@@ -6,6 +6,7 @@ from typing import Optional
 from uuid import uuid4
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.execution_corrector import build_corrected_execution_prompt, generate_retry_plan
@@ -36,6 +37,14 @@ app = FastAPI(
     description="Builds compact business logic-aware prompts before Codex runs.",
     version="0.1.0",
 )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+print(f"ai-gen backend starting in {os.getenv('AI_GEN_BACKEND_MODE', 'local')} mode")
 
 logic_store = LogicStore()
 context_builder = ContextBuilder(logic_store=logic_store)
@@ -146,6 +155,7 @@ def capabilities() -> dict:
 def build_context(request: ContextRequest) -> ContextResponse:
     """Return a compact prompt that Codex can use for code generation."""
 
+    print(f"ai-gen /context query={request.query[:120]!r}")
     intent = detect_intent(request.query)
     repo_state = _prepare_repo_context(request, intent)
     result = context_builder.build_prompt(
@@ -175,6 +185,7 @@ def build_context(request: ContextRequest) -> ContextResponse:
         planning_enabled=bool(result.get("planning_enabled")),
         related_flows=repo_state.get("related_flows", []),
     )
+    print(f"ai-gen execution mode={prompt_mode['mode']} reason={prompt_mode['reason']}")
     selected_files = select_execution_files(
         current_file=request.current_file or request.file_path,
         open_files=request.open_files,
@@ -582,3 +593,15 @@ def get_repo_branch_context(repo_id: str, branch_name: str, session_id: Optional
     branch = repo_context_manager.load_branch_overlay(repo_id, branch_name)
     session = repo_context_manager.load_session(repo_id, session_id) if session_id else None
     return merge_effective_context(base, branch, session)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(
+        "backend.app:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+    )

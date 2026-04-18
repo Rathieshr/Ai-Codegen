@@ -1,0 +1,103 @@
+{
+  "name": "ai-gen-vscode",
+  "displayName": "ai-gen",
+  "description": "Send editor context zto ai-gen and display Codex-ready prompts.",
+  "version": "0.1.5",
+  "publisher": "rathiesh",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:aiGen.sidebar",
+    "onCommand:ai-gen.ask",
+    "onCommand:ai-gen.explainFlow",
+    "onCommand:ai-gen.generateSafely",
+    "onCommand:ai-gen.sendToCodex",
+    "onCommand:ai-gen.validateExecution",
+    "onCommand:ai-gen.retryExecution",
+    "onCommand:ai-gen.copyPrompt",
+    "onCommand:ai-gen.checkBackend"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiGen",
+          "title": "ai-gen",
+          "icon": "media/ai-gen.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiGen": [
+        {
+          "id": "aiGen.sidebar",
+          "name": "ai-gen",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ai-gen.ask",
+        "title": "ai-gen: Ask"
+      },
+      {
+        "command": "ai-gen.explainFlow",
+        "title": "ai-gen: Explain Relevant Flow"
+      },
+      {
+        "command": "ai-gen.generateSafely",
+        "title": "ai-gen: Generate Safely"
+      },
+      {
+        "command": "ai-gen.sendToCodex",
+        "title": "ai-gen: Send Last Prompt to Codex"
+      },
+      {
+        "command": "ai-gen.validateExecution",
+        "title": "ai-gen: Validate Last Execution"
+      },
+      {
+        "command": "ai-gen.retryExecution",
+        "title": "ai-gen: Retry Last Execution"
+      },
+      {
+        "command": "ai-gen.copyPrompt",
+        "title": "ai-gen: Copy Last Prompt"
+      },
+      {
+        "command": "ai-gen.checkBackend",
+        "title": "ai-gen: Check Backend Connection"
+      }
+    ],
+    "configuration": {
+      "title": "ai-gen",
+      "properties": {
+        "ai-gen.backendUrl": {
+          "type": "string",
+          "default": "http://localhost:8000/context",
+          "description": "Local ai-gen backend context endpoint."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "compile": "^0.0.2"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {"id": "LoginFlow", "type": "flow"},
+    {"id": "TokenGeneration", "type": "flow"},
+    {"id": "AuthService", "type": "service"},
+    {"id": "LoginController", "type": "controller"}
+  ],
+  "edges": [
+    {"from": "LoginController", "to": "LoginFlow", "type": "invokes"},
+    {"from": "LoginFlow", "to": "AuthService", "type": "uses"},
+    {"from": "LoginFlow", "to": "TokenGeneration", "type": "depends_on"}
+  ]
+}
+

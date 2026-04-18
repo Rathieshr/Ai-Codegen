@@ -1,0 +1,23 @@
+{
+  "auth": [
+    "Do not remove or bypass credential validation.",
+    "Do not reveal whether the email or username exists on failed authentication.",
+    "Reuse the existing token/session generation path.",
+    "Do not change the order of critical authentication steps unless explicitly requested."
+  ],
+  "payment": [
+    "Do not mark payment as successful before gateway verification completes.",
+    "Do not skip transaction persistence.",
+    "Do not bypass payment validation or fraud checks."
+  ],
+  "signup": [
+    "Do not create duplicate user records.",
+    "Preserve password hashing and validation rules.",
+    "Reuse the existing account creation path when possible."
+  ],
+  "session": [
+    "Do not create a second session model if one already exists.",
+    "Reuse the existing session lifecycle and expiry rules."
+  ]
+}
+

@@ -1,0 +1,60 @@
+{
+  "manifestVersion": 1,
+  "id": "ai-gen-work-item-tools",
+  "publisher": "ai-gen",
+  "version": "0.1.0",
+  "name": "ai-gen Work Item Tools",
+  "description": "Convert Azure DevOps work items into ai-gen execution packets.",
+  "public": false,
+  "categories": ["Azure Boards"],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "icons": {
+    "default": "static/icon.svg"
+  },
+  "files": [
+    {
+      "path": "dist",
+      "addressable": true
+    },
+    {
+      "path": "static",
+      "addressable": true
+    },
+    {
+      "path": "workItemTab.html",
+      "addressable": true
+    },
+    {
+      "path": "workItemAction.html",
+      "addressable": true
+    }
+  ],
+  "contributions": [
+    {
+      "id": "ai-gen.work-item-tab",
+      "type": "ms.vss-work-web.work-item-form-page",
+      "targets": ["ms.vss-work-web.work-item-form"],
+      "properties": {
+        "name": "ai-gen",
+        "uri": "workItemTab.html"
+      }
+    },
+    {
+      "id": "ai-gen.generate-prompt",
+      "type": "ms.vss-web.action",
+      "targets": ["work-item-toolbar"],
+      "properties": {
+        "text": "Generate ai-gen Prompt",
+        "title": "Generate ai-gen Prompt",
+        "uri": "workItemAction.html"
+      }
+    }
+  ],
+  "scopes": [
+    "vso.work"
+  ]
+}

@@ -1,0 +1,84 @@
+body {
+  margin: 0;
+  color: #201f1e;
+  background: #fff;
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+
+.ai-gen-page {
+  padding: 16px;
+}
+
+.ai-gen-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.ai-gen-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.ai-gen-muted {
+  color: #605e5c;
+  font-size: 13px;
+}
+
+.ai-gen-section {
+  border-top: 1px solid #edebe9;
+  padding-top: 14px;
+  margin-top: 14px;
+}
+
+.ai-gen-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr;
+  gap: 6px 12px;
+  max-width: 900px;
+}
+
+.ai-gen-key {
+  color: #605e5c;
+}
+
+.ai-gen-prompt {
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 360px;
+  padding: 12px;
+  border: 1px solid #edebe9;
+  background: #faf9f8;
+  border-radius: 6px;
+}
+
+.ai-gen-button {
+  border: 0;
+  border-radius: 4px;
+  background: #0078d4;
+  color: #fff;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.ai-gen-button.secondary {
+  background: #f3f2f1;
+  color: #201f1e;
+}
+
+.ai-gen-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.ai-gen-error {
+  color: #a4262c;
+  background: #fde7e9;
+  padding: 10px;
+  border-radius: 6px;
+}

@@ -1,0 +1,28 @@
+/*
+ * ---------------------------------------------------------
+ * Copyright(C) Microsoft Corporation. All rights reserved.
+ * ---------------------------------------------------------
+ */
+define(["require", "exports"], function (require, exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    var Plan;
+    (function (Plan) {
+        /**
+         * No plan is indicated
+         */
+        Plan[Plan["None"] = 0] = "None";
+        /**
+         * The Code Security plan
+         */
+        Plan[Plan["CodeSecurity"] = 1] = "CodeSecurity";
+        /**
+         * The Secret Protection plan
+         */
+        Plan[Plan["SecretProtection"] = 2] = "SecretProtection";
+        /**
+         * Include all plans
+         */
+        Plan[Plan["All"] = 3] = "All";
+    })(Plan = exports.Plan || (exports.Plan = {}));
+});

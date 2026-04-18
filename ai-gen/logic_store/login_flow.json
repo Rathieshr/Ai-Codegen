@@ -1,0 +1,48 @@
+[
+  {
+    "id": "Login",
+    "name": "Login Flow",
+    "keywords": ["login", "signup", "sign up", "auth", "otp", "password", "session"],
+    "summary": "Users authenticate through signup or login, receive a session, and must keep validation and audit behavior consistent.",
+    "steps": [
+      "Signup validates email and password, creates a user, hashes credentials, then starts a session.",
+      "Login validates credentials, blocks inactive users, records an audit event, then returns a session token.",
+      "OTP login should reuse the existing identity lookup and session creation path rather than creating a second auth model.",
+      "Failed authentication attempts should not reveal whether the email exists."
+    ],
+    "depends_on": ["TokenGeneration"],
+    "services": ["AuthService", "UserService", "SessionService", "AuditLogService"],
+    "dependencies": ["password_hasher", "session_token_factory", "user_repository", "audit_logger"],
+    "files": ["backend/auth.py", "backend/users.py", "backend/sessions.py"],
+    "snippets": [
+      {
+        "label": "session creation contract",
+        "code": "session = SessionService.create_for_user(user_id=user.id, reason=\"login\")\nreturn {\"token\": session.token, \"user_id\": user.id}"
+      },
+      {
+        "label": "safe login error",
+        "code": "raise AuthError(\"Invalid email or password\")"
+      }
+    ]
+  },
+  {
+    "id": "TokenGeneration",
+    "name": "TokenGeneration",
+    "keywords": ["token", "session"],
+    "summary": "Session tokens are generated after identity and permission checks pass.",
+    "steps": [
+      "Generate session token with user id, expiry, and login reason.",
+      "Validate token payload before returning it to the caller."
+    ],
+    "depends_on": [],
+    "services": ["SessionService"],
+    "dependencies": ["session_token_factory"],
+    "files": ["backend/sessions.py"],
+    "snippets": [
+      {
+        "label": "token generation contract",
+        "code": "token = session_token_factory.create(user_id=user.id, reason=\"login\")"
+      }
+    ]
+  }
+]

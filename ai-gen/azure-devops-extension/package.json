@@ -1,0 +1,27 @@
+{
+  "name": "ai-gen-azure-devops-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Azure DevOps work item integration for ai-gen execution packets.",
+  "scripts": {
+    "build": "webpack --mode production",
+    "package": "npm run build && tfx extension create --manifest-globs azure-devops-extension.json"
+  },
+  "dependencies": {
+    "azure-devops-extension-api": "^4.240.0",
+    "azure-devops-extension-sdk": "^4.0.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "css-loader": "^6.10.0",
+    "style-loader": "^3.3.4",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.4.5",
+    "tfx-cli": "^0.17.0",
+    "webpack": "^5.91.0",
+    "webpack-cli": "^5.1.4"
+  }
+}

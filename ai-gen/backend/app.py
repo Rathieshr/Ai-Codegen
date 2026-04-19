@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -22,6 +22,7 @@ from backend.repo_context.models import SessionContext
 from backend.repo_context.storage import read_json
 from backend.repo_context.retrieval_bias import collect_session_bias_signals, rank_logic_units_with_bias
 from backend.status import get_status
+from backend.work_item_optimizer import optimize_work_item_request
 from context_builder.builder import ContextBuilder
 from context_builder.execution_packets import (
     build_execution_packet,
@@ -68,6 +69,8 @@ class ContextRequest(BaseModel):
     current_file: Optional[str] = Field(default=None, description="Optional current file path from the IDE.")
     git_remote: Optional[str] = Field(default=None, description="Optional git remote from the IDE.")
     routing_mode: str = Field(default="auto", description="Optional execution routing mode.")
+    source: Optional[str] = Field(default=None, description="Optional request source such as azure_devops.")
+    work_item: Optional[dict[str, Any]] = Field(default=None, description="Optional normalized work item payload.")
     max_tokens: int = Field(
         default=900,
         ge=150,
@@ -112,6 +115,10 @@ class ContextResponse(BaseModel):
     drift_detected: bool = False
     constraint_violations: list[str] = Field(default_factory=list)
     risky_changes: list[str] = Field(default_factory=list)
+    work_item_optimized: bool = False
+    work_item_task_summary: Optional[str] = None
+    work_item_surface: Optional[str] = None
+    work_item_scope: list[str] = Field(default_factory=list)
 
 
 class ExecutionValidationRequest(BaseModel):
@@ -156,10 +163,12 @@ def build_context(request: ContextRequest) -> ContextResponse:
     """Return a compact prompt that Codex can use for code generation."""
 
     print(f"ai-gen /context query={request.query[:120]!r}")
-    intent = detect_intent(request.query)
-    repo_state = _prepare_repo_context(request, intent)
+    work_item_context = _optimize_azure_work_item(request)
+    effective_query = work_item_context.get("normalized_query") or request.query
+    intent = detect_intent(effective_query)
+    repo_state = _prepare_repo_context(request, intent, effective_query)
     result = context_builder.build_prompt(
-        user_query=request.query,
+        user_query=effective_query,
         max_tokens=request.max_tokens,
         logic_bias_scores=repo_state.get("logic_bias_scores"),
         bug_context=repo_state.get("bug_context"),
@@ -176,7 +185,7 @@ def build_context(request: ContextRequest) -> ContextResponse:
         critical_constraints=constraints,
     )
     prompt_mode = detect_prompt_mode(
-        query=request.query,
+        query=effective_query,
         intent=intent,
         matched_logic=result["matched_logic"][0] if result.get("matched_logic") else None,
         detected_flow=repo_state.get("detected_flow"),
@@ -194,22 +203,23 @@ def build_context(request: ContextRequest) -> ContextResponse:
     )
     result["optimized_prompt"] = _mode_specific_prompt(
         mode=prompt_mode["mode"],
-        query=request.query,
+        query=effective_query,
         selected_files=selected_files,
         detected_flow=repo_state.get("detected_flow"),
         related_flows=repo_state.get("related_flows", []),
         constraints=constraints,
         likely_bug_hotspots=repo_state.get("likely_bug_hotspots", []),
         fallback_prompt=result["optimized_prompt"],
+        work_item_context=work_item_context,
     )
     result["token_estimate"] = _estimate_tokens(result["optimized_prompt"])
     route = detect_execution_target(
-        query=request.query,
+        query=effective_query,
         intent=intent,
         context_size=result["token_estimate"],
         routing_mode=request.routing_mode,
     )
-    _update_repo_session(request, route["target"], result["token_estimate"], repo_state)
+    _update_repo_session(request, route["target"], result["token_estimate"], repo_state, effective_query)
     result.update(
         {
             "execution_target": route["target"],
@@ -239,6 +249,10 @@ def build_context(request: ContextRequest) -> ContextResponse:
             "drift_detected": False,
             "constraint_violations": [],
             "risky_changes": [],
+            "work_item_optimized": bool(work_item_context),
+            "work_item_task_summary": work_item_context.get("task_summary"),
+            "work_item_surface": work_item_context.get("technical_surface"),
+            "work_item_scope": work_item_context.get("likely_scope", []),
         }
     )
     return ContextResponse(**result)
@@ -317,7 +331,7 @@ def validate_execution_result(request: ExecutionValidationRequest) -> dict:
     }
 
 
-def _prepare_repo_context(request: ContextRequest, intent: str) -> dict:
+def _prepare_repo_context(request: ContextRequest, intent: str, query: str) -> dict:
     """Best-effort repo identity resolution, auto-init, and bias calculation."""
 
     workspace_root = request.workspace_root or ""
@@ -341,7 +355,7 @@ def _prepare_repo_context(request: ContextRequest, intent: str) -> dict:
         current_file = request.current_file or request.file_path
         initial_bias = collect_session_bias_signals(effective, current_file, request.open_files)
         detected_flow = _infer_detected_flow(
-            request.query,
+            query,
             initial_bias.get("current_flow", ""),
             effective.get("file_index", []),
             index_state.get("detected_flows", []),
@@ -352,12 +366,12 @@ def _prepare_repo_context(request: ContextRequest, intent: str) -> dict:
         )
         related_flows = get_related_flows(detected_flow, relationships, max_depth=1)
         bias_signals = collect_session_bias_signals(effective, current_file, request.open_files, related_flows=related_flows)
-        ranked_logic = rank_logic_units_with_bias(effective.get("effective_logic_units", []), bias_signals, request.query)
+        ranked_logic = rank_logic_units_with_bias(effective.get("effective_logic_units", []), bias_signals, query)
         logic_bias_scores = {logic_id: score for logic_id, score in ranked_logic if score > 0}
-        bug_surface = detect_bug_surface(request.query) if intent == "bug_fix" else None
+        bug_surface = detect_bug_surface(query) if intent == "bug_fix" else None
         likely_bug_hotspots = (
             score_bug_hotspots(
-                query=request.query,
+                query=query,
                 detected_flow=detected_flow,
                 related_flows=related_flows,
                 file_index=effective.get("file_index", []),
@@ -450,10 +464,21 @@ def _mode_specific_prompt(
     constraints: list[str],
     likely_bug_hotspots: list[dict],
     fallback_prompt: str,
+    work_item_context: Optional[dict] = None,
 ) -> str:
     """Build the final handoff prompt, falling back to existing formatting if needed."""
 
     try:
+        if work_item_context:
+            return _build_work_item_execution_prompt(
+                query=query,
+                selected_files=selected_files,
+                detected_flow=detected_flow,
+                related_flows=related_flows,
+                constraints=constraints,
+                likely_bug_hotspots=likely_bug_hotspots,
+                work_item_context=work_item_context,
+            )
         if mode == "execute":
             return build_execution_packet(
                 query=query,
@@ -480,6 +505,81 @@ def _mode_specific_prompt(
     except (KeyError, TypeError, ValueError):
         return fallback_prompt
     return fallback_prompt
+
+
+def _build_work_item_execution_prompt(
+    query: str,
+    selected_files: list[str],
+    detected_flow: Optional[str],
+    related_flows: list[str],
+    constraints: list[str],
+    likely_bug_hotspots: list[dict],
+    work_item_context: dict,
+) -> str:
+    """Render a compact source-aware packet for Azure DevOps work items."""
+
+    scope_items = _dedupe((work_item_context.get("likely_scope") or []) + selected_files)
+    focus_rules = work_item_context.get("inferred_focus_rules") or []
+    task = work_item_context.get("task_summary") or query
+    sections = [
+        "# Task",
+        task.strip(),
+        _work_item_scope_section(scope_items, detected_flow, related_flows, work_item_context.get("technical_surface")),
+        _work_item_focus_section(focus_rules),
+        _work_item_breakpoints_section(likely_bug_hotspots),
+        _work_item_constraints_section(constraints),
+        "# Execution Rules",
+        "\n".join(
+            [
+                "- Do not widen scope unless the listed path does not explain the issue.",
+                "- Apply the smallest safe change.",
+                "- Preserve existing business rules and constraints.",
+            ]
+        ),
+    ]
+    return "\n\n".join(section for section in sections if section).strip()
+
+
+def _work_item_scope_section(
+    scope_items: list[str],
+    detected_flow: Optional[str],
+    related_flows: list[str],
+    surface: Optional[str],
+) -> str:
+    lines = ["# Scope"]
+    if surface:
+        lines.append(f"Surface:\n- {surface}")
+    if detected_flow:
+        lines.append(f"Flow:\n- {detected_flow}")
+    if related_flows:
+        lines.append("Related:")
+        lines.extend(f"- {flow}" for flow in _dedupe(related_flows)[:3])
+    if scope_items:
+        lines.append("First-pass scope:")
+        lines.extend(f"- {item}" for item in scope_items[:4])
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _work_item_focus_section(focus_rules: list[str]) -> str:
+    if not focus_rules:
+        return ""
+    return "# Focus\n" + "\n".join(f"- {rule}" for rule in _dedupe(focus_rules)[:4])
+
+
+def _work_item_breakpoints_section(hotspots: list[dict]) -> str:
+    if not hotspots:
+        return ""
+    lines = ["# Likely Breakpoints"]
+    for hotspot in hotspots[:3]:
+        reasons = ", ".join(hotspot.get("reasons", [])[:3])
+        lines.append(f"- {hotspot.get('file')} ({hotspot.get('flow', 'unknown')}/{hotspot.get('role', 'unknown')}): {reasons}")
+    return "\n".join(lines)
+
+
+def _work_item_constraints_section(constraints: list[str]) -> str:
+    if not constraints:
+        return ""
+    return "# Constraints\n" + "\n".join(f"- {constraint}" for constraint in _dedupe(constraints)[:4])
 
 
 def _extract_constraints(prompt: str) -> list[str]:
@@ -547,7 +647,13 @@ def _ordered_flows(file_index: list[dict], indexed_flows: list[str]) -> list[str
     return flows
 
 
-def _update_repo_session(request: ContextRequest, execution_target: str, token_estimate: int, repo_state: dict) -> None:
+def _update_repo_session(
+    request: ContextRequest,
+    execution_target: str,
+    token_estimate: int,
+    repo_state: dict,
+    effective_query: Optional[str] = None,
+) -> None:
     """Persist optional IDE session metadata without making repo context mandatory."""
 
     repo_id = repo_state.get("repo_id") or request.repo_id
@@ -567,8 +673,8 @@ def _update_repo_session(request: ContextRequest, execution_target: str, token_e
             current_file=request.current_file or request.file_path or existing.get("current_file", ""),
             open_files=request.open_files or existing.get("open_files", []),
             selected_text=request.selected_text or existing.get("selected_text", ""),
-            current_task=request.query,
-            last_query=request.query,
+            current_task=effective_query or request.query,
+            last_query=effective_query or request.query,
             last_execution_target=execution_target,
             last_prompt_token_estimate=token_estimate,
             created_at=existing.get("created_at") or SessionContext(session_id, repo_id, branch_name).created_at,
@@ -576,6 +682,46 @@ def _update_repo_session(request: ContextRequest, execution_target: str, token_e
         repo_context_manager.save_session(session)
     except OSError:
         return
+
+
+def _optimize_azure_work_item(request: ContextRequest) -> dict:
+    """Optimize Azure DevOps work item requests without affecting IDE callers."""
+
+    if (request.source or "").lower() != "azure_devops":
+        return {}
+
+    work_item = request.work_item or {}
+    title = _work_item_text(work_item, "title") or request.query
+    description = _work_item_text(work_item, "description")
+    acceptance = (
+        _work_item_text(work_item, "acceptanceCriteria")
+        or _work_item_text(work_item, "acceptance_criteria")
+    )
+    tags_value = work_item.get("tags")
+    tags = [str(tag) for tag in tags_value if tag] if isinstance(tags_value, list) else []
+    return optimize_work_item_request(
+        title=title,
+        description=description,
+        acceptance_criteria=acceptance,
+        tags=tags,
+        work_item_type=_work_item_text(work_item, "type"),
+        area_path=_work_item_text(work_item, "areaPath") or _work_item_text(work_item, "area_path"),
+        iteration_path=_work_item_text(work_item, "iterationPath") or _work_item_text(work_item, "iteration_path"),
+    )
+
+
+def _work_item_text(work_item: dict, key: str) -> str:
+    value = work_item.get(key)
+    return str(value).strip() if value is not None else ""
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    output: list[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        if normalized and normalized not in output:
+            output.append(normalized)
+    return output
 
 
 @app.get("/repo-context/{repo_id}")

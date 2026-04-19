@@ -1,7 +1,7 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
 
-const BACKEND_URL = 'http://localhost:8000/context';
+const BACKEND_URL = 'https://ai-codegen-production.up.railway.app/context';
 const STATE_KEY = 'ai-gen:last-result';
 
 export type NormalizedWorkItem = {

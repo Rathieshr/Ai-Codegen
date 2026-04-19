@@ -6,6 +6,10 @@ export type SidebarRequestOptions = {
 };
 
 export type SidebarState = {
+  backendMode: string;
+  activeBackendSource: string;
+  backendUrl: string;
+  backendReason: string;
   backendStatus: string;
   codexAvailable: boolean;
   localEnabled: boolean;
@@ -195,6 +199,10 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
   <section class="status">
     <div class="meta">
       <span class="key">Backend</span><span id="backendStatus">unknown</span>
+      <span class="key">Backend Mode</span><span id="backendMode">auto</span>
+      <span class="key">Active Backend</span><span id="activeBackend">none</span>
+      <span class="key">Backend URL</span><span id="backendUrl">not available</span>
+      <span class="key">Backend Reason</span><span id="backendReason">not resolved</span>
       <span class="key">Codex</span><span id="codexStatus">unknown</span>
       <span class="key">Local</span><span id="localStatus">unknown</span>
       <span class="key">Ollama</span><span id="ollamaStatus">unknown</span>
@@ -256,6 +264,10 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
 
     function renderState(state) {
       $('backendStatus').textContent = state.backendStatus === 'connected' ? 'Connected' : 'Disconnected';
+      $('backendMode').textContent = state.backendMode || 'auto';
+      $('activeBackend').textContent = state.activeBackendSource || 'none';
+      $('backendUrl').textContent = state.backendUrl || 'Not available';
+      $('backendReason').textContent = state.backendReason || '';
       $('codexStatus').textContent = state.codexAvailable ? 'Available' : 'Unavailable';
       $('localStatus').textContent = state.localEnabled ? 'Enabled' : 'Disabled';
       $('ollamaStatus').textContent = state.localProvider === 'ollama'

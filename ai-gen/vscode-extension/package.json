@@ -19,7 +19,8 @@
     "onCommand:ai-gen.validateExecution",
     "onCommand:ai-gen.retryExecution",
     "onCommand:ai-gen.copyPrompt",
-    "onCommand:ai-gen.checkBackend"
+    "onCommand:ai-gen.checkBackend",
+    "onCommand:ai-gen.refreshBackendResolution"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -73,15 +74,34 @@
       {
         "command": "ai-gen.checkBackend",
         "title": "ai-gen: Check Backend Connection"
+      },
+      {
+        "command": "ai-gen.refreshBackendResolution",
+        "title": "ai-gen: Refresh Backend Resolution"
       }
     ],
     "configuration": {
       "title": "ai-gen",
       "properties": {
-        "ai-gen.backendUrl": {
+        "ai-gen.backendMode": {
           "type": "string",
-          "default": "http://localhost:8000/context",
-          "description": "Local ai-gen backend context endpoint."
+          "enum": [
+            "auto",
+            "local",
+            "railway"
+          ],
+          "default": "auto",
+          "description": "Choose backend selection mode."
+        },
+        "ai-gen.localBackendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Local ai-gen backend base URL."
+        },
+        "ai-gen.railwayBackendUrl": {
+          "type": "string",
+          "default": "https://ai-codegen-production.up.railway.app",
+          "description": "Public Railway backend base URL."
         }
       }
     }

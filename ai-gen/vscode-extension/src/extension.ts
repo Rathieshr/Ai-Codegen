@@ -1,6 +1,14 @@
 import * as childProcess from 'child_process';
 import * as util from 'util';
 import * as vscode from 'vscode';
+import {
+  BackendResolution,
+  capabilitiesUrl,
+  contextUrl,
+  resolveBackendUrl,
+  snapshotUrl,
+  validateUrl
+} from './backendResolver';
 import { AiGenSidebarViewProvider, SidebarRequestOptions, SidebarResult, SidebarState } from './sidebarViewProvider';
 
 const DEFAULT_QUERY = 'Explain the relevant business flow for this context';
@@ -124,6 +132,13 @@ type LastExecutionState = {
 
 let lastPromptState: LastPromptState | undefined;
 let lastExecutionState: LastExecutionState | undefined;
+let backendResolution: BackendResolution = {
+  url: null,
+  source: 'none',
+  healthy: false,
+  mode: 'auto',
+  reason: 'Backend has not been resolved yet.'
+};
 let backendStatus = 'unknown';
 let codexAvailable = false;
 let localEnabled = false;
@@ -232,6 +247,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('ai-gen.checkBackend', async () => {
       const message = await checkBackend();
       sidebarProvider?.update(getSidebarState(message, ''));
+    }),
+    vscode.commands.registerCommand('ai-gen.refreshBackendResolution', async () => {
+      const resolution = await refreshBackendResolution();
+      const message = resolution.healthy && resolution.url
+        ? `ai-gen active backend: ${resolution.source} (${resolution.url})`
+        : resolution.reason;
+      vscode.window.showInformationMessage(message);
+      sidebarProvider?.update(getSidebarState(message, resolution.healthy ? '' : resolution.reason));
     })
   );
 }
@@ -317,11 +340,11 @@ function collectOpenFiles(): string[] {
 }
 
 async function requestContext(query: string, editorContext: EditorContext): Promise<BackendResponse> {
-  const backendUrl = getBackendUrl();
+  const backendUrl = await getActiveBackendBaseUrl();
 
   let response: Response;
   try {
-    response = await fetch(backendUrl, {
+    response = await fetch(contextUrl(backendUrl), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -339,7 +362,7 @@ async function requestContext(query: string, editorContext: EditorContext): Prom
       })
     });
   } catch {
-    throw new Error(`Could not reach local backend at ${backendUrl}. Start it with: python3 -m uvicorn backend.app:app --host 127.0.0.1 --port 8000`);
+    throw new Error(`Could not reach ai-gen backend at ${backendUrl}. ${backendResolution.reason}`);
   }
 
   if (!response.ok) {
@@ -364,25 +387,23 @@ async function detectGitBranch(workspaceRoot: string): Promise<string> {
 }
 
 async function ensureBackendAvailable() {
-  const healthUrl = getHealthUrl();
-
-  try {
-    const response = await fetch(healthUrl, { method: 'GET' });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    backendStatus = 'connected';
-  } catch {
+  const resolution = await refreshBackendResolution();
+  if (!resolution.healthy || !resolution.url) {
     markBackendDisconnected();
-    throw new Error(`Backend is unavailable at ${healthUrl}. Start ai-gen backend and try again.`);
+    throw new Error(resolution.reason);
   }
 }
 
 async function checkBackend(): Promise<string> {
   try {
+    const resolution = await refreshBackendResolution();
+    if (!resolution.healthy || !resolution.url) {
+      throw new Error(resolution.reason);
+    }
     applyCapabilities(await requestCapabilities());
-    vscode.window.showInformationMessage('ai-gen backend is reachable.');
-    return 'ai-gen backend is reachable.';
+    const message = `ai-gen connected to ${resolution.source} backend: ${resolution.url}`;
+    vscode.window.showInformationMessage(message);
+    return message;
   } catch (error) {
     markBackendDisconnected();
     const message = error instanceof Error ? error.message : String(error);
@@ -394,6 +415,10 @@ async function checkBackend(): Promise<string> {
 async function refreshAvailability() {
   codexAvailable = await isCodexCliAvailable();
   try {
+    const resolution = await refreshBackendResolution();
+    if (!resolution.healthy || !resolution.url) {
+      return;
+    }
     const capabilities = await requestCapabilities();
     applyCapabilities(capabilities);
   } catch {
@@ -402,12 +427,12 @@ async function refreshAvailability() {
 }
 
 async function requestCapabilities(): Promise<BackendCapabilities> {
-  const capabilitiesUrl = getCapabilitiesUrl();
+  const baseUrl = await getActiveBackendBaseUrl();
   let response: Response;
   try {
-    response = await fetch(capabilitiesUrl, { method: 'GET' });
+    response = await fetch(capabilitiesUrl(baseUrl), { method: 'GET' });
   } catch {
-    throw new Error(`Backend is unavailable at ${capabilitiesUrl}. Start ai-gen backend and try again.`);
+    throw new Error(`Backend is unavailable at ${baseUrl}. ${backendResolution.reason}`);
   }
   if (!response.ok) {
     throw new Error(`Capabilities returned HTTP ${response.status}`);
@@ -426,7 +451,7 @@ async function postJson<T>(url: string, payload: Record<string, unknown>): Promi
       body: JSON.stringify(payload)
     });
   } catch {
-    throw new Error(`Could not reach local backend at ${url}.`);
+    throw new Error(`Could not reach ai-gen backend at ${url}.`);
   }
   if (!response.ok) {
     const details = await response.text();
@@ -450,45 +475,27 @@ function applyCapabilities(capabilities: BackendCapabilities) {
 function markBackendDisconnected() {
   backendStatus = 'disconnected';
   localAvailable = false;
-  statusWarnings = ['Backend is disconnected'];
+  statusWarnings = [backendResolution.reason || 'Backend is disconnected'];
 }
 
-function getBackendUrl(): string {
-  return vscode.workspace
-    .getConfiguration('ai-gen')
-    .get<string>('backendUrl', 'http://localhost:8000/context');
-}
-
-function getHealthUrl(): string {
-  const backendUrl = getBackendUrl();
-  if (backendUrl.endsWith('/context')) {
-    return `${backendUrl.slice(0, -'/context'.length)}/health`;
+async function refreshBackendResolution(): Promise<BackendResolution> {
+  backendResolution = await resolveBackendUrl();
+  backendStatus = backendResolution.healthy ? 'connected' : 'disconnected';
+  if (backendResolution.healthy) {
+    statusWarnings = [];
+  } else {
+    localAvailable = false;
+    statusWarnings = [backendResolution.reason];
   }
-  return backendUrl;
+  return backendResolution;
 }
 
-function getCapabilitiesUrl(): string {
-  const backendUrl = getBackendUrl();
-  if (backendUrl.endsWith('/context')) {
-    return `${backendUrl.slice(0, -'/context'.length)}/capabilities`;
+async function getActiveBackendBaseUrl(): Promise<string> {
+  const resolution = await refreshBackendResolution();
+  if (!resolution.healthy || !resolution.url) {
+    throw new Error(resolution.reason);
   }
-  return backendUrl;
-}
-
-function getBackendBaseUrl(): string {
-  const backendUrl = getBackendUrl();
-  if (backendUrl.endsWith('/context')) {
-    return backendUrl.slice(0, -'/context'.length);
-  }
-  return backendUrl.replace(/\/$/, '');
-}
-
-function getSnapshotUrl(): string {
-  return `${getBackendBaseUrl()}/execution/snapshot`;
-}
-
-function getValidateUrl(): string {
-  return `${getBackendBaseUrl()}/execution/validate`;
+  return resolution.url;
 }
 
 function showPromptOutput(
@@ -723,7 +730,8 @@ async function captureExecutionSnapshot(): Promise<void> {
     throw new Error('No workspace root is available for execution validation.');
   }
   const selectedFiles = selectedExecutionFilesForBackend(lastPromptState);
-  const response = await postJson<{ baseline_hashes?: Record<string, string> }>(getSnapshotUrl(), {
+  const backendUrl = await getActiveBackendBaseUrl();
+  const response = await postJson<{ baseline_hashes?: Record<string, string> }>(snapshotUrl(backendUrl), {
     repo_id: lastPromptState.response.resolved_repo_id,
     branch_name: lastPromptState.response.resolved_branch_name || lastPromptState.editorContext.branch_name,
     session_id: lastPromptState.editorContext.session_id,
@@ -753,7 +761,8 @@ async function validateLastExecution(): Promise<string> {
     return message;
   }
   try {
-    const response = await postJson<ExecutionValidationResponse>(getValidateUrl(), {
+    const backendUrl = await getActiveBackendBaseUrl();
+    const response = await postJson<ExecutionValidationResponse>(validateUrl(backendUrl), {
       repo_id: lastExecutionState.repoId,
       branch_name: lastExecutionState.branchName,
       session_id: lastExecutionState.sessionId,
@@ -854,6 +863,10 @@ function shellQuote(value: string): string {
 
 function getSidebarState(statusMessage: string, errorMessage: string): SidebarState {
   return {
+    backendMode: backendResolution.mode,
+    activeBackendSource: backendResolution.source,
+    backendUrl: backendResolution.url || '',
+    backendReason: backendResolution.reason,
     backendStatus,
     codexAvailable,
     localEnabled,

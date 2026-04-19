@@ -1,6 +1,6 @@
 # ai-gen VS Code Extension
 
-Minimal VS Code extension for sending editor context to the local ai-gen backend and displaying the enriched Codex-ready prompt in a persistent sidebar.
+Minimal VS Code extension for sending editor context to the ai-gen backend and displaying the enriched Codex-ready prompt in a persistent sidebar. It can use a local backend or the Railway-hosted backend.
 
 ## Commands
 
@@ -10,10 +10,25 @@ Minimal VS Code extension for sending editor context to the local ai-gen backend
 - `ai-gen: Copy Last Prompt`
 - `ai-gen: Send Last Prompt to Codex`
 - `ai-gen: Check Backend Connection`
+- `ai-gen: Refresh Backend Resolution`
 
 The command palette commands remain available, but the ai-gen Activity Bar sidebar is the main control surface.
 
-## Start Backend
+## Backend Modes
+
+The extension supports three backend modes through VS Code settings:
+
+- `ai-gen.backendMode`: `auto`, `local`, or `railway`
+- `ai-gen.localBackendUrl`: defaults to `http://127.0.0.1:8000`
+- `ai-gen.railwayBackendUrl`: defaults to `https://ai-codegen-production.up.railway.app`
+
+In `auto` mode, ai-gen checks the local backend first with `/health`. If local is unavailable, it checks the Railway backend. Local wins when both are healthy, which keeps development fast while still allowing team testing against Railway.
+
+Use `local` mode to always use the local backend. Use `railway` mode to always use the Railway backend. If the selected backend is unavailable, the sidebar shows a disconnected state and a clear reason.
+
+The Railway service listens on Railway's assigned port internally. The public extension URL should normally be the HTTPS Railway domain, not a manual localhost-style port URL.
+
+## Start Local Backend
 
 From the project root:
 
@@ -22,13 +37,7 @@ cd "/Users/macbook/Products/Ai Gen Dev/ai-gen"
 .venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ```
 
-The extension calls:
-
-```text
-http://localhost:8000/context
-```
-
-You can change this with the `ai-gen.backendUrl` VS Code setting.
+With default `auto` mode, the extension will choose this local backend whenever `/health` succeeds.
 
 ## Install Extension Dependencies
 
@@ -54,6 +63,7 @@ The existing command palette commands still work and update the same latest prom
 The ai-gen sidebar includes:
 
 - backend status
+- backend mode, active backend source, resolved backend URL, and selection reason
 - Codex availability
 - local model availability when reported by the backend
 - Ollama reachability, model name, local base URL, cloud status, and setup warnings
@@ -63,13 +73,17 @@ The ai-gen sidebar includes:
 - routed result summary
 - flow, linked flows, impacted components, constraints, plan, local output, and final prompt sections
 
-The sidebar loads even when the backend is offline. Use `Refresh Status` or `Check Backend` after starting the local backend.
+The sidebar loads even when the backend is offline. Use `Refresh Status`, `Check Backend`, or `ai-gen: Refresh Backend Resolution` after starting local backend or changing settings.
 
 ## Status
 
-The sidebar status section is fetched from the backend `/capabilities` endpoint when the view opens and whenever you click `Refresh Status`.
+The sidebar first resolves the active backend with `/health`, then fetches `/capabilities` when the view opens and whenever you click `Refresh Status`.
 
 - `Backend: Connected` means the ai-gen FastAPI backend responded.
+- `Backend Mode` is the configured mode: `auto`, `local`, or `railway`.
+- `Active Backend` is the resolved source: `local`, `railway`, or `none`.
+- `Backend URL` is the base URL currently used for `/context`, `/capabilities`, snapshots, and validation.
+- `Backend Reason` explains why the backend was selected or why resolution failed.
 - `Codex: Available` means Codex is enabled by environment/config or the `codex` CLI was found on `PATH`.
 - `Local: Enabled` means `AI_GEN_LOCAL_ENABLED=1`.
 - `Local: Disabled` means local routing is off, even if Ollama is installed.
@@ -190,11 +204,11 @@ Use the sidebar `Check Backend` button or run:
 ai-gen: Check Backend Connection
 ```
 
-The extension checks backend capabilities derived from `ai-gen.backendUrl`. If the backend is offline, it shows a clear error and disables backend-dependent sidebar actions.
+The extension resolves the active backend, then checks capabilities from that backend. If the backend is offline, it shows a clear error and disables backend-dependent sidebar actions.
 
 ## Requirements
 
-- ai-gen backend running locally.
+- ai-gen backend running locally, or the Railway backend URL configured and reachable.
 - Node dependencies installed with `npm install`.
 - Codex CLI installed and available on `PATH` for `ai-gen: Send Last Prompt to Codex`.
 

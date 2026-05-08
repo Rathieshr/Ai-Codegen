@@ -17,6 +17,7 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(status["local_enabled"], False)
         self.assertEqual(status["local_available"], False)
         self.assertIn("available_targets", status)
+        self.assertIn("refiner", status)
 
     def test_local_enabled_missing_model_produces_warning(self) -> None:
         env = {
@@ -70,6 +71,21 @@ class StatusTests(unittest.TestCase):
 
         self.assertEqual(status["local_available"], True)
         self.assertEqual(status["local_base_url"], "http://localhost:11434")
+
+    def test_refiner_enabled_but_not_configured_produces_warning(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+            },
+            clear=True,
+        ), patch("shutil.which", return_value="/usr/bin/codex"):
+            status = get_status()
+
+        self.assertEqual(status["refiner"]["enabled"], True)
+        self.assertEqual(status["refiner"]["configured"], False)
+        self.assertIn("Refiner is enabled but not fully configured", status["warnings"])
 
 
 if __name__ == "__main__":

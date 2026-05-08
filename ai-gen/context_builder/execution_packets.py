@@ -35,15 +35,18 @@ def build_execution_packet(
     related_flows: list[str],
     constraints: list[str],
     likely_bug_hotspots: list[dict[str, Any]],
+    refined_metadata: dict[str, Any] | None = None,
 ) -> str:
     """Build a compact no-replan/no-rescan implementation handoff."""
 
     sections = [
         "# Task",
         query.strip(),
-        _scope_section(selected_files, detected_flow, related_flows),
+        _scope_section(selected_files, detected_flow, related_flows, refined_metadata),
+        _focus_section(refined_metadata),
         _constraints_section(constraints),
         _breakpoints_section(likely_bug_hotspots),
+        _unknowns_section(refined_metadata),
         "# Execution Rules",
         "\n".join(
             [
@@ -114,16 +117,37 @@ def build_exploration_packet(
     ).strip()
 
 
-def _scope_section(selected_files: list[str], detected_flow: str | None, related_flows: list[str]) -> str:
+def _scope_section(
+    selected_files: list[str],
+    detected_flow: str | None,
+    related_flows: list[str],
+    refined_metadata: dict[str, Any] | None = None,
+) -> str:
     lines = ["# Scope"]
+    refined = refined_metadata or {}
     if selected_files:
         lines.append("Files:")
         lines.extend(f"- {path}" for path in selected_files)
     if detected_flow:
         lines.append(f"Flow:\n- {detected_flow}")
+    elif refined.get("base_flow"):
+        lines.append(f"Flow:\n- {refined['base_flow']}")
+    if refined.get("variant"):
+        lines.append(f"Variant:\n- {refined['variant']}")
+    if refined.get("surface"):
+        lines.append(f"Surface:\n- {refined['surface']}")
     if related_flows:
         lines.append("Related:")
         lines.extend(f"- {flow}" for flow in _dedupe(related_flows))
+    if refined.get("fields"):
+        lines.append("Fields:")
+        lines.extend(f"- {field}" for field in _dedupe(refined.get("fields", [])))
+    if refined.get("validations"):
+        lines.append("Validations:")
+        lines.extend(f"- {validation}" for validation in _dedupe(refined.get("validations", [])))
+    if refined.get("first_pass_scope"):
+        lines.append("First-pass scope:")
+        lines.extend(f"- {item}" for item in _dedupe(refined.get("first_pass_scope", []))[:4])
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
@@ -143,6 +167,22 @@ def _breakpoints_section(hotspots: list[dict[str, Any]]) -> str:
         label = f"{hotspot.get('flow', 'unknown')}/{hotspot.get('role', 'unknown')}"
         reasons = ", ".join(hotspot.get("reasons", [])[:3])
         lines.append(f"- {hotspot.get('file')} ({label}): {reasons}")
+    return "\n".join(lines)
+
+
+def _focus_section(refined_metadata: dict[str, Any] | None) -> str:
+    if not refined_metadata or not refined_metadata.get("focus_rules"):
+        return ""
+    lines = ["# Focus"]
+    lines.extend(f"- {rule}" for rule in _dedupe(refined_metadata.get("focus_rules", []))[:4])
+    return "\n".join(lines)
+
+
+def _unknowns_section(refined_metadata: dict[str, Any] | None) -> str:
+    if not refined_metadata or not refined_metadata.get("unknowns"):
+        return ""
+    lines = ["# Unknowns"]
+    lines.extend(f"- {item}" for item in _dedupe(refined_metadata.get("unknowns", []))[:4])
     return "\n".join(lines)
 
 

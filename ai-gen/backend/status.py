@@ -8,6 +8,7 @@ import urllib.request
 from typing import Any
 
 from backend.model_router import get_available_targets
+from backend.refinement.provider import get_refiner_status
 
 
 def get_status() -> dict[str, Any]:
@@ -19,6 +20,7 @@ def get_status() -> dict[str, Any]:
     local_model = _env_or_none("AI_GEN_LOCAL_MODEL")
     local_base_url = _env_or_none("AI_GEN_LOCAL_BASE_URL")
     cloud_enabled = os.getenv("AI_GEN_CLOUD_ENABLED") == "1"
+    refiner = get_refiner_status()
     warnings: list[str] = []
 
     if local_enabled and not local_provider:
@@ -38,6 +40,8 @@ def get_status() -> dict[str, Any]:
 
     if not available_targets["codex"]:
         warnings.append("Codex is not available on PATH")
+    if refiner["enabled"] and not refiner["configured"]:
+        warnings.append("Refiner is enabled but not fully configured")
 
     return {
         "backend_up": True,
@@ -49,6 +53,7 @@ def get_status() -> dict[str, Any]:
         "local_base_url": local_base_url,
         "cloud_enabled": cloud_enabled,
         "warnings": warnings,
+        "refiner": refiner,
         "available_targets": available_targets,
         "supported_targets": ["local", "cloud", "codex", "preview_only"],
         "env": {

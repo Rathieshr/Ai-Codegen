@@ -46,12 +46,23 @@ class ExecutionPacketTests(unittest.TestCase):
                     "reasons": ["matches current file", "belongs to detected flow"],
                 }
             ],
+            refined_metadata={
+                "variant": "phone_number",
+                "surface": "ui_screen",
+                "fields": ["phone_number"],
+                "validations": ["required", "phone_format", "length_limit"],
+                "first_pass_scope": ["login screen input", "phone validation", "submit action"],
+                "unknowns": ["Is OTP required after phone submission?"],
+            },
         )
 
         self.assertIn("# Task", packet)
         self.assertIn("# Likely Breakpoints", packet)
         self.assertIn("Do not repeat broad repo analysis unless necessary.", packet)
         self.assertIn("Avoid re-planning from scratch.", packet)
+        self.assertIn("Variant:", packet)
+        self.assertIn("phone_number", packet)
+        self.assertIn("# Unknowns", packet)
         self.assertNotIn("## Plan", packet)
 
     def test_execute_packet_is_shorter_than_verbose_builder_prompt(self) -> None:

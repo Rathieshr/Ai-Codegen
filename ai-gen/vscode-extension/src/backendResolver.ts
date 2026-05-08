@@ -143,6 +143,19 @@ export function validateUrl(baseUrl: string): string {
   return `${normalizeBaseUrl(baseUrl)}/execution/validate`;
 }
 
+export function handoffByIdUrl(baseUrl: string, handoffId: string): string {
+  return `${normalizeBaseUrl(baseUrl)}/handoffs/${encodeURIComponent(handoffId)}`;
+}
+
+export function handoffListUrl(baseUrl: string, workItemId: string, stage = 'dev', status = 'approved'): string {
+  const params = new URLSearchParams({
+    work_item_id: workItemId,
+    stage,
+    status
+  });
+  return `${normalizeBaseUrl(baseUrl)}/handoffs?${params.toString()}`;
+}
+
 function normalizeBaseUrl(value: string | undefined): string {
   const trimmed = (value || '').trim();
   if (!trimmed) {

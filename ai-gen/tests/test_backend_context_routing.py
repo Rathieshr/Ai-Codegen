@@ -48,6 +48,7 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["drift_detected"], False)
         self.assertEqual(data["constraint_violations"], [])
         self.assertEqual(data["risky_changes"], [])
+        self.assertEqual(data["refinement_used"], False)
 
     def test_forced_codex_unavailable_returns_preview_only(self) -> None:
         with patch.dict(os.environ, {}, clear=True), patch("shutil.which", return_value=None):
@@ -255,6 +256,49 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(response["retry_required"], True)
         self.assertEqual(response["retry_plan"]["strategy"], "narrow_scope")
         self.assertIn("Do not modify files outside this list.", response["corrected_execution_prompt"])
+
+    def test_context_includes_refinement_metadata_when_provider_returns_data(self) -> None:
+        refinement_result = {
+            "refinement_used": True,
+            "refinement_reason": "provider returned structured refinement",
+            "refinement": {
+                "base_flow": "login",
+                "variant": "phone_number",
+                "surface": "ui_screen",
+                "fields": ["phone_number"],
+                "validations": ["required", "phone_format", "length_limit"],
+                "first_pass_scope": ["login screen input", "phone validation", "submit action"],
+                "unknowns": ["Is OTP required after phone submission?"],
+                "confidence": "medium",
+            },
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://example.test",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+            },
+            clear=True,
+        ), patch("backend.app.refine_task", return_value=refinement_result), patch(
+            "shutil.which", return_value="/usr/bin/codex"
+        ):
+            response = build_context(
+                ContextRequest(
+                    query="Add a login screen with phone number",
+                    source="azure_devops",
+                    work_item={"title": "Add a login screen with phone number", "type": "User Story"},
+                )
+            )
+
+        data = response.model_dump() if hasattr(response, "model_dump") else response.dict()
+        self.assertEqual(data["refinement_used"], True)
+        self.assertEqual(data["refined_variant"], "phone_number")
+        self.assertEqual(data["refined_surface"], "ui_screen")
+        self.assertIn("phone_number", data["optimized_prompt"])
+        self.assertIn("# Unknowns", data["optimized_prompt"])
 
     def test_context_incremental_refresh_reports_changed_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as storage:

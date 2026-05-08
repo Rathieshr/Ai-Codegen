@@ -10,10 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.execution_corrector import build_corrected_execution_prompt, generate_retry_plan
+from backend.handoff.storage import list_handoffs
 from backend.execution_mode import detect_prompt_mode, score_execution_confidence
 from backend.execution_validator import ExecutionContext, snapshot_selected_files, validate_execution
 from backend.intent_detector import detect_intent
 from backend.model_router import detect_execution_target, get_available_targets
+from backend.orchestrator.react_controller import PipelineController
+from backend.refinement.provider import get_refiner_status
+from backend.refinement.refinement_decider import should_use_refiner
+from backend.refinement.task_refiner import refine_task
 from backend.repo_context.bug_localizer import detect_bug_surface, score_bug_hotspots
 from backend.repo_context.cross_flow import build_flow_relationships, get_related_flows
 from backend.repo_context.indexer import bootstrap_repo_index, update_changed_files
@@ -52,6 +57,7 @@ context_builder = ContextBuilder(logic_store=logic_store)
 repo_context_manager = RepoContextManager(
     Path(os.getenv("AI_GEN_REPO_CONTEXT_ROOT", ".ai_gen_repo_context"))
 )
+pipeline_controller = PipelineController(Path(os.getenv("AI_GEN_PIPELINE_ROOT", ".ai_gen_pipelines")))
 
 
 class ContextRequest(BaseModel):
@@ -119,6 +125,17 @@ class ContextResponse(BaseModel):
     work_item_task_summary: Optional[str] = None
     work_item_surface: Optional[str] = None
     work_item_scope: list[str] = Field(default_factory=list)
+    refinement_used: bool = False
+    refinement_provider: Optional[str] = None
+    refinement_reason: str = ""
+    refined_base_flow: Optional[str] = None
+    refined_variant: Optional[str] = None
+    refined_surface: Optional[str] = None
+    refined_fields: list[str] = Field(default_factory=list)
+    refined_validations: list[str] = Field(default_factory=list)
+    refined_scope: list[str] = Field(default_factory=list)
+    refinement_unknowns: list[str] = Field(default_factory=list)
+    refinement_confidence: Optional[str] = None
 
 
 class ExecutionValidationRequest(BaseModel):
@@ -144,6 +161,28 @@ class ExecutionSnapshotRequest(BaseModel):
     selected_files: list[str] = Field(default_factory=list)
 
 
+class PipelineCreateRequest(BaseModel):
+    source: str = Field(default="azure_devops")
+    work_item: dict[str, Any] = Field(default_factory=dict)
+    repo_context: Optional[dict[str, Any]] = None
+    refinement: Optional[dict[str, Any]] = None
+
+
+class PipelineStageRequest(BaseModel):
+    stage: str
+    regenerate: bool = False
+
+
+class PipelineApproveRequest(BaseModel):
+    stage: str
+    approved_by: Optional[str] = None
+
+
+class PipelineSkipRequest(BaseModel):
+    stage: str
+    reason: str
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -156,6 +195,13 @@ def capabilities() -> dict:
     """Return lightweight routing capabilities."""
 
     return get_status()
+
+
+@app.get("/refinement/health")
+def refinement_health() -> dict[str, Any]:
+    """Return non-secret refiner configuration status."""
+
+    return get_refiner_status()
 
 
 @app.post("/context", response_model=ContextResponse)
@@ -174,6 +220,47 @@ def build_context(request: ContextRequest) -> ContextResponse:
         bug_context=repo_state.get("bug_context"),
     )
     constraints = _extract_constraints(result["optimized_prompt"])
+    initial_confidence = score_execution_confidence(
+        intent=intent,
+        matched_logic=result["matched_logic"][0] if result.get("matched_logic") else None,
+        detected_flow=repo_state.get("detected_flow"),
+        related_flows=repo_state.get("related_flows", []),
+        planning_enabled=bool(result.get("planning_enabled")),
+        retrieval_bias_applied=bool(repo_state.get("retrieval_bias_applied")),
+        likely_bug_hotspots=repo_state.get("likely_bug_hotspots", []),
+        critical_constraints=constraints,
+    )
+    refinement_allowed, refinement_reason = should_use_refiner(
+        source=request.source,
+        intent=intent,
+        detected_flow=repo_state.get("detected_flow"),
+        confidence_level=initial_confidence["level"],
+        query=effective_query,
+        work_item=request.work_item,
+    )
+    refinement_result = {
+        "refinement_used": False,
+        "refinement_reason": refinement_reason,
+        "refinement": {},
+    }
+    if refinement_allowed:
+        refinement_result = refine_task(
+            effective_query,
+            {
+                "source": request.source,
+                "work_item": request.work_item,
+                "intent": intent,
+                "detected_flow": repo_state.get("detected_flow"),
+                "constraints": constraints,
+                "repo_hints": repo_state.get("session_bias_summary") or {},
+            },
+        )
+    merged_refinement = _merge_refinement(
+        repo_state=repo_state,
+        work_item_context=work_item_context,
+        confidence_level=initial_confidence["level"],
+        refinement_result=refinement_result,
+    )
     confidence = score_execution_confidence(
         intent=intent,
         matched_logic=result["matched_logic"][0] if result.get("matched_logic") else None,
@@ -188,7 +275,7 @@ def build_context(request: ContextRequest) -> ContextResponse:
         query=effective_query,
         intent=intent,
         matched_logic=result["matched_logic"][0] if result.get("matched_logic") else None,
-        detected_flow=repo_state.get("detected_flow"),
+        detected_flow=merged_refinement.get("base_flow") or repo_state.get("detected_flow"),
         retrieval_bias_applied=bool(repo_state.get("retrieval_bias_applied")),
         likely_bug_hotspots=repo_state.get("likely_bug_hotspots", []),
         planning_enabled=bool(result.get("planning_enabled")),
@@ -205,12 +292,13 @@ def build_context(request: ContextRequest) -> ContextResponse:
         mode=prompt_mode["mode"],
         query=effective_query,
         selected_files=selected_files,
-        detected_flow=repo_state.get("detected_flow"),
+        detected_flow=merged_refinement.get("base_flow") or repo_state.get("detected_flow"),
         related_flows=repo_state.get("related_flows", []),
         constraints=constraints,
         likely_bug_hotspots=repo_state.get("likely_bug_hotspots", []),
         fallback_prompt=result["optimized_prompt"],
         work_item_context=work_item_context,
+        refined_metadata=merged_refinement,
     )
     result["token_estimate"] = _estimate_tokens(result["optimized_prompt"])
     route = detect_execution_target(
@@ -253,6 +341,17 @@ def build_context(request: ContextRequest) -> ContextResponse:
             "work_item_task_summary": work_item_context.get("task_summary"),
             "work_item_surface": work_item_context.get("technical_surface"),
             "work_item_scope": work_item_context.get("likely_scope", []),
+            "refinement_used": bool(refinement_result.get("refinement_used")),
+            "refinement_provider": "azure_phi" if refinement_result.get("refinement_used") else None,
+            "refinement_reason": refinement_result.get("refinement_reason", ""),
+            "refined_base_flow": merged_refinement.get("base_flow"),
+            "refined_variant": merged_refinement.get("variant"),
+            "refined_surface": merged_refinement.get("surface"),
+            "refined_fields": merged_refinement.get("fields", []),
+            "refined_validations": merged_refinement.get("validations", []),
+            "refined_scope": merged_refinement.get("first_pass_scope", []),
+            "refinement_unknowns": merged_refinement.get("unknowns", []),
+            "refinement_confidence": merged_refinement.get("confidence"),
         }
     )
     return ContextResponse(**result)
@@ -329,6 +428,68 @@ def validate_execution_result(request: ExecutionValidationRequest) -> dict:
         "retry_plan": retry_plan,
         "corrected_execution_prompt": corrected_prompt,
     }
+
+
+@app.post("/assist/pipeline/create")
+def create_assistant_pipeline(request: PipelineCreateRequest) -> dict:
+    """Create a new structured assistant pipeline."""
+
+    return pipeline_controller.create_pipeline(
+        work_item=request.work_item,
+        source=request.source,
+        repo_context=request.repo_context,
+        refinement=request.refinement,
+    )
+
+
+@app.post("/assist/pipeline/{pipeline_id}/run-stage")
+def run_pipeline_stage(pipeline_id: str, request: PipelineStageRequest) -> dict:
+    """Run a single stage in the structured assistant pipeline."""
+
+    return pipeline_controller.run_stage(pipeline_id, request.stage, regenerate=request.regenerate)
+
+
+@app.post("/assist/pipeline/{pipeline_id}/approve-stage")
+def approve_pipeline_stage(pipeline_id: str, request: PipelineApproveRequest) -> dict:
+    """Approve a generated stage and unlock the next one."""
+
+    return pipeline_controller.approve_stage(pipeline_id, request.stage, approved_by=request.approved_by)
+
+
+@app.post("/assist/pipeline/{pipeline_id}/skip-stage")
+def skip_pipeline_stage(pipeline_id: str, request: PipelineSkipRequest) -> dict:
+    """Skip a stage with an explicit reason."""
+
+    return pipeline_controller.skip_stage(pipeline_id, request.stage, request.reason)
+
+
+@app.get("/assist/pipeline/{pipeline_id}")
+def get_assistant_pipeline(pipeline_id: str) -> dict:
+    """Return the current structured pipeline state."""
+
+    return pipeline_controller.get_pipeline(pipeline_id)
+
+
+@app.get("/handoffs/{handoff_id}")
+def get_handoff_by_id(handoff_id: str) -> dict:
+    """Return a single stored handoff artifact."""
+
+    handoff = pipeline_controller.load_handoff(handoff_id)
+    return handoff or {}
+
+
+@app.get("/handoffs")
+def get_handoffs(work_item_id: str, stage: Optional[str] = None, status: Optional[str] = None) -> dict:
+    """List stored handoffs, optionally filtered by stage and status."""
+
+    if stage:
+        handoff = pipeline_controller.latest_handoff(work_item_id, stage, status=status)
+        return {"items": [handoff] if handoff else []}
+
+    handoffs = list_handoffs(work_item_id)
+    if status:
+        handoffs = [item for item in handoffs if item.get("status") == status]
+    return {"items": handoffs}
 
 
 def _prepare_repo_context(request: ContextRequest, intent: str, query: str) -> dict:
@@ -465,20 +626,11 @@ def _mode_specific_prompt(
     likely_bug_hotspots: list[dict],
     fallback_prompt: str,
     work_item_context: Optional[dict] = None,
+    refined_metadata: Optional[dict] = None,
 ) -> str:
     """Build the final handoff prompt, falling back to existing formatting if needed."""
 
     try:
-        if work_item_context:
-            return _build_work_item_execution_prompt(
-                query=query,
-                selected_files=selected_files,
-                detected_flow=detected_flow,
-                related_flows=related_flows,
-                constraints=constraints,
-                likely_bug_hotspots=likely_bug_hotspots,
-                work_item_context=work_item_context,
-            )
         if mode == "execute":
             return build_execution_packet(
                 query=query,
@@ -487,6 +639,7 @@ def _mode_specific_prompt(
                 related_flows=related_flows,
                 constraints=constraints,
                 likely_bug_hotspots=likely_bug_hotspots,
+                refined_metadata=_combine_prompt_refinement(work_item_context, refined_metadata),
             )
         if mode == "respond":
             return build_response_packet(
@@ -507,79 +660,18 @@ def _mode_specific_prompt(
     return fallback_prompt
 
 
-def _build_work_item_execution_prompt(
-    query: str,
-    selected_files: list[str],
-    detected_flow: Optional[str],
-    related_flows: list[str],
-    constraints: list[str],
-    likely_bug_hotspots: list[dict],
-    work_item_context: dict,
-) -> str:
-    """Render a compact source-aware packet for Azure DevOps work items."""
-
-    scope_items = _dedupe((work_item_context.get("likely_scope") or []) + selected_files)
-    focus_rules = work_item_context.get("inferred_focus_rules") or []
-    task = work_item_context.get("task_summary") or query
-    sections = [
-        "# Task",
-        task.strip(),
-        _work_item_scope_section(scope_items, detected_flow, related_flows, work_item_context.get("technical_surface")),
-        _work_item_focus_section(focus_rules),
-        _work_item_breakpoints_section(likely_bug_hotspots),
-        _work_item_constraints_section(constraints),
-        "# Execution Rules",
-        "\n".join(
-            [
-                "- Do not widen scope unless the listed path does not explain the issue.",
-                "- Apply the smallest safe change.",
-                "- Preserve existing business rules and constraints.",
-            ]
-        ),
-    ]
-    return "\n\n".join(section for section in sections if section).strip()
-
-
-def _work_item_scope_section(
-    scope_items: list[str],
-    detected_flow: Optional[str],
-    related_flows: list[str],
-    surface: Optional[str],
-) -> str:
-    lines = ["# Scope"]
-    if surface:
-        lines.append(f"Surface:\n- {surface}")
-    if detected_flow:
-        lines.append(f"Flow:\n- {detected_flow}")
-    if related_flows:
-        lines.append("Related:")
-        lines.extend(f"- {flow}" for flow in _dedupe(related_flows)[:3])
-    if scope_items:
-        lines.append("First-pass scope:")
-        lines.extend(f"- {item}" for item in scope_items[:4])
-    return "\n".join(lines) if len(lines) > 1 else ""
-
-
-def _work_item_focus_section(focus_rules: list[str]) -> str:
-    if not focus_rules:
-        return ""
-    return "# Focus\n" + "\n".join(f"- {rule}" for rule in _dedupe(focus_rules)[:4])
-
-
-def _work_item_breakpoints_section(hotspots: list[dict]) -> str:
-    if not hotspots:
-        return ""
-    lines = ["# Likely Breakpoints"]
-    for hotspot in hotspots[:3]:
-        reasons = ", ".join(hotspot.get("reasons", [])[:3])
-        lines.append(f"- {hotspot.get('file')} ({hotspot.get('flow', 'unknown')}/{hotspot.get('role', 'unknown')}): {reasons}")
-    return "\n".join(lines)
-
-
-def _work_item_constraints_section(constraints: list[str]) -> str:
-    if not constraints:
-        return ""
-    return "# Constraints\n" + "\n".join(f"- {constraint}" for constraint in _dedupe(constraints)[:4])
+def _combine_prompt_refinement(work_item_context: Optional[dict], refined_metadata: Optional[dict]) -> dict[str, Any]:
+    combined = dict(refined_metadata or {})
+    if work_item_context:
+        if not combined.get("surface"):
+            combined["surface"] = work_item_context.get("technical_surface")
+        combined["first_pass_scope"] = _dedupe(
+            list(combined.get("first_pass_scope", [])) + list(work_item_context.get("likely_scope", []))
+        )[:8]
+        combined["focus_rules"] = _dedupe(
+            list(combined.get("focus_rules", [])) + list(work_item_context.get("inferred_focus_rules", []))
+        )[:8]
+    return combined
 
 
 def _extract_constraints(prompt: str) -> list[str]:
@@ -713,6 +805,36 @@ def _optimize_azure_work_item(request: ContextRequest) -> dict:
 def _work_item_text(work_item: dict, key: str) -> str:
     value = work_item.get(key)
     return str(value).strip() if value is not None else ""
+
+
+def _merge_refinement(
+    repo_state: dict,
+    work_item_context: dict,
+    confidence_level: str,
+    refinement_result: dict,
+) -> dict[str, Any]:
+    refinement = dict(refinement_result.get("refinement") or {})
+    deterministic_flow = (repo_state.get("detected_flow") or "").strip()
+    suggested_flow = (refinement.get("base_flow") or "").strip()
+    final_flow = deterministic_flow
+    if not deterministic_flow or confidence_level in {"low", "medium"}:
+        final_flow = suggested_flow or deterministic_flow
+    elif suggested_flow and suggested_flow != deterministic_flow:
+        refinement["flow_suggestion"] = suggested_flow
+
+    if final_flow:
+        refinement["base_flow"] = final_flow
+
+    if not refinement.get("surface") and work_item_context.get("technical_surface"):
+        refinement["surface"] = work_item_context["technical_surface"]
+    refinement["first_pass_scope"] = _dedupe(
+        list(refinement.get("first_pass_scope", [])) + list(work_item_context.get("likely_scope", []))
+    )[:8]
+    refinement["focus_rules"] = _dedupe(
+        list(work_item_context.get("inferred_focus_rules", []))
+    )[:8]
+    repo_state["detected_flow"] = final_flow or repo_state.get("detected_flow")
+    return refinement
 
 
 def _dedupe(values: list[str]) -> list[str]:

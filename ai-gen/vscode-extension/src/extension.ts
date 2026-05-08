@@ -5,6 +5,8 @@ import {
   BackendResolution,
   capabilitiesUrl,
   contextUrl,
+  handoffByIdUrl,
+  handoffListUrl,
   resolveBackendUrl,
   snapshotUrl,
   validateUrl
@@ -59,6 +61,17 @@ type BackendResponse = {
   retry_required?: boolean;
   retry_plan?: Record<string, unknown>;
   corrected_execution_prompt?: string;
+  refinement_used?: boolean;
+  refinement_provider?: string;
+  refinement_reason?: string;
+  refined_base_flow?: string;
+  refined_variant?: string;
+  refined_surface?: string;
+  refined_fields?: string[];
+  refined_validations?: string[];
+  refined_scope?: string[];
+  refinement_unknowns?: string[];
+  refinement_confidence?: string;
 };
 
 type ExecutionValidationResponse = {
@@ -82,6 +95,12 @@ type BackendCapabilities = {
   cloud_enabled?: boolean;
   warnings?: string[];
   available_targets?: Record<string, boolean>;
+  refiner?: {
+    enabled?: boolean;
+    provider?: string | null;
+    model?: string | null;
+    configured?: boolean;
+  };
 };
 
 type PlanStep = {
@@ -95,6 +114,22 @@ type ExecutionPlan = {
   needs_planning: boolean;
   plan_type: string;
   steps: PlanStep[];
+};
+
+type HandoffRecord = {
+  handoff_id?: string;
+  pipeline_id?: string;
+  work_item_id?: string;
+  stage?: string;
+  version?: number;
+  status?: string;
+  summary?: string;
+  content?: Record<string, unknown>;
+  refinement?: Record<string, unknown>;
+  repo_context?: Record<string, unknown>;
+  constraints?: string[];
+  open_questions?: string[];
+  next_actions?: string[];
 };
 
 type PromptMetadata = {
@@ -147,6 +182,10 @@ let localProvider = '';
 let localModel = '';
 let localBaseUrl = '';
 let cloudEnabled = false;
+let refinerEnabled = false;
+let refinerProvider = '';
+let refinerModel = '';
+let refinerConfigured = false;
 let statusWarnings: string[] = [];
 let sidebarProvider: AiGenSidebarViewProvider | undefined;
 const ideSessionId = `vscode_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -255,6 +294,37 @@ export function activate(context: vscode.ExtensionContext) {
         : resolution.reason;
       vscode.window.showInformationMessage(message);
       sidebarProvider?.update(getSidebarState(message, resolution.healthy ? '' : resolution.reason));
+    }),
+    vscode.commands.registerCommand('ai-gen.loadHandoffById', async () => {
+      const handoffId = await vscode.window.showInputBox({
+        title: 'ai-gen: Load Handoff by ID',
+        prompt: 'Enter the handoff id',
+        placeHolder: '123:dev:v1',
+        ignoreFocusOut: true
+      });
+      if (!handoffId) {
+        return;
+      }
+      await loadAndShowHandoffById(handoffId, outputChannel);
+    }),
+    vscode.commands.registerCommand('ai-gen.loadHandoffForWorkItem', async () => {
+      const workItemId = await vscode.window.showInputBox({
+        title: 'ai-gen: Load Approved Handoff',
+        prompt: 'Enter the work item id',
+        placeHolder: '123',
+        ignoreFocusOut: true
+      });
+      if (!workItemId) {
+        return;
+      }
+      const stage = await vscode.window.showInputBox({
+        title: 'ai-gen: Handoff Stage',
+        prompt: 'Enter the stage to load',
+        placeHolder: 'dev',
+        value: 'dev',
+        ignoreFocusOut: true
+      });
+      await loadAndShowHandoffForWorkItem(workItemId, stage || 'dev', outputChannel);
     })
   );
 }
@@ -440,6 +510,20 @@ async function requestCapabilities(): Promise<BackendCapabilities> {
   return response.json() as Promise<BackendCapabilities>;
 }
 
+async function fetchJson<T>(url: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'GET' });
+  } catch {
+    throw new Error(`Could not reach ai-gen backend at ${url}.`);
+  }
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Backend returned HTTP ${response.status}: ${details}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 async function postJson<T>(url: string, payload: Record<string, unknown>): Promise<T> {
   let response: Response;
   try {
@@ -469,6 +553,10 @@ function applyCapabilities(capabilities: BackendCapabilities) {
   localModel = capabilities.local_model || '';
   localBaseUrl = capabilities.local_base_url || '';
   cloudEnabled = Boolean(capabilities.cloud_enabled);
+  refinerEnabled = Boolean(capabilities.refiner?.enabled);
+  refinerProvider = capabilities.refiner?.provider || '';
+  refinerModel = capabilities.refiner?.model || '';
+  refinerConfigured = Boolean(capabilities.refiner?.configured);
   statusWarnings = capabilities.warnings || [];
 }
 
@@ -875,11 +963,103 @@ function getSidebarState(statusMessage: string, errorMessage: string): SidebarSt
     localModel,
     localBaseUrl,
     cloudEnabled,
+    refinerEnabled,
+    refinerProvider,
+    refinerModel,
+    refinerConfigured,
     warnings: statusWarnings,
     statusMessage,
     errorMessage,
     latest: lastPromptState ? toSidebarResult(lastPromptState) : undefined
   };
+}
+
+async function loadAndShowHandoffById(handoffId: string, outputChannel: vscode.OutputChannel): Promise<void> {
+  try {
+    const baseUrl = await getActiveBackendBaseUrl();
+    const handoff = await fetchJson<HandoffRecord>(handoffByIdUrl(baseUrl, handoffId));
+    if (!handoff || !handoff.stage) {
+      throw new Error(`No handoff found for id ${handoffId}.`);
+    }
+    await showHandoffDocument(handoff, outputChannel);
+    sidebarProvider?.update(getSidebarState(`Loaded handoff ${handoffId}.`, ''));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sidebarProvider?.update(getSidebarState('Failed to load handoff.', message));
+    vscode.window.showErrorMessage(`ai-gen handoff load failed: ${message}`);
+  }
+}
+
+async function loadAndShowHandoffForWorkItem(
+  workItemId: string,
+  stage: string,
+  outputChannel: vscode.OutputChannel
+): Promise<void> {
+  try {
+    const baseUrl = await getActiveBackendBaseUrl();
+    const response = await fetchJson<{ items?: HandoffRecord[] }>(handoffListUrl(baseUrl, workItemId, stage, 'approved'));
+    const handoff = response.items?.[0];
+    if (!handoff) {
+      throw new Error(`No approved ${stage} handoff found for work item ${workItemId}.`);
+    }
+    await showHandoffDocument(handoff, outputChannel);
+    sidebarProvider?.update(getSidebarState(`Loaded ${stage} handoff for work item ${workItemId}.`, ''));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sidebarProvider?.update(getSidebarState('Failed to load work item handoff.', message));
+    vscode.window.showErrorMessage(`ai-gen handoff load failed: ${message}`);
+  }
+}
+
+async function showHandoffDocument(handoff: HandoffRecord, outputChannel: vscode.OutputChannel): Promise<void> {
+  const content = renderHandoffMarkdown(handoff);
+  outputChannel.clear();
+  outputChannel.appendLine(content);
+  outputChannel.show(true);
+  const document = await vscode.workspace.openTextDocument({
+    content,
+    language: 'markdown'
+  });
+  await vscode.window.showTextDocument(document, { preview: true });
+}
+
+function renderHandoffMarkdown(handoff: HandoffRecord): string {
+  const content = typeof handoff.content === 'object' && handoff.content
+    ? JSON.stringify(handoff.content, null, 2)
+    : '{}';
+  const refinement = typeof handoff.refinement === 'object' && handoff.refinement
+    ? JSON.stringify(handoff.refinement, null, 2)
+    : '{}';
+  const repoContext = typeof handoff.repo_context === 'object' && handoff.repo_context
+    ? JSON.stringify(handoff.repo_context, null, 2)
+    : '{}';
+  const lines = [
+    `# ${String(handoff.stage || 'handoff').toUpperCase()} Handoff`,
+    '',
+    `- Status: ${handoff.status || 'unknown'}`,
+    `- Work Item: ${handoff.work_item_id || 'unknown'}`,
+    `- Pipeline: ${handoff.pipeline_id || 'unknown'}`,
+    '',
+    '## Summary',
+    handoff.summary || 'No summary available.',
+  ];
+  if (handoff.constraints?.length) {
+    lines.push('', '## Constraints', ...handoff.constraints.map((item) => `- ${item}`));
+  }
+  if (handoff.open_questions?.length) {
+    lines.push('', '## Open Questions', ...handoff.open_questions.map((item) => `- ${item}`));
+  }
+  if (handoff.next_actions?.length) {
+    lines.push('', '## Next Actions', ...handoff.next_actions.map((item) => `- ${item}`));
+  }
+  if (handoff.stage === 'dev' && typeof handoff.content?.execution_packet === 'string') {
+    lines.push('', '## Execution Packet', '```text', handoff.content.execution_packet, '```');
+  }
+  if (Array.isArray(handoff.content?.selected_files) && handoff.content.selected_files.length) {
+    lines.push('', '## Selected Files', ...(handoff.content.selected_files as string[]).map((item) => `- ${item}`));
+  }
+  lines.push('', '## Stage Output', '```json', content, '```', '', '## Refinement', '```json', refinement, '```', '', '## Repo Context', '```json', repoContext, '```');
+  return lines.join('\n');
 }
 
 function toSidebarResult(state: LastPromptState): SidebarResult {
@@ -921,6 +1101,17 @@ function toSidebarResult(state: LastPromptState): SidebarResult {
     retryReason: typeof response.retry_plan?.reason === 'string' ? response.retry_plan.reason : undefined,
     retryStrategy: typeof response.retry_plan?.strategy === 'string' ? response.retry_plan.strategy : undefined,
     correctedExecutionPrompt: response.corrected_execution_prompt,
+    refinementUsed: response.refinement_used,
+    refinementProvider: response.refinement_provider,
+    refinementReason: response.refinement_reason,
+    refinedBaseFlow: response.refined_base_flow,
+    refinedVariant: response.refined_variant,
+    refinedSurface: response.refined_surface,
+    refinedFields: response.refined_fields?.join('\n'),
+    refinedValidations: response.refined_validations?.join('\n'),
+    refinedScope: response.refined_scope?.join('\n'),
+    refinementUnknowns: response.refinement_unknowns?.join('\n'),
+    refinementConfidence: response.refinement_confidence,
     availableTargets: formatAvailableTargets(state.availableTargets),
     planningEnabled: state.planningEnabled,
     planSummary: state.planSummary,

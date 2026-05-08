@@ -76,9 +76,62 @@ body {
   margin-top: 12px;
 }
 
+.ai-gen-stage-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-gen-stage-chip {
+  border: 1px solid #edebe9;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #faf9f8;
+  min-width: 72px;
+}
+
+.ai-gen-stage-chip span,
+.ai-gen-stage-chip small {
+  display: block;
+}
+
+.ai-gen-stage-chip.active {
+  border-color: #0078d4;
+}
+
+.ai-gen-stage-chip.approved {
+  background: #dff6dd;
+}
+
+.ai-gen-stage-chip.generated,
+.ai-gen-stage-chip.pending {
+  background: #deecf9;
+}
+
+.ai-gen-stage-chip.needs_revision {
+  background: #fde7e9;
+}
+
 .ai-gen-error {
   color: #a4262c;
   background: #fde7e9;
   padding: 10px;
   border-radius: 6px;
+}
+
+.ai-gen-subsection {
+  margin-top: 12px;
+}
+
+.ai-gen-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.ai-gen-warning {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 6px;
+  background: #fff4ce;
 }

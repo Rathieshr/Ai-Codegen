@@ -20,7 +20,9 @@
     "onCommand:ai-gen.retryExecution",
     "onCommand:ai-gen.copyPrompt",
     "onCommand:ai-gen.checkBackend",
-    "onCommand:ai-gen.refreshBackendResolution"
+    "onCommand:ai-gen.refreshBackendResolution",
+    "onCommand:ai-gen.loadHandoffById",
+    "onCommand:ai-gen.loadHandoffForWorkItem"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -78,6 +80,14 @@
       {
         "command": "ai-gen.refreshBackendResolution",
         "title": "ai-gen: Refresh Backend Resolution"
+      },
+      {
+        "command": "ai-gen.loadHandoffById",
+        "title": "ai-gen: Load Handoff by ID"
+      },
+      {
+        "command": "ai-gen.loadHandoffForWorkItem",
+        "title": "ai-gen: Load Approved Handoff for Work Item"
       }
     ],
     "configuration": {

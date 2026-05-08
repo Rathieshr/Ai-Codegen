@@ -18,6 +18,10 @@ export type SidebarState = {
   localModel: string;
   localBaseUrl: string;
   cloudEnabled: boolean;
+  refinerEnabled: boolean;
+  refinerProvider: string;
+  refinerModel: string;
+  refinerConfigured: boolean;
   warnings: string[];
   statusMessage: string;
   errorMessage: string;
@@ -46,6 +50,17 @@ export type SidebarResult = {
   retryReason?: string;
   retryStrategy?: string;
   correctedExecutionPrompt?: string;
+  refinementUsed?: boolean;
+  refinementProvider?: string;
+  refinementReason?: string;
+  refinedBaseFlow?: string;
+  refinedVariant?: string;
+  refinedSurface?: string;
+  refinedFields?: string;
+  refinedValidations?: string;
+  refinedScope?: string;
+  refinementUnknowns?: string;
+  refinementConfidence?: string;
   availableTargets: string;
   planningEnabled: boolean;
   planSummary: string;
@@ -209,6 +224,10 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       <span class="key">Model</span><span id="modelStatus">unknown</span>
       <span class="key">Base URL</span><span id="baseUrlStatus">unknown</span>
       <span class="key">Cloud</span><span id="cloudStatus">unknown</span>
+      <span class="key">Refiner</span><span id="refinerStatus">unknown</span>
+      <span class="key">Provider</span><span id="refinerProviderStatus">unknown</span>
+      <span class="key">Refiner Model</span><span id="refinerModelStatus">unknown</span>
+      <span class="key">Configured</span><span id="refinerConfiguredStatus">unknown</span>
     </div>
     <div id="warnings"></div>
     <div id="statusMessage" class="message"></div>
@@ -276,6 +295,10 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       $('modelStatus').textContent = state.localModel || 'Not configured';
       $('baseUrlStatus').textContent = state.localBaseUrl || 'Not configured';
       $('cloudStatus').textContent = state.cloudEnabled ? 'Enabled' : 'Disabled';
+      $('refinerStatus').textContent = state.refinerEnabled ? 'Enabled' : 'Disabled';
+      $('refinerProviderStatus').textContent = state.refinerProvider || 'Not configured';
+      $('refinerModelStatus').textContent = state.refinerModel || 'Not configured';
+      $('refinerConfiguredStatus').textContent = state.refinerConfigured ? 'Yes' : 'No';
       $('warnings').innerHTML = renderWarnings(state.warnings || []);
       $('statusMessage').textContent = state.statusMessage || '';
       $('errorMessage').textContent = state.errorMessage || '';
@@ -331,7 +354,10 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
         row('Planning Enabled', result.planningEnabled ? 'yes' : 'no') +
         row('Plan Summary', esc(result.planSummary)) +
         '</div>' +
+        detail('Refinement', refinement(result), true) +
+        detail('Refined Scope', result.refinedScope) +
         detail('Selected Execution Files', result.selectedExecutionFiles) +
+        detail('Open Questions', result.refinementUnknowns) +
         detail('Execution Confidence Signals', result.executionConfidenceSignals) +
         detail('Execution Validation', result.validationSummary) +
         detail('Constraint Violations', result.constraintViolations) +
@@ -347,6 +373,27 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
     function detail(title, content, open) {
       if (!content) return '';
       return '<details ' + (open ? 'open' : '') + '><summary>' + title + '</summary><pre>' + esc(content) + '</pre></details>';
+    }
+
+    function refinement(result) {
+      const lines = [];
+      const hasRefinement = result.refinementUsed
+        || result.refinedVariant
+        || result.refinedSurface
+        || result.refinedFields
+        || result.refinedValidations
+        || result.refinementUnknowns;
+      if (!hasRefinement) return '';
+      lines.push('Used: ' + (result.refinementUsed ? 'yes' : 'no'));
+      if (result.refinementProvider) lines.push('Provider: ' + result.refinementProvider);
+      if (result.refinementConfidence) lines.push('Confidence: ' + result.refinementConfidence);
+      if (result.refinementReason) lines.push('Reason: ' + result.refinementReason);
+      if (result.refinedBaseFlow) lines.push('Base Flow: ' + result.refinedBaseFlow);
+      if (result.refinedVariant) lines.push('Variant: ' + result.refinedVariant);
+      if (result.refinedSurface) lines.push('Surface: ' + result.refinedSurface);
+      if (result.refinedFields) lines.push('Fields:\n' + result.refinedFields);
+      if (result.refinedValidations) lines.push('Validations:\n' + result.refinedValidations);
+      return lines.join('\n');
     }
 
     function renderWarnings(warnings) {

@@ -17,6 +17,28 @@ cd ai-gen
 python3 -m uvicorn backend.app:app --reload
 ```
 
+## Optional Phi Refiner
+
+ai-gen can optionally use Azure AI Foundry Phi as a backend-only refinement advisor. This is disabled by default. The backend still owns final prompt building, constraints, routing, and validation.
+
+Local env example:
+
+```bash
+export AI_GEN_REFINER_ENABLED=1
+export AI_GEN_REFINER_PROVIDER=azure_phi
+export AI_GEN_REFINER_ENDPOINT="https://<your-foundry-endpoint>"
+export AI_GEN_REFINER_API_KEY="<your-key>"
+export AI_GEN_REFINER_MODEL="Phi-4-mini-instruct"
+export AI_GEN_REFINER_API_VERSION="2024-05-01-preview"
+export AI_GEN_REFINER_TIMEOUT_SECONDS=20
+```
+
+Railway setup:
+
+- add the same `AI_GEN_REFINER_*` variables in Railway service settings
+- keep the API key only in Railway/backend environment config
+- do not expose the key in the VS Code extension, Azure DevOps extension, or any frontend client
+
 ## Use CLI
 
 ```bash

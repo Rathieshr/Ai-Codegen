@@ -49,11 +49,15 @@ class PipelineController:
             refinement=refinement,
         )
         self.save_pipeline(state)
-        return state.to_dict()
+        return self._serialize_pipeline(state)
 
     def get_pipeline(self, pipeline_id: str) -> dict:
         state = self.load_pipeline(pipeline_id)
-        return state.to_dict()
+        return self._serialize_pipeline(state)
+
+    def get_pipeline_for_work_item(self, work_item_id: str | int) -> dict | None:
+        state = self.load_latest_pipeline_for_work_item(work_item_id)
+        return self._serialize_pipeline(state) if state else None
 
     def run_stage(self, pipeline_id: str, stage: str, regenerate: bool = False) -> dict:
         state = self.load_pipeline(pipeline_id)
@@ -81,9 +85,9 @@ class PipelineController:
         save_handoff(handoff)
         stage_state.handoff_id = handoff["handoff_id"]
         state.current_stage = stage
-        state.updated_at = utc_now()
+        self._touch_pipeline(state)
         self.save_pipeline(state)
-        return state.to_dict()
+        return self._serialize_pipeline(state)
 
     def approve_stage(self, pipeline_id: str, stage: str, approved_by: str | None = None) -> dict:
         state = self.load_pipeline(pipeline_id)
@@ -99,14 +103,16 @@ class PipelineController:
         )
         save_handoff(handoff)
         stage_state.handoff_id = handoff["handoff_id"]
+        self._touch_pipeline(state)
         self.save_pipeline(state)
-        return state.to_dict()
+        return self._serialize_pipeline(state)
 
     def skip_stage(self, pipeline_id: str, stage: str, reason: str) -> dict:
         state = self.load_pipeline(pipeline_id)
         state = apply_skip(state, stage, reason=reason)
+        self._touch_pipeline(state)
         self.save_pipeline(state)
-        return state.to_dict()
+        return self._serialize_pipeline(state)
 
     def load_pipeline(self, pipeline_id: str) -> PipelineState:
         data = read_json(self.root / f"{pipeline_id}.json", default=None)
@@ -122,6 +128,18 @@ class PipelineController:
 
     def load_handoff(self, handoff_id: str) -> dict | None:
         return load_handoff(handoff_id)
+
+    def load_latest_pipeline_for_work_item(self, work_item_id: str | int) -> PipelineState | None:
+        target = str(work_item_id)
+        latest_state: PipelineState | None = None
+        for path in sorted(self.root.glob("pipeline_*.json")):
+            data = read_json(path, default=None)
+            if not data or str(data.get("work_item_id", "")) != target:
+                continue
+            state = PipelineState.from_dict(data)
+            if latest_state is None or state.updated_at > latest_state.updated_at:
+                latest_state = state
+        return latest_state
 
     def _run_stage_output(self, state: PipelineState, stage: str) -> dict:
         if stage == "ba":
@@ -175,3 +193,33 @@ class PipelineController:
             dev_output=state.stages["dev"].output if state.stages["dev"].output else None,
             test_output=state.stages["test"].output if state.stages["test"].output else None,
         )
+
+    def _touch_pipeline(self, state: PipelineState) -> None:
+        state.version += 1
+        state.updated_at = utc_now()
+
+    def _serialize_pipeline(self, state: PipelineState) -> dict:
+        data = state.to_dict()
+        data["allowed_actions"] = self._allowed_actions(state)
+        return data
+
+    def _allowed_actions(self, state: PipelineState) -> dict[str, list[str]]:
+        actions = {
+            "generate_stages": [],
+            "regenerate_stages": [],
+            "approve_stages": [],
+            "skip_stages": [],
+            "view_handoff_stages": [],
+        }
+        for stage_name, stage_state in state.stages.items():
+            if stage_state.status != "locked" and not stage_state.approved:
+                actions["generate_stages"].append(stage_name)
+            if stage_state.status in {"generated", "needs_revision", "approved"}:
+                actions["regenerate_stages"].append(stage_name)
+            if bool(stage_state.output) and stage_state.status != "locked" and not stage_state.approved:
+                actions["approve_stages"].append(stage_name)
+            if stage_name == "ui" and stage_state.status != "locked" and not stage_state.approved:
+                actions["skip_stages"].append(stage_name)
+            if stage_state.handoff_id:
+                actions["view_handoff_stages"].append(stage_name)
+        return actions

@@ -7,8 +7,8 @@ def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None) -> dic
     """Generate structured UI guidance without generating code."""
 
     refinement = refinement or {}
-    base_flow = _first(ba_output.get("flows", [])) or refinement.get("refined_base_flow") or "workflow"
-    surface = refinement.get("refined_surface") or refinement.get("surface") or ""
+    base_flow = _first(ba_output.get("flows", [])) or _first(refinement.get("base_flows", [])) or refinement.get("refined_base_flow") or "workflow"
+    surface = _first(refinement.get("surfaces", [])) or refinement.get("refined_surface") or refinement.get("surface") or ""
     fields = _build_fields(ba_output, refinement)
     screen_type = _screen_type(surface, ba_output)
     screen_name = _screen_name(base_flow, screen_type)
@@ -27,7 +27,7 @@ def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None) -> dic
     }
     observe = {
         "surface": surface or "unknown",
-        "variant": ba_output.get("variant") or refinement.get("refined_variant"),
+        "variant": _first(ba_output.get("variants", [])) or ba_output.get("variant") or _first(refinement.get("variants", [])) or refinement.get("refined_variant"),
         "skippable": skippable,
     }
     output = {
@@ -150,8 +150,9 @@ def _ux_notes(ba_output: dict, refinement: dict) -> list[str]:
     notes = ["Keep the first interaction path short and obvious."]
     if any(flow in {"login", "signup"} for flow in ba_output.get("flows", [])):
         notes.append("Keep validation messages clear without exposing sensitive auth details.")
-    if (refinement.get("refined_variant") or refinement.get("variant")) == "phone_number":
-        notes.append("Make the primary phone input format easy to understand before submission.")
+    variants = list(refinement.get("refined_variants", [])) or list(refinement.get("variants", []))
+    if "phone_otp" in variants or "phone_number" in variants:
+        notes.append("Make the phone input and verification step easy to understand before submission.")
     return _dedupe(notes)
 
 

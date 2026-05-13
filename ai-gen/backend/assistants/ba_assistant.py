@@ -14,10 +14,12 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None) -> dict:
     acceptance_text = _text(work_item, "acceptanceCriteria") or _text(work_item, "acceptance_criteria")
     tags = [str(tag).strip() for tag in work_item.get("tags", []) if str(tag).strip()]
     combined = " ".join(part for part in [title, description, acceptance_text, " ".join(tags)] if part).strip()
-    variant = refinement.get("refined_variant") or refinement.get("variant")
-    base_flow = refinement.get("refined_base_flow") or refinement.get("base_flow") or _detect_flow(combined)
+    variants = list(refinement.get("refined_variants", [])) or list(refinement.get("variants", []))
+    variant = _first(variants) or refinement.get("refined_variant") or refinement.get("variant")
+    refined_flows = list(refinement.get("refined_base_flows", [])) or list(refinement.get("base_flows", []))
+    base_flow = _first(refined_flows) or refinement.get("refined_base_flow") or refinement.get("base_flow") or _detect_flow(combined)
     actors = _infer_actors(combined)
-    flows = _dedupe([base_flow] if base_flow else [])
+    flows = _dedupe(refined_flows + ([base_flow] if base_flow else []))
     business_rules = _business_rules(combined, refinement)
     acceptance_criteria = _parse_acceptance_criteria(acceptance_text, refinement)
     unknowns = _dedupe(
@@ -52,6 +54,7 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None) -> dict:
         "actors": actors,
         "flows": flows,
         "variant": variant or None,
+        "variants": _dedupe(variants + ([variant] if variant else [])),
         "business_rules": business_rules,
         "acceptance_criteria": acceptance_criteria,
         "unknowns": unknowns,
@@ -65,8 +68,9 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None) -> dict:
 
 
 def _refined_requirement(title: str, description: str, refinement: dict[str, Any]) -> str:
-    refined_scope = refinement.get("refined_scope") or refinement.get("first_pass_scope") or []
-    surface = refinement.get("refined_surface") or refinement.get("surface")
+    refined_scope = refinement.get("refined_scope") or refinement.get("scope_hints") or refinement.get("first_pass_scope") or []
+    surfaces = list(refinement.get("refined_surfaces", [])) or list(refinement.get("surfaces", []))
+    surface = _first(surfaces) or refinement.get("refined_surface") or refinement.get("surface")
     title_clean = title.strip().rstrip(".")
     if title_clean and refined_scope:
         return f"{title_clean}. Focus first on {', '.join(refined_scope[:2])}."
@@ -138,13 +142,16 @@ def _parse_acceptance_criteria(text: str, refinement: dict[str, Any]) -> list[st
             items.append(f"Support the required fields: {', '.join(_dedupe(fields)[:4])}.")
         if validations:
             items.append(f"Enforce the expected validations: {', '.join(_dedupe(validations)[:4])}.")
+        variants = list(refinement.get("refined_variants", [])) or list(refinement.get("variants", []))
+        if "phone_otp" in variants:
+            items.append("Authenticate the user with phone number entry followed by OTP verification.")
     return _dedupe(items)
 
 
 def _detect_unknowns(text: str, variant: str | None) -> list[str]:
     lowered = text.lower()
     unknowns: list[str] = []
-    if "otp" in lowered or variant == "phone_number":
+    if "otp" in lowered or variant in {"phone_number", "phone_otp", "otp_only"}:
         unknowns.append("Is OTP or a second-factor step required after the primary input succeeds?")
     if "dashboard" in lowered and "filter" in lowered:
         unknowns.append("Which filters are required in the first release?")
@@ -165,3 +172,11 @@ def _dedupe(values: list[str]) -> list[str]:
         if normalized and normalized not in output:
             output.append(normalized)
     return output
+
+
+def _first(values: list[str]) -> str | None:
+    for value in values:
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None

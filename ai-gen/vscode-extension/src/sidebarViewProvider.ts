@@ -32,6 +32,7 @@ export type SidebarResult = {
   query: string;
   prompt: string;
   generatedAt: string;
+  loadedHandoff?: string;
   matchedLogic: string;
   tokenEstimate: string;
   executionTarget: string;
@@ -59,6 +60,8 @@ export type SidebarResult = {
   refinedFields?: string;
   refinedValidations?: string;
   refinedScope?: string;
+  refinedActors?: string;
+  refinedStates?: string;
   refinementUnknowns?: string;
   refinementConfidence?: string;
   availableTargets: string;
@@ -83,6 +86,9 @@ type SidebarHandlers = {
   explainTask(options: SidebarRequestOptions): Promise<SidebarState>;
   copyPrompt(): Promise<SidebarState>;
   sendToCodex(): Promise<SidebarState>;
+  refreshHandoff(): Promise<SidebarState>;
+  reloadPipeline(): Promise<SidebarState>;
+  snapshotExecution(): Promise<SidebarState>;
   validateExecution(): Promise<SidebarState>;
   retryExecution(): Promise<SidebarState>;
   checkBackend(): Promise<SidebarState>;
@@ -154,6 +160,15 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       case 'sendToCodex':
         state = await this.handlers.sendToCodex();
         break;
+      case 'refreshHandoff':
+        state = await this.handlers.refreshHandoff();
+        break;
+      case 'reloadPipeline':
+        state = await this.handlers.reloadPipeline();
+        break;
+      case 'snapshot':
+        state = await this.handlers.snapshotExecution();
+        break;
       case 'validateExecution':
         state = await this.handlers.validateExecution();
         break;
@@ -207,6 +222,8 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
     details { margin: 8px 0; border-top: 1px solid var(--vscode-sideBarSectionHeader-border); padding-top: 8px; }
     summary { cursor: pointer; font-weight: 600; }
     .empty { color: var(--vscode-descriptionForeground); font-style: italic; }
+    .card { border: 1px solid var(--vscode-sideBarSectionHeader-border); border-radius: 6px; padding: 8px; background: var(--vscode-editor-background); margin-top: 12px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); margin-left: 6px; }
   </style>
 </head>
 <body>
@@ -241,15 +258,17 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
   <div>
     <button id="preview">Preview</button>
     <button id="explain" class="secondary">Explain</button>
-    <button id="copy" class="secondary">Copy Prompt</button>
+    <button id="copy" class="secondary">Copy Packet</button>
     <button id="send">Send to Codex</button>
+    <button id="refreshHandoff" class="secondary">Load / Refresh Handoff</button>
+    <button id="reloadPipeline" class="secondary">Refresh</button>
+    <button id="snapshot" class="secondary">Snapshot</button>
     <button id="validate" class="secondary">Validate Last Execution</button>
     <button id="retry" class="secondary">Retry Execution</button>
     <button id="check" class="secondary">Check Backend</button>
-    <button id="refresh" class="secondary">Refresh Status</button>
   </div>
 
-  <h2>Result</h2>
+  <h2>Execution</h2>
   <section id="result" class="empty">No prompt generated yet.</section>
 
   <script nonce="${nonce}">
@@ -271,10 +290,12 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
     $('explain').addEventListener('click', () => post('explainTask'));
     $('copy').addEventListener('click', () => post('copyPrompt'));
     $('send').addEventListener('click', () => post('sendToCodex'));
+    $('refreshHandoff').addEventListener('click', () => post('refreshHandoff'));
+    $('reloadPipeline').addEventListener('click', () => post('reloadPipeline'));
+    $('snapshot').addEventListener('click', () => post('snapshot'));
     $('validate').addEventListener('click', () => post('validateExecution'));
     $('retry').addEventListener('click', () => post('retryExecution'));
     $('check').addEventListener('click', () => post('checkBackend'));
-    $('refresh').addEventListener('click', () => post('refreshStatus'));
 
     window.addEventListener('message', (event) => {
       if (event.data?.type !== 'state') return;
@@ -305,10 +326,12 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       const backendConnected = state.backendStatus === 'connected';
       $('preview').disabled = !backendConnected;
       $('explain').disabled = !backendConnected;
+      $('refreshHandoff').disabled = !backendConnected;
+      $('reloadPipeline').disabled = !backendConnected;
+      $('snapshot').disabled = !backendConnected;
       $('validate').disabled = !backendConnected;
       $('retry').disabled = !backendConnected;
       $('check').disabled = false;
-      $('refresh').disabled = false;
 
       if (!state.latest) {
         $('result').className = 'empty';
@@ -320,50 +343,43 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       $('query').value = result.query || $('query').value;
       $('result').className = '';
       $('result').innerHTML = [
-        meta(result),
-        detail('Flow', result.flow),
-        detail('Linked Flows', result.linkedFlows),
-        detail('Impacted Components', result.impactedComponents),
-        detail('Critical Constraints', result.constraints),
-        detail('Plan', result.plan),
-        detail('Critical Steps', result.criticalSteps),
-        detail('Local Output', result.localOutput),
-        detail('Final Codex Prompt', result.prompt, true)
+        summary(result),
+        packet(result),
+        validation(result),
+        detail('Refinement', refinement(result), true),
+        detail('Open Questions', result.refinementUnknowns),
+        detail('Repo Status', repoStatus(result), false),
+        detail('Final Execution Packet', result.prompt, true),
+        detail('Extra Context', extraContext(result), false)
       ].join('');
     }
 
-    function meta(result) {
-      return '<div class="meta">' +
+    function summary(result) {
+      return '<div class="card"><div class="meta">' +
         row('Query', esc(result.query)) +
+        row('Loaded Handoff', esc(result.loadedHandoff || 'none')) +
         row('Execution Target', esc(result.executionTarget)) +
-        row('Routing Reason', esc(result.executionReason)) +
         row('Prompt Mode', esc(result.promptMode || 'unknown')) +
-        row('Prompt Mode Reason', esc(result.promptModeReason || 'unknown')) +
         row('Execution Confidence', esc(result.executionConfidence || 'unknown')) +
-        row('Drift Detected', result.driftDetected ? 'yes' : 'no') +
-        row('Drift Score', esc(result.validationDriftScore || '0')) +
-        row('Retry Recommended', result.retryRequired ? 'yes' : 'no') +
-        row('Retry Reason', esc(result.retryReason || 'none')) +
-        row('Retry Strategy', esc(result.retryStrategy || 'none')) +
-        row('Token Estimate', esc(result.tokenEstimate)) +
-        row('Matched Logic', esc(result.matchedLogic)) +
-        row('Repo ID', esc(result.resolvedRepoId || 'not resolved')) +
-        row('Branch', esc(result.resolvedBranchName || 'not resolved')) +
-        row('Repo Identity', esc(result.repoIdentityMode || 'unknown')) +
-        row('Retrieval Bias', result.retrievalBiasApplied ? 'applied' : 'not applied') +
-        row('Planning Enabled', result.planningEnabled ? 'yes' : 'no') +
-        row('Plan Summary', esc(result.planSummary)) +
-        '</div>' +
-        detail('Refinement', refinement(result), true) +
-        detail('Refined Scope', result.refinedScope) +
-        detail('Selected Execution Files', result.selectedExecutionFiles) +
-        detail('Open Questions', result.refinementUnknowns) +
-        detail('Execution Confidence Signals', result.executionConfidenceSignals) +
-        detail('Execution Validation', result.validationSummary) +
-        detail('Constraint Violations', result.constraintViolations) +
-        detail('Risky Changes', result.riskyChanges) +
-        detail('Corrected Execution Prompt', result.correctedExecutionPrompt) +
-        detail('Session Bias Summary', result.sessionBiasSummary);
+        row('Selected Files', esc(result.selectedExecutionFiles || 'not selected')) +
+        '</div></div>';
+    }
+
+    function packet(result) {
+      return '<div class="card"><strong>Execution packet</strong><pre>' + esc(result.prompt || '') + '</pre></div>';
+    }
+
+    function validation(result) {
+      const lines = [];
+      lines.push('Drift: ' + (result.driftDetected ? 'yes' : 'no'));
+      if (result.validationDriftScore) lines.push('Drift score: ' + result.validationDriftScore);
+      if (result.validationSummary) lines.push(result.validationSummary);
+      if (result.constraintViolations) lines.push('Constraint violations:\\n' + result.constraintViolations);
+      if (result.riskyChanges) lines.push('Risky changes:\\n' + result.riskyChanges);
+      if (result.retryRequired) lines.push('Retry recommended: yes');
+      if (result.retryReason) lines.push('Retry reason: ' + result.retryReason);
+      if (!lines.length) return '';
+      return '<div class="card"><strong>Validation result</strong><pre>' + esc(lines.join('\\n\\n')) + '</pre></div>';
     }
 
     function row(key, value) {
@@ -388,12 +404,39 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       if (result.refinementProvider) lines.push('Provider: ' + result.refinementProvider);
       if (result.refinementConfidence) lines.push('Confidence: ' + result.refinementConfidence);
       if (result.refinementReason) lines.push('Reason: ' + result.refinementReason);
-      if (result.refinedBaseFlow) lines.push('Base Flow: ' + result.refinedBaseFlow);
-      if (result.refinedVariant) lines.push('Variant: ' + result.refinedVariant);
-      if (result.refinedSurface) lines.push('Surface: ' + result.refinedSurface);
+      if (result.refinedBaseFlow) lines.push('Flows:\n' + result.refinedBaseFlow);
+      if (result.refinedVariant) lines.push('Variants:\n' + result.refinedVariant);
+      if (result.refinedSurface) lines.push('Surfaces:\n' + result.refinedSurface);
       if (result.refinedFields) lines.push('Fields:\n' + result.refinedFields);
       if (result.refinedValidations) lines.push('Validations:\n' + result.refinedValidations);
+      if (result.refinedActors) lines.push('Actors:\n' + result.refinedActors);
+      if (result.refinedStates) lines.push('States:\n' + result.refinedStates);
       return lines.join('\n');
+    }
+
+    function repoStatus(result) {
+      const lines = [];
+      lines.push('Backend: ' + (result.executionTarget ? 'ready' : 'unknown'));
+      if (result.resolvedRepoId) lines.push('Repo ID: ' + result.resolvedRepoId);
+      if (result.resolvedBranchName) lines.push('Branch: ' + result.resolvedBranchName);
+      if (result.repoIdentityMode) lines.push('Identity: ' + result.repoIdentityMode);
+      lines.push('Retrieval bias: ' + (result.retrievalBiasApplied ? 'applied' : 'not applied'));
+      if (result.sessionBiasSummary) lines.push(result.sessionBiasSummary);
+      return lines.join('\n');
+    }
+
+    function extraContext(result) {
+      const lines = [];
+      if (result.flow) lines.push('Flow:\n' + result.flow);
+      if (result.linkedFlows) lines.push('Linked flows:\n' + result.linkedFlows);
+      if (result.impactedComponents) lines.push('Impacted components:\n' + result.impactedComponents);
+      if (result.constraints) lines.push('Constraints:\n' + result.constraints);
+      if (result.plan) lines.push('Plan:\n' + result.plan);
+      if (result.criticalSteps) lines.push('Critical steps:\n' + result.criticalSteps);
+      if (result.localOutput) lines.push('Local output:\n' + result.localOutput);
+      if (result.executionConfidenceSignals) lines.push('Confidence signals:\n' + result.executionConfidenceSignals);
+      if (result.correctedExecutionPrompt) lines.push('Corrected retry packet:\n' + result.correctedExecutionPrompt);
+      return lines.join('\n\n');
     }
 
     function renderWarnings(warnings) {

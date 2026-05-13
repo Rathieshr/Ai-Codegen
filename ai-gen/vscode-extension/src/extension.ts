@@ -7,6 +7,7 @@ import {
   contextUrl,
   handoffByIdUrl,
   handoffListUrl,
+  handoffMarkdownUrl,
   resolveBackendUrl,
   snapshotUrl,
   validateUrl
@@ -64,12 +65,17 @@ type BackendResponse = {
   refinement_used?: boolean;
   refinement_provider?: string;
   refinement_reason?: string;
+  refined_base_flows?: string[];
+  refined_variants?: string[];
+  refined_surfaces?: string[];
   refined_base_flow?: string;
   refined_variant?: string;
   refined_surface?: string;
   refined_fields?: string[];
   refined_validations?: string[];
   refined_scope?: string[];
+  refined_actors?: string[];
+  refined_states?: string[];
   refinement_unknowns?: string[];
   refinement_confidence?: string;
 };
@@ -124,6 +130,10 @@ type HandoffRecord = {
   version?: number;
   status?: string;
   summary?: string;
+  created_at?: string;
+  approved_at?: string | null;
+  execution_packet?: string;
+  selected_files?: string[];
   content?: Record<string, unknown>;
   refinement?: Record<string, unknown>;
   repo_context?: Record<string, unknown>;
@@ -165,8 +175,15 @@ type LastExecutionState = {
   timestamp: Date;
 };
 
+type LastHandoffRequest =
+  | { kind: 'id'; handoffId: string }
+  | { kind: 'work_item'; workItemId: string; stage: string };
+
 let lastPromptState: LastPromptState | undefined;
 let lastExecutionState: LastExecutionState | undefined;
+let lastHandoffRequest: LastHandoffRequest | undefined;
+let lastLoadedHandoff: HandoffRecord | undefined;
+let lastSidebarView: 'prompt' | 'handoff' = 'prompt';
 let backendResolution: BackendResolution = {
   url: null,
   source: 'none',
@@ -214,6 +231,18 @@ export function activate(context: vscode.ExtensionContext) {
       const message = await sendLastPromptToCodex();
       return getSidebarState(message, '');
     },
+    refreshHandoff: async () => {
+      const message = await refreshLastHandoff(outputChannel);
+      return getSidebarState(message, '');
+    },
+    reloadPipeline: async () => {
+      const message = await reloadLastPromptFromBackend(outputChannel);
+      return getSidebarState(message, '');
+    },
+    snapshotExecution: async () => {
+      const message = await snapshotLastExecution();
+      return getSidebarState(message, '');
+    },
     retryExecution: async () => {
       const message = await retryLastExecution();
       return getSidebarState(message, '');
@@ -236,6 +265,26 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     outputChannel,
     vscode.window.registerWebviewViewProvider(AiGenSidebarViewProvider.viewType, sidebarProvider),
+    vscode.window.registerUriHandler({
+      handleUri: async (uri: vscode.Uri) => {
+        const handoffId = parseHandoffIdFromUri(uri);
+        if (!handoffId) {
+          const message = `Unable to parse handoff link: ${uri.toString(true)}`;
+          sidebarProvider?.update(getSidebarState('Failed to open handoff link.', message));
+          vscode.window.showErrorMessage(message);
+          return;
+        }
+        try {
+          await loadAndShowHandoffById(handoffId, outputChannel);
+          vscode.window.showInformationMessage(`Handoff loaded: ${handoffId}`);
+          await vscode.commands.executeCommand('aiGen.sidebar.focus');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          sidebarProvider?.update(getSidebarState(`Unable to load handoff ${handoffId}.`, message));
+          vscode.window.showErrorMessage(`Unable to load handoff ${handoffId}. ${message}`);
+        }
+      }
+    }),
     vscode.commands.registerCommand('ai-gen.ask', async () => {
       const query = await vscode.window.showInputBox({
         title: 'ai-gen',
@@ -273,6 +322,18 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('ai-gen.sendToCodex', async () => {
       const message = await sendLastPromptToCodex();
+      sidebarProvider?.update(getSidebarState(message, ''));
+    }),
+    vscode.commands.registerCommand('ai-gen.refreshHandoff', async () => {
+      const message = await refreshLastHandoff(outputChannel);
+      sidebarProvider?.update(getSidebarState(message, ''));
+    }),
+    vscode.commands.registerCommand('ai-gen.reloadPipeline', async () => {
+      const message = await reloadLastPromptFromBackend(outputChannel);
+      sidebarProvider?.update(getSidebarState(message, ''));
+    }),
+    vscode.commands.registerCommand('ai-gen.snapshotExecution', async () => {
+      const message = await snapshotLastExecution();
       sidebarProvider?.update(getSidebarState(message, ''));
     }),
     vscode.commands.registerCommand('ai-gen.validateExecution', async () => {
@@ -325,6 +386,18 @@ export function activate(context: vscode.ExtensionContext) {
         ignoreFocusOut: true
       });
       await loadAndShowHandoffForWorkItem(workItemId, stage || 'dev', outputChannel);
+    }),
+    vscode.commands.registerCommand('ai-gen.loadLatestDevHandoffForWorkItem', async () => {
+      const workItemId = await vscode.window.showInputBox({
+        title: 'ai-gen: Load Latest Dev Handoff',
+        prompt: 'Enter the work item id',
+        placeHolder: '123',
+        ignoreFocusOut: true
+      });
+      if (!workItemId) {
+        return;
+      }
+      await loadAndShowHandoffForWorkItem(workItemId, 'dev', outputChannel);
     })
   );
 }
@@ -375,6 +448,7 @@ async function requestAndStorePrompt(
     editorContext,
     ...metadata
   };
+  lastSidebarView = 'prompt';
   return lastPromptState;
 }
 
@@ -741,27 +815,31 @@ function sessionFlowForRetry(): string {
 }
 
 async function copyLastPrompt(): Promise<string> {
-  if (!lastPromptState?.prompt) {
-    const message = 'No ai-gen prompt is available yet. Run Preview first.';
+  const packet = currentExecutionPacket();
+  if (!packet) {
+    const message = 'No ai-gen execution packet is available yet. Run Preview or load a handoff first.';
     vscode.window.showErrorMessage(message);
     return message;
   }
 
-  await vscode.env.clipboard.writeText(lastPromptState.prompt);
-  vscode.window.showInformationMessage('ai-gen prompt copied to clipboard.');
-  return 'ai-gen prompt copied to clipboard.';
+  await vscode.env.clipboard.writeText(packet);
+  vscode.window.showInformationMessage('ai-gen execution packet copied to clipboard.');
+  return 'ai-gen execution packet copied to clipboard.';
 }
 
 async function sendLastPromptToCodex(): Promise<string> {
-  if (!lastPromptState?.prompt) {
-    const message = 'No ai-gen prompt is available yet. Run Preview first.';
+  const packet = currentExecutionPacket();
+  if (!packet) {
+    const message = 'No ai-gen execution packet is available yet. Run Preview or load a handoff first.';
     vscode.window.showErrorMessage(message);
     return message;
   }
 
-  if (lastPromptState.executionTarget !== 'codex') {
+  const executionTarget = lastPromptState?.executionTarget || (lastLoadedHandoff?.stage === 'dev' ? 'codex' : 'handoff');
+  const executionReason = lastPromptState?.executionReason || 'loaded from handoff';
+  if (executionTarget !== 'codex') {
     const override = await vscode.window.showWarningMessage(
-      `ai-gen routed this prompt to ${lastPromptState.executionTarget} (${lastPromptState.executionReason}). Send to Codex anyway?`,
+      `ai-gen routed this prompt to ${executionTarget} (${executionReason}). Send to Codex anyway?`,
       { modal: true },
       'Send Anyway'
     );
@@ -800,7 +878,7 @@ async function sendLastPromptToCodex(): Promise<string> {
   try {
     const terminal = vscode.window.createTerminal({ name: 'ai-gen Codex' });
     terminal.show();
-    terminal.sendText(`codex ${shellQuote(lastPromptState.prompt)}`);
+    terminal.sendText(`codex ${shellQuote(packet)}`);
     return `Sent to Codex terminal.${snapshotMessage}`;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -810,36 +888,49 @@ async function sendLastPromptToCodex(): Promise<string> {
 }
 
 async function captureExecutionSnapshot(): Promise<void> {
-  if (!lastPromptState) {
-    throw new Error('No prompt is available to snapshot.');
-  }
-  const workspaceRoot = lastPromptState.editorContext.workspace_root;
+  const workspaceRoot = lastPromptState?.editorContext.workspace_root || currentWorkspaceRoot();
   if (!workspaceRoot) {
     throw new Error('No workspace root is available for execution validation.');
   }
-  const selectedFiles = selectedExecutionFilesForBackend(lastPromptState);
+  const selectedFiles = currentSelectedFiles(workspaceRoot);
+  if (!selectedFiles.length) {
+    throw new Error('No selected files are available for execution validation.');
+  }
   const backendUrl = await getActiveBackendBaseUrl();
   const response = await postJson<{ baseline_hashes?: Record<string, string> }>(snapshotUrl(backendUrl), {
-    repo_id: lastPromptState.response.resolved_repo_id,
-    branch_name: lastPromptState.response.resolved_branch_name || lastPromptState.editorContext.branch_name,
-    session_id: lastPromptState.editorContext.session_id,
+    repo_id: currentRepoId(),
+    branch_name: currentBranchName(workspaceRoot),
+    session_id: currentSessionId(),
     workspace_root: workspaceRoot,
     repo_root: workspaceRoot,
     selected_execution_files: selectedFiles,
     selected_files: selectedFiles
   });
   lastExecutionState = {
-    repoId: lastPromptState.response.resolved_repo_id || '',
-    branchName: lastPromptState.response.resolved_branch_name || lastPromptState.editorContext.branch_name,
-    sessionId: lastPromptState.editorContext.session_id,
+    repoId: currentRepoId(),
+    branchName: currentBranchName(workspaceRoot),
+    sessionId: currentSessionId(),
     workspaceRoot,
     selectedFiles,
-    constraints: constraintsForValidation(lastPromptState),
-    likelyBreakpoints: likelyBreakpointsForValidation(lastPromptState),
+    constraints: currentConstraints(),
+    likelyBreakpoints: currentLikelyBreakpoints(workspaceRoot, selectedFiles),
     baselineHashes: response.baseline_hashes || {},
-    promptMode: lastPromptState.response.prompt_mode || 'execute',
+    promptMode: lastPromptState?.response.prompt_mode || 'execute',
     timestamp: new Date()
   };
+}
+
+async function snapshotLastExecution(): Promise<string> {
+  try {
+    await captureExecutionSnapshot();
+    const message = 'Snapshot captured for validation.';
+    vscode.window.showInformationMessage(message);
+    return message;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showWarningMessage(`Unable to capture snapshot. ${message}`);
+    return `Unable to capture snapshot. ${message}`;
+  }
 }
 
 async function validateLastExecution(): Promise<string> {
@@ -949,6 +1040,85 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function parseHandoffIdFromUri(uri: vscode.Uri): string {
+  const path = (uri.path || '').replace(/^\/+/, '');
+  const params = new URLSearchParams(uri.query || '');
+  const handoffId = (params.get('handoffId') || '').trim();
+  if (path === 'loadHandoff' && handoffId) {
+    return handoffId;
+  }
+  return '';
+}
+
+function currentExecutionPacket(): string | undefined {
+  if (lastSidebarView === 'handoff' && lastLoadedHandoff) {
+    const packet = lastLoadedHandoff.execution_packet || lastLoadedHandoff.content?.execution_packet;
+    if (typeof packet === 'string' && packet.trim()) {
+      return packet;
+    }
+  }
+  if (lastPromptState?.prompt) {
+    return lastPromptState.prompt;
+  }
+  if (lastLoadedHandoff) {
+    const packet = lastLoadedHandoff.execution_packet || lastLoadedHandoff.content?.execution_packet;
+    if (typeof packet === 'string' && packet.trim()) {
+      return packet;
+    }
+  }
+  return undefined;
+}
+
+function currentWorkspaceRoot(): string {
+  return lastPromptState?.editorContext.workspace_root
+    || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+    || '';
+}
+
+function currentRepoId(): string {
+  const repoContext = lastLoadedHandoff?.repo_context || {};
+  return lastPromptState?.response.resolved_repo_id
+    || firstString(repoContext, ['resolved_repo_id', 'repo_id'])
+    || '';
+}
+
+function currentBranchName(workspaceRoot: string): string {
+  const repoContext = lastLoadedHandoff?.repo_context || {};
+  return lastPromptState?.response.resolved_branch_name
+    || lastPromptState?.editorContext.branch_name
+    || firstString(repoContext, ['resolved_branch_name', 'branch_name'])
+    || '';
+}
+
+function currentSessionId(): string {
+  return lastPromptState?.editorContext.session_id || ideSessionId;
+}
+
+function currentSelectedFiles(workspaceRoot: string): string[] {
+  if (lastPromptState) {
+    return selectedExecutionFilesForBackend(lastPromptState);
+  }
+  const selectedFiles = lastLoadedHandoff?.selected_files || lastLoadedHandoff?.content?.selected_files;
+  if (Array.isArray(selectedFiles)) {
+    return normalizeStringList(selectedFiles).map((filePath) => toWorkspaceRelative(filePath, workspaceRoot));
+  }
+  return [];
+}
+
+function currentConstraints(): string[] {
+  if (lastPromptState) {
+    return constraintsForValidation(lastPromptState);
+  }
+  return normalizeStringList(lastLoadedHandoff?.constraints);
+}
+
+function currentLikelyBreakpoints(workspaceRoot: string, selectedFiles: string[]): string[] {
+  if (lastPromptState) {
+    return likelyBreakpointsForValidation(lastPromptState);
+  }
+  return selectedFiles.map((filePath) => toWorkspaceRelative(filePath, workspaceRoot));
+}
+
 function getSidebarState(statusMessage: string, errorMessage: string): SidebarState {
   return {
     backendMode: backendResolution.mode,
@@ -970,23 +1140,39 @@ function getSidebarState(statusMessage: string, errorMessage: string): SidebarSt
     warnings: statusWarnings,
     statusMessage,
     errorMessage,
-    latest: lastPromptState ? toSidebarResult(lastPromptState) : undefined
+    latest: latestSidebarResult()
   };
 }
 
+function latestSidebarResult(): SidebarResult | undefined {
+  if (lastSidebarView === 'handoff' && lastLoadedHandoff) {
+    return handoffToSidebarResult(lastLoadedHandoff);
+  }
+  if (lastPromptState) {
+    return toSidebarResult(lastPromptState);
+  }
+  if (lastLoadedHandoff) {
+    return handoffToSidebarResult(lastLoadedHandoff);
+  }
+  return undefined;
+}
+
 async function loadAndShowHandoffById(handoffId: string, outputChannel: vscode.OutputChannel): Promise<void> {
+  lastHandoffRequest = { kind: 'id', handoffId };
   try {
     const baseUrl = await getActiveBackendBaseUrl();
     const handoff = await fetchJson<HandoffRecord>(handoffByIdUrl(baseUrl, handoffId));
     if (!handoff || !handoff.stage) {
       throw new Error(`No handoff found for id ${handoffId}.`);
     }
+    lastLoadedHandoff = handoff;
+    lastSidebarView = 'handoff';
     await showHandoffDocument(handoff, outputChannel);
     sidebarProvider?.update(getSidebarState(`Loaded handoff ${handoffId}.`, ''));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    sidebarProvider?.update(getSidebarState('Failed to load handoff.', message));
-    vscode.window.showErrorMessage(`ai-gen handoff load failed: ${message}`);
+    sidebarProvider?.update(getSidebarState(`Failed to load handoff ${handoffId}.`, message));
+    vscode.window.showErrorMessage(`ai-gen handoff load failed for ${handoffId}: ${message}`);
   }
 }
 
@@ -1002,6 +1188,9 @@ async function loadAndShowHandoffForWorkItem(
     if (!handoff) {
       throw new Error(`No approved ${stage} handoff found for work item ${workItemId}.`);
     }
+    lastHandoffRequest = { kind: 'work_item', workItemId, stage };
+    lastLoadedHandoff = handoff;
+    lastSidebarView = 'handoff';
     await showHandoffDocument(handoff, outputChannel);
     sidebarProvider?.update(getSidebarState(`Loaded ${stage} handoff for work item ${workItemId}.`, ''));
   } catch (error) {
@@ -1012,7 +1201,7 @@ async function loadAndShowHandoffForWorkItem(
 }
 
 async function showHandoffDocument(handoff: HandoffRecord, outputChannel: vscode.OutputChannel): Promise<void> {
-  const content = renderHandoffMarkdown(handoff);
+  const content = await fetchOrRenderHandoffMarkdown(handoff);
   outputChannel.clear();
   outputChannel.appendLine(content);
   outputChannel.show(true);
@@ -1021,6 +1210,26 @@ async function showHandoffDocument(handoff: HandoffRecord, outputChannel: vscode
     language: 'markdown'
   });
   await vscode.window.showTextDocument(document, { preview: true });
+}
+
+async function fetchOrRenderHandoffMarkdown(handoff: HandoffRecord): Promise<string> {
+  const handoffId = handoff.handoff_id;
+  if (!handoffId) {
+    return renderHandoffMarkdown(handoff);
+  }
+  try {
+    const baseUrl = await getActiveBackendBaseUrl();
+    const response = await fetch(handoffMarkdownUrl(baseUrl, handoffId), { method: 'GET' });
+    if (response.ok) {
+      const content = await response.text();
+      if (content.trim()) {
+        return content;
+      }
+    }
+  } catch {
+    // Fall back to local rendering.
+  }
+  return renderHandoffMarkdown(handoff);
 }
 
 function renderHandoffMarkdown(handoff: HandoffRecord): string {
@@ -1052,14 +1261,104 @@ function renderHandoffMarkdown(handoff: HandoffRecord): string {
   if (handoff.next_actions?.length) {
     lines.push('', '## Next Actions', ...handoff.next_actions.map((item) => `- ${item}`));
   }
-  if (handoff.stage === 'dev' && typeof handoff.content?.execution_packet === 'string') {
-    lines.push('', '## Execution Packet', '```text', handoff.content.execution_packet, '```');
+  const executionPacket = handoff.execution_packet || (typeof handoff.content?.execution_packet === 'string' ? handoff.content.execution_packet : '');
+  if (handoff.stage === 'dev' && executionPacket) {
+    lines.push('', '## Execution Packet', '```text', executionPacket, '```');
   }
-  if (Array.isArray(handoff.content?.selected_files) && handoff.content.selected_files.length) {
-    lines.push('', '## Selected Files', ...(handoff.content.selected_files as string[]).map((item) => `- ${item}`));
+  const selectedFiles = Array.isArray(handoff.selected_files)
+    ? handoff.selected_files
+    : (Array.isArray(handoff.content?.selected_files) ? handoff.content.selected_files as string[] : []);
+  if (selectedFiles.length) {
+    lines.push('', '## Selected Files', ...selectedFiles.map((item) => `- ${item}`));
   }
   lines.push('', '## Stage Output', '```json', content, '```', '', '## Refinement', '```json', refinement, '```', '', '## Repo Context', '```json', repoContext, '```');
   return lines.join('\n');
+}
+
+function handoffToSidebarResult(handoff: HandoffRecord): SidebarResult {
+  const content = handoff.content || {};
+  const refinement = handoff.refinement || {};
+  const repoContext = handoff.repo_context || {};
+  const executionPacket = typeof handoff.execution_packet === 'string'
+    ? handoff.execution_packet
+    : typeof content.execution_packet === 'string'
+      ? content.execution_packet
+    : handoff.summary || 'No execution packet available.';
+  return {
+    query: handoff.summary || `${String(handoff.stage || 'handoff').toUpperCase()} handoff`,
+    prompt: executionPacket,
+    generatedAt: handoff.approved_at || handoff.created_at || 'unknown',
+    loadedHandoff: handoff.handoff_id || currentLoadedHandoffLabel(),
+    matchedLogic: 'handoff',
+    tokenEstimate: 'n/a',
+    executionTarget: handoff.stage === 'dev' ? 'execution_handoff' : `${handoff.stage || 'handoff'}_handoff`,
+    executionReason: `Loaded ${handoff.status || 'draft'} handoff`,
+    selectedExecutionFiles: Array.isArray(handoff.selected_files)
+      ? handoff.selected_files.join('\n')
+      : Array.isArray(content.selected_files)
+        ? (content.selected_files as string[]).join('\n')
+      : undefined,
+    refinementUsed: Boolean(Object.keys(refinement).length),
+    refinementProvider: undefined,
+    refinementReason: undefined,
+    refinedBaseFlow: toLines(refinement, ['base_flows', 'refined_base_flows', 'base_flow', 'refined_base_flow']),
+    refinedVariant: toLines(refinement, ['variants', 'refined_variants', 'variant', 'refined_variant']),
+    refinedSurface: toLines(refinement, ['surfaces', 'refined_surfaces', 'surface', 'refined_surface']),
+    refinedFields: toLines(refinement, ['fields', 'refined_fields']),
+    refinedValidations: toLines(refinement, ['validations', 'refined_validations']),
+    refinedScope: toLines(refinement, ['scope_hints', 'refined_scope', 'first_pass_scope']),
+    refinedActors: toLines(refinement, ['actors', 'refined_actors']),
+    refinedStates: toLines(refinement, ['states', 'refined_states']),
+    refinementUnknowns: normalizeStringList(handoff.open_questions).join('\n') || toLines(refinement, ['unknowns', 'refinement_unknowns']),
+    refinementConfidence: firstString(refinement, ['confidence', 'refinement_confidence']),
+    availableTargets: 'n/a',
+    planningEnabled: false,
+    planSummary: 'Loaded from approved handoff.',
+    resolvedRepoId: firstString(repoContext, ['resolved_repo_id', 'repo_id']),
+    resolvedBranchName: firstString(repoContext, ['resolved_branch_name', 'branch_name']),
+    repoIdentityMode: firstString(repoContext, ['repo_identity_mode']),
+    retrievalBiasApplied: undefined,
+    sessionBiasSummary: undefined,
+    constraints: normalizeStringList(handoff.constraints).join('\n'),
+    plan: undefined,
+    flow: toLines(refinement, ['base_flows', 'refined_base_flows', 'base_flow', 'refined_base_flow']),
+    criticalSteps: normalizeStringList(handoff.next_actions).join('\n')
+  };
+}
+
+function normalizeStringList(items: unknown): string[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items
+    .map((item) => typeof item === 'string' ? item.trim() : '')
+    .filter(Boolean);
+}
+
+function toLines(source: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (Array.isArray(value)) {
+      const lines = normalizeStringList(value);
+      if (lines.length) {
+        return lines.join('\n');
+      }
+    }
+  }
+  return undefined;
+}
+
+function firstString(source: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 function toSidebarResult(state: LastPromptState): SidebarResult {
@@ -1077,6 +1376,7 @@ function toSidebarResult(state: LastPromptState): SidebarResult {
     query: state.query,
     prompt: state.prompt,
     generatedAt: state.timestamp.toLocaleString(),
+    loadedHandoff: currentLoadedHandoffLabel(),
     matchedLogic: response.matched_logic?.join(', ') || 'none',
     tokenEstimate: String(response.token_estimate ?? 'unknown'),
     executionTarget: state.executionTarget,
@@ -1104,12 +1404,14 @@ function toSidebarResult(state: LastPromptState): SidebarResult {
     refinementUsed: response.refinement_used,
     refinementProvider: response.refinement_provider,
     refinementReason: response.refinement_reason,
-    refinedBaseFlow: response.refined_base_flow,
-    refinedVariant: response.refined_variant,
-    refinedSurface: response.refined_surface,
+    refinedBaseFlow: response.refined_base_flows?.join('\n') || response.refined_base_flow,
+    refinedVariant: response.refined_variants?.join('\n') || response.refined_variant,
+    refinedSurface: response.refined_surfaces?.join('\n') || response.refined_surface,
     refinedFields: response.refined_fields?.join('\n'),
     refinedValidations: response.refined_validations?.join('\n'),
     refinedScope: response.refined_scope?.join('\n'),
+    refinedActors: response.refined_actors?.join('\n'),
+    refinedStates: response.refined_states?.join('\n'),
     refinementUnknowns: response.refinement_unknowns?.join('\n'),
     refinementConfidence: response.refinement_confidence,
     availableTargets: formatAvailableTargets(state.availableTargets),
@@ -1130,4 +1432,64 @@ function toSidebarResult(state: LastPromptState): SidebarResult {
     criticalSteps: sections.get('Critical Steps') || sections.get('Importance-Aware Flow'),
     localOutput
   };
+}
+
+function currentLoadedHandoffLabel(): string | undefined {
+  if (!lastHandoffRequest) {
+    return undefined;
+  }
+  if (lastHandoffRequest.kind === 'id') {
+    return lastHandoffRequest.handoffId;
+  }
+  return `${lastHandoffRequest.workItemId} / ${lastHandoffRequest.stage}`;
+}
+
+async function refreshLastHandoff(outputChannel: vscode.OutputChannel): Promise<string> {
+  if (!lastHandoffRequest) {
+    const handoffId = await vscode.window.showInputBox({
+      title: 'ai-gen: Load Handoff by ID',
+      prompt: 'Enter the handoff id',
+      placeHolder: '123:dev:v1',
+      ignoreFocusOut: true
+    });
+    if (!handoffId) {
+      return 'Load handoff cancelled.';
+    }
+    await loadAndShowHandoffById(handoffId, outputChannel);
+    return `Loaded handoff ${handoffId}.`;
+  }
+  try {
+    if (lastHandoffRequest.kind === 'id') {
+      await loadAndShowHandoffById(lastHandoffRequest.handoffId, outputChannel);
+      return `Refreshed handoff ${lastHandoffRequest.handoffId}.`;
+    }
+    await loadAndShowHandoffForWorkItem(lastHandoffRequest.workItemId, lastHandoffRequest.stage, outputChannel);
+    return `Refreshed ${lastHandoffRequest.stage} handoff for work item ${lastHandoffRequest.workItemId}.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showWarningMessage(`Unable to refresh handoff state. ${message}`);
+    return `Unable to refresh handoff state. ${message}`;
+  }
+}
+
+async function reloadLastPromptFromBackend(outputChannel: vscode.OutputChannel): Promise<string> {
+  if (!lastPromptState) {
+    const message = 'No pipeline context is loaded yet. Run Preview first.';
+    vscode.window.showInformationMessage(message);
+    return message;
+  }
+  try {
+    const includeSelection = Boolean(lastPromptState.editorContext.selected_text);
+    const includeFile = Boolean(lastPromptState.editorContext.file_path || lastPromptState.editorContext.current_file);
+    const refreshed = await requestAndStorePrompt(
+      lastPromptState.query,
+      { includeSelection, includeFile }
+    );
+    showPromptOutput(outputChannel, refreshed.prompt, refreshed.response, refreshed);
+    return 'Pipeline context reloaded from backend.';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showWarningMessage(`Unable to refresh pipeline state. ${message}`);
+    return `Unable to refresh pipeline state. ${message}`;
+  }
 }

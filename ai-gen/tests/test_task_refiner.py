@@ -17,12 +17,12 @@ class TaskRefinerTests(unittest.TestCase):
         provider = unittest.mock.Mock()
         provider.is_enabled.return_value = True
         provider.refine_json.return_value = {
-            "base_flow": "login",
-            "variant": "phone_number",
-            "surface": "ui_screen",
-            "fields": ["phone_number"],
+            "base_flows": ["Sign In", "verification"],
+            "variants": ["mobile otp"],
+            "surfaces": ["screen"],
+            "fields": ["mobile no", "verification code"],
             "validations": ["required", "phone_format", "length_limit"],
-            "first_pass_scope": ["login screen input", "phone validation", "submit action"],
+            "scope_hints": ["login screen input", "phone validation", "submit action"],
             "unknowns": ["Is OTP required after phone submission?"],
             "confidence": "medium",
             "bad_key": "ignore me",
@@ -31,8 +31,9 @@ class TaskRefinerTests(unittest.TestCase):
             result = refine_task("Add a login screen with phone number", {"source": "azure_devops"})
 
         self.assertEqual(result["refinement_used"], True)
-        self.assertEqual(result["refinement"]["variant"], "phone_number")
-        self.assertEqual(result["refinement"]["fields"], ["phone_number"])
+        self.assertEqual(result["refinement"]["variants"], ["phone_otp"])
+        self.assertEqual(result["refinement"]["base_flows"], ["login", "otp_verification"])
+        self.assertEqual(result["refinement"]["fields"], ["phone_number", "otp"])
         self.assertNotIn("bad_key", result["refinement"])
 
     def test_malformed_phi_response_falls_back_safely(self) -> None:
@@ -44,6 +45,16 @@ class TaskRefinerTests(unittest.TestCase):
 
         self.assertEqual(result["refinement_used"], True)
         self.assertEqual(result["refinement"]["fields"], ["phone_number"])
+
+    def test_provider_unavailable_uses_deterministic_fallback(self) -> None:
+        with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=None):
+            result = refine_task("mobile number login with sms code")
+
+        self.assertEqual(result["refinement_used"], False)
+        self.assertEqual(result["refinement_provider"], "deterministic_fallback")
+        self.assertEqual(result["refinement"]["base_flows"], ["login", "otp_verification"])
+        self.assertEqual(result["refinement"]["variants"], ["phone_otp"])
+        self.assertEqual(result["refinement"]["fields"], ["phone_number", "otp"])
 
 
 if __name__ == "__main__":

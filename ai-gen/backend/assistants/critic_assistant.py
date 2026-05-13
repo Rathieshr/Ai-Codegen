@@ -38,6 +38,7 @@ def run_critic_assistant(
             )
         if dev_output.get("react", {}).get("observe", {}).get("repo_context_available") and not dev_output.get("selected_files"):
             findings.append(_finding("weak_scope", "medium", "Repo-aware task is missing selected files.", "dev"))
+        findings.extend(_semantic_findings(ba_output, ui_output, dev_output))
     if test_output:
         types = {case.get("type") for case in test_output.get("test_cases", [])}
         for expected in {"positive", "negative", "edge"}:
@@ -103,8 +104,9 @@ def _recommended_changes(findings: list[dict]) -> list[str]:
 
 
 def _phone_email_conflict(ba_output: dict | None, ui_output: dict | None, dev_output: dict | None) -> bool:
+    variants = set((ba_output or {}).get("variants", []) + (dev_output or {}).get("variants", []))
     variant = (ba_output or {}).get("variant") or (dev_output or {}).get("variant") or ""
-    if variant != "phone_number":
+    if "phone_otp" not in variants and variant != "phone_number":
         return False
     values = []
     if ui_output:
@@ -117,6 +119,26 @@ def _phone_email_conflict(ba_output: dict | None, ui_output: dict | None, dev_ou
 
 def _looks_sensitive(flow: str | None) -> bool:
     return (flow or "") in {"login", "signup", "session", "payment"}
+
+
+def _semantic_findings(ba_output: dict | None, ui_output: dict | None, dev_output: dict | None) -> list[dict]:
+    findings: list[dict] = []
+    flows = set((ba_output or {}).get("flows", []) + (dev_output or {}).get("flows", []))
+    variants = set((ba_output or {}).get("variants", []) + (dev_output or {}).get("variants", []))
+    surfaces = set((dev_output or {}).get("surfaces", []))
+    fields = set()
+    if ui_output:
+        fields.update(field.get("name", "") for field in ui_output.get("fields", []))
+    if "phone_otp" in variants:
+        if "otp" not in fields:
+            findings.append(_finding("missing_critical_field", "high", "Phone OTP flow is missing the otp field.", "ui"))
+        if "email_password" in variants:
+            findings.append(_finding("conflicting_variants", "high", "Phone OTP and email_password variants conflict.", "dev"))
+    if "dashboard" in flows and "authentication" in surfaces and "ui_screen" not in surfaces:
+        findings.append(_finding("semantic_mismatch", "medium", "Dashboard task is mapped too narrowly to authentication.", "dev"))
+    if any(surface and surface not in {"ui_screen", "ui_validation", "ui_state", "api_controller", "api_validation", "service_logic", "database", "authentication", "authorization", "workflow", "notification_flow"} for surface in surfaces):
+        findings.append(_finding("unsupported_surface", "medium", "Refinement includes an unsupported surface.", "dev"))
+    return findings
 
 
 def _dedupe(values: list[str]) -> list[str]:

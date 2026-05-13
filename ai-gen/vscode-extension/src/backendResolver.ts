@@ -147,6 +147,10 @@ export function handoffByIdUrl(baseUrl: string, handoffId: string): string {
   return `${normalizeBaseUrl(baseUrl)}/handoffs/${encodeURIComponent(handoffId)}`;
 }
 
+export function handoffMarkdownUrl(baseUrl: string, handoffId: string): string {
+  return `${normalizeBaseUrl(baseUrl)}/handoffs/${encodeURIComponent(handoffId)}/markdown`;
+}
+
 export function handoffListUrl(baseUrl: string, workItemId: string, stage = 'dev', status = 'approved'): string {
   const params = new URLSearchParams({
     work_item_id: workItemId,

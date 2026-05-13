@@ -7,7 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 try:
-    from backend.app import ContextRequest, ExecutionValidationRequest, build_context, capabilities, validate_execution_result
+    from backend.app import (
+        ContextRequest,
+        ExecutionValidationRequest,
+        build_context,
+        capabilities,
+        get_handoff_markdown,
+        validate_execution_result,
+    )
     from backend.repo_context.manager import RepoContextManager
     from backend.repo_context.models import BranchMeta, RepoMeta
     from backend.repo_context.storage import write_json
@@ -16,6 +23,7 @@ except ModuleNotFoundError:
     ExecutionValidationRequest = None
     build_context = None
     capabilities = None
+    get_handoff_markdown = None
     validate_execution_result = None
     RepoContextManager = None
     BranchMeta = None
@@ -257,19 +265,91 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(response["retry_plan"]["strategy"], "narrow_scope")
         self.assertIn("Do not modify files outside this list.", response["corrected_execution_prompt"])
 
+    def test_handoff_markdown_endpoint_returns_readable_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_HANDOFF_ROOT": temp_dir}, clear=False):
+            from backend.handoff.storage import save_handoff
+
+            save_handoff(
+                {
+                    "handoff_id": "handoff_123_dev_v1",
+                    "pipeline_id": "pipeline_1",
+                    "work_item_id": "123",
+                    "stage": "dev",
+                    "version": 1,
+                    "status": "approved",
+                    "created_at": "now",
+                    "approved_at": "now",
+                    "source_stage": "dev",
+                    "target_stages": ["test"],
+                    "summary": "Fix login validation",
+                    "content": {"execution_packet": "Fix the login validation safely."},
+                    "refinement": {},
+                    "repo_context": {},
+                    "constraints": ["Do not bypass credential validation."],
+                    "open_questions": [],
+                    "next_actions": [],
+                }
+            )
+
+            markdown = get_handoff_markdown("handoff_123_dev_v1")
+
+        self.assertIn("# DEV Handoff", markdown)
+        self.assertIn("Fix login validation", markdown)
+
+    def test_handoff_by_id_returns_execution_packet_and_selected_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_HANDOFF_ROOT": temp_dir}, clear=False):
+            from backend.app import get_handoff_by_id
+            from backend.handoff.storage import save_handoff
+
+            save_handoff(
+                {
+                    "handoff_id": "handoff_123_dev_v1",
+                    "pipeline_id": "pipeline_1",
+                    "work_item_id": "123",
+                    "stage": "dev",
+                    "version": 1,
+                    "status": "approved",
+                    "created_at": "now",
+                    "approved_at": "now",
+                    "source_stage": "dev",
+                    "target_stages": ["test"],
+                    "summary": "Fix login validation",
+                    "content": {
+                        "execution_packet": "Fix the login validation safely.",
+                        "selected_files": ["src/LoginScreen.tsx"],
+                    },
+                    "refinement": {"variants": ["phone_otp"]},
+                    "repo_context": {},
+                    "constraints": ["Do not bypass credential validation."],
+                    "open_questions": ["Is OTP required?"],
+                    "next_actions": [],
+                }
+            )
+
+            handoff = get_handoff_by_id("handoff_123_dev_v1")
+
+        self.assertEqual(handoff["execution_packet"], "Fix the login validation safely.")
+        self.assertEqual(handoff["selected_files"], ["src/LoginScreen.tsx"])
+        self.assertEqual(handoff["refinement"]["variants"], ["phone_otp"])
+
     def test_context_includes_refinement_metadata_when_provider_returns_data(self) -> None:
         refinement_result = {
             "refinement_used": True,
+            "refinement_provider": "azure_phi",
             "refinement_reason": "provider returned structured refinement",
             "refinement": {
-                "base_flow": "login",
-                "variant": "phone_number",
-                "surface": "ui_screen",
-                "fields": ["phone_number"],
-                "validations": ["required", "phone_format", "length_limit"],
-                "first_pass_scope": ["login screen input", "phone validation", "submit action"],
+                "base_flows": ["login", "otp_verification"],
+                "variants": ["phone_otp"],
+                "surfaces": ["ui_screen", "authentication"],
+                "fields": ["phone_number", "otp"],
+                "validations": ["required", "format", "length_limit"],
+                "scope_hints": ["login screen input", "phone validation", "submit action"],
                 "unknowns": ["Is OTP required after phone submission?"],
                 "confidence": "medium",
+                "base_flow": "login",
+                "variant": "phone_otp",
+                "surface": "ui_screen",
+                "first_pass_scope": ["login screen input", "phone validation", "submit action"],
             },
         }
         with patch.dict(
@@ -295,9 +375,11 @@ class BackendContextRoutingTests(unittest.TestCase):
 
         data = response.model_dump() if hasattr(response, "model_dump") else response.dict()
         self.assertEqual(data["refinement_used"], True)
-        self.assertEqual(data["refined_variant"], "phone_number")
+        self.assertEqual(data["refined_variant"], "phone_otp")
+        self.assertEqual(data["refined_base_flows"], ["login", "otp_verification"])
         self.assertEqual(data["refined_surface"], "ui_screen")
         self.assertIn("phone_number", data["optimized_prompt"])
+        self.assertIn("otp", data["optimized_prompt"])
         self.assertIn("# Unknowns", data["optimized_prompt"])
 
     def test_context_incremental_refresh_reports_changed_files(self) -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from backend.handoff.schemas import default_handoff
+from backend.handoff.schemas import default_handoff, make_handoff_id
 
 
 def build_handoff(
@@ -17,7 +17,7 @@ def build_handoff(
 
     stage_state = pipeline_state.stages[stage]
     version = max(stage_state.version, 1)
-    handoff_id = f"{pipeline_state.work_item_id}:{stage}:v{version}"
+    handoff_id = make_handoff_id(pipeline_state.work_item_id, stage, version)
     handoff = default_handoff(
         handoff_id=handoff_id,
         pipeline_id=pipeline_state.pipeline_id,

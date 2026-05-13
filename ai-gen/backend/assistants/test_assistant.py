@@ -9,6 +9,7 @@ def run_test_assistant(ba_output: dict, dev_output: dict, ui_output: dict | None
     acceptance = list(ba_output.get("acceptance_criteria", []))
     fields = [field.get("name", "") for field in (ui_output or {}).get("fields", []) if field.get("name")]
     flow = dev_output.get("flow") or _first(ba_output.get("flows", [])) or "feature"
+    variants = list(dev_output.get("variants", [])) or list(ba_output.get("variants", []))
     test_cases = _dedupe_test_cases(
         [
             _test_case(
@@ -33,7 +34,7 @@ def run_test_assistant(ba_output: dict, dev_output: dict, ui_output: dict | None
                 expected="The change blocks invalid input without breaking the existing safety rules.",
                 linked=acceptance[:1],
             ),
-            _edge_case(flow, fields, acceptance),
+            _edge_case(flow, fields, acceptance, variants),
             _acceptance_case(acceptance, flow),
         ]
     )
@@ -74,8 +75,10 @@ def _test_case(title: str, case_type: str, steps: list[str], expected: str, link
     }
 
 
-def _edge_case(flow: str, fields: list[str], acceptance: list[str]) -> dict:
+def _edge_case(flow: str, fields: list[str], acceptance: list[str], variants: list[str]) -> dict:
     focus = fields[0] if fields else "input"
+    if "phone_otp" in variants and "otp" in fields:
+        focus = "otp"
     return _test_case(
         title=f"{flow.title()} handles boundary values for {focus}",
         case_type="edge",
@@ -107,6 +110,8 @@ def _coverage_notes(fields: list[str], acceptance: list[str]) -> list[str]:
     notes = ["Review both successful and failure paths before sign-off."]
     if fields:
         notes.append(f"Include validation coverage for: {', '.join(fields[:3])}.")
+    if "otp" in fields:
+        notes.append("Include OTP retry, expiry, and invalid-code coverage.")
     if not acceptance:
         notes.append("Acceptance criteria are thin, so manual review should confirm the intended user outcome.")
     return notes

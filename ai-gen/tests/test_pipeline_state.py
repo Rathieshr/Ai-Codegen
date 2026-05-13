@@ -22,15 +22,19 @@ class PipelineStateTests(unittest.TestCase):
 
     def test_approving_ba_unlocks_ui(self) -> None:
         self.pipeline.stages["ba"].output = {"assistant": "ba", "refined_requirement": "Add login screen."}
+        original_version = self.pipeline.version
         updated = approve_stage(self.pipeline, "ba")
         self.assertEqual(updated.stages["ba"].status, "approved")
         self.assertEqual(updated.stages["ui"].status, "pending")
+        self.assertGreaterEqual(updated.stages["ba"].version, 1)
+        self.assertEqual(updated.version, original_version)
 
     def test_skipping_ui_unlocks_dev(self) -> None:
         self.pipeline.stages["ui"].status = "pending"
         updated = skip_stage(self.pipeline, "ui", "backend-only task")
         self.assertEqual(updated.stages["ui"].status, "skipped")
         self.assertEqual(updated.stages["dev"].status, "pending")
+        self.assertGreaterEqual(updated.stages["ui"].version, 1)
 
     def test_cannot_approve_empty_output(self) -> None:
         with self.assertRaises(ValueError):

@@ -7,6 +7,7 @@ const CAPABILITIES_URL = 'https://ai-codegen-production.up.railway.app/capabilit
 const PIPELINE_CREATE_URL = 'https://ai-codegen-production.up.railway.app/assist/pipeline/create';
 const PIPELINE_BASE_URL = 'https://ai-codegen-production.up.railway.app/assist/pipeline';
 const HANDOFFS_URL = 'https://ai-codegen-production.up.railway.app/handoffs';
+const VSCODE_EXTENSION_ID = 'rathiesh.ai-gen-vscode';
 
 export type NormalizedWorkItem = {
   id: number | string;
@@ -30,12 +31,17 @@ export type AiGenResponse = {
   refinement_used?: boolean;
   refinement_provider?: string;
   refinement_reason?: string;
+  refined_base_flows?: string[];
+  refined_variants?: string[];
+  refined_surfaces?: string[];
   refined_base_flow?: string;
   refined_variant?: string;
   refined_surface?: string;
   refined_fields?: string[];
   refined_validations?: string[];
   refined_scope?: string[];
+  refined_actors?: string[];
+  refined_states?: string[];
   refinement_unknowns?: string[];
   refinement_confidence?: string;
   ba?: unknown;
@@ -67,8 +73,16 @@ export type PipelineState = {
   work_item_id: string;
   current_stage: string;
   stages: Record<string, PipelineStageState>;
+  version: number;
   created_at: string;
   updated_at: string;
+  allowed_actions?: {
+    generate_stages?: string[];
+    regenerate_stages?: string[];
+    approve_stages?: string[];
+    skip_stages?: string[];
+    view_handoff_stages?: string[];
+  };
   work_item?: Record<string, unknown>;
   repo_context?: Record<string, unknown>;
   refinement?: Record<string, unknown>;
@@ -81,7 +95,11 @@ export type HandoffRecord = {
   stage: string;
   version: number;
   status: string;
+  created_at?: string;
+  approved_at?: string | null;
   summary?: string;
+  execution_packet?: string;
+  selected_files?: string[];
   content?: Record<string, unknown>;
   refinement?: Record<string, unknown>;
   repo_context?: Record<string, unknown>;
@@ -108,6 +126,10 @@ export type AiGenState = {
   pipeline?: PipelineState;
   handoff?: HandoffRecord;
 };
+
+export function clearGeneratedState(): void {
+  window.sessionStorage.removeItem(STATE_KEY);
+}
 
 export async function getCurrentWorkItem(): Promise<NormalizedWorkItem> {
   const service = await SDK.getService<IWorkItemFormService>(WorkItemTrackingServiceIds.WorkItemFormService);
@@ -199,7 +221,7 @@ export async function generateFromCurrentWorkItem(): Promise<AiGenState> {
   const workItem = await getCurrentWorkItem();
   const response = await generateAiGenPrompt(workItem);
   const capabilities = await loadCapabilities();
-  const pipeline = await createPipeline(workItem, response).catch(() => undefined);
+  const pipeline = await loadPipelineForWorkItem(workItem.id).catch(() => undefined);
   const state = {
     workItem,
     response,
@@ -223,12 +245,17 @@ export async function createPipeline(workItem: NormalizedWorkItem, response: AiG
       detected_flow: stringValue(response.detected_flow)
     },
     refinement: {
+      base_flows: arrayValue(response.refined_base_flows),
+      variants: arrayValue(response.refined_variants),
+      surfaces: arrayValue(response.refined_surfaces),
       refined_base_flow: stringValue(response.refined_base_flow),
       refined_variant: stringValue(response.refined_variant),
       refined_surface: stringValue(response.refined_surface),
       refined_fields: arrayValue(response.refined_fields),
       refined_validations: arrayValue(response.refined_validations),
       refined_scope: arrayValue(response.refined_scope),
+      actors: arrayValue(response.refined_actors),
+      states: arrayValue(response.refined_states),
       refinement_unknowns: arrayValue(response.refinement_unknowns),
       refinement_confidence: stringValue(response.refinement_confidence)
     }
@@ -240,6 +267,24 @@ export async function runPipelineStage(pipelineId: string, stage: string, regene
     stage,
     regenerate
   });
+}
+
+export async function loadPipeline(pipelineId: string): Promise<PipelineState> {
+  return getJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}`);
+}
+
+export async function loadPipelineForWorkItem(workItemId: number | string): Promise<PipelineState | undefined> {
+  try {
+    const pipeline = await getJson<PipelineState | Record<string, never>>(
+      `${PIPELINE_BASE_URL}?work_item_id=${encodeURIComponent(String(workItemId))}`
+    );
+    if (pipeline && typeof (pipeline as PipelineState).pipeline_id === 'string') {
+      return pipeline as PipelineState;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function approvePipelineStage(pipelineId: string, stage: string, approvedBy = 'azure_devops'): Promise<PipelineState> {
@@ -259,6 +304,22 @@ export async function skipPipelineStage(pipelineId: string, stage: string, reaso
 export async function loadHandoff(handoffId: string): Promise<HandoffRecord | undefined> {
   try {
     return await getJson<HandoffRecord>(`${HANDOFFS_URL}/${encodeURIComponent(handoffId)}`);
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildVsCodeHandoffLink(handoffId: string): string {
+  return `vscode://${VSCODE_EXTENSION_ID}/loadHandoff?handoffId=${encodeURIComponent(handoffId)}`;
+}
+
+export async function loadHandoffMarkdown(handoffId: string): Promise<string | undefined> {
+  try {
+    const response = await fetch(`${HANDOFFS_URL}/${encodeURIComponent(handoffId)}/markdown`, { method: 'GET' });
+    if (!response.ok) {
+      return undefined;
+    }
+    return await response.text();
   } catch {
     return undefined;
   }
@@ -285,6 +346,32 @@ export async function loadCapabilities(): Promise<BackendCapabilities | undefine
   } catch {
     return undefined;
   }
+}
+
+export async function refreshPipelineState(
+  workItem: NormalizedWorkItem,
+  currentState?: AiGenState,
+  pipelineOverride?: PipelineState
+): Promise<AiGenState> {
+  const [capabilities, pipeline] = await Promise.all([
+    loadCapabilities(),
+    pipelineOverride ? Promise.resolve(pipelineOverride) : loadPipelineForWorkItem(workItem.id)
+  ]);
+  const targetPipeline = pipelineOverride || pipeline || currentState?.pipeline;
+  const targetStage = activeStageName(targetPipeline);
+  const handoff = targetPipeline && targetStage && targetPipeline.stages[targetStage]?.handoff_id
+    ? await loadHandoff(targetPipeline.stages[targetStage]?.handoff_id || '')
+    : currentState?.handoff;
+  const refreshed = {
+    workItem,
+    response: currentState?.response || await generateAiGenPrompt(workItem),
+    generatedAt: new Date().toISOString(),
+    capabilities,
+    pipeline: targetPipeline,
+    handoff
+  };
+  saveGeneratedState(refreshed);
+  return refreshed;
 }
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
@@ -340,4 +427,21 @@ function htmlToText(value: string): string {
   const container = document.createElement('div');
   container.innerHTML = value;
   return (container.textContent || container.innerText || '').trim();
+}
+
+function activeStageName(pipeline?: PipelineState): string {
+  if (!pipeline) {
+    return '';
+  }
+  const ordered = ['ba', 'ui', 'dev', 'test', 'critic'];
+  for (const stage of ordered) {
+    const stageState = pipeline.stages[stage];
+    if (!stageState) {
+      continue;
+    }
+    if (stageState.status === 'generated' || stageState.status === 'needs_revision' || stageState.status === 'pending') {
+      return stage;
+    }
+  }
+  return pipeline.current_stage || 'critic';
 }

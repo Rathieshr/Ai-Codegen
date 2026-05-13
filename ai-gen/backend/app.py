@@ -7,10 +7,11 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from backend.execution_corrector import build_corrected_execution_prompt, generate_retry_plan
-from backend.handoff.storage import list_handoffs
+from backend.handoff.storage import list_handoffs, load_handoff_markdown
 from backend.execution_mode import detect_prompt_mode, score_execution_confidence
 from backend.execution_validator import ExecutionContext, snapshot_selected_files, validate_execution
 from backend.intent_detector import detect_intent
@@ -128,12 +129,17 @@ class ContextResponse(BaseModel):
     refinement_used: bool = False
     refinement_provider: Optional[str] = None
     refinement_reason: str = ""
+    refined_base_flows: list[str] = Field(default_factory=list)
+    refined_variants: list[str] = Field(default_factory=list)
+    refined_surfaces: list[str] = Field(default_factory=list)
     refined_base_flow: Optional[str] = None
     refined_variant: Optional[str] = None
     refined_surface: Optional[str] = None
     refined_fields: list[str] = Field(default_factory=list)
     refined_validations: list[str] = Field(default_factory=list)
     refined_scope: list[str] = Field(default_factory=list)
+    refined_actors: list[str] = Field(default_factory=list)
+    refined_states: list[str] = Field(default_factory=list)
     refinement_unknowns: list[str] = Field(default_factory=list)
     refinement_confidence: Optional[str] = None
 
@@ -342,14 +348,19 @@ def build_context(request: ContextRequest) -> ContextResponse:
             "work_item_surface": work_item_context.get("technical_surface"),
             "work_item_scope": work_item_context.get("likely_scope", []),
             "refinement_used": bool(refinement_result.get("refinement_used")),
-            "refinement_provider": "azure_phi" if refinement_result.get("refinement_used") else None,
+            "refinement_provider": refinement_result.get("refinement_provider"),
             "refinement_reason": refinement_result.get("refinement_reason", ""),
+            "refined_base_flows": merged_refinement.get("base_flows", []),
+            "refined_variants": merged_refinement.get("variants", []),
+            "refined_surfaces": merged_refinement.get("surfaces", []),
             "refined_base_flow": merged_refinement.get("base_flow"),
             "refined_variant": merged_refinement.get("variant"),
             "refined_surface": merged_refinement.get("surface"),
             "refined_fields": merged_refinement.get("fields", []),
             "refined_validations": merged_refinement.get("validations", []),
-            "refined_scope": merged_refinement.get("first_pass_scope", []),
+            "refined_scope": merged_refinement.get("scope_hints", []) or merged_refinement.get("first_pass_scope", []),
+            "refined_actors": merged_refinement.get("actors", []),
+            "refined_states": merged_refinement.get("states", []),
             "refinement_unknowns": merged_refinement.get("unknowns", []),
             "refinement_confidence": merged_refinement.get("confidence"),
         }
@@ -470,12 +481,26 @@ def get_assistant_pipeline(pipeline_id: str) -> dict:
     return pipeline_controller.get_pipeline(pipeline_id)
 
 
+@app.get("/assist/pipeline")
+def get_assistant_pipeline_for_work_item(work_item_id: str) -> dict:
+    """Return the latest structured pipeline state for a work item."""
+
+    return pipeline_controller.get_pipeline_for_work_item(work_item_id) or {}
+
+
 @app.get("/handoffs/{handoff_id}")
 def get_handoff_by_id(handoff_id: str) -> dict:
     """Return a single stored handoff artifact."""
 
     handoff = pipeline_controller.load_handoff(handoff_id)
-    return handoff or {}
+    return _serialize_handoff(handoff)
+
+
+@app.get("/handoffs/{handoff_id}/markdown", response_class=PlainTextResponse)
+def get_handoff_markdown(handoff_id: str) -> str:
+    """Return the markdown form of a stored handoff artifact."""
+
+    return load_handoff_markdown(handoff_id) or ""
 
 
 @app.get("/handoffs")
@@ -484,12 +509,25 @@ def get_handoffs(work_item_id: str, stage: Optional[str] = None, status: Optiona
 
     if stage:
         handoff = pipeline_controller.latest_handoff(work_item_id, stage, status=status)
-        return {"items": [handoff] if handoff else []}
+        return {"items": [_serialize_handoff(handoff)] if handoff else []}
 
     handoffs = list_handoffs(work_item_id)
     if status:
         handoffs = [item for item in handoffs if item.get("status") == status]
-    return {"items": handoffs}
+    return {"items": [_serialize_handoff(handoff) for handoff in handoffs]}
+
+
+def _serialize_handoff(handoff: Optional[dict]) -> dict:
+    if not handoff:
+        return {}
+    content = handoff.get("content") if isinstance(handoff.get("content"), dict) else {}
+    serialized = dict(handoff)
+    serialized["execution_packet"] = content.get("execution_packet", "")
+    serialized["selected_files"] = list(content.get("selected_files", [])) if isinstance(content.get("selected_files"), list) else []
+    serialized["constraints"] = list(handoff.get("constraints", []))
+    serialized["open_questions"] = list(handoff.get("open_questions", []))
+    serialized["refinement"] = handoff.get("refinement", {}) if isinstance(handoff.get("refinement"), dict) else {}
+    return serialized
 
 
 def _prepare_repo_context(request: ContextRequest, intent: str, query: str) -> dict:
@@ -665,9 +703,12 @@ def _combine_prompt_refinement(work_item_context: Optional[dict], refined_metada
     if work_item_context:
         if not combined.get("surface"):
             combined["surface"] = work_item_context.get("technical_surface")
-        combined["first_pass_scope"] = _dedupe(
-            list(combined.get("first_pass_scope", [])) + list(work_item_context.get("likely_scope", []))
+        combined["scope_hints"] = _dedupe(
+            list(combined.get("scope_hints", []))
+            + list(combined.get("first_pass_scope", []))
+            + list(work_item_context.get("likely_scope", []))
         )[:8]
+        combined["first_pass_scope"] = list(combined["scope_hints"])
         combined["focus_rules"] = _dedupe(
             list(combined.get("focus_rules", [])) + list(work_item_context.get("inferred_focus_rules", []))
         )[:8]
@@ -815,7 +856,8 @@ def _merge_refinement(
 ) -> dict[str, Any]:
     refinement = dict(refinement_result.get("refinement") or {})
     deterministic_flow = (repo_state.get("detected_flow") or "").strip()
-    suggested_flow = (refinement.get("base_flow") or "").strip()
+    suggested_flows = list(refinement.get("base_flows", []))
+    suggested_flow = (_first_nonempty(suggested_flows) or refinement.get("base_flow") or "").strip()
     final_flow = deterministic_flow
     if not deterministic_flow or confidence_level in {"low", "medium"}:
         final_flow = suggested_flow or deterministic_flow
@@ -823,16 +865,26 @@ def _merge_refinement(
         refinement["flow_suggestion"] = suggested_flow
 
     if final_flow:
+        refinement["base_flows"] = _dedupe([final_flow] + list(refinement.get("base_flows", [])))
         refinement["base_flow"] = final_flow
 
-    if not refinement.get("surface") and work_item_context.get("technical_surface"):
+    if not refinement.get("surface") and not refinement.get("surfaces") and work_item_context.get("technical_surface"):
         refinement["surface"] = work_item_context["technical_surface"]
-    refinement["first_pass_scope"] = _dedupe(
-        list(refinement.get("first_pass_scope", [])) + list(work_item_context.get("likely_scope", []))
+        refinement["surfaces"] = _dedupe([work_item_context["technical_surface"]])
+    elif refinement.get("surface") and not refinement.get("surfaces"):
+        refinement["surfaces"] = _dedupe([refinement["surface"]])
+
+    refinement["scope_hints"] = _dedupe(
+        list(refinement.get("scope_hints", []))
+        + list(refinement.get("first_pass_scope", []))
+        + list(work_item_context.get("likely_scope", []))
     )[:8]
+    refinement["first_pass_scope"] = list(refinement["scope_hints"])
     refinement["focus_rules"] = _dedupe(
         list(work_item_context.get("inferred_focus_rules", []))
     )[:8]
+    refinement["variant"] = _first_nonempty(refinement.get("variants", [])) or refinement.get("variant")
+    refinement["surface"] = _first_nonempty(refinement.get("surfaces", [])) or refinement.get("surface")
     repo_state["detected_flow"] = final_flow or repo_state.get("detected_flow")
     return refinement
 
@@ -844,6 +896,14 @@ def _dedupe(values: list[str]) -> list[str]:
         if normalized and normalized not in output:
             output.append(normalized)
     return output
+
+
+def _first_nonempty(values: list[str]) -> str:
+    for value in values:
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return ""
 
 
 @app.get("/repo-context/{repo_id}")

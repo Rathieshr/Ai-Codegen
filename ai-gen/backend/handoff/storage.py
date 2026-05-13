@@ -31,6 +31,7 @@ def save_handoff(handoff: dict) -> dict:
     index = read_json(index_path, default={}) or {}
     index[handoff["handoff_id"]] = {
         "path": str(json_path),
+        "markdown_path": str(md_path),
         "work_item_id": work_item_id,
         "stage": stage,
         "status": handoff.get("status", "draft"),
@@ -50,7 +51,25 @@ def load_handoff(handoff_id: str) -> dict | None:
     return read_json(record["path"], default=None)
 
 
-def latest_handoff(work_item_id: str | int, stage: str, status: str | None = None) -> dict | None:
+def load_handoff_markdown(handoff_id: str) -> str | None:
+    """Load the markdown form of a handoff artifact by id."""
+
+    index = read_json(handoff_root() / "index.json", default={}) or {}
+    record = index.get(handoff_id)
+    if not record:
+        return None
+    markdown_path = record.get("markdown_path")
+    if markdown_path and Path(markdown_path).exists():
+        return Path(markdown_path).read_text(encoding="utf-8")
+    json_path = Path(record["path"])
+    fallback_path = json_path.with_suffix(".md")
+    if fallback_path.exists():
+        return fallback_path.read_text(encoding="utf-8")
+    handoff = read_json(record["path"], default=None)
+    return render_handoff_markdown(handoff) if handoff else None
+
+
+def latest_handoff(work_item_id: str | int, stage: str = "dev", status: str | None = "approved") -> dict | None:
     """Return the most recent handoff for a work item and stage."""
 
     work_item_id = str(work_item_id)

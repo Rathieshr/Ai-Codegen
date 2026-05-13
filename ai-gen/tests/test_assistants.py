@@ -21,41 +21,46 @@ class AssistantTests(unittest.TestCase):
                 "tags": ["auth"],
             },
             {
-                "refined_base_flow": "login",
-                "refined_variant": "phone_number",
+                "base_flows": ["login", "otp_verification"],
+                "variants": ["phone_otp"],
                 "refined_fields": ["phone_number"],
+                "fields": ["phone_number", "otp"],
                 "refined_validations": ["required", "phone_format"],
             },
         )
         self.assertEqual(output["assistant"], "ba")
         self.assertIn("refined_requirement", output)
         self.assertIn("acceptance_criteria", output)
-        self.assertEqual(output["variant"], "phone_number")
+        self.assertEqual(output["variant"], "phone_otp")
+        self.assertEqual(output["flows"], ["login", "otp_verification"])
 
     def test_ui_assistant_outputs_fields_and_states(self) -> None:
         ba_output = {
             "refined_requirement": "Add a login screen with phone number.",
-            "flows": ["login"],
-            "variant": "phone_number",
+            "flows": ["login", "otp_verification"],
+            "variant": "phone_otp",
+            "variants": ["phone_otp"],
             "unknowns": [],
         }
         output = run_app_ui_assistant(
             ba_output,
             {
-                "refined_surface": "ui_screen",
-                "refined_fields": ["phone_number"],
+                "surfaces": ["ui_screen"],
+                "fields": ["phone_number", "otp"],
                 "refined_validations": ["required", "phone_format"],
             },
         )
         self.assertEqual(output["assistant"], "app_ui")
         self.assertTrue(output["fields"])
         self.assertIn("loading", output["states"])
+        self.assertEqual([field["name"] for field in output["fields"]], ["phone_number", "otp"])
 
     def test_dev_assistant_outputs_execution_packet(self) -> None:
         ba_output = {
             "refined_requirement": "Fix login validation.",
-            "flows": ["login"],
+            "flows": ["login", "otp_verification"],
             "variant": None,
+            "variants": ["phone_otp"],
             "business_rules": ["Do not bypass credential validation."],
             "acceptance_criteria": ["Email must use a valid format."],
             "unknowns": [],
@@ -63,7 +68,7 @@ class AssistantTests(unittest.TestCase):
         ui_output = {
             "screen_name": "Login Form",
             "screen_type": "form",
-            "fields": [{"name": "email", "validation": ["required", "email_format"]}],
+            "fields": [{"name": "phone_number", "validation": ["required", "format"]}, {"name": "otp", "validation": ["required"]}],
             "actions": ["submit"],
             "skippable": False,
         }
@@ -73,15 +78,16 @@ class AssistantTests(unittest.TestCase):
             "session_bias_summary": {"current_file": "ui/LoginScreen.kt"},
             "open_files": ["ui/LoginScreen.kt"],
         }
-        output = run_dev_assistant(ba_output, ui_output, repo_context, {"refined_surface": "ui_validation"})
+        output = run_dev_assistant(ba_output, ui_output, repo_context, {"surfaces": ["ui_validation"], "variants": ["phone_otp"]})
         self.assertEqual(output["assistant"], "dev")
         self.assertIn("# Task", output["execution_packet"])
         self.assertTrue(output["selected_files"])
+        self.assertIn("phone_otp", output["variants"])
 
     def test_test_assistant_creates_positive_negative_and_edge_cases(self) -> None:
-        ba_output = {"flows": ["login"], "acceptance_criteria": ["Phone is required."], "unknowns": []}
-        dev_output = {"flow": "login"}
-        ui_output = {"fields": [{"name": "phone_number"}], "skippable": False}
+        ba_output = {"flows": ["login", "otp_verification"], "variants": ["phone_otp"], "acceptance_criteria": ["Phone is required."], "unknowns": []}
+        dev_output = {"flow": "login", "variants": ["phone_otp"]}
+        ui_output = {"fields": [{"name": "phone_number"}, {"name": "otp"}], "skippable": False}
         output = run_test_assistant(ba_output, dev_output, ui_output)
         case_types = {case["type"] for case in output["test_cases"]}
         self.assertIn("positive", case_types)
@@ -89,16 +95,18 @@ class AssistantTests(unittest.TestCase):
         self.assertIn("edge", case_types)
 
     def test_critic_detects_phone_login_email_password_conflict(self) -> None:
-        ba_output = {"variant": "phone_number", "acceptance_criteria": ["Use phone login."], "unknowns": []}
+        ba_output = {"variant": "phone_otp", "variants": ["phone_otp"], "acceptance_criteria": ["Use phone login."], "unknowns": []}
         ui_output = {
             "fields": [{"name": "email"}, {"name": "password"}],
             "screen_type": "form",
             "unknowns": [],
             "skippable": False,
         }
-        dev_output = {"variant": "phone_number", "flow": "login", "surface": "ui_form", "task_summary": "Fix email and password login."}
+        dev_output = {"variant": "phone_otp", "variants": ["phone_otp", "email_password"], "flow": "login", "surfaces": ["ui_screen"], "surface": "ui_form", "task_summary": "Fix email and password login."}
         critic = run_critic_assistant(ba_output=ba_output, ui_output=ui_output, dev_output=dev_output)
-        self.assertTrue(any(item["type"] == "conflict" for item in critic["findings"]))
+        finding_types = {item["type"] for item in critic["findings"]}
+        self.assertIn("conflict", finding_types)
+        self.assertIn("missing_critical_field", finding_types)
 
 
 if __name__ == "__main__":

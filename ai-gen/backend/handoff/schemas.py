@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 
 def handoff_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def make_handoff_id(work_item_id: str | int, stage: str, version: int) -> str:
+    """Build a stable, URL-safe handoff id."""
+
+    safe_work_item_id = _slug(str(work_item_id))
+    safe_stage = _slug(stage)
+    return f"handoff_{safe_work_item_id}_{safe_stage}_v{max(version, 1)}"
 
 
 def default_handoff(
@@ -39,3 +48,9 @@ def default_handoff(
         "open_questions": [],
         "next_actions": [],
     }
+
+
+def _slug(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip().lower())
+    normalized = normalized.strip("._-")
+    return normalized or "unknown"

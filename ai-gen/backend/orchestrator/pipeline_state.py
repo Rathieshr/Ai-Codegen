@@ -41,6 +41,7 @@ class PipelineState:
     work_item_id: str
     current_stage: str
     stages: dict[str, StageState]
+    version: int = 1
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
     work_item: dict[str, Any] = field(default_factory=dict)
@@ -61,6 +62,7 @@ class PipelineState:
             work_item_id=str(data.get("work_item_id", "")),
             current_stage=data.get("current_stage", "ba"),
             stages=stages,
+            version=int(data.get("version", 1)),
             created_at=data.get("created_at", utc_now()),
             updated_at=data.get("updated_at", utc_now()),
             work_item=data.get("work_item", {}),

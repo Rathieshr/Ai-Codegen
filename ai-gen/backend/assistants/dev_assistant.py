@@ -17,9 +17,9 @@ def run_dev_assistant(
 
     repo_context = repo_context or {}
     refinement = refinement or {}
-    flow = _first(ba_output.get("flows", [])) or refinement.get("refined_base_flow") or refinement.get("base_flow")
-    variant = ba_output.get("variant") or refinement.get("refined_variant") or refinement.get("variant")
-    surface = refinement.get("refined_surface") or refinement.get("surface") or _infer_surface(ui_output)
+    flow = _first(ba_output.get("flows", [])) or _first(refinement.get("base_flows", [])) or refinement.get("refined_base_flow") or refinement.get("base_flow")
+    variant = _first(ba_output.get("variants", [])) or ba_output.get("variant") or _first(refinement.get("variants", [])) or refinement.get("refined_variant") or refinement.get("variant")
+    surface = _first(refinement.get("surfaces", [])) or refinement.get("refined_surface") or refinement.get("surface") or _infer_surface(ui_output)
     scope = _build_scope(ba_output, ui_output, refinement)
     constraints = _build_constraints(ba_output, flow)
     likely_breakpoints = list(repo_context.get("likely_bug_hotspots", []))[:3]
@@ -35,11 +35,15 @@ def run_dev_assistant(
         likely_bug_hotspots=likely_breakpoints,
         refined_metadata={
             "base_flow": flow,
+            "base_flows": _dedupe(list(refinement.get("base_flows", [])) + ([flow] if flow else [])),
             "variant": variant,
+            "variants": _dedupe(list(refinement.get("variants", [])) + ([variant] if variant else [])),
             "surface": surface,
+            "surfaces": _dedupe(list(refinement.get("surfaces", [])) + ([surface] if surface else [])),
             "fields": _field_names(ui_output),
             "validations": _field_validations(ui_output, refinement),
             "first_pass_scope": scope,
+            "scope_hints": scope,
             "unknowns": _dedupe(list(ba_output.get("unknowns", [])) + list(refinement.get("refinement_unknowns", []))),
             "focus_rules": _focus_rules(flow, surface),
         },
@@ -65,6 +69,9 @@ def run_dev_assistant(
         "flow": flow,
         "variant": variant,
         "surface": surface,
+        "flows": _dedupe(list(ba_output.get("flows", [])) + ([flow] if flow else [])),
+        "variants": _dedupe(list(ba_output.get("variants", [])) + ([variant] if variant else [])),
+        "surfaces": _dedupe(list(refinement.get("surfaces", [])) + ([surface] if surface else [])),
         "scope": scope,
         "constraints": constraints,
         "likely_breakpoints": likely_breakpoints,

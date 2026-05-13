@@ -238,18 +238,25 @@ function WorkItemTab() {
     if (!state.data?.pipeline || !currentStageName || !clarification.trim()) {
       return;
     }
+    const comment = clarification.trim();
     setState((current) => ({ ...current, loadingMessage: andRegenerate ? 'Regenerating with clarifications...' : 'Saving clarification...' }));
     await withPipelineUpdate(async () => {
-      const pipeline = await addStageFeedback(state.data!.pipeline!.pipeline_id, currentStageName, clarification.trim());
-      setClarification('');
       if (andRegenerate) {
-        const regenerated = await runPipelineStage(pipeline.pipeline_id, currentStageName, true);
+        const regenerated = await runPipelineStage(
+          state.data!.pipeline!.pipeline_id,
+          currentStageName,
+          true,
+          comment
+        );
+        setClarification('');
         return refreshPipelineState(
           state.data!.workItem,
           { ...state.data!, pipeline: regenerated },
           regenerated
         );
       }
+      const pipeline = await addStageFeedback(state.data!.pipeline!.pipeline_id, currentStageName, comment);
+      setClarification('');
       return refreshPipelineState(
         state.data!.workItem,
         { ...state.data!, pipeline },

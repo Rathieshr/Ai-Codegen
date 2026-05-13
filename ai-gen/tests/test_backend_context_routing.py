@@ -10,11 +10,16 @@ try:
     from backend.app import (
         ContextRequest,
         ExecutionValidationRequest,
+        PipelineCreateRequest,
+        PipelineStageRequest,
         build_context,
         capabilities,
+        create_assistant_pipeline,
         get_handoff_markdown,
+        run_pipeline_stage,
         validate_execution_result,
     )
+    from backend.orchestrator.react_controller import PipelineController
     from backend.repo_context.manager import RepoContextManager
     from backend.repo_context.models import BranchMeta, RepoMeta
     from backend.repo_context.storage import write_json
@@ -25,6 +30,11 @@ except ModuleNotFoundError:
     capabilities = None
     get_handoff_markdown = None
     validate_execution_result = None
+    PipelineCreateRequest = None
+    PipelineStageRequest = None
+    create_assistant_pipeline = None
+    run_pipeline_stage = None
+    PipelineController = None
     RepoContextManager = None
     BranchMeta = None
     RepoMeta = None
@@ -331,6 +341,54 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(handoff["execution_packet"], "Fix the login validation safely.")
         self.assertEqual(handoff["selected_files"], ["src/LoginScreen.tsx"])
         self.assertEqual(handoff["refinement"]["variants"], ["phone_otp"])
+
+    def test_run_stage_regenerate_can_apply_feedback_inline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "backend.app.pipeline_controller",
+            PipelineController(temp_dir),
+        ):
+            pipeline = create_assistant_pipeline(
+                PipelineCreateRequest(
+                    source="azure_devops",
+                    work_item={
+                        "id": 123,
+                        "title": "Ai Gen Extension Test",
+                        "description": "Focus first on phone number input and otp verification step.",
+                        "acceptanceCriteria": "Phone number input is required.",
+                        "tags": ["Android"],
+                    },
+                    refinement={
+                        "base_flows": ["login", "otp_verification"],
+                        "variants": ["phone_otp"],
+                        "surfaces": ["ui_screen"],
+                        "fields": ["phone_number", "otp"],
+                        "validations": ["auth_required"],
+                    },
+                )
+            )
+            pipeline = run_pipeline_stage(
+                pipeline["pipeline_id"],
+                PipelineStageRequest(stage="ba"),
+            )
+            pipeline = run_pipeline_stage(
+                pipeline["pipeline_id"],
+                PipelineStageRequest(
+                    stage="ba",
+                    regenerate=True,
+                    feedback_comment="yes retry policy 3 times max. second factor needed after primary input succeeds. yes otp is needed",
+                    feedback_author="azure_devops",
+                ),
+            )
+
+        self.assertIn("Review clarifications", pipeline["stages"]["ba"]["output"]["refined_requirement"])
+        self.assertNotIn(
+            "Clarify OTP retry and expiry policy.",
+            pipeline["stages"]["ba"]["output"]["unknowns"],
+        )
+        self.assertNotIn(
+            "Is OTP or a second-factor step required after the primary input succeeds?",
+            pipeline["stages"]["ba"]["output"]["unknowns"],
+        )
 
     def test_context_includes_refinement_metadata_when_provider_returns_data(self) -> None:
         refinement_result = {

@@ -266,10 +266,18 @@ export async function createPipeline(workItem: NormalizedWorkItem, response: AiG
   });
 }
 
-export async function runPipelineStage(pipelineId: string, stage: string, regenerate = false): Promise<PipelineState> {
+export async function runPipelineStage(
+  pipelineId: string,
+  stage: string,
+  regenerate = false,
+  feedbackComment?: string,
+  feedbackAuthor = 'azure_devops'
+): Promise<PipelineState> {
   return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/run-stage`, {
     stage,
-    regenerate
+    regenerate,
+    feedback_comment: feedbackComment,
+    feedback_author: feedbackComment ? feedbackAuthor : undefined
   });
 }
 

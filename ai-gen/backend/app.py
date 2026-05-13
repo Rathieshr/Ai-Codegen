@@ -177,6 +177,8 @@ class PipelineCreateRequest(BaseModel):
 class PipelineStageRequest(BaseModel):
     stage: str
     regenerate: bool = False
+    feedback_comment: Optional[str] = None
+    feedback_author: Optional[str] = None
 
 
 class PipelineApproveRequest(BaseModel):
@@ -463,6 +465,13 @@ def create_assistant_pipeline(request: PipelineCreateRequest) -> dict:
 def run_pipeline_stage(pipeline_id: str, request: PipelineStageRequest) -> dict:
     """Run a single stage in the structured assistant pipeline."""
 
+    if request.regenerate and (request.feedback_comment or "").strip():
+        pipeline_controller.add_stage_feedback(
+            pipeline_id,
+            request.stage,
+            request.feedback_comment or "",
+            author=request.feedback_author,
+        )
     return pipeline_controller.run_stage(pipeline_id, request.stage, regenerate=request.regenerate)
 
 

@@ -116,6 +116,48 @@ class ReactControllerTests(unittest.TestCase):
             resolved_types = {finding["type"] for finding in pipeline["stages"]["ba"]["resolved_findings"]}
             self.assertIn("missing_acceptance_criteria", resolved_types)
 
+    def test_ba_regeneration_clears_answered_otp_unknowns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {
+                    "id": 123,
+                    "title": "Ai Gen Extension Test",
+                    "description": "Focus first on phone number input and otp verification step.",
+                    "acceptanceCriteria": "Phone number input is required.",
+                },
+                refinement={
+                    "base_flows": ["login", "otp_verification"],
+                    "variants": ["phone_otp"],
+                    "fields": ["phone_number", "otp"],
+                },
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            self.assertIn(
+                "Is OTP or a second-factor step required after the primary input succeeds?",
+                pipeline["stages"]["ba"]["output"]["unknowns"],
+            )
+            self.assertIn(
+                "Clarify OTP retry and expiry policy.",
+                pipeline["stages"]["ba"]["output"]["unknowns"],
+            )
+
+            pipeline = controller.add_stage_feedback(
+                pipeline["pipeline_id"],
+                "ba",
+                "yes retry policy 3 times max. second factor needed after primary input succeeds. yes otp is needed",
+                "reviewer",
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
+            self.assertNotIn(
+                "Is OTP or a second-factor step required after the primary input succeeds?",
+                pipeline["stages"]["ba"]["output"]["unknowns"],
+            )
+            self.assertNotIn(
+                "Clarify OTP retry and expiry policy.",
+                pipeline["stages"]["ba"]["output"]["unknowns"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

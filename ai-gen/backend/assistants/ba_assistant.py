@@ -29,6 +29,7 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None, review_con
         + _detect_unknowns(combined, variant)
         + _reviewer_unknowns(review_context)
     )
+    unknowns = _filter_answered_unknowns(unknowns, review_context)
     refined_requirement = _refined_requirement(title, description, refinement)
     if review_context.get("review_feedback"):
         refined_requirement = f"{refined_requirement.rstrip('.')} Review clarifications: {_feedback_summary(review_context)}."
@@ -78,6 +79,75 @@ def _feedback_summary(review_context: dict[str, Any]) -> str:
 
 def _reviewer_unknowns(review_context: dict[str, Any]) -> list[str]:
     return [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", []) if item.get("severity") == "blocking"]
+
+
+def _filter_answered_unknowns(unknowns: list[str], review_context: dict[str, Any]) -> list[str]:
+    feedback_text = " ".join(
+        str(item.get("comment", "")).strip().lower()
+        for item in review_context.get("review_feedback", [])
+        if str(item.get("comment", "")).strip()
+    )
+    if not feedback_text:
+        return unknowns
+
+    filtered: list[str] = []
+    for unknown in unknowns:
+        if _is_answered_unknown(str(unknown), feedback_text):
+            continue
+        filtered.append(unknown)
+    return filtered
+
+
+def _is_answered_unknown(unknown: str, feedback_text: str) -> bool:
+    question = unknown.strip().lower()
+    if not question:
+        return False
+
+    if ("otp" in question or "second-factor" in question or "second factor" in question) and any(
+        phrase in feedback_text
+        for phrase in [
+            "otp is needed",
+            "otp is required",
+            "otp needed",
+            "otp required",
+            "second factor needed",
+            "second-factor needed",
+            "second factor required",
+            "second-factor required",
+            "verification code is needed",
+            "verification code is required",
+        ]
+    ):
+        return True
+
+    if "retry" in question and any(
+        phrase in feedback_text
+        for phrase in [
+            "retry policy",
+            "retry allowed",
+            "retry limit",
+            "3 times",
+            "3 attempts",
+            "three times",
+            "three attempts",
+            "max 3",
+            "maximum 3",
+        ]
+    ):
+        return True
+
+    if "expiry" in question and "expiry" in feedback_text:
+        return True
+
+    if "filters" in question and any(phrase in feedback_text for phrase in ["filter", "filters"]):
+        return True
+
+    if "who is allowed to approve" in question and any(
+        phrase in feedback_text for phrase in ["admin", "manager", "approver", "reviewer", "allowed to approve"]
+    ):
+        return True
+
+    return False
 
 
 def _refined_requirement(title: str, description: str, refinement: dict[str, Any]) -> str:
@@ -170,6 +240,8 @@ def _detect_unknowns(text: str, variant: str | None) -> list[str]:
     unknowns: list[str] = []
     if "otp" in lowered or variant in {"phone_number", "phone_otp", "otp_only"}:
         unknowns.append("Is OTP or a second-factor step required after the primary input succeeds?")
+        if "retry" not in lowered and "attempt" not in lowered and "expire" not in lowered and "expiry" not in lowered:
+            unknowns.append("Clarify OTP retry and expiry policy.")
     if "dashboard" in lowered and "filter" in lowered:
         unknowns.append("Which filters are required in the first release?")
     if "approval" in lowered:

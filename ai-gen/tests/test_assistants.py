@@ -34,6 +34,41 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(output["variant"], "phone_otp")
         self.assertEqual(output["flows"], ["login", "otp_verification"])
 
+    def test_ba_assistant_resolves_answered_otp_unknowns_from_review_feedback(self) -> None:
+        output = run_ba_assistant(
+            {
+                "title": "Ai Gen Extension Test",
+                "description": "Focus first on phone number input and otp verification step.",
+                "acceptanceCriteria": "",
+                "tags": ["auth"],
+            },
+            {
+                "base_flows": ["login", "otp_verification"],
+                "variants": ["phone_otp"],
+                "fields": ["phone_number", "otp"],
+            },
+            {
+                "review_feedback": [
+                    {
+                        "comment": "yes retry policy 3 times max. second factor needed after primary input succeeds. yes otp is needed"
+                    }
+                ],
+                "critic_findings": [
+                    {
+                        "severity": "blocking",
+                        "message": "Clarify OTP retry and expiry policy.",
+                    },
+                    {
+                        "severity": "blocking",
+                        "message": "Is OTP or a second-factor step required after the primary input succeeds?",
+                    },
+                ],
+            },
+        )
+        self.assertNotIn("Is OTP or a second-factor step required after the primary input succeeds?", output["unknowns"])
+        self.assertNotIn("Clarify OTP retry and expiry policy.", output["unknowns"])
+        self.assertIn("Review clarifications", output["refined_requirement"])
+
     def test_ui_assistant_outputs_fields_and_states(self) -> None:
         ba_output = {
             "refined_requirement": "Add a login screen with phone number.",

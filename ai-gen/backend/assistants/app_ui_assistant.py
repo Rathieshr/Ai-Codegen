@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 
-def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None) -> dict:
+def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None, review_context: dict | None = None) -> dict:
     """Generate structured UI guidance without generating code."""
 
     refinement = refinement or {}
+    review_context = review_context or {}
     base_flow = _first(ba_output.get("flows", [])) or _first(refinement.get("base_flows", [])) or refinement.get("refined_base_flow") or "workflow"
     surface = _first(refinement.get("surfaces", [])) or refinement.get("refined_surface") or refinement.get("surface") or ""
-    fields = _build_fields(ba_output, refinement)
+    fields = _build_fields(ba_output, refinement, review_context)
     screen_type = _screen_type(surface, ba_output)
     screen_name = _screen_name(base_flow, screen_type)
     platform = _platform(surface, ba_output)
@@ -42,7 +43,11 @@ def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None) -> dic
         "states": _states(screen_type),
         "ux_notes": _ux_notes(ba_output, refinement),
         "accessibility_notes": _accessibility_notes(fields),
-        "unknowns": _dedupe(list(ba_output.get("unknowns", [])) + list(refinement.get("refinement_unknowns", []))),
+        "unknowns": _dedupe(
+            list(ba_output.get("unknowns", []))
+            + list(refinement.get("refinement_unknowns", []))
+            + [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])]
+        ),
         "skippable": skippable,
         "skip_reason": "No dedicated UI surface is required for this task." if skippable else "",
         "react": {
@@ -55,9 +60,15 @@ def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None) -> dic
     return output
 
 
-def _build_fields(ba_output: dict, refinement: dict) -> list[dict]:
+def _build_fields(ba_output: dict, refinement: dict, review_context: dict) -> list[dict]:
     names = list(refinement.get("refined_fields", [])) or list(refinement.get("fields", []))
     validations = list(refinement.get("refined_validations", [])) or list(refinement.get("validations", []))
+    previous_output = review_context.get("previous_output", {})
+    if not names and isinstance(previous_output, dict):
+        names = [field.get("name", "") for field in previous_output.get("fields", []) if field.get("name")]
+    if not validations and isinstance(previous_output, dict):
+        for field in previous_output.get("fields", []):
+            validations.extend(field.get("validation", []))
     if not names:
         requirement = str(ba_output.get("refined_requirement", "")).lower()
         if "email" in requirement:

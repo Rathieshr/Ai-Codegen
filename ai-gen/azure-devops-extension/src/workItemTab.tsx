@@ -5,6 +5,7 @@ import {
   clearGeneratedState,
   AiGenState,
   approvePipelineStage,
+  addStageFeedback,
   buildVsCodeHandoffLink,
   createPipeline,
   getCurrentWorkItem,
@@ -38,6 +39,7 @@ function WorkItemTab() {
     error: '',
     data: loadGeneratedState()
   });
+  const [clarification, setClarification] = useState('');
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
@@ -118,6 +120,11 @@ function WorkItemTab() {
   const canApprove = Boolean(currentStageName && allowedActions?.approve_stages?.includes(currentStageName));
   const canSkipUi = Boolean(allowedActions?.skip_stages?.includes('ui') && currentStageName === 'ui');
   const canViewHandoff = Boolean(currentStageName && allowedActions?.view_handoff_stages?.includes(currentStageName));
+  const canAddFeedback = Boolean(currentStageName && allowedActions?.feedback_stages?.includes(currentStageName));
+  const unresolvedFindings = Array.isArray(currentStage?.unresolved_findings) ? currentStage?.unresolved_findings as Array<Record<string, unknown>> : [];
+  const blockingFindings = unresolvedFindings.filter((finding) => String(finding.severity || '') === 'blocking');
+  const warningFindings = unresolvedFindings.filter((finding) => String(finding.severity || '') === 'warning');
+  const suggestionFindings = unresolvedFindings.filter((finding) => String(finding.severity || '') === 'suggestion');
 
   async function refresh() {
     setState((current) => ({ ...current, loading: true, loadingMessage: 'Refreshing...', error: '' }));
@@ -219,6 +226,30 @@ function WorkItemTab() {
     setState((current) => ({ ...current, loadingMessage: 'Skipping UI...' }));
     await withPipelineUpdate(async () => {
       const pipeline = await skipPipelineStage(state.data!.pipeline!.pipeline_id, 'ui', 'backend-only task');
+      return refreshPipelineState(
+        state.data!.workItem,
+        { ...state.data!, pipeline },
+        pipeline
+      );
+    });
+  }
+
+  async function addClarification(andRegenerate = false) {
+    if (!state.data?.pipeline || !currentStageName || !clarification.trim()) {
+      return;
+    }
+    setState((current) => ({ ...current, loadingMessage: andRegenerate ? 'Regenerating with clarifications...' : 'Saving clarification...' }));
+    await withPipelineUpdate(async () => {
+      const pipeline = await addStageFeedback(state.data!.pipeline!.pipeline_id, currentStageName, clarification.trim());
+      setClarification('');
+      if (andRegenerate) {
+        const regenerated = await runPipelineStage(pipeline.pipeline_id, currentStageName, true);
+        return refreshPipelineState(
+          state.data!.workItem,
+          { ...state.data!, pipeline: regenerated },
+          regenerated
+        );
+      }
       return refreshPipelineState(
         state.data!.workItem,
         { ...state.data!, pipeline },
@@ -329,6 +360,12 @@ function WorkItemTab() {
                 </ul>
               </div>
             ) : null}
+            {currentStage?.status === 'needs_revision' ? (
+              <div className="ai-gen-warning">
+                <div className="ai-gen-key">Needs Revision</div>
+                <div>AI identified ambiguities requiring clarification before approval.</div>
+              </div>
+            ) : null}
             <div className="ai-gen-actions ai-gen-actions-compact">
               {canGenerate ? (
                 <button className="ai-gen-button" onClick={() => generateStage(false)} disabled={state.loading}>
@@ -364,6 +401,21 @@ function WorkItemTab() {
                 </button>
               ) : null}
             </div>
+            {currentStage ? (
+              <FeedbackPanel
+                blockingFindings={blockingFindings}
+                warningFindings={warningFindings}
+                suggestionFindings={suggestionFindings}
+                reviewFeedback={currentStage.review_feedback || []}
+                clarification={clarification}
+                onClarificationChange={setClarification}
+                onAddClarification={() => addClarification(false)}
+                onRegenerateWithClarifications={() => addClarification(true)}
+                canAddFeedback={canAddFeedback}
+                canRegenerate={canRegenerate}
+                loading={state.loading}
+              />
+            ) : null}
             {currentStage ? <StagePanel stage={currentStageName} stageState={currentStage} /> : null}
             <PipelineHandoff handoff={state.data?.handoff} />
           </>
@@ -440,6 +492,81 @@ function WorkItemTab() {
         </p>
       </section>
     </main>
+  );
+}
+
+function FeedbackPanel({
+  blockingFindings,
+  warningFindings,
+  suggestionFindings,
+  reviewFeedback,
+  clarification,
+  onClarificationChange,
+  onAddClarification,
+  onRegenerateWithClarifications,
+  canAddFeedback,
+  canRegenerate,
+  loading,
+}: {
+  blockingFindings: Array<Record<string, unknown>>;
+  warningFindings: Array<Record<string, unknown>>;
+  suggestionFindings: Array<Record<string, unknown>>;
+  reviewFeedback: Array<{ id: string; author: string; timestamp: string; comment: string }>;
+  clarification: string;
+  onClarificationChange: (value: string) => void;
+  onAddClarification: () => void;
+  onRegenerateWithClarifications: () => void;
+  canAddFeedback: boolean;
+  canRegenerate: boolean;
+  loading: boolean;
+}) {
+  return (
+    <div className="ai-gen-stage-panel">
+      {blockingFindings.length ? <FindingSection title="Blocking Issues" items={blockingFindings} /> : null}
+      {warningFindings.length ? <FindingSection title="Warnings" items={warningFindings} /> : null}
+      {suggestionFindings.length ? <FindingSection title="Suggestions" items={suggestionFindings} /> : null}
+      <details open className="ai-gen-detail-block">
+        <summary>Reviewer Clarifications</summary>
+        <textarea
+          className="ai-gen-textarea"
+          value={clarification}
+          onChange={(event) => onClarificationChange(event.target.value)}
+          placeholder="Answer critic questions or add reviewer guidance for this stage."
+        />
+        <div className="ai-gen-actions ai-gen-actions-compact">
+          <button className="ai-gen-button secondary" onClick={onAddClarification} disabled={loading || !canAddFeedback || !clarification.trim()}>
+            Add Clarification
+          </button>
+          <button className="ai-gen-button" onClick={onRegenerateWithClarifications} disabled={loading || !canRegenerate || !clarification.trim()}>
+            Regenerate with Clarifications
+          </button>
+        </div>
+        {reviewFeedback.length ? (
+          <ul className="ai-gen-list">
+            {reviewFeedback.slice(-4).reverse().map((item) => (
+              <li key={item.id}>
+                <strong>{item.author}</strong>: {item.comment}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="ai-gen-muted">No reviewer clarifications yet.</div>
+        )}
+      </details>
+    </div>
+  );
+}
+
+function FindingSection({ title, items }: { title: string; items: Array<Record<string, unknown>> }) {
+  return (
+    <div className="ai-gen-warning">
+      <div className="ai-gen-key">{title}</div>
+      <ul className="ai-gen-list">
+        {items.map((item) => (
+          <li key={String(item.id || item.message || Math.random())}>{String(item.message || 'Review needed')}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -665,8 +792,9 @@ function stageSummary(stage: string, stageState: PipelineStageState): string {
 }
 
 function stageBlockingIssues(stageState: PipelineStageState): string[] {
-  const criticFindings = Array.isArray(stageState.critic?.findings) ? stageState.critic?.findings : [];
+  const criticFindings = Array.isArray(stageState.unresolved_findings) ? stageState.unresolved_findings : [];
   const criticIssues = criticFindings
+    .filter((finding) => String((finding as Record<string, unknown>).severity || '') === 'blocking')
     .map((finding) => String((finding as Record<string, unknown>).message || 'Review needed'))
     .filter(Boolean);
   const outputUnknowns = Array.isArray(stageState.output?.unknowns) ? stageState.output.unknowns.map((item) => String(item)) : [];
@@ -683,6 +811,9 @@ function stageNextAction(
   }
   if (flags.canGenerate) {
     return `Generate ${formatStageName(stage)} output.`;
+  }
+  if (stageState.status === 'needs_revision') {
+    return 'Add clarification or regenerate with reviewer context.';
   }
   if (flags.canApprove) {
     return `Approve ${formatStageName(stage)} and continue.`;

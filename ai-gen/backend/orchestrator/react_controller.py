@@ -20,7 +20,7 @@ from backend.orchestrator.approval_gate import (
     can_run_stage,
     skip_stage as apply_skip,
 )
-from backend.orchestrator.pipeline_state import PipelineState, StageState, create_initial_pipeline_state, utc_now
+from backend.orchestrator.pipeline_state import PipelineState, StageFeedback, StageState, create_initial_pipeline_state, utc_now
 from backend.repo_context.storage import read_json, write_json
 
 
@@ -66,14 +66,18 @@ class PipelineController:
             raise ValueError(reason)
         stage_state = state.stages[stage]
         stage_state.version = stage_state.version + 1 if regenerate or stage_state.version else 1
-        output = self._run_stage_output(state, stage)
+        review_context = self._build_review_context(stage_state) if regenerate else None
+        output = self._run_stage_output(state, stage, review_context=review_context)
         critic = self._run_critic_for_stage(stage, output, state)
+        unresolved, resolved = self._split_findings(stage_state, critic)
         stage_state.output = output
         stage_state.critic = critic
         stage_state.status = "needs_revision" if critic.get("decision") == "needs_revision" else "generated"
         stage_state.approved = False
         stage_state.approved_at = None
         stage_state.approved_by = None
+        stage_state.unresolved_findings = unresolved
+        stage_state.resolved_findings = resolved
         handoff = build_handoff(
             pipeline_state=state,
             stage=stage,
@@ -114,6 +118,25 @@ class PipelineController:
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
 
+    def add_stage_feedback(self, pipeline_id: str, stage: str, comment: str, author: str | None = None) -> dict:
+        state = self.load_pipeline(pipeline_id)
+        stage_state = state.stages.get(stage)
+        if stage_state is None:
+            raise ValueError(f"Unknown stage: {stage}")
+        normalized = str(comment).strip()
+        if not normalized:
+            raise ValueError("Feedback comment is required.")
+        feedback = StageFeedback(
+            id=f"feedback_{uuid4().hex[:12]}",
+            author=(author or "reviewer").strip() or "reviewer",
+            timestamp=utc_now(),
+            comment=normalized,
+        )
+        stage_state.review_feedback.append(feedback)
+        self._touch_pipeline(state)
+        self.save_pipeline(state)
+        return self._serialize_pipeline(state)
+
     def load_pipeline(self, pipeline_id: str) -> PipelineState:
         data = read_json(self.root / f"{pipeline_id}.json", default=None)
         if not data:
@@ -141,24 +164,26 @@ class PipelineController:
                 latest_state = state
         return latest_state
 
-    def _run_stage_output(self, state: PipelineState, stage: str) -> dict:
+    def _run_stage_output(self, state: PipelineState, stage: str, review_context: dict | None = None) -> dict:
         if stage == "ba":
-            return run_ba_assistant(state.work_item, state.refinement)
+            return run_ba_assistant(state.work_item, state.refinement, review_context=review_context)
         if stage == "ui":
             ba_output = state.stages["ba"].output
-            return run_app_ui_assistant(ba_output, state.refinement)
+            return run_app_ui_assistant(ba_output, state.refinement, review_context=review_context)
         if stage == "dev":
             return run_dev_assistant(
                 ba_output=state.stages["ba"].output,
                 ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
                 repo_context=state.repo_context,
                 refinement=state.refinement,
+                review_context=review_context,
             )
         if stage == "test":
             return run_test_assistant(
                 ba_output=state.stages["ba"].output,
                 dev_output=state.stages["dev"].output,
                 ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
+                review_context=review_context,
             )
         if stage == "critic":
             return run_critic_assistant(
@@ -198,6 +223,28 @@ class PipelineController:
         state.version += 1
         state.updated_at = utc_now()
 
+    def _build_review_context(self, stage_state: StageState) -> dict:
+        return {
+            "previous_output": stage_state.output or {},
+            "critic_findings": [finding for finding in stage_state.unresolved_findings if finding.get("status", "open") == "open"],
+            "review_feedback": [feedback.to_dict() for feedback in stage_state.review_feedback],
+        }
+
+    def _split_findings(self, stage_state: StageState, critic: dict) -> tuple[list[dict], list[dict]]:
+        current = []
+        for finding in critic.get("findings", []):
+            item = dict(finding)
+            item["status"] = "open"
+            current.append(item)
+        current_ids = {finding.get("id") for finding in current}
+        resolved = [dict(finding) for finding in stage_state.resolved_findings]
+        for previous in stage_state.unresolved_findings:
+            if previous.get("id") not in current_ids:
+                item = dict(previous)
+                item["status"] = "resolved"
+                resolved.append(item)
+        return current, _dedupe_findings(resolved)
+
     def _serialize_pipeline(self, state: PipelineState) -> dict:
         data = state.to_dict()
         data["allowed_actions"] = self._allowed_actions(state)
@@ -210,16 +257,34 @@ class PipelineController:
             "approve_stages": [],
             "skip_stages": [],
             "view_handoff_stages": [],
+            "feedback_stages": [],
         }
         for stage_name, stage_state in state.stages.items():
             if stage_state.status != "locked" and not stage_state.approved:
                 actions["generate_stages"].append(stage_name)
             if stage_state.status in {"generated", "needs_revision", "approved"}:
                 actions["regenerate_stages"].append(stage_name)
-            if bool(stage_state.output) and stage_state.status != "locked" and not stage_state.approved:
+            has_blocking_findings = any(
+                finding.get("severity") == "blocking" and finding.get("status", "open") == "open"
+                for finding in stage_state.unresolved_findings
+            )
+            if bool(stage_state.output) and stage_state.status != "locked" and not stage_state.approved and not has_blocking_findings:
                 actions["approve_stages"].append(stage_name)
             if stage_name == "ui" and stage_state.status != "locked" and not stage_state.approved:
                 actions["skip_stages"].append(stage_name)
             if stage_state.handoff_id:
                 actions["view_handoff_stages"].append(stage_name)
+            if stage_state.status != "locked":
+                actions["feedback_stages"].append(stage_name)
         return actions
+
+
+def _dedupe_findings(findings: list[dict]) -> list[dict]:
+    output: list[dict] = []
+    seen: set[str] = set()
+    for finding in findings:
+        finding_id = str(finding.get("id", "")).strip()
+        if finding_id and finding_id not in seen:
+            seen.add(finding_id)
+            output.append(finding)
+    return output

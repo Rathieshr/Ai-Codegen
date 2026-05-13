@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 
-def run_ba_assistant(work_item: dict, refinement: dict | None = None) -> dict:
+def run_ba_assistant(work_item: dict, refinement: dict | None = None, review_context: dict | None = None) -> dict:
     """Build a deterministic BA artifact from work item text and optional refinement."""
 
     refinement = refinement or {}
+    review_context = review_context or {}
     title = _text(work_item, "title")
     description = _text(work_item, "description")
     acceptance_text = _text(work_item, "acceptanceCriteria") or _text(work_item, "acceptance_criteria")
@@ -21,13 +22,16 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None) -> dict:
     actors = _infer_actors(combined)
     flows = _dedupe(refined_flows + ([base_flow] if base_flow else []))
     business_rules = _business_rules(combined, refinement)
-    acceptance_criteria = _parse_acceptance_criteria(acceptance_text, refinement)
+    acceptance_criteria = _parse_acceptance_criteria(acceptance_text, refinement, review_context)
     unknowns = _dedupe(
         list(refinement.get("refinement_unknowns", []))
         + list(refinement.get("unknowns", []))
         + _detect_unknowns(combined, variant)
+        + _reviewer_unknowns(review_context)
     )
     refined_requirement = _refined_requirement(title, description, refinement)
+    if review_context.get("review_feedback"):
+        refined_requirement = f"{refined_requirement.rstrip('.')} Review clarifications: {_feedback_summary(review_context)}."
 
     reason = {
         "known": _dedupe(
@@ -65,6 +69,15 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None) -> dict:
             "decision": "ready_for_approval" if refined_requirement else "needs_revision",
         },
     }
+
+
+def _feedback_summary(review_context: dict[str, Any]) -> str:
+    comments = [str(item.get("comment", "")).strip() for item in review_context.get("review_feedback", [])]
+    return "; ".join(comment for comment in comments[:2] if comment)
+
+
+def _reviewer_unknowns(review_context: dict[str, Any]) -> list[str]:
+    return [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", []) if item.get("severity") == "blocking"]
 
 
 def _refined_requirement(title: str, description: str, refinement: dict[str, Any]) -> str:
@@ -129,7 +142,7 @@ def _business_rules(text: str, refinement: dict[str, Any]) -> list[str]:
     return _dedupe(rules)
 
 
-def _parse_acceptance_criteria(text: str, refinement: dict[str, Any]) -> list[str]:
+def _parse_acceptance_criteria(text: str, refinement: dict[str, Any], review_context: dict[str, Any]) -> list[str]:
     items: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.strip().lstrip("-*0123456789. ").strip()
@@ -145,6 +158,10 @@ def _parse_acceptance_criteria(text: str, refinement: dict[str, Any]) -> list[st
         variants = list(refinement.get("refined_variants", [])) or list(refinement.get("variants", []))
         if "phone_otp" in variants:
             items.append("Authenticate the user with phone number entry followed by OTP verification.")
+    for feedback in review_context.get("review_feedback", []):
+        comment = str(feedback.get("comment", "")).strip()
+        if comment and ("acceptance criteria" in comment.lower() or "acceptance:" in comment.lower()):
+            items.append(comment.rstrip(".") + ".")
     return _dedupe(items)
 
 

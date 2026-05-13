@@ -65,6 +65,9 @@ export type PipelineStageState = {
   critic?: Record<string, unknown> | null;
   handoff_id?: string | null;
   skip_reason?: string | null;
+  review_feedback?: Array<{ id: string; author: string; timestamp: string; comment: string }>;
+  unresolved_findings?: Array<Record<string, unknown>>;
+  resolved_findings?: Array<Record<string, unknown>>;
 };
 
 export type PipelineState = {
@@ -82,6 +85,7 @@ export type PipelineState = {
     approve_stages?: string[];
     skip_stages?: string[];
     view_handoff_stages?: string[];
+    feedback_stages?: string[];
   };
   work_item?: Record<string, unknown>;
   repo_context?: Record<string, unknown>;
@@ -298,6 +302,19 @@ export async function skipPipelineStage(pipelineId: string, stage: string, reaso
   return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/skip-stage`, {
     stage,
     reason
+  });
+}
+
+export async function addStageFeedback(
+  pipelineId: string,
+  stage: string,
+  comment: string,
+  author = 'azure_devops'
+): Promise<PipelineState> {
+  return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/stage-feedback`, {
+    stage,
+    comment,
+    author
   });
 }
 

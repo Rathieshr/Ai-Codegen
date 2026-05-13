@@ -28,6 +28,13 @@ def approve_stage(pipeline_state: PipelineState, stage: str, approved_by: str | 
         raise ValueError(f"Stage {stage} is locked.")
     if not stage_state.output:
         raise ValueError(f"Stage {stage} has no output to approve.")
+    blocking_findings = [
+        finding
+        for finding in stage_state.unresolved_findings
+        if finding.get("severity") == "blocking" and finding.get("status", "open") == "open"
+    ]
+    if blocking_findings:
+        raise ValueError(f"Stage {stage} still has blocking critic findings.")
 
     stage_state.status = "approved"
     stage_state.approved = True

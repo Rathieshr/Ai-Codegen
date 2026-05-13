@@ -107,6 +107,8 @@ class AssistantTests(unittest.TestCase):
         finding_types = {item["type"] for item in critic["findings"]}
         self.assertIn("conflict", finding_types)
         self.assertIn("missing_critical_field", finding_types)
+        severities = {item["severity"] for item in critic["findings"]}
+        self.assertIn("blocking", severities)
 
 
 if __name__ == "__main__":

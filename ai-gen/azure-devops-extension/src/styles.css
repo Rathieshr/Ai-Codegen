@@ -135,3 +135,15 @@ body {
   border-radius: 6px;
   background: #fff4ce;
 }
+
+.ai-gen-textarea {
+  width: 100%;
+  min-height: 88px;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid #c8c6c4;
+  border-radius: 6px;
+  resize: vertical;
+  margin-top: 8px;
+  font: inherit;
+}

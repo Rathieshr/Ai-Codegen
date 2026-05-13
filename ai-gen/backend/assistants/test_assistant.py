@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 
-def run_test_assistant(ba_output: dict, dev_output: dict, ui_output: dict | None = None) -> dict:
+def run_test_assistant(ba_output: dict, dev_output: dict, ui_output: dict | None = None, review_context: dict | None = None) -> dict:
     """Generate structured test ideas from approved BA and dev outputs."""
 
     acceptance = list(ba_output.get("acceptance_criteria", []))
+    review_context = review_context or {}
     fields = [field.get("name", "") for field in (ui_output or {}).get("fields", []) if field.get("name")]
     flow = dev_output.get("flow") or _first(ba_output.get("flows", [])) or "feature"
     variants = list(dev_output.get("variants", [])) or list(ba_output.get("variants", []))
@@ -55,7 +56,10 @@ def run_test_assistant(ba_output: dict, dev_output: dict, ui_output: dict | None
         "assistant": "test",
         "test_cases": test_cases,
         "coverage_notes": _coverage_notes(fields, acceptance),
-        "unknowns": list(ba_output.get("unknowns", []))[:4],
+        "unknowns": _dedupe(
+            list(ba_output.get("unknowns", []))[:4]
+            + [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])]
+        )[:4],
         "react": {
             "reason": reason,
             "act": act,

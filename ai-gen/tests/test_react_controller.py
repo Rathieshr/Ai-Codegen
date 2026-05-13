@@ -71,6 +71,51 @@ class ReactControllerTests(unittest.TestCase):
             self.assertIsNotNone(latest)
             self.assertEqual(latest["pipeline_id"], second["pipeline_id"])
 
+    def test_feedback_is_stored_and_regenerate_uses_feedback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {
+                    "id": 123,
+                    "title": "Add login screen",
+                    "description": "Use phone login.",
+                    "acceptanceCriteria": "",
+                },
+                refinement={"base_flows": ["login"], "variants": ["phone_otp"]},
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            pipeline = controller.add_stage_feedback(pipeline["pipeline_id"], "ba", "Clarify that OTP is required after phone entry.", "reviewer")
+            self.assertEqual(pipeline["stages"]["ba"]["review_feedback"][0]["comment"], "Clarify that OTP is required after phone entry.")
+
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
+            self.assertIn("Review clarifications", pipeline["stages"]["ba"]["output"]["refined_requirement"])
+
+    def test_regeneration_resolves_matching_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {
+                    "id": 123,
+                    "title": "Clarify onboarding flow",
+                    "description": "Support the new entry path.",
+                    "acceptanceCriteria": "",
+                },
+                refinement={},
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            self.assertTrue(pipeline["stages"]["ba"]["unresolved_findings"])
+            finding_types = {finding["type"] for finding in pipeline["stages"]["ba"]["unresolved_findings"]}
+            self.assertIn("missing_acceptance_criteria", finding_types)
+            pipeline = controller.add_stage_feedback(
+                pipeline["pipeline_id"],
+                "ba",
+                "Acceptance criteria: User can start the entry flow and reach the expected success state.",
+                "reviewer",
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
+            resolved_types = {finding["type"] for finding in pipeline["stages"]["ba"]["resolved_findings"]}
+            self.assertIn("missing_acceptance_criteria", resolved_types)
+
 
 if __name__ == "__main__":
     unittest.main()

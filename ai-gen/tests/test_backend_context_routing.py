@@ -412,6 +412,32 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["changed_files_count"], 1)
         self.assertIn("login", data["related_flows"])
 
+    def test_stage_feedback_endpoint_stores_feedback(self) -> None:
+        from backend.app import (
+            PipelineCreateRequest,
+            PipelineStageFeedbackRequest,
+            add_pipeline_stage_feedback,
+            create_assistant_pipeline,
+            run_pipeline_stage,
+            PipelineStageRequest,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch("backend.app.pipeline_controller", pipeline_controller := type("Holder", (), {})()):
+            from backend.orchestrator.react_controller import PipelineController
+
+            controller = PipelineController(temp_dir)
+            pipeline_controller.create_pipeline = controller.create_pipeline
+            pipeline_controller.run_stage = controller.run_stage
+            pipeline_controller.add_stage_feedback = controller.add_stage_feedback
+            pipeline = create_assistant_pipeline(PipelineCreateRequest(work_item={"id": 123, "title": "Add login screen"}))
+            run_pipeline_stage(pipeline["pipeline_id"], PipelineStageRequest(stage="ba"))
+            updated = add_pipeline_stage_feedback(
+                pipeline["pipeline_id"],
+                PipelineStageFeedbackRequest(stage="ba", comment="Clarify acceptance criteria", author="reviewer"),
+            )
+
+        self.assertEqual(updated["stages"]["ba"]["review_feedback"][0]["comment"], "Clarify acceptance criteria")
+
 
 if __name__ == "__main__":
     unittest.main()

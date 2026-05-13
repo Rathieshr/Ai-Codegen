@@ -12,16 +12,18 @@ def run_dev_assistant(
     ui_output: dict | None,
     repo_context: dict | None = None,
     refinement: dict | None = None,
+    review_context: dict | None = None,
 ) -> dict:
     """Build an executor-agnostic development packet from approved upstream artifacts."""
 
     repo_context = repo_context or {}
     refinement = refinement or {}
+    review_context = review_context or {}
     flow = _first(ba_output.get("flows", [])) or _first(refinement.get("base_flows", [])) or refinement.get("refined_base_flow") or refinement.get("base_flow")
     variant = _first(ba_output.get("variants", [])) or ba_output.get("variant") or _first(refinement.get("variants", [])) or refinement.get("refined_variant") or refinement.get("variant")
     surface = _first(refinement.get("surfaces", [])) or refinement.get("refined_surface") or refinement.get("surface") or _infer_surface(ui_output)
-    scope = _build_scope(ba_output, ui_output, refinement)
-    constraints = _build_constraints(ba_output, flow)
+    scope = _build_scope(ba_output, ui_output, refinement, review_context)
+    constraints = _build_constraints(ba_output, flow, review_context)
     likely_breakpoints = list(repo_context.get("likely_bug_hotspots", []))[:3]
     selected_files = _select_files(repo_context, flow)
     related_flows = list(repo_context.get("related_flows", []))
@@ -44,7 +46,11 @@ def run_dev_assistant(
             "validations": _field_validations(ui_output, refinement),
             "first_pass_scope": scope,
             "scope_hints": scope,
-            "unknowns": _dedupe(list(ba_output.get("unknowns", [])) + list(refinement.get("refinement_unknowns", []))),
+            "unknowns": _dedupe(
+                list(ba_output.get("unknowns", []))
+                + list(refinement.get("refinement_unknowns", []))
+                + [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])]
+            ),
             "focus_rules": _focus_rules(flow, surface),
         },
     )
@@ -86,18 +92,22 @@ def run_dev_assistant(
     }
 
 
-def _build_scope(ba_output: dict, ui_output: dict | None, refinement: dict) -> list[str]:
+def _build_scope(ba_output: dict, ui_output: dict | None, refinement: dict, review_context: dict) -> list[str]:
     scope = list(refinement.get("refined_scope", [])) or list(refinement.get("first_pass_scope", []))
+    previous_output = review_context.get("previous_output", {})
+    if not scope and isinstance(previous_output, dict):
+        scope.extend(previous_output.get("scope", [])[:4])
     if ui_output and not ui_output.get("skippable"):
         if ui_output.get("screen_name"):
             scope.append(ui_output["screen_name"])
         scope.extend(ui_output.get("actions", [])[:2])
     if not scope:
         scope.extend(ba_output.get("acceptance_criteria", [])[:3])
+    scope.extend(str(item.get("comment", "")).strip() for item in review_context.get("review_feedback", []))
     return _dedupe(scope)[:6]
 
 
-def _build_constraints(ba_output: dict, flow: str | None) -> list[str]:
+def _build_constraints(ba_output: dict, flow: str | None, review_context: dict) -> list[str]:
     constraints = list(ba_output.get("business_rules", []))
     if flow in {"login", "signup", "session"}:
         constraints.extend(
@@ -108,6 +118,7 @@ def _build_constraints(ba_output: dict, flow: str | None) -> list[str]:
         )
     if flow == "payment":
         constraints.append("Do not mark payment as successful before verification completes.")
+    constraints.extend(str(item.get("message", "")).strip() for item in review_context.get("critic_findings", []) if item.get("severity") == "blocking")
     return _dedupe(constraints)[:6]
 
 

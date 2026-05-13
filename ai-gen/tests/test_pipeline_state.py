@@ -47,6 +47,22 @@ class PipelineStateTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn("already approved", reason)
 
+    def test_blocking_findings_prevent_approval(self) -> None:
+        self.pipeline.stages["ba"].output = {"assistant": "ba"}
+        self.pipeline.stages["ba"].unresolved_findings = [
+            {"id": "finding_1", "severity": "blocking", "status": "open", "message": "Need acceptance criteria."}
+        ]
+        with self.assertRaises(ValueError):
+            approve_stage(self.pipeline, "ba")
+
+    def test_warnings_allow_approval(self) -> None:
+        self.pipeline.stages["ba"].output = {"assistant": "ba"}
+        self.pipeline.stages["ba"].unresolved_findings = [
+            {"id": "finding_1", "severity": "warning", "status": "open", "message": "Review wording."}
+        ]
+        updated = approve_stage(self.pipeline, "ba")
+        self.assertTrue(updated.stages["ba"].approved)
+
 
 if __name__ == "__main__":
     unittest.main()

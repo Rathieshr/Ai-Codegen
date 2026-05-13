@@ -49,8 +49,6 @@ def run_critic_assistant(
 
     overall_risk = _overall_risk(findings)
     decision = "approve_candidate" if not findings else "needs_revision"
-    if any(item["severity"] == "high" for item in findings):
-        decision = "needs_revision"
     return {
         "assistant": "critic",
         "overall_risk": overall_risk,
@@ -72,17 +70,19 @@ def run_critic_assistant(
 
 def _finding(finding_type: str, severity: str, message: str, target_stage: str) -> dict:
     return {
+        "id": _finding_id(finding_type, target_stage, message),
         "type": finding_type,
-        "severity": severity,
+        "severity": _normalize_severity(severity),
         "message": message,
         "target_stage": target_stage,
+        "status": "open",
     }
 
 
 def _overall_risk(findings: list[dict]) -> str:
-    if any(item["severity"] == "high" for item in findings):
+    if any(item["severity"] == "blocking" for item in findings):
         return "high"
-    if any(item["severity"] == "medium" for item in findings):
+    if any(item["severity"] == "warning" for item in findings):
         return "medium"
     return "low"
 
@@ -148,3 +148,24 @@ def _dedupe(values: list[str]) -> list[str]:
         if normalized and normalized not in output:
             output.append(normalized)
     return output
+
+
+def _normalize_severity(severity: str) -> str:
+    mapping = {
+        "high": "blocking",
+        "medium": "warning",
+        "low": "suggestion",
+        "blocking": "blocking",
+        "warning": "warning",
+        "suggestion": "suggestion",
+    }
+    return mapping.get(str(severity).strip().lower(), "warning")
+
+
+def _finding_id(finding_type: str, target_stage: str, message: str) -> str:
+    normalized = "".join(
+        character if character.isalnum() else "_"
+        for character in f"{target_stage}_{finding_type}_{message}".lower()
+    )
+    normalized = "_".join(part for part in normalized.split("_") if part)
+    return f"finding_{normalized[:80]}"

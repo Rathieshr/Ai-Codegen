@@ -189,6 +189,12 @@ class PipelineSkipRequest(BaseModel):
     reason: str
 
 
+class PipelineStageFeedbackRequest(BaseModel):
+    stage: str
+    comment: str
+    author: Optional[str] = None
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -472,6 +478,18 @@ def skip_pipeline_stage(pipeline_id: str, request: PipelineSkipRequest) -> dict:
     """Skip a stage with an explicit reason."""
 
     return pipeline_controller.skip_stage(pipeline_id, request.stage, request.reason)
+
+
+@app.post("/assist/pipeline/{pipeline_id}/stage-feedback")
+def add_pipeline_stage_feedback(pipeline_id: str, request: PipelineStageFeedbackRequest) -> dict:
+    """Store reviewer clarification for a stage so regeneration can reuse it."""
+
+    return pipeline_controller.add_stage_feedback(
+        pipeline_id,
+        request.stage,
+        request.comment,
+        author=request.author,
+    )
 
 
 @app.get("/assist/pipeline/{pipeline_id}")

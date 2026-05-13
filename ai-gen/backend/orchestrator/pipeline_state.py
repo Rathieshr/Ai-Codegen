@@ -14,6 +14,21 @@ def utc_now() -> str:
 
 
 @dataclass
+class StageFeedback:
+    id: str
+    author: str
+    timestamp: str
+    comment: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "StageFeedback":
+        return cls(**data)
+
+
+@dataclass
 class StageState:
     stage: str
     status: str = "locked"
@@ -25,13 +40,20 @@ class StageState:
     critic: dict[str, Any] | None = None
     handoff_id: str | None = None
     skip_reason: str | None = None
+    review_feedback: list[StageFeedback] = field(default_factory=list)
+    unresolved_findings: list[dict[str, Any]] = field(default_factory=list)
+    resolved_findings: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["review_feedback"] = [feedback.to_dict() for feedback in self.review_feedback]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StageState":
-        return cls(**data)
+        payload = dict(data)
+        payload["review_feedback"] = [StageFeedback.from_dict(item) for item in data.get("review_feedback", [])]
+        return cls(**payload)
 
 
 @dataclass

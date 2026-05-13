@@ -52,11 +52,16 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
 
     provider = get_refinement_provider()
     if provider is None or not provider.is_enabled():
+        fallback = _deterministic_fallback(query, context)
         return {
-            "refinement_used": False,
+            "semantic_mapping_applied": _has_semantic_metadata(fallback),
+            "refinement_used": _has_semantic_metadata(fallback),
+            "refinement_source": "deterministic_fallback" if _has_semantic_metadata(fallback) else "none",
             "refinement_provider": "deterministic_fallback",
             "refinement_reason": "provider unavailable",
-            "refinement": _deterministic_fallback(query, context),
+            "phi_used": False,
+            "phi_status": "not_configured",
+            "refinement": fallback,
         }
 
     payload = {
@@ -76,17 +81,26 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
     )
     validated = validate_task_refinement(raw)
     if not any(validated.get(key) for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "unknowns")):
+        fallback = _deterministic_fallback(query, context)
         return {
-            "refinement_used": False,
+            "semantic_mapping_applied": _has_semantic_metadata(fallback),
+            "refinement_used": _has_semantic_metadata(fallback),
+            "refinement_source": "deterministic_fallback" if _has_semantic_metadata(fallback) else "none",
             "refinement_provider": "deterministic_fallback",
             "refinement_reason": "provider returned no usable refinement",
-            "refinement": _deterministic_fallback(query, context),
+            "phi_used": False,
+            "phi_status": "unusable_response",
+            "refinement": fallback,
         }
 
     return {
         "refinement_used": True,
+        "semantic_mapping_applied": True,
+        "refinement_source": "phi",
         "refinement_provider": "azure_phi",
         "refinement_reason": "provider returned structured refinement",
+        "phi_used": True,
+        "phi_status": "used",
         "refinement": validated,
     }
 
@@ -221,3 +235,10 @@ def _deterministic_fallback(query: str, context: dict | None = None) -> dict[str
 def _append(values: list[str], value: str | None) -> None:
     if value and value not in values:
         values.append(value)
+
+
+def _has_semantic_metadata(refinement: dict[str, Any]) -> bool:
+    return any(
+        refinement.get(key)
+        for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "actors", "states", "unknowns")
+    )

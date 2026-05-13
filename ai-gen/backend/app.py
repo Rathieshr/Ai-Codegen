@@ -126,9 +126,13 @@ class ContextResponse(BaseModel):
     work_item_task_summary: Optional[str] = None
     work_item_surface: Optional[str] = None
     work_item_scope: list[str] = Field(default_factory=list)
+    semantic_mapping_applied: bool = False
     refinement_used: bool = False
+    refinement_source: str = "none"
     refinement_provider: Optional[str] = None
     refinement_reason: str = ""
+    phi_used: bool = False
+    phi_status: str = "skipped"
     refined_base_flows: list[str] = Field(default_factory=list)
     refined_variants: list[str] = Field(default_factory=list)
     refined_surfaces: list[str] = Field(default_factory=list)
@@ -253,8 +257,12 @@ def build_context(request: ContextRequest) -> ContextResponse:
         work_item=request.work_item,
     )
     refinement_result = {
+        "semantic_mapping_applied": False,
         "refinement_used": False,
+        "refinement_source": "none",
         "refinement_reason": refinement_reason,
+        "phi_used": False,
+        "phi_status": "skipped",
         "refinement": {},
     }
     if refinement_allowed:
@@ -275,6 +283,7 @@ def build_context(request: ContextRequest) -> ContextResponse:
         confidence_level=initial_confidence["level"],
         refinement_result=refinement_result,
     )
+    semantic_mapping_applied = _has_semantic_mapping(merged_refinement)
     confidence = score_execution_confidence(
         intent=intent,
         matched_logic=result["matched_logic"][0] if result.get("matched_logic") else None,
@@ -355,9 +364,13 @@ def build_context(request: ContextRequest) -> ContextResponse:
             "work_item_task_summary": work_item_context.get("task_summary"),
             "work_item_surface": work_item_context.get("technical_surface"),
             "work_item_scope": work_item_context.get("likely_scope", []),
-            "refinement_used": bool(refinement_result.get("refinement_used")),
+            "semantic_mapping_applied": semantic_mapping_applied,
+            "refinement_used": semantic_mapping_applied,
+            "refinement_source": refinement_result.get("refinement_source") or ("canonical_normalizer" if semantic_mapping_applied else "none"),
             "refinement_provider": refinement_result.get("refinement_provider"),
             "refinement_reason": refinement_result.get("refinement_reason", ""),
+            "phi_used": bool(refinement_result.get("phi_used")),
+            "phi_status": refinement_result.get("phi_status", "skipped"),
             "refined_base_flows": merged_refinement.get("base_flows", []),
             "refined_variants": merged_refinement.get("variants", []),
             "refined_surfaces": merged_refinement.get("surfaces", []),
@@ -370,7 +383,7 @@ def build_context(request: ContextRequest) -> ContextResponse:
             "refined_actors": merged_refinement.get("actors", []),
             "refined_states": merged_refinement.get("states", []),
             "refinement_unknowns": merged_refinement.get("unknowns", []),
-            "refinement_confidence": merged_refinement.get("confidence"),
+            "refinement_confidence": merged_refinement.get("confidence") or refinement_result.get("refinement", {}).get("confidence"),
         }
     )
     return ContextResponse(**result)
@@ -767,6 +780,13 @@ def _estimate_tokens(prompt: str) -> int:
     """Approximate tokens using the same dependency-free word count convention."""
 
     return len(prompt.split())
+
+
+def _has_semantic_mapping(refinement: dict[str, Any]) -> bool:
+    return any(
+        refinement.get(key)
+        for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "actors", "states", "unknowns")
+    )
 
 
 def _previous_execution_issues(validation_result: dict) -> list[str]:

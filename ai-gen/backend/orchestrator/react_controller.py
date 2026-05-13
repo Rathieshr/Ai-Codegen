@@ -234,6 +234,8 @@ class PipelineController:
         current = []
         for finding in critic.get("findings", []):
             item = dict(finding)
+            item.setdefault("target_stage", stage_state.stage)
+            item.setdefault("source_stage", stage_state.stage)
             item["status"] = "open"
             current.append(item)
         current_ids = {finding.get("id") for finding in current}
@@ -248,8 +250,19 @@ class PipelineController:
     def _serialize_pipeline(self, state: PipelineState) -> dict:
         data = state.to_dict()
         data["allowed_actions"] = self._allowed_actions(state)
+        data["current_stage"] = self._active_stage_name(state)
         data["current_stage_findings"] = self._current_stage_findings(state)
+        data["current_stage_blocking_findings"] = self._current_stage_blocking_findings(state)
         data["all_findings"] = self._all_findings(state)
+        data["resolved_findings"] = self._resolved_findings(state)
+        print(
+            "ai-gen pipeline"
+            f" current_stage={data['current_stage']}"
+            f" current_stage_findings={len(data['current_stage_findings'])}"
+            f" current_stage_blocking_findings={len(data['current_stage_blocking_findings'])}"
+            f" all_findings={len(data['all_findings'])}"
+            f" resolved_findings={len(data['resolved_findings'])}"
+        )
         return data
 
     def _allowed_actions(self, state: PipelineState) -> dict[str, list[str]]:
@@ -332,6 +345,13 @@ class PipelineController:
             and finding.get("target_stage", stage_name) == stage_name
         ]
 
+    def _current_stage_blocking_findings(self, state: PipelineState) -> list[dict]:
+        return [
+            finding
+            for finding in self._current_stage_findings(state)
+            if finding.get("severity") == "blocking"
+        ]
+
     def _all_findings(self, state: PipelineState) -> list[dict]:
         findings: list[dict] = []
         for stage_name in state.stages:
@@ -340,6 +360,18 @@ class PipelineController:
                 item = dict(finding)
                 item.setdefault("target_stage", stage_name)
                 item.setdefault("source_stage", stage_name)
+                findings.append(item)
+        return findings
+
+    def _resolved_findings(self, state: PipelineState) -> list[dict]:
+        findings: list[dict] = []
+        for stage_name in state.stages:
+            stage_state = state.stages[stage_name]
+            for finding in stage_state.resolved_findings:
+                item = dict(finding)
+                item.setdefault("target_stage", stage_name)
+                item.setdefault("source_stage", stage_name)
+                item["status"] = "resolved"
                 findings.append(item)
         return findings
 

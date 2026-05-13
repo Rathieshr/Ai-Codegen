@@ -55,6 +55,7 @@ npm run compile
 3. Press `F5` to launch an Extension Development Host.
 4. In the new VS Code window, open the ai-gen icon in the Activity Bar.
 5. Enter a task and click `Preview`, or use `Explain`, `Copy Prompt`, `Send to Codex`, and `Check Backend`.
+6. Use the generated packet with your preferred executor: Codex, Gemini, Copilot, Claude, Cursor, or manual implementation.
 
 The existing command palette commands still work and update the same latest prompt state.
 
@@ -70,6 +71,7 @@ The ai-gen sidebar includes:
 - task input
 - toggles for current selection and current file
 - Preview, Explain, Copy Prompt, Send to Codex, and Check Backend actions
+- Executor-agnostic packets that can be used with Codex, Gemini, Copilot, Claude, Cursor, or manual implementation
 - routed result summary
 - flow, linked flows, impacted components, constraints, plan, local output, and final prompt sections
 

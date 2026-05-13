@@ -123,7 +123,9 @@ function WorkItemTab() {
   const canAddFeedback = currentStageActions.includes('add_clarification');
   const canRegenerateWithClarifications = currentStageActions.includes('regenerate_with_clarifications');
   const currentStageFindings = Array.isArray(pipeline?.current_stage_findings) ? pipeline?.current_stage_findings as Array<Record<string, unknown>> : [];
-  const blockingFindings = currentStageFindings.filter((finding) => String(finding.severity || '') === 'blocking');
+  const blockingFindings = Array.isArray(pipeline?.current_stage_blocking_findings)
+    ? pipeline?.current_stage_blocking_findings as Array<Record<string, unknown>>
+    : currentStageFindings.filter((finding) => String(finding.severity || '') === 'blocking');
   const warningFindings = currentStageFindings.filter((finding) => String(finding.severity || '') === 'warning');
   const suggestionFindings = currentStageFindings.filter((finding) => String(finding.severity || '') === 'suggestion');
 
@@ -278,7 +280,8 @@ function WorkItemTab() {
   }
 
   const showRefinement = Boolean(
-    response?.refinement_used
+    response?.semantic_mapping_applied
+    || response?.refinement_used
     || response?.refined_base_flows?.length
     || response?.refined_variants?.length
     || response?.refined_surfaces?.length
@@ -428,7 +431,14 @@ function WorkItemTab() {
                 stageState={currentStage}
               />
             ) : null}
-            {currentStage ? <StagePanel stage={currentStageName} stageState={currentStage} allFindings={pipeline?.all_findings || []} /> : null}
+            {currentStage ? (
+              <StagePanel
+                stage={currentStageName}
+                stageState={currentStage}
+                currentStageFindings={currentStageFindings}
+                allFindings={pipeline?.all_findings || []}
+              />
+            ) : null}
             <PipelineHandoff handoff={state.data?.handoff} />
           </>
         )}
@@ -468,8 +478,14 @@ function WorkItemTab() {
         <details className="ai-gen-section" open={false}>
           <summary>Refinement</summary>
           <div className="ai-gen-grid">
-            <span className="ai-gen-key">Used</span>
-            <span>{response?.refinement_used ? 'Yes' : 'No'}</span>
+            <span className="ai-gen-key">Semantic Refinement</span>
+            <span>{response?.semantic_mapping_applied ? 'Applied' : 'Not Applied'}</span>
+            <span className="ai-gen-key">Source</span>
+            <span>{response?.refinement_source || 'none'}</span>
+            <span className="ai-gen-key">Phi</span>
+            <span>{response?.phi_status || (response?.phi_used ? 'used' : 'skipped')}</span>
+            <span className="ai-gen-key">Confidence</span>
+            <span>{response?.refinement_confidence || 'unknown'}</span>
             <span className="ai-gen-key">Flows</span>
             <span>{response?.refined_base_flows?.join(', ') || response?.refined_base_flow || 'Not refined'}</span>
             <span className="ai-gen-key">Variants</span>
@@ -500,7 +516,7 @@ function WorkItemTab() {
           </button>
         </div>
         <p className="ai-gen-muted">
-          Send to Codex from your IDE or terminal after copying the prompt.
+          Use this packet with your preferred executor: Codex, Gemini, Copilot, Claude, Cursor, or manual implementation.
         </p>
       </section>
     </main>
@@ -602,10 +618,20 @@ async function getSafeCurrentWorkItemId(): Promise<string | undefined> {
   }
 }
 
-function StagePanel({ stage, stageState, allFindings }: { stage: string; stageState: PipelineStageState; allFindings: Array<Record<string, unknown>> }) {
+function StagePanel({
+  stage,
+  stageState,
+  currentStageFindings,
+  allFindings,
+}: {
+  stage: string;
+  stageState: PipelineStageState;
+  currentStageFindings: Array<Record<string, unknown>>;
+  allFindings: Array<Record<string, unknown>>;
+}) {
   const stageDebugFindings = allFindings.filter((finding) => String(finding.target_stage || '') === stage);
   const risk = String(stageState.critic?.overall_risk || 'low');
-  const stageFindings = Array.isArray(stageState.unresolved_findings) ? stageState.unresolved_findings as Array<Record<string, unknown>> : [];
+  const stageFindings = currentStageFindings;
   const blockingCount = stageFindings.filter((finding) => String(finding.severity || '') === 'blocking').length;
   const warningCount = stageFindings.filter((finding) => String(finding.severity || '') === 'warning').length;
   return (

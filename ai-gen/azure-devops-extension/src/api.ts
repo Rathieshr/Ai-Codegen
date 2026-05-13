@@ -28,9 +28,13 @@ export type AiGenResponse = {
   execution_confidence?: number;
   execution_confidence_level?: string;
   selected_execution_files?: string[];
+  semantic_mapping_applied?: boolean;
   refinement_used?: boolean;
+  refinement_source?: string;
   refinement_provider?: string;
   refinement_reason?: string;
+  phi_used?: boolean;
+  phi_status?: string;
   refined_base_flows?: string[];
   refined_variants?: string[];
   refined_surfaces?: string[];
@@ -77,7 +81,9 @@ export type PipelineState = {
   current_stage: string;
   stages: Record<string, PipelineStageState>;
   current_stage_findings?: Array<Record<string, unknown>>;
+  current_stage_blocking_findings?: Array<Record<string, unknown>>;
   all_findings?: Array<Record<string, unknown>>;
+  resolved_findings?: Array<Record<string, unknown>>;
   version: number;
   created_at: string;
   updated_at: string;

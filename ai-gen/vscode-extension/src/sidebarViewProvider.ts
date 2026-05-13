@@ -51,9 +51,13 @@ export type SidebarResult = {
   retryReason?: string;
   retryStrategy?: string;
   correctedExecutionPrompt?: string;
+  semanticMappingApplied?: boolean;
   refinementUsed?: boolean;
+  refinementSource?: string;
   refinementProvider?: string;
   refinementReason?: string;
+  phiUsed?: boolean;
+  phiStatus?: string;
   refinedBaseFlow?: string;
   refinedVariant?: string;
   refinedSurface?: string;
@@ -394,13 +398,16 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
     function refinement(result) {
       const lines = [];
       const hasRefinement = result.refinementUsed
+        || result.semanticMappingApplied
         || result.refinedVariant
         || result.refinedSurface
         || result.refinedFields
         || result.refinedValidations
         || result.refinementUnknowns;
       if (!hasRefinement) return '';
-      lines.push('Used: ' + (result.refinementUsed ? 'yes' : 'no'));
+      lines.push('Semantic Refinement Status: ' + (result.semanticMappingApplied ? 'Applied' : 'Not Applied'));
+      if (result.refinementSource) lines.push('Source: ' + result.refinementSource);
+      if (result.phiStatus) lines.push('Phi: ' + result.phiStatus);
       if (result.refinementProvider) lines.push('Provider: ' + result.refinementProvider);
       if (result.refinementConfidence) lines.push('Confidence: ' + result.refinementConfidence);
       if (result.refinementReason) lines.push('Reason: ' + result.refinementReason);

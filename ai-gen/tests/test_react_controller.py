@@ -204,6 +204,7 @@ class ReactControllerTests(unittest.TestCase):
             pipeline = controller.run_stage(pipeline["pipeline_id"], "ui")
             self.assertEqual(pipeline["current_stage"], "ui")
             self.assertEqual(pipeline["current_stage_findings"], [])
+            self.assertEqual(pipeline["current_stage_blocking_findings"], [])
             self.assertEqual(pipeline["stages"]["ui"]["output"].get("unknowns"), [])
 
     def test_needs_revision_hides_generate_and_approve(self) -> None:
@@ -267,6 +268,7 @@ class ReactControllerTests(unittest.TestCase):
                 if finding.get("target_stage") == "ba" and finding.get("status") == "resolved"
             ]
             self.assertTrue(resolved_ba)
+            self.assertTrue(pipeline["resolved_findings"])
 
 
 if __name__ == "__main__":

@@ -31,7 +31,9 @@ def approve_stage(pipeline_state: PipelineState, stage: str, approved_by: str | 
     blocking_findings = [
         finding
         for finding in stage_state.unresolved_findings
-        if finding.get("severity") == "blocking" and finding.get("status", "open") == "open"
+        if finding.get("severity") == "blocking"
+        and finding.get("status", "open") == "open"
+        and finding.get("target_stage", stage) == stage
     ]
     if blocking_findings:
         raise ValueError(f"Stage {stage} still has blocking critic findings.")
@@ -43,11 +45,16 @@ def approve_stage(pipeline_state: PipelineState, stage: str, approved_by: str | 
     stage_state.version = stage_state.version + 1 if stage_state.version else 1
     resolved = [dict(finding) for finding in stage_state.resolved_findings]
     for finding in stage_state.unresolved_findings:
+        if finding.get("target_stage", stage) != stage:
+            continue
         item = dict(finding)
         item["status"] = "resolved"
         resolved.append(item)
     stage_state.resolved_findings = _dedupe_findings(resolved)
-    stage_state.unresolved_findings = []
+    stage_state.unresolved_findings = [
+        finding for finding in stage_state.unresolved_findings
+        if finding.get("target_stage", stage) != stage
+    ]
     pipeline_state.current_stage = stage
     pipeline_state.updated_at = utc_now()
     return unlock_next_stage(pipeline_state, stage)

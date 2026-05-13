@@ -62,9 +62,13 @@ type BackendResponse = {
   retry_required?: boolean;
   retry_plan?: Record<string, unknown>;
   corrected_execution_prompt?: string;
+  semantic_mapping_applied?: boolean;
   refinement_used?: boolean;
+  refinement_source?: string;
   refinement_provider?: string;
   refinement_reason?: string;
+  phi_used?: boolean;
+  phi_status?: string;
   refined_base_flows?: string[];
   refined_variants?: string[];
   refined_surfaces?: string[];
@@ -1401,9 +1405,13 @@ function toSidebarResult(state: LastPromptState): SidebarResult {
     retryReason: typeof response.retry_plan?.reason === 'string' ? response.retry_plan.reason : undefined,
     retryStrategy: typeof response.retry_plan?.strategy === 'string' ? response.retry_plan.strategy : undefined,
     correctedExecutionPrompt: response.corrected_execution_prompt,
+    semanticMappingApplied: response.semantic_mapping_applied,
     refinementUsed: response.refinement_used,
+    refinementSource: response.refinement_source,
     refinementProvider: response.refinement_provider,
     refinementReason: response.refinement_reason,
+    phiUsed: response.phi_used,
+    phiStatus: response.phi_status,
     refinedBaseFlow: response.refined_base_flows?.join('\n') || response.refined_base_flow,
     refinedVariant: response.refined_variants?.join('\n') || response.refined_variant,
     refinedSurface: response.refined_surfaces?.join('\n') || response.refined_surface,

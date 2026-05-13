@@ -66,7 +66,9 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["drift_detected"], False)
         self.assertEqual(data["constraint_violations"], [])
         self.assertEqual(data["risky_changes"], [])
+        self.assertEqual(data["semantic_mapping_applied"], False)
         self.assertEqual(data["refinement_used"], False)
+        self.assertEqual(data["refinement_source"], "none")
 
     def test_forced_codex_unavailable_returns_preview_only(self) -> None:
         with patch.dict(os.environ, {}, clear=True), patch("shutil.which", return_value=None):
@@ -392,9 +394,13 @@ class BackendContextRoutingTests(unittest.TestCase):
 
     def test_context_includes_refinement_metadata_when_provider_returns_data(self) -> None:
         refinement_result = {
+            "semantic_mapping_applied": True,
             "refinement_used": True,
+            "refinement_source": "phi",
             "refinement_provider": "azure_phi",
             "refinement_reason": "provider returned structured refinement",
+            "phi_used": True,
+            "phi_status": "used",
             "refinement": {
                 "base_flows": ["login", "otp_verification"],
                 "variants": ["phone_otp"],
@@ -433,6 +439,9 @@ class BackendContextRoutingTests(unittest.TestCase):
 
         data = response.model_dump() if hasattr(response, "model_dump") else response.dict()
         self.assertEqual(data["refinement_used"], True)
+        self.assertEqual(data["semantic_mapping_applied"], True)
+        self.assertEqual(data["refinement_source"], "phi")
+        self.assertEqual(data["phi_status"], "used")
         self.assertEqual(data["refined_variant"], "phone_otp")
         self.assertEqual(data["refined_base_flows"], ["login", "otp_verification"])
         self.assertEqual(data["refined_surface"], "ui_screen")

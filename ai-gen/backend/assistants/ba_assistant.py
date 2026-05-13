@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from backend.refinement.provider import get_refinement_provider
+
+
+QUESTION_VALIDATION_SYSTEM_PROMPT = (
+    "You are ai-gen's clarification validation engine.\n"
+    "Decide whether reviewer feedback clearly answers a specific open requirement question.\n"
+    "Return strict JSON only.\n"
+    "Schema: {\"answered\": true|false, \"confidence\": \"low|medium|high\"}\n"
+    "Do not generate implementation steps, code, or file paths."
+)
 
 
 def run_ba_assistant(work_item: dict, refinement: dict | None = None, review_context: dict | None = None) -> dict:
@@ -82,17 +94,21 @@ def _reviewer_unknowns(review_context: dict[str, Any]) -> list[str]:
 
 
 def _filter_answered_unknowns(unknowns: list[str], review_context: dict[str, Any]) -> list[str]:
-    feedback_text = " ".join(
-        str(item.get("comment", "")).strip().lower()
+    feedback_comments = [
+        str(item.get("comment", "")).strip()
         for item in review_context.get("review_feedback", [])
         if str(item.get("comment", "")).strip()
-    )
+    ]
+    feedback_text = " ".join(comment.lower() for comment in feedback_comments)
     if not feedback_text:
         return unknowns
 
+    provider = get_refinement_provider()
     filtered: list[str] = []
     for unknown in unknowns:
         if _is_answered_unknown(str(unknown), feedback_text):
+            continue
+        if _provider_answers_unknown(str(unknown), feedback_comments, provider):
             continue
         filtered.append(unknown)
     return filtered
@@ -103,20 +119,33 @@ def _is_answered_unknown(unknown: str, feedback_text: str) -> bool:
     if not question:
         return False
 
-    if ("otp" in question or "second-factor" in question or "second factor" in question) and any(
+    has_second_factor_answer = (
+        "second factor" in feedback_text
+        or "second-factor" in feedback_text
+        or "otp" in feedback_text
+        or "verification code" in feedback_text
+    ) and any(
         phrase in feedback_text
         for phrase in [
-            "otp is needed",
-            "otp is required",
-            "otp needed",
-            "otp required",
-            "second factor needed",
-            "second-factor needed",
-            "second factor required",
-            "second-factor required",
-            "verification code is needed",
-            "verification code is required",
+            "needed",
+            "required",
+            "yes",
         ]
+    )
+
+    if ("otp" in question or "second-factor" in question or "second factor" in question) and (
+        has_second_factor_answer
+        or any(
+            phrase in feedback_text
+            for phrase in [
+                "otp is needed",
+                "otp is required",
+                "otp needed",
+                "otp required",
+                "verification code is needed",
+                "verification code is required",
+            ]
+        )
     ):
         return True
 
@@ -147,6 +176,36 @@ def _is_answered_unknown(unknown: str, feedback_text: str) -> bool:
     ):
         return True
 
+    return False
+
+
+def _provider_answers_unknown(unknown: str, feedback_comments: list[str], provider: Any) -> bool:
+    if provider is None or not getattr(provider, "is_enabled", lambda: False)():
+        return False
+
+    payload = {
+        "open_question": unknown,
+        "reviewer_feedback": feedback_comments[:6],
+        "expected_json_schema": {
+            "answered": "true|false",
+            "confidence": "low|medium|high",
+        },
+    }
+    try:
+        raw = provider.refine_json(
+            QUESTION_VALIDATION_SYSTEM_PROMPT,
+            json.dumps(payload, ensure_ascii=True),
+            max_tokens=120,
+        )
+    except Exception:
+        return False
+    if not isinstance(raw, dict):
+        return False
+    answered = raw.get("answered")
+    if isinstance(answered, bool):
+        return answered
+    if isinstance(answered, str):
+        return answered.strip().lower() == "true"
     return False
 
 

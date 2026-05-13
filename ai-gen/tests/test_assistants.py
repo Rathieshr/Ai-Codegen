@@ -1,6 +1,7 @@
 """Tests for structured assistant stage outputs."""
 
 import unittest
+from unittest.mock import Mock, patch
 
 from backend.assistants import (
     run_app_ui_assistant,
@@ -68,6 +69,82 @@ class AssistantTests(unittest.TestCase):
         self.assertNotIn("Is OTP or a second-factor step required after the primary input succeeds?", output["unknowns"])
         self.assertNotIn("Clarify OTP retry and expiry policy.", output["unknowns"])
         self.assertIn("Review clarifications", output["refined_requirement"])
+
+    def test_ba_assistant_resolves_second_factor_screen_wording(self) -> None:
+        output = run_ba_assistant(
+            {
+                "title": "Ai Gen Extension Test",
+                "description": "Focus first on phone number input and otp verification step.",
+                "acceptanceCriteria": "",
+                "tags": ["auth"],
+            },
+            {
+                "base_flows": ["login", "otp_verification"],
+                "variants": ["phone_otp"],
+                "fields": ["phone_number", "otp"],
+            },
+            {
+                "review_feedback": [
+                    {
+                        "comment": "retry policy of 3 times and expiry policy of 60 seconds. second factor screen required"
+                    }
+                ],
+                "critic_findings": [
+                    {
+                        "severity": "blocking",
+                        "message": "Clarify OTP retry and expiry policy.",
+                    },
+                    {
+                        "severity": "blocking",
+                        "message": "Is OTP or a second-factor step required after the primary input succeeds?",
+                    },
+                ],
+            },
+        )
+        self.assertEqual(output["unknowns"], [])
+
+    def test_ba_assistant_can_use_phi_to_resolve_large_clarification_text(self) -> None:
+        provider = Mock()
+        provider.is_enabled.return_value = True
+        provider.refine_json.return_value = {"answered": True, "confidence": "high"}
+        with patch("backend.assistants.ba_assistant.get_refinement_provider", return_value=provider):
+            output = run_ba_assistant(
+                {
+                    "title": "Ai Gen Extension Test",
+                    "description": "Focus first on phone number input and otp verification step.",
+                    "acceptanceCriteria": "",
+                    "tags": ["auth"],
+                },
+                {
+                    "base_flows": ["login", "otp_verification"],
+                    "variants": ["phone_otp"],
+                    "fields": ["phone_number", "otp"],
+                },
+                {
+                    "review_feedback": [
+                        {
+                            "comment": (
+                                "After the primary phone entry succeeds, route the user into a dedicated secondary "
+                                "verification screen backed by a one-time passcode challenge with a 60-second expiry "
+                                "window and no more than three retries before lockout messaging."
+                            )
+                        }
+                    ],
+                    "critic_findings": [
+                        {
+                            "severity": "blocking",
+                            "message": "Clarify OTP retry and expiry policy.",
+                        },
+                        {
+                            "severity": "blocking",
+                            "message": "Is OTP or a second-factor step required after the primary input succeeds?",
+                        },
+                    ],
+                },
+            )
+
+        self.assertEqual(output["unknowns"], [])
+        self.assertTrue(provider.refine_json.called)
 
     def test_ui_assistant_outputs_fields_and_states(self) -> None:
         ba_output = {

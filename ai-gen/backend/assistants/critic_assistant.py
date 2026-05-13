@@ -75,6 +75,7 @@ def _finding(finding_type: str, severity: str, message: str, target_stage: str) 
         "severity": _normalize_severity(severity),
         "message": message,
         "target_stage": target_stage,
+        "source_stage": target_stage,
         "status": "open",
     }
 

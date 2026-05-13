@@ -168,21 +168,21 @@ class PipelineController:
         if stage == "ba":
             return run_ba_assistant(state.work_item, state.refinement, review_context=review_context)
         if stage == "ui":
-            ba_output = state.stages["ba"].output
+            ba_output = self._approved_stage_context(state, "ba")
             return run_app_ui_assistant(ba_output, state.refinement, review_context=review_context)
         if stage == "dev":
             return run_dev_assistant(
-                ba_output=state.stages["ba"].output,
-                ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
+                ba_output=self._approved_stage_context(state, "ba"),
+                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
                 repo_context=state.repo_context,
                 refinement=state.refinement,
                 review_context=review_context,
             )
         if stage == "test":
             return run_test_assistant(
-                ba_output=state.stages["ba"].output,
-                dev_output=state.stages["dev"].output,
-                ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
+                ba_output=self._approved_stage_context(state, "ba"),
+                dev_output=self._approved_stage_context(state, "dev"),
+                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
                 review_context=review_context,
             )
         if stage == "critic":
@@ -198,25 +198,25 @@ class PipelineController:
         if stage == "ba":
             return run_critic_assistant(ba_output=output)
         if stage == "ui":
-            return run_critic_assistant(ba_output=state.stages["ba"].output, ui_output=output)
+            return run_critic_assistant(ba_output=self._approved_stage_context(state, "ba"), ui_output=output)
         if stage == "dev":
             return run_critic_assistant(
-                ba_output=state.stages["ba"].output,
-                ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
+                ba_output=self._approved_stage_context(state, "ba"),
+                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
                 dev_output=output,
             )
         if stage == "test":
             return run_critic_assistant(
-                ba_output=state.stages["ba"].output,
-                ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
-                dev_output=state.stages["dev"].output,
+                ba_output=self._approved_stage_context(state, "ba"),
+                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
+                dev_output=self._approved_stage_context(state, "dev"),
                 test_output=output,
             )
         return run_critic_assistant(
-            ba_output=state.stages["ba"].output if state.stages["ba"].output else None,
-            ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
-            dev_output=state.stages["dev"].output if state.stages["dev"].output else None,
-            test_output=state.stages["test"].output if state.stages["test"].output else None,
+            ba_output=self._approved_stage_context(state, "ba") if state.stages["ba"].output else None,
+            ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
+            dev_output=self._approved_stage_context(state, "dev") if state.stages["dev"].output else None,
+            test_output=self._approved_stage_context(state, "test") if state.stages["test"].output else None,
         )
 
     def _touch_pipeline(self, state: PipelineState) -> None:
@@ -248,9 +248,12 @@ class PipelineController:
     def _serialize_pipeline(self, state: PipelineState) -> dict:
         data = state.to_dict()
         data["allowed_actions"] = self._allowed_actions(state)
+        data["current_stage_findings"] = self._current_stage_findings(state)
+        data["all_findings"] = self._all_findings(state)
         return data
 
     def _allowed_actions(self, state: PipelineState) -> dict[str, list[str]]:
+        current_stage = self._active_stage_name(state)
         actions = {
             "generate_stages": [],
             "regenerate_stages": [],
@@ -258,25 +261,96 @@ class PipelineController:
             "skip_stages": [],
             "view_handoff_stages": [],
             "feedback_stages": [],
+            "current_stage_actions": [],
         }
         for stage_name, stage_state in state.stages.items():
-            if stage_state.status != "locked" and not stage_state.approved:
+            if stage_state.status == "pending" and not stage_state.approved:
                 actions["generate_stages"].append(stage_name)
-            if stage_state.status in {"generated", "needs_revision", "approved"}:
+            if stage_state.status == "generated" and not stage_state.approved:
                 actions["regenerate_stages"].append(stage_name)
             has_blocking_findings = any(
                 finding.get("severity") == "blocking" and finding.get("status", "open") == "open"
                 for finding in stage_state.unresolved_findings
             )
-            if bool(stage_state.output) and stage_state.status != "locked" and not stage_state.approved and not has_blocking_findings:
+            if (
+                bool(stage_state.output)
+                and stage_state.status == "generated"
+                and not stage_state.approved
+                and not has_blocking_findings
+            ):
                 actions["approve_stages"].append(stage_name)
-            if stage_name == "ui" and stage_state.status != "locked" and not stage_state.approved:
+            if stage_name == "ui" and stage_state.status in {"pending", "generated"} and not stage_state.approved:
                 actions["skip_stages"].append(stage_name)
             if stage_state.handoff_id:
                 actions["view_handoff_stages"].append(stage_name)
-            if stage_state.status != "locked":
+            if stage_state.status == "needs_revision":
                 actions["feedback_stages"].append(stage_name)
+            if stage_name == current_stage:
+                actions["current_stage_actions"] = self._current_stage_actions(stage_name, stage_state, has_blocking_findings)
         return actions
+
+    def _current_stage_actions(self, stage_name: str, stage_state: StageState, has_blocking_findings: bool) -> list[str]:
+        actions: list[str] = []
+        status = stage_state.status
+        if status == "pending" and not stage_state.approved:
+            actions.append("generate")
+            if stage_name == "ui":
+                actions.append("skip_ui")
+        elif status == "generated" and not stage_state.approved:
+            actions.append("regenerate")
+            if stage_state.handoff_id:
+                actions.append("view_handoff")
+            if not has_blocking_findings:
+                actions.append("approve")
+            if stage_name == "ui":
+                actions.append("skip_ui")
+        elif status == "needs_revision" and not stage_state.approved:
+            actions.extend(["add_clarification", "regenerate_with_clarifications"])
+            if stage_state.handoff_id:
+                actions.append("view_handoff")
+        elif status == "approved":
+            if stage_state.handoff_id:
+                actions.extend(["view_handoff", "copy_handoff"])
+        return actions
+
+    def _approved_stage_context(self, state: PipelineState, stage: str) -> dict:
+        stage_state = state.stages.get(stage)
+        output = dict(stage_state.output) if stage_state and stage_state.output else {}
+        if stage_state and stage_state.approved:
+            output["unknowns"] = []
+        return output
+
+    def _current_stage_findings(self, state: PipelineState) -> list[dict]:
+        stage_name = self._active_stage_name(state)
+        stage_state = state.stages.get(stage_name)
+        if not stage_state:
+            return []
+        return [
+            dict(finding)
+            for finding in stage_state.unresolved_findings
+            if finding.get("status", "open") == "open"
+            and finding.get("target_stage", stage_name) == stage_name
+        ]
+
+    def _all_findings(self, state: PipelineState) -> list[dict]:
+        findings: list[dict] = []
+        for stage_name in state.stages:
+            stage_state = state.stages[stage_name]
+            for finding in stage_state.unresolved_findings + stage_state.resolved_findings:
+                item = dict(finding)
+                item.setdefault("target_stage", stage_name)
+                item.setdefault("source_stage", stage_name)
+                findings.append(item)
+        return findings
+
+    def _active_stage_name(self, state: PipelineState) -> str:
+        for stage_name in ["ba", "ui", "dev", "test", "critic"]:
+            stage_state = state.stages.get(stage_name)
+            if not stage_state:
+                continue
+            if stage_state.status in {"generated", "needs_revision", "pending"}:
+                return stage_name
+        return state.current_stage
 
 
 def _dedupe_findings(findings: list[dict]) -> list[dict]:

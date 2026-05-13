@@ -62,6 +62,8 @@ class PipelineStateTests(unittest.TestCase):
         ]
         updated = approve_stage(self.pipeline, "ba")
         self.assertTrue(updated.stages["ba"].approved)
+        self.assertEqual(updated.stages["ba"].unresolved_findings, [])
+        self.assertEqual(updated.stages["ba"].resolved_findings[0]["status"], "resolved")
 
 
 if __name__ == "__main__":

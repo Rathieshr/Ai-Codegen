@@ -17,7 +17,7 @@ def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None, review
     skippable = screen_type == "unknown" and surface in {"service/auth", "api/controller"}
     reason = {
         "known": _known_ui_points(ba_output, refinement),
-        "missing": list(ba_output.get("unknowns", []))[:4],
+        "missing": [],
         "goal": "Turn the approved requirement into screen structure, fields, actions, and states.",
     }
     act = {
@@ -31,21 +31,24 @@ def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None, review
         "variant": _first(ba_output.get("variants", [])) or ba_output.get("variant") or _first(refinement.get("variants", [])) or refinement.get("refined_variant"),
         "skippable": skippable,
     }
+    actions = _actions(base_flow, screen_type, fields)
+    states = _states(screen_type)
+    summary = _ui_summary(screen_name, fields, actions, states, base_flow, ba_output, refinement)
     output = {
         "assistant": "app_ui",
         "screen_name": screen_name,
         "screen_type": screen_type,
         "platform": platform,
-        "user_goal": _user_goal(base_flow, screen_type),
+        "user_goal": summary,
+        "summary": summary,
         "layout": _layout(screen_type, fields),
         "fields": fields,
-        "actions": _actions(base_flow, screen_type, fields),
-        "states": _states(screen_type),
+        "actions": actions,
+        "states": states,
         "ux_notes": _ux_notes(ba_output, refinement),
         "accessibility_notes": _accessibility_notes(fields),
         "unknowns": _dedupe(
-            list(ba_output.get("unknowns", []))
-            + list(refinement.get("refinement_unknowns", []))
+            list(refinement.get("refinement_unknowns", []))
             + [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])]
         ),
         "skippable": skippable,
@@ -125,6 +128,31 @@ def _user_goal(base_flow: str, screen_type: str) -> str:
     if screen_type == "dashboard":
         return f"Review {base_flow} information quickly and act on it."
     return f"Complete the {base_flow} task without confusion or extra steps."
+
+
+def _ui_summary(
+    screen_name: str,
+    fields: list[dict],
+    actions: list[str],
+    states: list[str],
+    base_flow: str,
+    ba_output: dict,
+    refinement: dict,
+) -> str:
+    field_names = [str(field.get("name", "")).strip() for field in fields if str(field.get("name", "")).strip()]
+    variants = set(list(ba_output.get("variants", [])) + list(refinement.get("variants", [])) + list(refinement.get("refined_variants", [])))
+    if base_flow == "login" and "phone_otp" in variants and {"phone_number", "otp"}.issubset(set(field_names)):
+        return "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling."
+
+    primary_fields = ", ".join(name.replace("_", " ") for name in field_names[:3]) if field_names else "primary components"
+    main_actions = ", ".join(actions[:2]) if actions else "main actions"
+    state_summary = ", ".join(state for state in states if state in {"loading", "error", "success"})
+    if not state_summary:
+        state_summary = "states"
+    return (
+        f"Design {screen_name} with {primary_fields}, {main_actions}, "
+        f"{state_summary}, and validation and error handling."
+    )
 
 
 def _layout(screen_type: str, fields: list[dict]) -> list[str]:

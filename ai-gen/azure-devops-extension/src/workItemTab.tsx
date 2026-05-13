@@ -114,17 +114,18 @@ function WorkItemTab() {
   const pipeline = state.data?.pipeline;
   const currentStageName = useMemo(() => activeStageName(pipeline), [pipeline]);
   const currentStage = currentStageName && pipeline ? pipeline.stages[currentStageName] : undefined;
-  const allowedActions = pipeline?.allowed_actions;
-  const canGenerate = Boolean(currentStageName && allowedActions?.generate_stages?.includes(currentStageName));
-  const canRegenerate = Boolean(currentStageName && allowedActions?.regenerate_stages?.includes(currentStageName));
-  const canApprove = Boolean(currentStageName && allowedActions?.approve_stages?.includes(currentStageName));
-  const canSkipUi = Boolean(allowedActions?.skip_stages?.includes('ui') && currentStageName === 'ui');
-  const canViewHandoff = Boolean(currentStageName && allowedActions?.view_handoff_stages?.includes(currentStageName));
-  const canAddFeedback = Boolean(currentStageName && allowedActions?.feedback_stages?.includes(currentStageName));
-  const unresolvedFindings = Array.isArray(currentStage?.unresolved_findings) ? currentStage?.unresolved_findings as Array<Record<string, unknown>> : [];
-  const blockingFindings = unresolvedFindings.filter((finding) => String(finding.severity || '') === 'blocking');
-  const warningFindings = unresolvedFindings.filter((finding) => String(finding.severity || '') === 'warning');
-  const suggestionFindings = unresolvedFindings.filter((finding) => String(finding.severity || '') === 'suggestion');
+  const currentStageActions = pipeline?.allowed_actions?.current_stage_actions || [];
+  const canGenerate = currentStageActions.includes('generate');
+  const canRegenerate = currentStageActions.includes('regenerate');
+  const canApprove = currentStage?.status === 'needs_revision' ? false : currentStageActions.includes('approve');
+  const canSkipUi = currentStageActions.includes('skip_ui');
+  const canViewHandoff = currentStageActions.includes('view_handoff');
+  const canAddFeedback = currentStageActions.includes('add_clarification');
+  const canRegenerateWithClarifications = currentStageActions.includes('regenerate_with_clarifications');
+  const currentStageFindings = Array.isArray(pipeline?.current_stage_findings) ? pipeline?.current_stage_findings as Array<Record<string, unknown>> : [];
+  const blockingFindings = currentStageFindings.filter((finding) => String(finding.severity || '') === 'blocking');
+  const warningFindings = currentStageFindings.filter((finding) => String(finding.severity || '') === 'warning');
+  const suggestionFindings = currentStageFindings.filter((finding) => String(finding.severity || '') === 'suggestion');
 
   async function refresh() {
     setState((current) => ({ ...current, loading: true, loadingMessage: 'Refreshing...', error: '' }));
@@ -289,7 +290,10 @@ function WorkItemTab() {
     || response?.refinement_unknowns?.length
   );
   const stageOwner = ownerRole(currentStageName);
-  const blockingIssues = currentStage ? stageBlockingIssues(currentStage) : [];
+  const blockingIssues = blockingFindings
+    .map((finding) => String(finding.message || 'Review needed'))
+    .filter(Boolean)
+    .slice(0, 4);
   const nextAction = currentStageName ? stageNextAction(currentStageName, currentStage, {
     canGenerate,
     canRegenerate,
@@ -367,7 +371,7 @@ function WorkItemTab() {
                 </ul>
               </div>
             ) : null}
-            {currentStage?.status === 'needs_revision' ? (
+            {currentStage?.status === 'needs_revision' && (currentStageFindings.length || Array.isArray(currentStage?.output?.unknowns) && currentStage.output.unknowns.length) ? (
               <div className="ai-gen-warning">
                 <div className="ai-gen-key">Needs Revision</div>
                 <div>AI identified ambiguities requiring clarification before approval.</div>
@@ -399,7 +403,7 @@ function WorkItemTab() {
               </button>
               {canViewHandoff ? (
                 <button className="ai-gen-button secondary" onClick={viewCurrentHandoff} disabled={state.loading}>
-                  View Handoff
+                  {currentStage?.status === 'needs_revision' ? 'View Draft' : 'View Handoff'}
                 </button>
               ) : null}
               {currentStageName === 'dev' && currentStage?.output?.execution_packet ? (
@@ -419,11 +423,12 @@ function WorkItemTab() {
                 onAddClarification={() => addClarification(false)}
                 onRegenerateWithClarifications={() => addClarification(true)}
                 canAddFeedback={canAddFeedback}
-                canRegenerate={canRegenerate}
+                canRegenerate={canRegenerateWithClarifications}
                 loading={state.loading}
+                stageState={currentStage}
               />
             ) : null}
-            {currentStage ? <StagePanel stage={currentStageName} stageState={currentStage} /> : null}
+            {currentStage ? <StagePanel stage={currentStageName} stageState={currentStage} allFindings={pipeline?.all_findings || []} /> : null}
             <PipelineHandoff handoff={state.data?.handoff} />
           </>
         )}
@@ -514,6 +519,7 @@ function FeedbackPanel({
   canAddFeedback,
   canRegenerate,
   loading,
+  stageState,
 }: {
   blockingFindings: Array<Record<string, unknown>>;
   warningFindings: Array<Record<string, unknown>>;
@@ -526,19 +532,29 @@ function FeedbackPanel({
   canAddFeedback: boolean;
   canRegenerate: boolean;
   loading: boolean;
+  stageState: PipelineStageState;
 }) {
+  const guidedPrompts = clarificationPrompts(stageState);
   return (
     <div className="ai-gen-stage-panel">
       {blockingFindings.length ? <FindingSection title="Blocking Issues" items={blockingFindings} /> : null}
       {warningFindings.length ? <FindingSection title="Warnings" items={warningFindings} /> : null}
       {suggestionFindings.length ? <FindingSection title="Suggestions" items={suggestionFindings} /> : null}
       <details open className="ai-gen-detail-block">
-        <summary>Reviewer Clarifications</summary>
+        <summary>Clarification required before approval</summary>
+        {guidedPrompts.length ? (
+          <>
+            <div className="ai-gen-key">Guided prompts</div>
+            <ul className="ai-gen-list">
+              {guidedPrompts.map((prompt) => <li key={prompt}>{prompt}</li>)}
+            </ul>
+          </>
+        ) : null}
         <textarea
           className="ai-gen-textarea"
           value={clarification}
           onChange={(event) => onClarificationChange(event.target.value)}
-          placeholder="Answer critic questions or add reviewer guidance for this stage."
+          placeholder="Example: OTP expires in 2 minutes. Max retry attempts: 3. Resend cooldown: 30 seconds."
         />
         <div className="ai-gen-actions ai-gen-actions-compact">
           <button className="ai-gen-button secondary" onClick={onAddClarification} disabled={loading || !canAddFeedback || !clarification.trim()}>
@@ -586,21 +602,23 @@ async function getSafeCurrentWorkItemId(): Promise<string | undefined> {
   }
 }
 
-function StagePanel({ stage, stageState }: { stage: string; stageState: PipelineStageState }) {
-  const criticFindings = Array.isArray(stageState.critic?.findings) ? stageState.critic?.findings as Array<Record<string, unknown>> : [];
+function StagePanel({ stage, stageState, allFindings }: { stage: string; stageState: PipelineStageState; allFindings: Array<Record<string, unknown>> }) {
+  const stageDebugFindings = allFindings.filter((finding) => String(finding.target_stage || '') === stage);
+  const risk = String(stageState.critic?.overall_risk || 'low');
+  const stageFindings = Array.isArray(stageState.unresolved_findings) ? stageState.unresolved_findings as Array<Record<string, unknown>> : [];
+  const blockingCount = stageFindings.filter((finding) => String(finding.severity || '') === 'blocking').length;
+  const warningCount = stageFindings.filter((finding) => String(finding.severity || '') === 'warning').length;
   return (
     <div className="ai-gen-stage-panel">
-      {criticFindings.length ? (
+      {stageFindings.length ? (
         <div className="ai-gen-critic-card">
           <div className="ai-gen-critic-header">
             <strong>Critic review</strong>
-            <span className={`ai-gen-badge ${String(stageState.critic?.overall_risk || 'medium')}`}>{String(stageState.critic?.overall_risk || 'medium')}</span>
+            <span className={`ai-gen-badge ${risk}`}>Risk: {risk}</span>
           </div>
-          <ul className="ai-gen-list">
-            {criticFindings.slice(0, 3).map((finding, index) => (
-              <li key={`${stage}-${index}`}>{String(finding.message || finding.type || 'Review needed')}</li>
-            ))}
-          </ul>
+          <div className="ai-gen-muted">
+            {blockingCount ? `Blocking: ${blockingCount}` : 'Blocking: 0'} {warningCount ? `| Warnings: ${warningCount}` : ''}
+          </div>
         </div>
       ) : null}
       <details open className="ai-gen-detail-block">
@@ -620,6 +638,18 @@ function StagePanel({ stage, stageState }: { stage: string; stageState: Pipeline
       </details>
       <details className="ai-gen-detail-block">
         <summary>View Details</summary>
+        {stageDebugFindings.length ? (
+          <>
+            <div className="ai-gen-key">Stage Findings</div>
+            <ul className="ai-gen-list">
+              {stageDebugFindings.map((finding) => (
+                <li key={String(finding.id || finding.message || Math.random())}>
+                  [{String(finding.target_stage || stage).toUpperCase()}] {String(finding.status || 'open')}: {String(finding.message || 'Review needed')}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
         {Object.keys(stageState.output || {}).length ? (
           <pre className="ai-gen-prompt">{JSON.stringify(stageState.output, null, 2)}</pre>
         ) : (
@@ -693,7 +723,7 @@ function PipelineHandoff({ handoff }: { handoff?: HandoffRecord }) {
           <div>{handoff?.summary || 'Dev handoff not approved yet'}</div>
           <div className="ai-gen-muted">
             {handoff
-              ? `${formatStageName(handoff.stage)} v${handoff.version} ${handoff.approved_at ? `approved ${handoff.approved_at}` : ''}`
+              ? `${formatStageName(handoff.stage)} v${handoff.version} ${handoff.status === 'approved' ? `approved ${handoff.approved_at || ''}` : 'draft - not approved'}`
               : 'Approve the Dev stage to open it directly in VS Code.'}
           </div>
         </div>
@@ -713,12 +743,25 @@ function PipelineHandoff({ handoff }: { handoff?: HandoffRecord }) {
       {handoff?.next_actions?.length ? <ListSection title="Next Actions" items={handoff.next_actions} /> : null}
       {handoff ? (
         <details className="ai-gen-detail-block">
-          <summary>View</summary>
+          <summary>{handoff?.status === 'approved' ? 'View' : 'View Draft'}</summary>
           <pre className="ai-gen-prompt">{JSON.stringify(handoff.content || {}, null, 2)}</pre>
         </details>
       ) : null}
     </div>
   );
+}
+
+function clarificationPrompts(stageState: PipelineStageState): string[] {
+  const unknowns = Array.isArray(stageState.output?.unknowns) ? stageState.output.unknowns.map((item) => String(item)) : [];
+  const combined = unknowns.join(' ').toLowerCase();
+  if (combined.includes('otp') && (combined.includes('retry') || combined.includes('expiry'))) {
+    return [
+      'How long should OTP be valid?',
+      'How many retry attempts are allowed?',
+      'Should resend OTP have cooldown?',
+    ];
+  }
+  return unknowns.slice(0, 3);
 }
 
 function ListSection({ title, items }: { title: string; items: string[] }) {
@@ -786,7 +829,7 @@ function stageSummary(stage: string, stageState: PipelineStageState): string {
     case 'ba':
       return String(output.refined_requirement || 'Clarify the requirement and acceptance criteria.');
     case 'ui':
-      return String(output.user_goal || output.screen_name || 'Define the user-facing screen and states.');
+      return String(output.summary || output.user_goal || output.screen_name || 'Define the user-facing screen and states.');
     case 'dev':
       return String(output.task_summary || 'Prepare the execution packet and scope.');
     case 'test':
@@ -796,16 +839,6 @@ function stageSummary(stage: string, stageState: PipelineStageState): string {
     default:
       return 'Stage output is ready for review.';
   }
-}
-
-function stageBlockingIssues(stageState: PipelineStageState): string[] {
-  const criticFindings = Array.isArray(stageState.unresolved_findings) ? stageState.unresolved_findings : [];
-  const criticIssues = criticFindings
-    .filter((finding) => String((finding as Record<string, unknown>).severity || '') === 'blocking')
-    .map((finding) => String((finding as Record<string, unknown>).message || 'Review needed'))
-    .filter(Boolean);
-  const outputUnknowns = Array.isArray(stageState.output?.unknowns) ? stageState.output.unknowns.map((item) => String(item)) : [];
-  return [...criticIssues, ...outputUnknowns].slice(0, 4);
 }
 
 function stageNextAction(

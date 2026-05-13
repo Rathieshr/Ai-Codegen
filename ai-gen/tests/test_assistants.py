@@ -166,6 +166,10 @@ class AssistantTests(unittest.TestCase):
         self.assertTrue(output["fields"])
         self.assertIn("loading", output["states"])
         self.assertEqual([field["name"] for field in output["fields"]], ["phone_number", "otp"])
+        self.assertEqual(
+            output["summary"],
+            "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.",
+        )
 
     def test_dev_assistant_outputs_execution_packet(self) -> None:
         ba_output = {

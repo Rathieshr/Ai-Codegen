@@ -76,6 +76,8 @@ export type PipelineState = {
   work_item_id: string;
   current_stage: string;
   stages: Record<string, PipelineStageState>;
+  current_stage_findings?: Array<Record<string, unknown>>;
+  all_findings?: Array<Record<string, unknown>>;
   version: number;
   created_at: string;
   updated_at: string;
@@ -86,6 +88,7 @@ export type PipelineState = {
     skip_stages?: string[];
     view_handoff_stages?: string[];
     feedback_stages?: string[];
+    current_stage_actions?: string[];
   };
   work_item?: Record<string, unknown>;
   repo_context?: Record<string, unknown>;

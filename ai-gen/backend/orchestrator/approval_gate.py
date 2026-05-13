@@ -41,6 +41,13 @@ def approve_stage(pipeline_state: PipelineState, stage: str, approved_by: str | 
     stage_state.approved_at = utc_now()
     stage_state.approved_by = approved_by
     stage_state.version = stage_state.version + 1 if stage_state.version else 1
+    resolved = [dict(finding) for finding in stage_state.resolved_findings]
+    for finding in stage_state.unresolved_findings:
+        item = dict(finding)
+        item["status"] = "resolved"
+        resolved.append(item)
+    stage_state.resolved_findings = _dedupe_findings(resolved)
+    stage_state.unresolved_findings = []
     pipeline_state.current_stage = stage
     pipeline_state.updated_at = utc_now()
     return unlock_next_stage(pipeline_state, stage)
@@ -82,3 +89,14 @@ def _unlock_if_locked(pipeline_state: PipelineState, stage: str) -> None:
     stage_state = pipeline_state.stages.get(stage)
     if stage_state and stage_state.status == "locked":
         stage_state.status = "pending"
+
+
+def _dedupe_findings(findings: list[dict]) -> list[dict]:
+    output: list[dict] = []
+    seen: set[str] = set()
+    for finding in findings:
+        finding_id = str(finding.get("id", "")).strip()
+        if finding_id and finding_id not in seen:
+            seen.add(finding_id)
+            output.append(finding)
+    return output

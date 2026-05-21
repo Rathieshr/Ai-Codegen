@@ -242,6 +242,39 @@ class AssistantTests(unittest.TestCase):
         )
         self.assertNotIn("Clarify OTP retry and expiry policy.", output["execution_packet"])
 
+    def test_dev_assistant_does_not_embed_critic_scope_warning_as_unknown(self) -> None:
+        ba_output = {
+            "refined_requirement": "Login Screen. Focus first on phone number input, otp verification step.",
+            "flows": ["login", "otp_verification"],
+            "variants": ["phone_otp"],
+            "business_rules": ["Do not bypass credential validation."],
+            "acceptance_criteria": ["Phone number is required."],
+            "unknowns": [],
+        }
+        ui_output = {
+            "screen_name": "Login Form",
+            "screen_type": "form",
+            "fields": [{"name": "phone_number", "validation": ["required"]}, {"name": "otp", "validation": ["required"]}],
+            "actions": ["submit"],
+            "skippable": False,
+        }
+        output = run_dev_assistant(
+            ba_output,
+            ui_output,
+            {},
+            {"surfaces": ["ui_screen"], "variants": ["phone_otp"]},
+            {
+                "critic_findings": [
+                    {
+                        "severity": "warning",
+                        "message": "Repo-aware task is missing selected files.",
+                    }
+                ]
+            },
+        )
+        self.assertNotIn("# Unknowns", output["execution_packet"])
+        self.assertNotIn("Repo-aware task is missing selected files.", output["execution_packet"])
+
     def test_test_assistant_creates_positive_negative_and_edge_cases(self) -> None:
         ba_output = {"flows": ["login", "otp_verification"], "variants": ["phone_otp"], "acceptance_criteria": ["Phone is required."], "unknowns": []}
         dev_output = {"flow": "login", "variants": ["phone_otp"]}

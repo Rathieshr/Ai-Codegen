@@ -46,7 +46,7 @@ def run_dev_assistant(
             "validations": _field_validations(ui_output, refinement),
             "first_pass_scope": scope,
             "scope_hints": scope,
-            "unknowns": _stage_unknowns(review_context),
+            "unknowns": _stage_unknowns(),
             "focus_rules": _focus_rules(flow, surface),
         },
     )
@@ -189,5 +189,5 @@ def _dedupe(values: list[str]) -> list[str]:
     return output
 
 
-def _stage_unknowns(review_context: dict[str, Any]) -> list[str]:
-    return _dedupe([str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])])
+def _stage_unknowns() -> list[str]:
+    return []

@@ -56,10 +56,7 @@ def run_test_assistant(ba_output: dict, dev_output: dict, ui_output: dict | None
         "assistant": "test",
         "test_cases": test_cases,
         "coverage_notes": _coverage_notes(fields, acceptance),
-        "unknowns": _dedupe(
-            list(ba_output.get("unknowns", []))[:4]
-            + [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])]
-        )[:4],
+        "unknowns": _stage_unknowns(review_context)[:4],
         "react": {
             "reason": reason,
             "act": act,
@@ -147,3 +144,7 @@ def _first(values: list[str]) -> str:
         if normalized:
             return normalized
     return ""
+
+
+def _stage_unknowns(review_context: dict) -> list[str]:
+    return _dedupe([str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])])

@@ -171,6 +171,24 @@ class AssistantTests(unittest.TestCase):
             "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.",
         )
 
+    def test_ui_assistant_does_not_carry_forward_resolved_ba_unknowns(self) -> None:
+        ba_output = {
+            "refined_requirement": "Add a login screen with phone number.",
+            "flows": ["login", "otp_verification"],
+            "variant": "phone_otp",
+            "variants": ["phone_otp"],
+            "unknowns": [],
+        }
+        output = run_app_ui_assistant(
+            ba_output,
+            {
+                "surfaces": ["ui_screen"],
+                "fields": ["phone_number", "otp"],
+                "refinement_unknowns": ["Clarify OTP retry and expiry policy."],
+            },
+        )
+        self.assertEqual(output["unknowns"], [])
+
     def test_dev_assistant_outputs_execution_packet(self) -> None:
         ba_output = {
             "refined_requirement": "Fix login validation.",
@@ -200,6 +218,30 @@ class AssistantTests(unittest.TestCase):
         self.assertTrue(output["selected_files"])
         self.assertIn("phone_otp", output["variants"])
 
+    def test_dev_assistant_does_not_carry_forward_resolved_ba_unknowns(self) -> None:
+        ba_output = {
+            "refined_requirement": "Fix login validation.",
+            "flows": ["login", "otp_verification"],
+            "variants": ["phone_otp"],
+            "business_rules": ["Do not bypass credential validation."],
+            "acceptance_criteria": ["Phone number is required."],
+            "unknowns": [],
+        }
+        ui_output = {
+            "screen_name": "Login Form",
+            "screen_type": "form",
+            "fields": [{"name": "phone_number", "validation": ["required"]}, {"name": "otp", "validation": ["required"]}],
+            "actions": ["submit"],
+            "skippable": False,
+        }
+        output = run_dev_assistant(
+            ba_output,
+            ui_output,
+            {},
+            {"surfaces": ["ui_validation"], "variants": ["phone_otp"], "refinement_unknowns": ["Clarify OTP retry and expiry policy."]},
+        )
+        self.assertNotIn("Clarify OTP retry and expiry policy.", output["execution_packet"])
+
     def test_test_assistant_creates_positive_negative_and_edge_cases(self) -> None:
         ba_output = {"flows": ["login", "otp_verification"], "variants": ["phone_otp"], "acceptance_criteria": ["Phone is required."], "unknowns": []}
         dev_output = {"flow": "login", "variants": ["phone_otp"]}
@@ -209,6 +251,18 @@ class AssistantTests(unittest.TestCase):
         self.assertIn("positive", case_types)
         self.assertIn("negative", case_types)
         self.assertIn("edge", case_types)
+
+    def test_test_assistant_does_not_carry_forward_resolved_ba_unknowns(self) -> None:
+        ba_output = {
+            "flows": ["login", "otp_verification"],
+            "variants": ["phone_otp"],
+            "acceptance_criteria": ["Phone is required."],
+            "unknowns": [],
+        }
+        dev_output = {"flow": "login", "variants": ["phone_otp"]}
+        ui_output = {"fields": [{"name": "phone_number"}, {"name": "otp"}], "skippable": False}
+        output = run_test_assistant(ba_output, dev_output, ui_output)
+        self.assertEqual(output["unknowns"], [])
 
     def test_critic_detects_phone_login_email_password_conflict(self) -> None:
         ba_output = {"variant": "phone_otp", "variants": ["phone_otp"], "acceptance_criteria": ["Use phone login."], "unknowns": []}

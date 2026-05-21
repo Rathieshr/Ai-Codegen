@@ -207,6 +207,42 @@ class ReactControllerTests(unittest.TestCase):
             self.assertEqual(pipeline["current_stage_blocking_findings"], [])
             self.assertEqual(pipeline["stages"]["ui"]["output"].get("unknowns"), [])
 
+    def test_resolved_ba_unknowns_do_not_reappear_in_dev_or_test_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {
+                    "id": 123,
+                    "title": "Ai Gen Extension Test",
+                    "description": "Focus first on phone number input and otp verification step.",
+                    "acceptanceCriteria": "Phone number input is required.",
+                },
+                refinement={
+                    "base_flows": ["login", "otp_verification"],
+                    "variants": ["phone_otp"],
+                    "surfaces": ["ui_screen"],
+                    "fields": ["phone_number", "otp"],
+                    "validations": ["auth_required"],
+                    "refinement_unknowns": ["Clarify OTP retry and expiry policy."],
+                },
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            pipeline = controller.add_stage_feedback(
+                pipeline["pipeline_id"],
+                "ba",
+                "retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+                "reviewer",
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "ba", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "ui", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "dev")
+            self.assertNotIn("Clarify OTP retry and expiry policy.", pipeline["stages"]["dev"]["output"]["execution_packet"])
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "dev", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "test")
+            self.assertEqual(pipeline["stages"]["test"]["output"].get("unknowns"), [])
+
     def test_needs_revision_hides_generate_and_approve(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller = PipelineController(temp_dir)

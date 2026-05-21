@@ -47,10 +47,7 @@ def run_app_ui_assistant(ba_output: dict, refinement: dict | None = None, review
         "states": states,
         "ux_notes": _ux_notes(ba_output, refinement),
         "accessibility_notes": _accessibility_notes(fields),
-        "unknowns": _dedupe(
-            list(refinement.get("refinement_unknowns", []))
-            + [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])]
-        ),
+        "unknowns": _stage_unknowns(review_context),
         "skippable": skippable,
         "skip_reason": "No dedicated UI surface is required for this task." if skippable else "",
         "react": {
@@ -233,3 +230,7 @@ def _dedupe(values: list[str]) -> list[str]:
         if normalized and normalized not in output:
             output.append(normalized)
     return output
+
+
+def _stage_unknowns(review_context: dict) -> list[str]:
+    return _dedupe([str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])])

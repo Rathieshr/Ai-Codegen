@@ -46,11 +46,7 @@ def run_dev_assistant(
             "validations": _field_validations(ui_output, refinement),
             "first_pass_scope": scope,
             "scope_hints": scope,
-            "unknowns": _dedupe(
-                list(ba_output.get("unknowns", []))
-                + list(refinement.get("refinement_unknowns", []))
-                + [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])]
-            ),
+            "unknowns": _stage_unknowns(review_context),
             "focus_rules": _focus_rules(flow, surface),
         },
     )
@@ -191,3 +187,7 @@ def _dedupe(values: list[str]) -> list[str]:
         if normalized and normalized not in output:
             output.append(normalized)
     return output
+
+
+def _stage_unknowns(review_context: dict[str, Any]) -> list[str]:
+    return _dedupe([str(item.get("message", "")).strip() for item in review_context.get("critic_findings", [])])

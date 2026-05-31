@@ -27,7 +27,7 @@ def run_dev_assistant(
     likely_breakpoints = list(repo_context.get("likely_bug_hotspots", []))[:3]
     selected_files = _select_files(repo_context, flow)
     related_flows = list(repo_context.get("related_flows", []))
-    query = ba_output.get("refined_requirement", "Implement the approved change.")
+    query = _task_summary(ba_output)
     execution_packet = build_execution_packet(
         query=query,
         selected_files=selected_files,
@@ -191,3 +191,17 @@ def _dedupe(values: list[str]) -> list[str]:
 
 def _stage_unknowns() -> list[str]:
     return []
+
+
+def _task_summary(ba_output: dict) -> str:
+    raw = str(ba_output.get("refined_requirement", "")).strip()
+    if not raw:
+        return "Implement the approved change."
+    marker = " review clarifications:"
+    lowered = raw.lower()
+    index = lowered.find(marker)
+    if index >= 0:
+        cleaned = raw[:index].rstrip(" .")
+        if cleaned:
+            return f"{cleaned}."
+    return raw

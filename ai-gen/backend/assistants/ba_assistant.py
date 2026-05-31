@@ -17,7 +17,12 @@ QUESTION_VALIDATION_SYSTEM_PROMPT = (
 )
 
 
-def run_ba_assistant(work_item: dict, refinement: dict | None = None, review_context: dict | None = None) -> dict:
+def run_ba_assistant(
+    work_item: dict,
+    refinement: dict | None = None,
+    review_context: dict | None = None,
+    effective_context: dict | None = None,
+) -> dict:
     """Build a deterministic BA artifact from work item text and optional refinement."""
 
     refinement = refinement or {}
@@ -25,8 +30,9 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None, review_con
     title = _text(work_item, "title")
     description = _text(work_item, "description")
     acceptance_text = _text(work_item, "acceptanceCriteria") or _text(work_item, "acceptance_criteria")
+    effective_text = str((effective_context or {}).get("effective_text") or work_item.get("effective_context_text") or "").strip()
     tags = [str(tag).strip() for tag in work_item.get("tags", []) if str(tag).strip()]
-    combined = " ".join(part for part in [title, description, acceptance_text, " ".join(tags)] if part).strip()
+    combined = " ".join(part for part in [title, description, acceptance_text, effective_text, " ".join(tags)] if part).strip()
     variants = list(refinement.get("refined_variants", [])) or list(refinement.get("variants", []))
     variant = _first(variants) or refinement.get("refined_variant") or refinement.get("variant")
     refined_flows = list(refinement.get("refined_base_flows", [])) or list(refinement.get("base_flows", []))
@@ -41,7 +47,7 @@ def run_ba_assistant(work_item: dict, refinement: dict | None = None, review_con
         + _detect_unknowns(combined, variant)
         + _reviewer_unknowns(review_context)
     )
-    unknowns = _filter_answered_unknowns(unknowns, review_context)
+    unknowns = _filter_answered_unknowns(unknowns, review_context, effective_context)
     refined_requirement = _refined_requirement(title, description, refinement)
     if review_context.get("review_feedback"):
         refined_requirement = f"{refined_requirement.rstrip('.')} Review clarifications: {_feedback_summary(review_context)}."
@@ -93,12 +99,21 @@ def _reviewer_unknowns(review_context: dict[str, Any]) -> list[str]:
     return [str(item.get("message", "")).strip() for item in review_context.get("critic_findings", []) if item.get("severity") == "blocking"]
 
 
-def _filter_answered_unknowns(unknowns: list[str], review_context: dict[str, Any]) -> list[str]:
+def _filter_answered_unknowns(
+    unknowns: list[str],
+    review_context: dict[str, Any],
+    effective_context: dict[str, Any] | None = None,
+) -> list[str]:
     feedback_comments = [
         str(item.get("comment", "")).strip()
         for item in review_context.get("review_feedback", [])
         if str(item.get("comment", "")).strip()
     ]
+    feedback_comments.extend(
+        str(item.get("body", "")).strip()
+        for item in (effective_context or {}).get("clarifications", [])
+        if str(item.get("body", "")).strip()
+    )
     feedback_text = " ".join(comment.lower() for comment in feedback_comments)
     if not feedback_text:
         return unknowns

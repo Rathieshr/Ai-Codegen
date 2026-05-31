@@ -1,0 +1,851 @@
+# STORY_GENERATION Handoff
+Status: draft
+
+## Summary
+Generated proposed work items from the approved planning scope.
+
+## Stage Output
+```json
+{
+  "assistant": "story_generator",
+  "dependencies": [],
+  "generated_work_items": [
+    {
+      "acceptance_criteria": [
+        "Checkout improvements story slice 1 is independently reviewable."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 1 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 1 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Documentation reflects the delivered behavior and rollout notes."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Update supporting release or support documentation for checkout improvements: story slice 1.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Documentation Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        }
+      ],
+      "children": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 1 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 1 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Documentation reflects the delivered behavior and rollout notes."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Update supporting release or support documentation for checkout improvements: story slice 1.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Documentation Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        }
+      ],
+      "creation_error": null,
+      "description": "As an end user, I want the checkout improvements story slice 1 so the feature can be delivered safely.",
+      "draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+      "draft_type": "User Story",
+      "id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "108",
+      "selected": true,
+      "source_stage": "story_generation",
+      "status": "draft",
+      "tags": [],
+      "title": "Checkout improvements: Story Slice 1",
+      "type": "User Story"
+    },
+    {
+      "acceptance_criteria": [
+        "Checkout improvements story slice 2 is independently reviewable."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 2 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 2 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        }
+      ],
+      "children": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 2 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 2 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        }
+      ],
+      "creation_error": null,
+      "description": "As an end user, I want the checkout improvements story slice 2 so the feature can be delivered safely.",
+      "draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+      "draft_type": "User Story",
+      "id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "108",
+      "selected": true,
+      "source_stage": "story_generation",
+      "status": "draft",
+      "tags": [],
+      "title": "Checkout improvements: Story Slice 2",
+      "type": "User Story"
+    },
+    {
+      "acceptance_criteria": [
+        "Checkout improvements story slice 3 is independently reviewable."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 3 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 3 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        }
+      ],
+      "children": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 3 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 3 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        }
+      ],
+      "creation_error": null,
+      "description": "As an end user, I want the checkout improvements story slice 3 so the feature can be delivered safely.",
+      "draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+      "draft_type": "User Story",
+      "id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "108",
+      "selected": true,
+      "source_stage": "story_generation",
+      "status": "draft",
+      "tags": [],
+      "title": "Checkout improvements: Story Slice 3",
+      "type": "User Story"
+    }
+  ],
+  "proposed_work_items": [
+    {
+      "acceptance_criteria": [
+        "Checkout improvements story slice 1 is independently reviewable."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 1 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 1 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Documentation reflects the delivered behavior and rollout notes."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Update supporting release or support documentation for checkout improvements: story slice 1.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Documentation Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        }
+      ],
+      "children": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 1 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_1_1_b117bfb1cb",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 1 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_1_2_d99688761b",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Documentation reflects the delivered behavior and rollout notes."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Update supporting release or support documentation for checkout improvements: story slice 1.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_docs_checkout_improvements_story_slice_1_3_b6a046dee7",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Documentation Task: Checkout improvements: Story Slice 1",
+          "type": "Task"
+        }
+      ],
+      "creation_error": null,
+      "description": "As an end user, I want the checkout improvements story slice 1 so the feature can be delivered safely.",
+      "draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+      "draft_type": "User Story",
+      "id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "108",
+      "selected": true,
+      "source_stage": "story_generation",
+      "status": "draft",
+      "tags": [],
+      "title": "Checkout improvements: Story Slice 1",
+      "type": "User Story"
+    },
+    {
+      "acceptance_criteria": [
+        "Checkout improvements story slice 2 is independently reviewable."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 2 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 2 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        }
+      ],
+      "children": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 2 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_2_1_f27a3bcd0d",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 2 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_2_2_baf1b079cc",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 2",
+          "type": "Task"
+        }
+      ],
+      "creation_error": null,
+      "description": "As an end user, I want the checkout improvements story slice 2 so the feature can be delivered safely.",
+      "draft_id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+      "draft_type": "User Story",
+      "id": "draft_story_generation_checkout_improvements_story_slice_2_2_130b78a84f",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "108",
+      "selected": true,
+      "source_stage": "story_generation",
+      "status": "draft",
+      "tags": [],
+      "title": "Checkout improvements: Story Slice 2",
+      "type": "User Story"
+    },
+    {
+      "acceptance_criteria": [
+        "Checkout improvements story slice 3 is independently reviewable."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 3 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 3 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        }
+      ],
+      "children": [
+        {
+          "acceptance_criteria": [
+            "Implementation follows the approved execution scope.",
+            "Variant behavior is respected: default flow."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Implement the approved behavior for checkout improvements: story slice 3 with minimal scope.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_dev_checkout_improvements_story_slice_3_1_cf9a1b8520",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "Dev Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        },
+        {
+          "acceptance_criteria": [
+            "Positive, negative, and edge validation is documented.",
+            "Regression risks are covered before closure."
+          ],
+          "area_path": "",
+          "azure_work_item_id": null,
+          "child_drafts": [],
+          "children": [],
+          "creation_error": null,
+          "description": "Validate the delivered behavior for checkout improvements: story slice 3 and capture regression coverage.",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "draft_type": "Task",
+          "id": "draft_story_generation_draft_story_generation_checkout_improvements_sto_qa_checkout_improvements_story_slice_3_2_124298d9f8",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+          "parent_work_item_id": "108",
+          "selected": true,
+          "source_stage": "story_generation",
+          "status": "draft",
+          "tags": [],
+          "title": "QA Task: Checkout improvements: Story Slice 3",
+          "type": "Task"
+        }
+      ],
+      "creation_error": null,
+      "description": "As an end user, I want the checkout improvements story slice 3 so the feature can be delivered safely.",
+      "draft_id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+      "draft_type": "User Story",
+      "id": "draft_story_generation_checkout_improvements_story_slice_3_3_7d6a4bba77",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "108",
+      "selected": true,
+      "source_stage": "story_generation",
+      "status": "draft",
+      "tags": [],
+      "title": "Checkout improvements: Story Slice 3",
+      "type": "User Story"
+    }
+  ],
+  "risks": [],
+  "summary": "Generated proposed work items from the approved planning scope.",
+  "unknowns": [],
+  "created_work_items": [
+    {
+      "draft_id": "draft_story_generation_checkout_improvements_story_slice_1_1_be0c4c1a2f",
+      "azure_work_item_id": 9010,
+      "status": "created",
+      "title": "Checkout improvements: Story Slice 1",
+      "type": "User Story"
+    }
+  ]
+}
+```
+
+## Next Actions
+- Review created Azure DevOps items.
+- Retry failed draft items if needed.

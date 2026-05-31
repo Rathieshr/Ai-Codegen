@@ -2,6 +2,7 @@ import * as SDK from 'azure-devops-extension-sdk';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  addAiGenComment,
   clearGeneratedState,
   approveDraftWorkItems,
   AiGenState,
@@ -15,18 +16,20 @@ import {
   generateFromCurrentWorkItem,
   HandoffRecord,
   loadDraftWorkItemCreatePayload,
+  loadAiGenComments,
   loadGeneratedState,
   loadHandoff,
   loadHandoffMarkdown,
   loadPipelineForWorkItem,
-  markDraftWorkItemsCreated,
   PipelineState,
   PipelineStageState,
   refreshPipelineState,
   saveGeneratedState,
   skipPipelineStage,
+  storeWorkItemCreationResult,
   runPipelineStage
 } from './api';
+import { selectWorkspaceRenderer } from './renderers/workspaceRenderer';
 import './styles.css';
 
 type ViewState = {
@@ -47,7 +50,8 @@ function WorkItemTab() {
   const [selectedChildTaskTitles, setSelectedChildTaskTitles] = useState<string[]>([]);
   const [createdTaskPreview, setCreatedTaskPreview] = useState<Array<Record<string, unknown>>>([]);
   const [selectedDraftIds, setSelectedDraftIds] = useState<string[]>([]);
-  const [createdDraftsPreview, setCreatedDraftsPreview] = useState<Array<{ draft_id: string; azure_work_item_id: number; title: string; type: string }>>([]);
+  const [createdDraftsPreview, setCreatedDraftsPreview] = useState<Array<{ draft_id: string; azure_work_item_id: number | null; title: string; type: string; status: 'created' | 'failed' | 'skipped'; creation_error?: string | null }>>([]);
+  const [pendingCommentSync, setPendingCommentSync] = useState<{ kind: 'Clarification' | 'Approval' | 'Handoff' | 'Revision'; lines: string[] } | undefined>(undefined);
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
@@ -144,6 +148,10 @@ function WorkItemTab() {
   const currentStageDrafts = draftWorkItems.filter((draft) => draft.source_stage === currentStageName);
   const isPlanningTemplate = ['epic_planning', 'feature_planning'].includes(String(pipeline?.workflow_template || ''));
   const isStoryTaskPlanning = String(pipeline?.workflow_template || '') === 'story_delivery' && currentStageName === 'task_planning';
+  const workspaceRenderer = useMemo(
+    () => selectWorkspaceRenderer(pipeline?.workflow_template || pipeline?.work_item_classification?.recommended_template),
+    [pipeline?.workflow_template, pipeline?.work_item_classification?.recommended_template]
+  );
 
   useEffect(() => {
     setSelectedChildTaskTitles([]);
@@ -214,10 +222,11 @@ function WorkItemTab() {
     }
     setState((current) => ({ ...current, loadingMessage: 'Creating pipeline...' }));
     await withPipelineUpdate(async () => {
-      const pipeline = await createPipeline(state.data!.workItem, state.data!.response);
+      const commentLoad = await loadAiGenComments(state.data!.workItem.id);
+      const pipeline = await createPipeline(state.data!.workItem, state.data!.response, commentLoad.comments);
       return refreshPipelineState(
         state.data!.workItem,
-        { ...state.data!, pipeline },
+        { ...state.data!, pipeline, commentWarning: commentLoad.warning },
         pipeline
       );
     });
@@ -229,13 +238,46 @@ function WorkItemTab() {
     }
     setState((current) => ({ ...current, loadingMessage: regenerate ? 'Regenerating...' : 'Generating...' }));
     await withPipelineUpdate(async () => {
-      const pipeline = await runPipelineStage(state.data!.pipeline!.pipeline_id, currentStageName, regenerate);
+      const commentLoad = await loadAiGenComments(state.data!.workItem.id);
+      const pipeline = await runPipelineStage(
+        state.data!.pipeline!.pipeline_id,
+        currentStageName,
+        regenerate,
+        undefined,
+        'azure_devops',
+        commentLoad.comments,
+      );
       return refreshPipelineState(
         state.data!.workItem,
-        { ...state.data!, pipeline },
+        { ...state.data!, pipeline, commentWarning: commentLoad.warning },
         pipeline
       );
     });
+  }
+
+  async function syncComment(kind: 'Clarification' | 'Approval' | 'Handoff' | 'Revision', lines: string[]) {
+    await addAiGenComment(state.data!.workItem.id, kind, lines);
+    setPendingCommentSync(undefined);
+    setState((current) => current.data
+      ? { ...current, data: { ...current.data, commentSyncWarning: undefined } }
+      : current);
+  }
+
+  async function retryCommentSync() {
+    if (!pendingCommentSync || !state.data) {
+      return;
+    }
+    setState((current) => ({ ...current, loading: true, loadingMessage: 'Retrying comment sync...' }));
+    try {
+      await syncComment(pendingCommentSync.kind, pendingCommentSync.lines);
+      const refreshed = await refreshPipelineState(state.data.workItem, state.data);
+      setState({ loading: false, loadingMessage: '', error: '', data: refreshed });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to sync Azure DevOps comment.';
+      setState((current) => current.data
+        ? { ...current, loading: false, loadingMessage: '', data: { ...current.data, commentSyncWarning: message } }
+        : current);
+    }
   }
 
   async function approveStage() {
@@ -245,6 +287,34 @@ function WorkItemTab() {
     setState((current) => ({ ...current, loadingMessage: 'Approving...' }));
     await withPipelineUpdate(async () => {
       const pipeline = await approvePipelineStage(state.data!.pipeline!.pipeline_id, currentStageName);
+      const approvalLines = [
+        `Stage: ${stageLabel(currentStageName, pipeline)}`,
+        `Approved by ai-gen at pipeline version ${pipeline.version}.`,
+      ];
+      try {
+        await syncComment('Approval', approvalLines);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to sync Azure DevOps comment.';
+        setPendingCommentSync({ kind: 'Approval', lines: approvalLines });
+        setState((current) => current.data
+          ? { ...current, data: { ...current.data, commentSyncWarning: message } }
+          : current);
+      }
+      if (pipeline.stages[currentStageName]?.handoff_id) {
+        const handoffLines = [
+          `Stage: ${stageLabel(currentStageName, pipeline)}`,
+          `Handoff: ${pipeline.stages[currentStageName]?.handoff_id}`,
+        ];
+        try {
+          await syncComment('Handoff', handoffLines);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unable to sync Azure DevOps comment.';
+          setPendingCommentSync({ kind: 'Handoff', lines: handoffLines });
+          setState((current) => current.data
+            ? { ...current, data: { ...current.data, commentSyncWarning: message } }
+            : current);
+        }
+      }
       return refreshPipelineState(
         state.data!.workItem,
         { ...state.data!, pipeline },
@@ -280,20 +350,49 @@ function WorkItemTab() {
     setState((current) => ({ ...current, loadingMessage: andRegenerate ? 'Regenerating with clarifications...' : 'Saving clarification...' }));
     await withPipelineUpdate(async () => {
       if (andRegenerate) {
+        const commentLoad = await loadAiGenComments(state.data!.workItem.id);
         const regenerated = await runPipelineStage(
           state.data!.pipeline!.pipeline_id,
           currentStageName,
           true,
-          comment
+          comment,
+          'azure_devops',
+          commentLoad.comments,
         );
+        const revisionLines = [
+          `Stage: ${stageLabel(currentStageName, regenerated)}`,
+          comment,
+        ];
+        try {
+          await syncComment('Revision', revisionLines);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unable to sync Azure DevOps comment.';
+          setPendingCommentSync({ kind: 'Revision', lines: revisionLines });
+          setState((current) => current.data
+            ? { ...current, data: { ...current.data, commentSyncWarning: message } }
+            : current);
+        }
         setClarification('');
         return refreshPipelineState(
           state.data!.workItem,
-          { ...state.data!, pipeline: regenerated },
+          { ...state.data!, pipeline: regenerated, commentWarning: commentLoad.warning },
           regenerated
         );
       }
       const pipeline = await addStageFeedback(state.data!.pipeline!.pipeline_id, currentStageName, comment);
+      const clarificationLines = [
+        `Stage: ${stageLabel(currentStageName, pipeline)}`,
+        comment,
+      ];
+      try {
+        await syncComment('Clarification', clarificationLines);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to sync Azure DevOps comment.';
+        setPendingCommentSync({ kind: 'Clarification', lines: clarificationLines });
+        setState((current) => current.data
+          ? { ...current, data: { ...current.data, commentSyncWarning: message } }
+          : current);
+      }
       setClarification('');
       return refreshPipelineState(
         state.data!.workItem,
@@ -343,14 +442,27 @@ function WorkItemTab() {
     if (!state.data?.pipeline || !selectedDraftIds.length) {
       return;
     }
+    const count = selectedDraftIds.length;
+    const confirmed = window.confirm(`This will create ${count} Azure DevOps work items under ${state.data.workItem.type} #${state.data.workItem.id}. Continue?`);
+    if (!confirmed) {
+      return;
+    }
     setState((current) => ({ ...current, loadingMessage: 'Creating Azure DevOps work items...' }));
     await withPipelineUpdate(async () => {
       const payload = await loadDraftWorkItemCreatePayload(state.data!.pipeline!.pipeline_id, selectedDraftIds, true);
       const created = await createAzureDevOpsWorkItems(state.data!.workItem, payload.work_item_create_requests);
-      await markDraftWorkItemsCreated(state.data!.pipeline!.pipeline_id, created.map((item) => ({
-        draft_id: item.draft_id,
-        azure_work_item_id: item.azure_work_item_id,
-      })));
+      await storeWorkItemCreationResult(
+        state.data!.pipeline!.pipeline_id,
+        created.map((item) => ({
+          draft_id: item.draft_id,
+          type: item.type,
+          title: item.title,
+          azure_work_item_id: item.azure_work_item_id,
+          parent_azure_work_item_id: item.parent_azure_work_item_id,
+          status: item.status,
+          creation_error: item.creation_error || null,
+        }))
+      );
       setCreatedDraftsPreview(created);
       return refreshPipelineState(state.data!.workItem, state.data!);
     });
@@ -382,6 +494,10 @@ function WorkItemTab() {
     canViewHandoff
   }, pipeline) : 'Create a pipeline to start.';
   const currentSummary = currentStage ? stageSummary(currentStageName || '', currentStage, pipeline) : 'No active stage yet.';
+  const recommendation = workflowRecommendation(workItem?.type || '', response);
+  const timelineItems = buildTimeline(pipeline);
+  const contextWarnings = [...(pipeline?.context_warnings || []), ...(pipeline?.pipeline_context?.warnings || [])];
+  const workflowConfidence = String(pipeline?.work_item_classification?.confidence || inferWorkflowConfidence(workItem?.type || ''));
 
   return (
     <main className="ai-gen-page">
@@ -419,11 +535,28 @@ function WorkItemTab() {
       <section className="ai-gen-section">
         <h2>AI Pipeline</h2>
         {!pipeline ? (
-          <div className="ai-gen-actions">
-            <button className="ai-gen-button" onClick={createOrRefreshPipeline} disabled={state.loading || !response?.optimized_prompt}>
-              Create Pipeline
-            </button>
-            <span className="ai-gen-muted">Create the workflow template that best fits this work item.</span>
+            <div className="ai-gen-stage-panel">
+              <h3>AI Recommendation</h3>
+              <div className="ai-gen-grid">
+                <span className="ai-gen-key">Work Item Title</span>
+                <span>{workItem?.title || 'Not loaded'}</span>
+                <span className="ai-gen-key">Detected Type</span>
+                <span>{recommendation.detectedType}</span>
+                <span className="ai-gen-key">Recommended Workflow</span>
+                <span>{recommendation.workflowLabel}</span>
+                <span className="ai-gen-key">Confidence</span>
+                <span>{workflowConfidence}</span>
+                <span className="ai-gen-key">Expected Outputs</span>
+                <span>{recommendation.outputs.join(', ')}</span>
+                <span className="ai-gen-key">Estimated Time</span>
+                <span>30 seconds</span>
+              </div>
+              {state.data?.commentWarning ? <div className="ai-gen-warning">{state.data.commentWarning}</div> : null}
+              <div className="ai-gen-actions">
+                <button className="ai-gen-button" onClick={createOrRefreshPipeline} disabled={state.loading || !response?.optimized_prompt}>
+                  {recommendation.actionLabel}
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -432,6 +565,8 @@ function WorkItemTab() {
               <span>{formatTemplateName(pipeline.workflow_template || pipeline.work_item_classification?.recommended_template || 'legacy_delivery')}</span>
               <span className="ai-gen-key">Artifact Type</span>
               <span>{pipeline.work_item_classification?.artifact_type || 'generic'}</span>
+              <span className="ai-gen-key">Confidence</span>
+              <span>{workflowConfidence}</span>
               <span className="ai-gen-key">Why this template</span>
               <span>{pipeline.work_item_classification?.reason || 'Selected from work item type and refinement context.'}</span>
             </div>
@@ -446,121 +581,109 @@ function WorkItemTab() {
                 </div>
               ))}
             </div>
-            <div className="ai-gen-stage-summary">
-              <div className="ai-gen-stage-summary-main">
-                <div className="ai-gen-stage-title-row">
-                  <h3>{stageLabel(currentStageName || stageOrder[0] || 'stage', pipeline)}</h3>
-                  <span className={`ai-gen-badge ${currentStage?.status || 'unknown'}`}>{currentStage?.status || 'unknown'}</span>
+            {workspaceRenderer({
+              pipeline,
+              currentStageName,
+              currentStage,
+              currentSummary,
+              nextAction,
+              stageOwner,
+              timelineItems,
+              blockingIssues,
+              commentWarning: state.data?.commentWarning,
+              commentSyncWarning: state.data?.commentSyncWarning,
+              contextWarnings,
+              loading: state.loading,
+              retryCommentSync: pendingCommentSync ? () => void retryCommentSync() : undefined,
+              actionBar: (
+                <div className="ai-gen-actions ai-gen-actions-compact">
+                  {canGenerate ? (
+                    <button className="ai-gen-button" onClick={() => generateStage(false)} disabled={state.loading}>
+                      {generateActionLabel(currentStageName, pipeline, false)}
+                    </button>
+                  ) : null}
+                  {canRegenerate ? (
+                    <button className="ai-gen-button secondary" onClick={() => generateStage(true)} disabled={state.loading}>
+                      {generateActionLabel(currentStageName, pipeline, true)}
+                    </button>
+                  ) : null}
+                  {canApprove ? (
+                    <button className="ai-gen-button secondary" onClick={approveStage} disabled={state.loading}>
+                      Approve &amp; Continue
+                    </button>
+                  ) : null}
+                  {canSkipStage ? (
+                    <button className="ai-gen-button secondary" onClick={skipCurrentStage} disabled={state.loading}>
+                      Skip Stage
+                    </button>
+                  ) : null}
+                  <button className="ai-gen-button secondary" onClick={() => refreshPipeline()} disabled={state.loading}>
+                    Refresh
+                  </button>
+                  {canViewHandoff ? (
+                    <button className="ai-gen-button secondary" onClick={viewCurrentHandoff} disabled={state.loading}>
+                      {currentStage?.status === 'needs_revision' ? 'View Draft' : 'View Handoff'}
+                    </button>
+                  ) : null}
+                  {currentStage?.output?.execution_packet ? (
+                    <button className="ai-gen-button secondary" onClick={copyExecutionPacket} disabled={state.loading}>
+                      Copy Packet
+                    </button>
+                  ) : null}
                 </div>
-                <p className="ai-gen-summary-text">{currentSummary}</p>
-                <div className="ai-gen-stage-meta">
-                  <span><strong>Owner:</strong> {stageOwner}</span>
-                  <span><strong>Approved:</strong> {currentStage?.approved ? 'Yes' : 'No'}</span>
-                  <span><strong>Version:</strong> {currentStage?.version || pipeline.version}</span>
-                </div>
-              </div>
-              <div className="ai-gen-stage-sidebar">
-                <div className="ai-gen-card-label">Next action</div>
-                <div>{nextAction}</div>
-              </div>
-            </div>
-            {blockingIssues.length ? (
-              <div className="ai-gen-warning">
-                <div className="ai-gen-key">Blocking issues</div>
-                <ul className="ai-gen-list">
-                  {blockingIssues.map((issue) => <li key={issue}>{issue}</li>)}
-                </ul>
-              </div>
-            ) : null}
-            {currentStage?.status === 'needs_revision' && (currentStageFindings.length || Array.isArray(currentStage?.output?.unknowns) && currentStage.output.unknowns.length) ? (
-              <div className="ai-gen-warning">
-                <div className="ai-gen-key">Needs Revision</div>
-                <div>AI identified ambiguities requiring clarification before approval.</div>
-              </div>
-            ) : null}
-            <div className="ai-gen-actions ai-gen-actions-compact">
-              {canGenerate ? (
-                <button className="ai-gen-button" onClick={() => generateStage(false)} disabled={state.loading}>
-                  Generate
-                </button>
-              ) : null}
-              {canRegenerate ? (
-                <button className="ai-gen-button secondary" onClick={() => generateStage(true)} disabled={state.loading}>
-                  Regenerate
-                </button>
-              ) : null}
-              {canApprove ? (
-                <button className="ai-gen-button secondary" onClick={approveStage} disabled={state.loading}>
-                  Approve &amp; Continue
-                </button>
-              ) : null}
-              {canSkipStage ? (
-                <button className="ai-gen-button secondary" onClick={skipCurrentStage} disabled={state.loading}>
-                  Skip Stage
-                </button>
-              ) : null}
-              <button className="ai-gen-button secondary" onClick={() => refreshPipeline()} disabled={state.loading}>
-                Reload Pipeline
-              </button>
-              {canViewHandoff ? (
-                <button className="ai-gen-button secondary" onClick={viewCurrentHandoff} disabled={state.loading}>
-                  {currentStage?.status === 'needs_revision' ? 'View Draft' : 'View Handoff'}
-                </button>
-              ) : null}
-              {currentStage?.output?.execution_packet ? (
-                <button className="ai-gen-button secondary" onClick={copyExecutionPacket} disabled={state.loading}>
-                  Copy Packet
-                </button>
-              ) : null}
-            </div>
-            {currentStage && (blockingFindings.length || warningFindings.length || suggestionFindings.length || canAddFeedback || canRegenerateWithClarifications || (currentStage.review_feedback || []).length) ? (
-              <FeedbackPanel
-                blockingFindings={blockingFindings}
-                warningFindings={warningFindings}
-                suggestionFindings={suggestionFindings}
-                reviewFeedback={currentStage.review_feedback || []}
-                clarification={clarification}
-                onClarificationChange={setClarification}
-                onAddClarification={() => addClarification(false)}
-                onRegenerateWithClarifications={() => addClarification(true)}
-                canAddFeedback={canAddFeedback}
-                canRegenerate={canRegenerateWithClarifications}
-                loading={state.loading}
-                stageState={currentStage}
-              />
-            ) : null}
-            {currentStage ? (
-              <StagePanel
-                stage={currentStageName}
-                stageState={currentStage}
-                currentStageFindings={currentStageFindings}
-                allFindings={pipeline?.all_findings || []}
-                pipeline={pipeline}
-              />
-            ) : null}
-            {(isPlanningTemplate || isStoryTaskPlanning) ? (
-              <DraftWorkItemsPanel
-                workflowTemplate={String(pipeline.workflow_template || '')}
-                drafts={currentStageDrafts}
-                selectedDraftIds={selectedDraftIds}
-                onToggleDraft={(draftId) => setSelectedDraftIds((current) => current.includes(draftId) ? current.filter((item) => item !== draftId) : [...current, draftId])}
-                onApproveDrafts={() => void approveSelectedDraftsAction()}
-                onCreateSelected={() => void createSelectedDraftWorkItemsAction()}
-                createdPreview={createdDraftsPreview}
-                loading={state.loading}
-              />
-            ) : null}
-            {proposedChildTasks.length ? (
-              <ChildTaskPlannerCard
-                tasks={proposedChildTasks}
-                selectedTitles={selectedChildTaskTitles}
-                onToggle={(title) => setSelectedChildTaskTitles((current) => current.includes(title) ? current.filter((item) => item !== title) : [...current, title])}
-                onCreateSelected={() => void createSelectedTasksPreview()}
-                createdPreview={createdTaskPreview}
-                loading={state.loading}
-              />
-            ) : null}
-            <PipelineHandoff handoff={state.data?.handoff} />
+              ),
+              feedbackPanel: currentStage && (blockingFindings.length || warningFindings.length || suggestionFindings.length || canAddFeedback || canRegenerateWithClarifications || (currentStage.review_feedback || []).length) ? (
+                <FeedbackPanel
+                  blockingFindings={blockingFindings}
+                  warningFindings={warningFindings}
+                  suggestionFindings={suggestionFindings}
+                  reviewFeedback={currentStage.review_feedback || []}
+                  clarification={clarification}
+                  onClarificationChange={setClarification}
+                  onAddClarification={() => addClarification(false)}
+                  onRegenerateWithClarifications={() => addClarification(true)}
+                  canAddFeedback={canAddFeedback}
+                  canRegenerate={canRegenerateWithClarifications}
+                  loading={state.loading}
+                  stageState={currentStage}
+                />
+              ) : null,
+              stagePanel: currentStage ? (
+                <StagePanel
+                  stage={currentStageName}
+                  stageState={currentStage}
+                  currentStageFindings={currentStageFindings}
+                  allFindings={pipeline?.all_findings || []}
+                  pipeline={pipeline}
+                />
+              ) : null,
+              draftPanel: (isPlanningTemplate || isStoryTaskPlanning) ? (
+                <DraftWorkItemsPanel
+                  workflowTemplate={String(pipeline.workflow_template || '')}
+                  drafts={currentStageDrafts}
+                  selectedDraftIds={selectedDraftIds}
+                  onToggleDraft={(draftId) => setSelectedDraftIds((current) => current.includes(draftId) ? current.filter((item) => item !== draftId) : [...current, draftId])}
+                  onSelectAll={() => setSelectedDraftIds(flattenDrafts(currentStageDrafts).map((item) => item.draft_id))}
+                  onDeselectAll={() => setSelectedDraftIds([])}
+                  onApproveDrafts={() => void approveSelectedDraftsAction()}
+                  onCreateSelected={() => void createSelectedDraftWorkItemsAction()}
+                  onRetryFailed={() => setSelectedDraftIds(flattenDrafts(currentStageDrafts).filter((item) => item.status === 'failed').map((item) => item.draft_id))}
+                  createdPreview={createdDraftsPreview}
+                  loading={state.loading}
+                />
+              ) : null,
+              childTaskPanel: proposedChildTasks.length ? (
+                <ChildTaskPlannerCard
+                  tasks={proposedChildTasks}
+                  selectedTitles={selectedChildTaskTitles}
+                  onToggle={(title) => setSelectedChildTaskTitles((current) => current.includes(title) ? current.filter((item) => item !== title) : [...current, title])}
+                  onCreateSelected={() => void createSelectedTasksPreview()}
+                  createdPreview={createdTaskPreview}
+                  loading={state.loading}
+                />
+              ) : null,
+              handoffPanel: <PipelineHandoff handoff={state.data?.handoff} />,
+            })}
           </>
         )}
       </section>
@@ -580,19 +703,21 @@ function WorkItemTab() {
       </section>
 
       <section className="ai-gen-section">
-        <h2>Status</h2>
-        <div className="ai-gen-grid">
-          <span className="ai-gen-key">Backend</span>
-          <span>{capabilities?.backend_up ? 'Connected' : 'Unknown'}</span>
-          <span className="ai-gen-key">Refiner</span>
-          <span>{capabilities?.refiner?.enabled ? 'Enabled' : 'Disabled'}</span>
-          <span className="ai-gen-key">Provider</span>
-          <span>{capabilities?.refiner?.provider || 'Not configured'}</span>
-          <span className="ai-gen-key">Model</span>
-          <span>{capabilities?.refiner?.model || 'Not configured'}</span>
-          <span className="ai-gen-key">Configured</span>
-          <span>{capabilities?.refiner?.configured ? 'Yes' : 'No'}</span>
-        </div>
+        <details>
+          <summary>Developer Diagnostics</summary>
+          <div className="ai-gen-grid">
+            <span className="ai-gen-key">Backend</span>
+            <span>{capabilities?.backend_up ? 'Connected' : 'Unknown'}</span>
+            <span className="ai-gen-key">Refiner</span>
+            <span>{capabilities?.refiner?.enabled ? 'Enabled' : 'Disabled'}</span>
+            <span className="ai-gen-key">Provider</span>
+            <span>{capabilities?.refiner?.provider || 'Not configured'}</span>
+            <span className="ai-gen-key">Model</span>
+            <span>{capabilities?.refiner?.model || 'Not configured'}</span>
+            <span className="ai-gen-key">Configured</span>
+            <span>{capabilities?.refiner?.configured ? 'Yes' : 'No'}</span>
+          </div>
+        </details>
       </section>
 
       {showRefinement && (
@@ -866,8 +991,11 @@ function DraftWorkItemsPanel({
   drafts,
   selectedDraftIds,
   onToggleDraft,
+  onSelectAll,
+  onDeselectAll,
   onApproveDrafts,
   onCreateSelected,
+  onRetryFailed,
   createdPreview,
   loading,
 }: {
@@ -875,14 +1003,18 @@ function DraftWorkItemsPanel({
   drafts: DraftWorkItem[];
   selectedDraftIds: string[];
   onToggleDraft: (draftId: string) => void;
+  onSelectAll: () => void;
+  onDeselectAll: () => void;
   onApproveDrafts: () => void;
   onCreateSelected: () => void;
-  createdPreview: Array<{ draft_id: string; azure_work_item_id: number; title: string; type: string }>;
+  onRetryFailed: () => void;
+  createdPreview: Array<{ draft_id: string; azure_work_item_id: number | null; title: string; type: string; status: 'created' | 'failed' | 'skipped'; creation_error?: string | null }>;
   loading: boolean;
 }) {
   const flattened = flattenDrafts(drafts);
   const risks = draftRiskSummary(drafts);
   const header = workflowTemplate === 'story_delivery' ? 'Proposed Child Tasks' : 'Proposed Work Items';
+  const failedCount = flattened.filter((draft) => draft.status === 'failed').length;
   return (
     <div className="ai-gen-stage-panel">
       <details open className="ai-gen-detail-block">
@@ -910,19 +1042,34 @@ function DraftWorkItemsPanel({
           </div>
         ) : null}
         <div className="ai-gen-actions ai-gen-actions-compact">
+          <button className="ai-gen-button secondary" onClick={onSelectAll} disabled={loading || !flattened.length}>
+            Select All
+          </button>
+          <button className="ai-gen-button secondary" onClick={onDeselectAll} disabled={loading || !selectedDraftIds.length}>
+            Deselect All
+          </button>
           <button className="ai-gen-button secondary" onClick={onApproveDrafts} disabled={loading || !selectedDraftIds.length}>
             Approve Drafts
           </button>
           <button className="ai-gen-button" onClick={onCreateSelected} disabled={loading || !selectedDraftIds.length}>
             {workflowTemplate === 'story_delivery' ? 'Create Selected Child Tasks' : 'Create Selected Work Items'}
           </button>
+          {failedCount ? (
+            <button className="ai-gen-button secondary" onClick={onRetryFailed} disabled={loading}>
+              Retry Failed
+            </button>
+          ) : null}
         </div>
         {createdPreview.length ? (
           <details className="ai-gen-detail-block">
             <summary>Created Work Items</summary>
             <ul className="ai-gen-list">
               {createdPreview.map((item) => (
-                <li key={item.draft_id}>{item.type} #{item.azure_work_item_id}: {item.title}</li>
+                <li key={item.draft_id}>
+                  {item.status === 'created'
+                    ? `${item.type} #${item.azure_work_item_id}: ${item.title}`
+                    : `${item.type}: ${item.title} failed${item.creation_error ? ` - ${item.creation_error}` : ''}`}
+                </li>
               ))}
             </ul>
           </details>
@@ -936,32 +1083,39 @@ function DraftWorkItemRow({
   draft,
   selectedDraftIds,
   onToggleDraft,
+  level = 0,
 }: {
   draft: DraftWorkItem;
   selectedDraftIds: string[];
   onToggleDraft: (draftId: string) => void;
+  level?: number;
 }) {
   const checked = selectedDraftIds.includes(draft.draft_id);
+  const children = draft.children || draft.child_drafts || [];
   return (
-    <li>
+    <li style={{ marginLeft: `${level * 16}px` }}>
       <label>
         <input type="checkbox" checked={checked} onChange={() => onToggleDraft(draft.draft_id)} />
         {' '}
         <strong>{draft.draft_type}</strong>: {draft.title}
       </label>
       <div className="ai-gen-muted">
-        {draft.acceptance_criteria.length} acceptance criteria | {draft.child_drafts.length} child tasks | {draft.status}
+        {draft.acceptance_criteria.length} acceptance criteria | {children.length} child tasks | {draft.status}{draft.azure_work_item_id ? ` #${draft.azure_work_item_id}` : ''}{draft.creation_error ? ` | ${draft.creation_error}` : ''}
       </div>
       <details className="ai-gen-detail-block">
         <summary>View Details</summary>
         <div className="ai-gen-muted">{draft.description}</div>
         {draft.acceptance_criteria.length ? <ListSection title="Acceptance Criteria" items={draft.acceptance_criteria} /> : null}
-        {draft.child_drafts.length ? (
+        {children.length ? (
           <ul className="ai-gen-list">
-            {draft.child_drafts.map((child) => (
-              <li key={child.draft_id}>
-                <strong>{child.draft_type}</strong>: {child.title}
-              </li>
+            {children.map((child) => (
+              <DraftWorkItemRow
+                key={child.draft_id}
+                draft={child}
+                selectedDraftIds={selectedDraftIds}
+                onToggleDraft={onToggleDraft}
+                level={level + 1}
+              />
             ))}
           </ul>
         ) : null}
@@ -1125,11 +1279,91 @@ function pipelineStageOrder(pipeline?: PipelineState): string[] {
     : Object.keys(pipeline.stages || {});
 }
 
+function workflowRecommendation(workItemType: string, response?: AiGenState['response']) {
+  const normalized = String(workItemType || '').trim() || 'Work Item';
+  const lower = normalized.toLowerCase();
+  if (lower.includes('epic')) {
+    return {
+      detectedType: 'Epic',
+      workflowLabel: 'Epic Planning',
+      outputs: ['Features', 'Stories', 'Dependencies', 'Risks'],
+      actionLabel: 'Generate Epic Plan',
+    };
+  }
+  if (lower.includes('feature')) {
+    return {
+      detectedType: 'Feature',
+      workflowLabel: 'Feature Planning',
+      outputs: ['Stories', 'Tasks', 'Acceptance Criteria'],
+      actionLabel: 'Generate Feature Breakdown',
+    };
+  }
+  if (lower.includes('bug')) {
+    return {
+      detectedType: 'Bug',
+      workflowLabel: 'Bug Fix',
+      outputs: ['Fix Packet', 'Regression Checklist'],
+      actionLabel: 'Analyze Bug',
+    };
+  }
+  if (lower.includes('task')) {
+    return {
+      detectedType: normalized,
+      workflowLabel: 'Task Execution',
+      outputs: ['Execution Packet', 'Validation Checklist'],
+      actionLabel: 'Generate Execution Packet',
+    };
+  }
+  return {
+    detectedType: normalized,
+    workflowLabel: response?.prompt_mode === 'respond' ? 'Research Workflow' : 'Story Delivery',
+    outputs: response?.prompt_mode === 'respond'
+      ? ['Investigation Summary', 'Recommendation']
+      : ['Refined Requirement', 'Generated Tasks', 'Test Plan'],
+    actionLabel: response?.prompt_mode === 'respond' ? 'Start Research Workflow' : 'Start Story Workflow',
+  };
+}
+
+function buildTimeline(pipeline?: PipelineState): string[] {
+  if (!pipeline) {
+    return [];
+  }
+  const items = [`Pipeline Created (v${pipeline.version})`];
+  if (pipeline.pipeline_context?.comment_count) {
+    items.push(`Comments loaded (${pipeline.pipeline_context.comment_count})`);
+  }
+  if (pipeline.pipeline_context?.last_comment_sync_at) {
+    items.push('Azure DevOps comment synced');
+  }
+  for (const stageName of pipelineStageOrder(pipeline)) {
+    const stage = pipeline.stages[stageName];
+    if (!stage) {
+      continue;
+    }
+    if (stage.review_feedback?.length) {
+      items.push(`${stageLabel(stageName, pipeline)}: Clarification Added`);
+    }
+    if (stage.output && Object.keys(stage.output).length) {
+      items.push(`${stageLabel(stageName, pipeline)}: Generated`);
+    }
+    if ((stage.review_feedback || []).length && stage.version > 1) {
+      items.push(`${stageLabel(stageName, pipeline)}: Regenerated using clarification`);
+    }
+    if (stage.approved) {
+      items.push(`${stageLabel(stageName, pipeline)}: Approved`);
+    }
+    if (stage.handoff_id) {
+      items.push(`${stageLabel(stageName, pipeline)}: Handoff Ready`);
+    }
+  }
+  return items;
+}
+
 function flattenDrafts(drafts: DraftWorkItem[]): DraftWorkItem[] {
   const items: DraftWorkItem[] = [];
   for (const draft of drafts) {
     items.push(draft);
-    items.push(...flattenDrafts(draft.child_drafts || []));
+    items.push(...flattenDrafts(draft.children || draft.child_drafts || []));
   }
   return items;
 }
@@ -1242,6 +1476,42 @@ function chipLabel(stage: string, stageState?: PipelineStageState, pipeline?: Pi
     return `${ownerRole(stage, pipeline)} approved`;
   }
   return stageState.status;
+}
+
+function inferWorkflowConfidence(workItemType: string): string {
+  const normalized = String(workItemType || '').trim().toLowerCase();
+  if (!normalized) {
+    return 'low';
+  }
+  return ['epic', 'feature', 'bug', 'task', 'story', 'user story', 'qa task', 'ui task', 'spike'].some((item) => normalized.includes(item))
+    ? 'high'
+    : 'medium';
+}
+
+function generateActionLabel(stage: string, pipeline?: PipelineState, regenerate = false): string {
+  const workflow = String(pipeline?.workflow_template || '');
+  if (workflow === 'epic_planning' && stage === 'epic_analysis') {
+    return regenerate ? 'Regenerate Epic Plan' : 'Generate Epic Plan';
+  }
+  if (workflow === 'feature_planning' && stage === 'feature_analysis') {
+    return regenerate ? 'Regenerate Feature Breakdown' : 'Generate Feature Breakdown';
+  }
+  if (workflow === 'bug_fix' && stage === 'bug_analysis') {
+    return regenerate ? 'Reanalyze Bug' : 'Analyze Bug';
+  }
+  if (workflow === 'task_execution' && stage === 'task_analysis') {
+    return regenerate ? 'Regenerate Execution Analysis' : 'Generate Execution Packet';
+  }
+  if (workflow === 'qa_task' && stage === 'test_design') {
+    return regenerate ? 'Regenerate Test Design' : 'Design Tests';
+  }
+  if (workflow === 'ui_task' && stage === 'ui_plan') {
+    return regenerate ? 'Regenerate UI Plan' : 'Generate UI Plan';
+  }
+  if (workflow === 'spike' && stage === 'research_plan') {
+    return regenerate ? 'Regenerate Research Plan' : 'Start Research Plan';
+  }
+  return regenerate ? 'Regenerate' : 'Generate';
 }
 
 async function copyText(value: string): Promise<void> {

@@ -1,0 +1,84 @@
+{
+  "approved_at": null,
+  "constraints": [
+    "Preserve the existing authentication order and failure safety rules.",
+    "Reuse the existing session or token lifecycle."
+  ],
+  "content": {
+    "acceptance_criteria": [
+      "Authenticate the user with phone number entry followed by OTP verification."
+    ],
+    "actors": [
+      "end_user"
+    ],
+    "assistant": "ba",
+    "business_rules": [
+      "Preserve the existing authentication order and failure safety rules.",
+      "Reuse the existing session or token lifecycle."
+    ],
+    "flows": [
+      "login"
+    ],
+    "react": {
+      "act": {
+        "acceptance_criteria_count": 1,
+        "actors": [
+          "end_user"
+        ],
+        "flows": [
+          "login"
+        ],
+        "requirement": "Phone OTP login."
+      },
+      "decision": "ready_for_approval",
+      "observe": {
+        "surface": null,
+        "tags": [],
+        "used_refinement": true
+      },
+      "reason": {
+        "goal": "Clarify the requirement, actors, flows, and business rules before UI or development work starts.",
+        "known": [
+          "Phone OTP login",
+          "flow:login",
+          "variant:phone_otp"
+        ],
+        "missing": []
+      }
+    },
+    "refined_requirement": "Phone OTP login.",
+    "unknowns": [],
+    "variant": "phone_otp",
+    "variants": [
+      "phone_otp"
+    ]
+  },
+  "created_at": "2026-05-31T15:00:28.938579+00:00",
+  "handoff_id": "handoff_102_ba_v1",
+  "handoff_type": "requirement_handoff",
+  "next_actions": [
+    "Review the clarified requirement.",
+    "Approve BA output before UI or dev work."
+  ],
+  "open_questions": [],
+  "pipeline_id": "pipeline_e33eaf9dc62f",
+  "refinement": {
+    "base_flows": [
+      "login"
+    ],
+    "variants": [
+      "phone_otp"
+    ]
+  },
+  "repo_context": {},
+  "source_stage": "ba",
+  "stage": "ba",
+  "status": "draft",
+  "summary": "Phone OTP login.",
+  "target_stages": [
+    "ui_optional",
+    "task_planning"
+  ],
+  "version": 1,
+  "work_item_id": "102"
+}

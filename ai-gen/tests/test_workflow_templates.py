@@ -65,7 +65,7 @@ class WorkflowTemplateTests(unittest.TestCase):
             controller = PipelineController(temp_dir)
             pipeline = controller.create_pipeline({"id": 104, "type": "Epic", "title": "Identity modernization"})
             self.assertEqual(pipeline["workflow_template"], "epic_planning")
-            self.assertEqual(pipeline["stage_order"], ["epic_analysis", "story_generation", "review"])
+            self.assertEqual(pipeline["stage_order"], ["epic_analysis", "feature_generation", "story_generation", "review"])
 
     def test_epic_story_generation_outputs_proposed_work_items(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -73,9 +73,14 @@ class WorkflowTemplateTests(unittest.TestCase):
             pipeline = controller.create_pipeline({"id": 105, "type": "Epic", "title": "Identity modernization"})
             pipeline = controller.run_stage(pipeline["pipeline_id"], "epic_analysis")
             pipeline = controller.approve_stage(pipeline["pipeline_id"], "epic_analysis", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "feature_generation")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "feature_generation", approved_by="tester")
             pipeline = controller.run_stage(pipeline["pipeline_id"], "story_generation")
             output = pipeline["stages"]["story_generation"]["output"]
             self.assertTrue(output["proposed_work_items"])
+            self.assertTrue(output["generated_work_items"])
+            self.assertEqual(output["generated_work_items"][0]["draft_type"], "Feature")
+            self.assertTrue(output["generated_work_items"][0]["children"])
             self.assertNotIn("proposed_stories", output)
             self.assertEqual(output["assistant"], "story_generator")
 
@@ -97,7 +102,9 @@ class WorkflowTemplateTests(unittest.TestCase):
             pipeline = controller.run_stage(pipeline["pipeline_id"], "task_planning")
             output = pipeline["stages"]["task_planning"]["output"]
             self.assertTrue(output["proposed_work_items"])
+            self.assertTrue(output["generated_work_items"])
             self.assertEqual(output["proposed_work_items"][0]["source_stage"], "task_planning")
+            self.assertIn(output["generated_work_items"][0]["draft_type"], {"Task"})
 
     def test_create_request_payload_and_created_mapping_work(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -105,6 +112,8 @@ class WorkflowTemplateTests(unittest.TestCase):
             pipeline = controller.create_pipeline({"id": 107, "type": "Epic", "title": "Identity modernization"})
             pipeline = controller.run_stage(pipeline["pipeline_id"], "epic_analysis")
             pipeline = controller.approve_stage(pipeline["pipeline_id"], "epic_analysis", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "feature_generation")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "feature_generation", approved_by="tester")
             pipeline = controller.run_stage(pipeline["pipeline_id"], "story_generation")
             drafts = controller.get_draft_work_items(pipeline["pipeline_id"])["draft_work_items"]
             draft_ids = [drafts[0]["draft_id"]]
@@ -112,9 +121,26 @@ class WorkflowTemplateTests(unittest.TestCase):
             self.assertTrue(payload["work_item_create_requests"])
             created = controller.mark_draft_work_items_created(
                 pipeline["pipeline_id"],
-                [{"draft_id": payload["work_item_create_requests"][0]["draft_id"], "azure_work_item_id": 9001}],
+                [{"draft_id": payload["work_item_create_requests"][0]["draft_id"], "azure_work_item_id": 9001, "status": "created"}],
             )
             self.assertTrue(any(item["azure_work_item_id"] == 9001 for item in created["draft_work_items"]))
+
+    def test_creation_result_is_stored_in_pipeline_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 108, "type": "Feature", "title": "Checkout improvements"})
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "feature_analysis")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "feature_analysis", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "story_generation")
+            drafts = controller.get_draft_work_items(pipeline["pipeline_id"])["draft_work_items"]
+            draft_id = drafts[0]["draft_id"]
+            controller.mark_draft_work_items_created(
+                pipeline["pipeline_id"],
+                [{"draft_id": draft_id, "azure_work_item_id": 9010, "status": "created", "title": drafts[0]["title"], "type": drafts[0]["draft_type"]}],
+            )
+            stored = controller.get_pipeline(pipeline["pipeline_id"])
+            self.assertTrue(stored["activity"])
+            self.assertEqual(stored["activity"][-1]["type"], "work_item_creation_result")
 
 
 if __name__ == "__main__":

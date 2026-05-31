@@ -1,0 +1,262 @@
+# TASK_PLANNING Handoff
+Status: approved
+
+## Summary
+Generated proposed child work items from the approved story scope.
+
+## Stage Output
+```json
+{
+  "acceptance_criteria": [
+    "Phone number input is required."
+  ],
+  "assistant": "task_planning",
+  "flows": [
+    "login",
+    "otp_verification"
+  ],
+  "generated_work_items": [
+    {
+      "acceptance_criteria": [
+        "UI structure reflects the approved story scope.",
+        "Fields are covered: phone_number, otp."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Design and implement the UI structure for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required., including fields and states.",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "UI Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    },
+    {
+      "acceptance_criteria": [
+        "Implementation follows the approved execution scope.",
+        "Variant behavior is respected: phone_otp."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Implement the approved behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. with minimal scope.",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "Dev Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    },
+    {
+      "acceptance_criteria": [
+        "Positive, negative, and edge validation is documented.",
+        "Regression risks are covered before closure."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Validate the delivered behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. and capture regression coverage.",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "QA Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    },
+    {
+      "acceptance_criteria": [
+        "Documentation reflects the delivered behavior and rollout notes."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Update supporting release or support documentation for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required..",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "Documentation Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    }
+  ],
+  "proposed_child_tasks": [
+    {
+      "description": "Build the approved behavior for flows: login, otp_verification.",
+      "title": "Implement Ai Gen Extension Test",
+      "type": "task"
+    },
+    {
+      "description": "Define the UI behavior, fields, and states for: phone_number, otp.",
+      "title": "Design Ai Gen Extension Test",
+      "type": "ui_task"
+    },
+    {
+      "description": "Prepare and execute the validation and regression checklist for the approved scope.",
+      "title": "Validate Ai Gen Extension Test",
+      "type": "qa_task"
+    }
+  ],
+  "proposed_work_items": [
+    {
+      "acceptance_criteria": [
+        "UI structure reflects the approved story scope.",
+        "Fields are covered: phone_number, otp."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Design and implement the UI structure for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required., including fields and states.",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "UI Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    },
+    {
+      "acceptance_criteria": [
+        "Implementation follows the approved execution scope.",
+        "Variant behavior is respected: phone_otp."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Implement the approved behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. with minimal scope.",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "Dev Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    },
+    {
+      "acceptance_criteria": [
+        "Positive, negative, and edge validation is documented.",
+        "Regression risks are covered before closure."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Validate the delivered behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. and capture regression coverage.",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "QA Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    },
+    {
+      "acceptance_criteria": [
+        "Documentation reflects the delivered behavior and rollout notes."
+      ],
+      "area_path": "",
+      "azure_work_item_id": null,
+      "child_drafts": [],
+      "children": [],
+      "creation_error": null,
+      "description": "Update supporting release or support documentation for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required..",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
+      "draft_type": "Task",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
+      "iteration_path": "",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_work_item_id": "123",
+      "selected": true,
+      "source_stage": "task_planning",
+      "status": "draft",
+      "tags": [],
+      "title": "Documentation Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "type": "Task"
+    }
+  ],
+  "summary": "Generated proposed child work items from the approved story scope.",
+  "unknowns": []
+}
+```
+
+## Next Actions
+- Review the proposed child tasks.
+- Approve before copying tasks into downstream systems.
+
+## Refinement
+```json
+{
+  "base_flows": [
+    "login",
+    "otp_verification"
+  ],
+  "fields": [
+    "phone_number",
+    "otp"
+  ],
+  "refinement_unknowns": [
+    "Clarify OTP retry and expiry policy."
+  ],
+  "surfaces": [
+    "ui_screen"
+  ],
+  "validations": [
+    "auth_required"
+  ],
+  "variants": [
+    "phone_otp"
+  ]
+}
+```

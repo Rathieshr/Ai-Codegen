@@ -6,13 +6,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from backend.assistants import (
-    run_app_ui_assistant,
-    run_ba_assistant,
-    run_critic_assistant,
-    run_dev_assistant,
-    run_test_assistant,
-)
+from backend.context import build_effective_work_item_context
 from backend.handoff.handoff_builder import build_handoff
 from backend.handoff.storage import latest_handoff, load_handoff, save_handoff
 from backend.orchestrator.approval_gate import (
@@ -41,10 +35,21 @@ class PipelineController:
         source: str = "azure_devops",
         repo_context: dict | None = None,
         refinement: dict | None = None,
+        ai_gen_comments: list[dict] | None = None,
     ) -> dict:
         pipeline_id = f"pipeline_{uuid4().hex[:12]}"
         work_item_id = str(work_item.get("id") or work_item.get("work_item_id") or uuid4().hex[:8])
-        classification, template = route_work_item_to_template(work_item, refinement=refinement)
+        effective_context = build_effective_work_item_context(
+            work_item,
+            pipeline_state=None,
+            ai_gen_comments=ai_gen_comments or [],
+            approved_handoffs=[],
+        )
+        classification, template = route_work_item_to_template(
+            work_item,
+            refinement=refinement,
+            effective_context=effective_context,
+        )
         state = create_initial_pipeline_state(
             pipeline_id=pipeline_id,
             source=source,
@@ -52,6 +57,8 @@ class PipelineController:
             work_item=work_item,
             repo_context=repo_context,
             refinement=refinement,
+            ai_gen_comments=ai_gen_comments or [],
+            pipeline_context=self._pipeline_context_summary(effective_context, comment_count=len(ai_gen_comments or [])),
             workflow_template=template["name"],
             stage_order=list_stage_names(template),
             stage_metadata=stage_metadata_map(template),
@@ -68,15 +75,19 @@ class PipelineController:
         state = self.load_latest_pipeline_for_work_item(work_item_id)
         return self._serialize_pipeline(state) if state else None
 
-    def run_stage(self, pipeline_id: str, stage: str, regenerate: bool = False) -> dict:
+    def run_stage(self, pipeline_id: str, stage: str, regenerate: bool = False, ai_gen_comments: list[dict] | None = None) -> dict:
         state = self.load_pipeline(pipeline_id)
         allowed, reason = can_run_stage(state, stage, regenerate=regenerate)
         if not allowed:
             raise ValueError(reason)
+        if ai_gen_comments is not None:
+            state.ai_gen_comments = ai_gen_comments
         stage_state = state.stages[stage]
         stage_state.version = stage_state.version + 1 if regenerate or stage_state.version else 1
+        effective_context = self._rebuild_effective_context(state)
+        state.pipeline_context = self._pipeline_context_summary(effective_context, comment_count=len(state.ai_gen_comments))
         review_context = self._build_review_context(stage_state) if regenerate else None
-        output = self._run_stage_output(state, stage, review_context=review_context)
+        output = self._run_stage_output(state, stage, effective_context=effective_context, review_context=review_context)
         critic = self._run_critic_for_stage(stage, output, state)
         unresolved, resolved = self._split_findings(stage_state, critic)
         stage_state.output = output
@@ -117,6 +128,7 @@ class PipelineController:
         )
         save_handoff(handoff)
         stage_state.handoff_id = handoff["handoff_id"]
+        state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
@@ -124,6 +136,7 @@ class PipelineController:
     def skip_stage(self, pipeline_id: str, stage: str, reason: str) -> dict:
         state = self.load_pipeline(pipeline_id)
         state = apply_skip(state, stage, reason=reason)
+        state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
@@ -143,6 +156,7 @@ class PipelineController:
             comment=normalized,
         )
         stage_state.review_feedback.append(feedback)
+        state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
@@ -200,15 +214,38 @@ class PipelineController:
     def mark_draft_work_items_created(self, pipeline_id: str, created_items: list[dict]) -> dict:
         state = self.load_pipeline(pipeline_id)
         state.draft_work_items = mark_drafts_created(state.draft_work_items, created_items)
+        owner_stage = self._draft_owner_stage(state)
+        if owner_stage:
+            state.stages[owner_stage].output["created_work_items"] = created_items
+            if state.stages[owner_stage].handoff_id:
+                handoff = load_handoff(state.stages[owner_stage].handoff_id)
+                if handoff:
+                    handoff["content"]["created_work_items"] = created_items
+                    handoff["next_actions"] = ["Review created Azure DevOps items.", "Retry failed draft items if needed."]
+                    save_handoff(handoff)
+        state.activity.append(
+            {
+                "type": "work_item_creation_result",
+                "timestamp": utc_now(),
+                "created_items": created_items,
+            }
+        )
         self._touch_pipeline(state)
         self.save_pipeline(state)
         return self.get_draft_work_items(pipeline_id)
 
-    def _run_stage_output(self, state: PipelineState, stage: str, review_context: dict | None = None) -> dict:
+    def _run_stage_output(
+        self,
+        state: PipelineState,
+        stage: str,
+        effective_context: dict | None = None,
+        review_context: dict | None = None,
+    ) -> dict:
         return run_stage_output(
             stage,
             state,
             approved_stage_context=lambda stage_name: self._approved_stage_context(state, stage_name),
+            effective_context=effective_context or self._rebuild_effective_context(state),
             review_context=review_context,
         )
 
@@ -256,11 +293,14 @@ class PipelineController:
         data["stage_order"] = list(state.stage_order)
         data["stage_metadata"] = state.stage_metadata
         data["work_item_classification"] = state.work_item_classification
+        data["pipeline_context"] = state.pipeline_context
+        data["activity"] = list(state.activity)
         data["draft_work_items"] = list(state.draft_work_items)
         data["current_stage_findings"] = self._current_stage_findings(state)
         data["current_stage_blocking_findings"] = self._current_stage_blocking_findings(state)
         data["all_findings"] = self._all_findings(state)
         data["resolved_findings"] = self._resolved_findings(state)
+        data["context_warnings"] = list(state.pipeline_context.get("warnings", [])) if isinstance(state.pipeline_context, dict) else []
         print(
             "ai-gen pipeline"
             f" current_stage={data['current_stage']}"
@@ -268,6 +308,7 @@ class PipelineController:
             f" current_stage_blocking_findings={len(data['current_stage_blocking_findings'])}"
             f" all_findings={len(data['all_findings'])}"
             f" resolved_findings={len(data['resolved_findings'])}"
+            f" context_sources={len((data.get('pipeline_context') or {}).get('context_sources', []))}"
         )
         return data
 
@@ -397,7 +438,7 @@ class PipelineController:
         return stage_name.endswith("_optional")
 
     def _sync_stage_drafts(self, state: PipelineState, stage: str, output: dict) -> None:
-        proposed = output.get("proposed_work_items")
+        proposed = output.get("generated_work_items") or output.get("proposed_work_items")
         if not isinstance(proposed, list):
             return
         stage_drafts = []
@@ -410,23 +451,79 @@ class PipelineController:
         state.draft_work_items = preserved + normalize_drafts(stage_drafts)
 
     def _select_drafts(self, drafts: list[dict], draft_ids: list[str], create_child_tasks: bool = True) -> list[dict]:
-        by_id = {str(draft.get("draft_id")): dict(draft) for draft in drafts}
+        selected_ids = {str(item).strip() for item in draft_ids if str(item).strip()}
         selected: list[dict] = []
-        pending = [str(item) for item in draft_ids]
-        seen: set[str] = set()
-        while pending:
-            draft_id = pending.pop(0)
-            if draft_id in seen or draft_id not in by_id:
-                continue
-            seen.add(draft_id)
-            draft = by_id[draft_id]
-            selected.append(draft)
-            if create_child_tasks:
-                for child in draft.get("child_drafts", []):
-                    child_id = str(child.get("draft_id", "")).strip()
-                    if child_id:
-                        pending.append(child_id)
+        for draft in normalize_drafts(drafts):
+            selected.extend(self._select_drafts_recursive(draft, selected_ids, create_child_tasks))
         return normalize_drafts(selected)
+
+    def _flatten_nested_drafts(self, draft: dict) -> list[dict]:
+        item = dict(draft)
+        children = item.get("children") or item.get("child_drafts") or []
+        flattened = [item]
+        for child in children:
+            if isinstance(child, dict):
+                flattened.extend(self._flatten_nested_drafts(child))
+        return flattened
+
+    def _select_drafts_recursive(self, draft: dict, selected_ids: set[str], create_child_tasks: bool) -> list[dict]:
+        item = dict(draft)
+        draft_id = str(item.get("draft_id", "")).strip()
+        children = [dict(child) for child in item.get("children") or item.get("child_drafts") or [] if isinstance(child, dict)]
+        if draft_id in selected_ids:
+            if create_child_tasks:
+                return [item]
+            item["children"] = []
+            item["child_drafts"] = []
+            return [item]
+        selected_children: list[dict] = []
+        for child in children:
+            selected_children.extend(self._select_drafts_recursive(child, selected_ids, create_child_tasks))
+        return selected_children
+
+    def _rebuild_effective_context(self, state: PipelineState) -> dict:
+        return build_effective_work_item_context(
+            state.work_item,
+            pipeline_state=state.to_dict(),
+            ai_gen_comments=state.ai_gen_comments,
+            approved_handoffs=self._approved_handoffs(state),
+        )
+
+    def _approved_handoffs(self, state: PipelineState) -> list[dict]:
+        output: list[dict] = []
+        for stage_name in state.stage_order:
+            stage_state = state.stages.get(stage_name)
+            if not stage_state or not stage_state.approved or not stage_state.handoff_id:
+                continue
+            handoff = load_handoff(stage_state.handoff_id)
+            if handoff:
+                output.append(handoff)
+        return output
+
+    def _pipeline_context_summary(self, effective_context: dict, comment_count: int) -> dict:
+        return {
+            "effective_context_summary": {
+                "clarification_count": len(effective_context.get("clarifications", [])),
+                "approval_count": len(effective_context.get("approvals", [])),
+                "handoff_summary_count": len(effective_context.get("handoff_summaries", [])),
+                "revision_note_count": len(effective_context.get("revision_notes", [])),
+                "pipeline_feedback_count": len(effective_context.get("pipeline_feedback", [])),
+                "effective_text_preview": str(effective_context.get("effective_text", ""))[:1200],
+            },
+            "context_sources": list(effective_context.get("context_sources", [])),
+            "last_comment_sync_at": utc_now() if comment_count else None,
+            "comment_count": comment_count,
+            "warnings": list(effective_context.get("warnings", [])),
+        }
+
+    def _draft_owner_stage(self, state: PipelineState) -> str | None:
+        for stage_name in reversed(state.stage_order):
+            stage_state = state.stages.get(stage_name)
+            if stage_state and stage_state.output and (
+                stage_state.output.get("generated_work_items") or stage_state.output.get("proposed_work_items")
+            ):
+                return stage_name
+        return None
 
 
 def _dedupe_findings(findings: list[dict]) -> list[dict]:

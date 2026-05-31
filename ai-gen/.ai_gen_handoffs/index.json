@@ -1,0 +1,242 @@
+{
+  "handoff_102_ba_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/102/ba_v1.md",
+    "path": ".ai_gen_handoffs/work_items/102/ba_v1.json",
+    "stage": "ba",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "102"
+  },
+  "handoff_105_epic_analysis_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/105/epic_analysis_v1.md",
+    "path": ".ai_gen_handoffs/work_items/105/epic_analysis_v1.json",
+    "stage": "epic_analysis",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "105"
+  },
+  "handoff_105_epic_analysis_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/105/epic_analysis_v2.md",
+    "path": ".ai_gen_handoffs/work_items/105/epic_analysis_v2.json",
+    "stage": "epic_analysis",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "105"
+  },
+  "handoff_105_feature_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/105/feature_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/105/feature_generation_v1.json",
+    "stage": "feature_generation",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "105"
+  },
+  "handoff_105_feature_generation_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/105/feature_generation_v2.md",
+    "path": ".ai_gen_handoffs/work_items/105/feature_generation_v2.json",
+    "stage": "feature_generation",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "105"
+  },
+  "handoff_105_story_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/105/story_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/105/story_generation_v1.json",
+    "stage": "story_generation",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "105"
+  },
+  "handoff_106_ba_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/106/ba_v1.md",
+    "path": ".ai_gen_handoffs/work_items/106/ba_v1.json",
+    "stage": "ba",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "106"
+  },
+  "handoff_106_ba_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/106/ba_v2.md",
+    "path": ".ai_gen_handoffs/work_items/106/ba_v2.json",
+    "stage": "ba",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "106"
+  },
+  "handoff_106_task_planning_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/106/task_planning_v1.md",
+    "path": ".ai_gen_handoffs/work_items/106/task_planning_v1.json",
+    "stage": "task_planning",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "106"
+  },
+  "handoff_107_epic_analysis_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/107/epic_analysis_v1.md",
+    "path": ".ai_gen_handoffs/work_items/107/epic_analysis_v1.json",
+    "stage": "epic_analysis",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "107"
+  },
+  "handoff_107_epic_analysis_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/107/epic_analysis_v2.md",
+    "path": ".ai_gen_handoffs/work_items/107/epic_analysis_v2.json",
+    "stage": "epic_analysis",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "107"
+  },
+  "handoff_107_feature_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/107/feature_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/107/feature_generation_v1.json",
+    "stage": "feature_generation",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "107"
+  },
+  "handoff_107_feature_generation_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/107/feature_generation_v2.md",
+    "path": ".ai_gen_handoffs/work_items/107/feature_generation_v2.json",
+    "stage": "feature_generation",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "107"
+  },
+  "handoff_107_story_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/107/story_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/107/story_generation_v1.json",
+    "stage": "story_generation",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "107"
+  },
+  "handoff_108_feature_analysis_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/108/feature_analysis_v1.md",
+    "path": ".ai_gen_handoffs/work_items/108/feature_analysis_v1.json",
+    "stage": "feature_analysis",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "108"
+  },
+  "handoff_108_feature_analysis_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/108/feature_analysis_v2.md",
+    "path": ".ai_gen_handoffs/work_items/108/feature_analysis_v2.json",
+    "stage": "feature_analysis",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "108"
+  },
+  "handoff_108_story_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/108/story_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/108/story_generation_v1.json",
+    "stage": "story_generation",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "108"
+  },
+  "handoff_123_ba_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/ba_v1.md",
+    "path": ".ai_gen_handoffs/work_items/123/ba_v1.json",
+    "stage": "ba",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "123"
+  },
+  "handoff_123_ba_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/ba_v2.md",
+    "path": ".ai_gen_handoffs/work_items/123/ba_v2.json",
+    "stage": "ba",
+    "status": "draft",
+    "version": 2,
+    "work_item_id": "123"
+  },
+  "handoff_123_ba_v3": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/ba_v3.md",
+    "path": ".ai_gen_handoffs/work_items/123/ba_v3.json",
+    "stage": "ba",
+    "status": "approved",
+    "version": 3,
+    "work_item_id": "123"
+  },
+  "handoff_123_dev_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/dev_v1.md",
+    "path": ".ai_gen_handoffs/work_items/123/dev_v1.json",
+    "stage": "dev",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "123"
+  },
+  "handoff_123_dev_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/dev_v2.md",
+    "path": ".ai_gen_handoffs/work_items/123/dev_v2.json",
+    "stage": "dev",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "123"
+  },
+  "handoff_123_task_planning_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/task_planning_v1.md",
+    "path": ".ai_gen_handoffs/work_items/123/task_planning_v1.json",
+    "stage": "task_planning",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "123"
+  },
+  "handoff_123_task_planning_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/task_planning_v2.md",
+    "path": ".ai_gen_handoffs/work_items/123/task_planning_v2.json",
+    "stage": "task_planning",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "123"
+  },
+  "handoff_123_test_planning_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/test_planning_v1.md",
+    "path": ".ai_gen_handoffs/work_items/123/test_planning_v1.json",
+    "stage": "test_planning",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "123"
+  },
+  "handoff_123_test_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/test_v1.md",
+    "path": ".ai_gen_handoffs/work_items/123/test_v1.json",
+    "stage": "test",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "123"
+  },
+  "handoff_123_ui_optional_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/ui_optional_v1.md",
+    "path": ".ai_gen_handoffs/work_items/123/ui_optional_v1.json",
+    "stage": "ui_optional",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "123"
+  },
+  "handoff_123_ui_optional_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/ui_optional_v2.md",
+    "path": ".ai_gen_handoffs/work_items/123/ui_optional_v2.json",
+    "stage": "ui_optional",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "123"
+  },
+  "handoff_123_ui_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/ui_v1.md",
+    "path": ".ai_gen_handoffs/work_items/123/ui_v1.json",
+    "stage": "ui",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "123"
+  },
+  "handoff_123_ui_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/123/ui_v2.md",
+    "path": ".ai_gen_handoffs/work_items/123/ui_v2.json",
+    "stage": "ui",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "123"
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "approved_at": "2026-05-31T15:00:29.090242+00:00",
+  "constraints": [],
+  "content": {
+    "accessibility_notes": [
+      "Provide clear labels and error text for every interactive element.",
+      "Ensure field validation can be understood without relying on color alone."
+    ],
+    "actions": [
+      "submit",
+      "update field state",
+      "show validation errors"
+    ],
+    "assistant": "ui_optional",
+    "fields": [
+      {
+        "name": "phone_number",
+        "type": "text_input",
+        "validation": [
+          "auth_required"
+        ]
+      },
+      {
+        "name": "otp",
+        "type": "text_input",
+        "validation": [
+          "auth_required"
+        ]
+      }
+    ],
+    "layout": [
+      "primary content",
+      "supporting actions"
+    ],
+    "platform": "unknown",
+    "react": {
+      "act": {
+        "action_count": 3,
+        "field_count": 2,
+        "screen_name": "Login Unknown",
+        "screen_type": "unknown"
+      },
+      "decision": "ready_for_approval",
+      "observe": {
+        "skippable": false,
+        "surface": "ui_screen",
+        "variant": "phone_otp"
+      },
+      "reason": {
+        "goal": "Turn the approved requirement into screen structure, fields, actions, and states.",
+        "known": [
+          "login",
+          "otp_verification"
+        ],
+        "missing": []
+      }
+    },
+    "screen_name": "Login Unknown",
+    "screen_type": "unknown",
+    "skip_reason": "",
+    "skippable": false,
+    "states": [
+      "default",
+      "loading",
+      "error",
+      "success"
+    ],
+    "summary": "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.",
+    "unknowns": [],
+    "user_goal": "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.",
+    "ux_notes": [
+      "Keep the first interaction path short and obvious.",
+      "Keep validation messages clear without exposing sensitive auth details.",
+      "Make the phone input and verification step easy to understand before submission."
+    ]
+  },
+  "created_at": "2026-05-31T15:00:29.090258+00:00",
+  "handoff_id": "handoff_123_ui_optional_v2",
+  "handoff_type": "ui_handoff",
+  "next_actions": [
+    "Review the optional UI planning output.",
+    "Approve or skip the UI stage before task planning."
+  ],
+  "open_questions": [],
+  "pipeline_id": "pipeline_35c75657f8d2",
+  "refinement": {
+    "base_flows": [
+      "login",
+      "otp_verification"
+    ],
+    "fields": [
+      "phone_number",
+      "otp"
+    ],
+    "refinement_unknowns": [
+      "Clarify OTP retry and expiry policy."
+    ],
+    "surfaces": [
+      "ui_screen"
+    ],
+    "validations": [
+      "auth_required"
+    ],
+    "variants": [
+      "phone_otp"
+    ]
+  },
+  "repo_context": {},
+  "source_stage": "ui_optional",
+  "stage": "ui_optional",
+  "status": "approved",
+  "summary": "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.",
+  "target_stages": [
+    "task_planning",
+    "test_planning"
+  ],
+  "version": 2,
+  "work_item_id": "123"
+}

@@ -176,6 +176,7 @@ class PipelineCreateRequest(BaseModel):
     work_item: dict[str, Any] = Field(default_factory=dict)
     repo_context: Optional[dict[str, Any]] = None
     refinement: Optional[dict[str, Any]] = None
+    ai_gen_comments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PipelineStageRequest(BaseModel):
@@ -183,6 +184,7 @@ class PipelineStageRequest(BaseModel):
     regenerate: bool = False
     feedback_comment: Optional[str] = None
     feedback_author: Optional[str] = None
+    ai_gen_comments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PipelineApproveRequest(BaseModel):
@@ -485,6 +487,7 @@ def create_assistant_pipeline(request: PipelineCreateRequest) -> dict:
         source=request.source,
         repo_context=request.repo_context,
         refinement=request.refinement,
+        ai_gen_comments=request.ai_gen_comments,
     )
 
 
@@ -499,7 +502,12 @@ def run_pipeline_stage(pipeline_id: str, request: PipelineStageRequest) -> dict:
             request.feedback_comment or "",
             author=request.feedback_author,
         )
-    return pipeline_controller.run_stage(pipeline_id, request.stage, regenerate=request.regenerate)
+    return pipeline_controller.run_stage(
+        pipeline_id,
+        request.stage,
+        regenerate=request.regenerate,
+        ai_gen_comments=request.ai_gen_comments,
+    )
 
 
 @app.post("/assist/pipeline/{pipeline_id}/approve-stage")
@@ -570,6 +578,13 @@ def create_pipeline_draft_work_items(pipeline_id: str, request: DraftWorkItemCre
 @app.post("/assist/pipeline/{pipeline_id}/draft-work-items/created")
 def mark_pipeline_draft_work_items_created(pipeline_id: str, request: DraftWorkItemsCreatedRequest) -> dict:
     """Record created Azure DevOps work item ids against draft ids."""
+
+    return pipeline_controller.mark_draft_work_items_created(pipeline_id, request.created_items)
+
+
+@app.post("/assist/pipeline/{pipeline_id}/work-item-creation-result")
+def store_pipeline_work_item_creation_result(pipeline_id: str, request: DraftWorkItemsCreatedRequest) -> dict:
+    """Record Azure DevOps creation results for generated work item drafts."""
 
     return pipeline_controller.mark_draft_work_items_created(pipeline_id, request.created_items)
 

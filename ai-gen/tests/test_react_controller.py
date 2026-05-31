@@ -61,15 +61,15 @@ class ReactControllerTests(unittest.TestCase):
             run_version = pipeline["version"]
             self.assertIn("approve", pipeline["allowed_actions"]["current_stage_actions"])
             pipeline = controller.approve_stage(pipeline["pipeline_id"], "ba", approved_by="tester")
-            self.assertEqual(pipeline["stages"]["ui"]["status"], "pending")
+            self.assertEqual(pipeline["stages"]["ui_optional"]["status"], "pending")
             approved_handoff = controller.load_handoff(pipeline["stages"]["ba"]["handoff_id"])
             self.assertEqual(approved_handoff["status"], "approved")
             markdown_path = Path(handoff_root) / "work_items" / "123" / "ba_v1.md"
             self.assertTrue(markdown_path.exists())
             self.assertGreater(pipeline["version"], run_version)
 
-            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui")
-            self.assertIn("screen_name", pipeline["stages"]["ui"]["output"])
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui_optional")
+            self.assertIn("screen_name", pipeline["stages"]["ui_optional"]["output"])
             self.assertEqual(pipeline["refinement"]["variants"], ["phone_otp"])
             self.assertEqual(pipeline["current_stage_findings"], [])
             self.assertIn("approve", pipeline["allowed_actions"]["current_stage_actions"])
@@ -201,11 +201,11 @@ class ReactControllerTests(unittest.TestCase):
             self.assertEqual(pipeline["stages"]["ba"]["unresolved_findings"], [])
             self.assertTrue(pipeline["stages"]["ba"]["resolved_findings"])
 
-            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui")
-            self.assertEqual(pipeline["current_stage"], "ui")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui_optional")
+            self.assertEqual(pipeline["current_stage"], "ui_optional")
             self.assertEqual(pipeline["current_stage_findings"], [])
             self.assertEqual(pipeline["current_stage_blocking_findings"], [])
-            self.assertEqual(pipeline["stages"]["ui"]["output"].get("unknowns"), [])
+            self.assertEqual(pipeline["stages"]["ui_optional"]["output"].get("unknowns"), [])
 
     def test_resolved_ba_unknowns_do_not_reappear_in_dev_or_test_stage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -235,13 +235,13 @@ class ReactControllerTests(unittest.TestCase):
             )
             pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
             pipeline = controller.approve_stage(pipeline["pipeline_id"], "ba", approved_by="tester")
-            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui")
-            pipeline = controller.approve_stage(pipeline["pipeline_id"], "ui", approved_by="tester")
-            pipeline = controller.run_stage(pipeline["pipeline_id"], "dev")
-            self.assertNotIn("Clarify OTP retry and expiry policy.", pipeline["stages"]["dev"]["output"]["execution_packet"])
-            pipeline = controller.approve_stage(pipeline["pipeline_id"], "dev", approved_by="tester")
-            pipeline = controller.run_stage(pipeline["pipeline_id"], "test")
-            self.assertEqual(pipeline["stages"]["test"]["output"].get("unknowns"), [])
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui_optional")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "ui_optional", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "task_planning")
+            self.assertNotIn("Clarify OTP retry and expiry policy.", str(pipeline["stages"]["task_planning"]["output"]))
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "task_planning", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "test_planning")
+            self.assertEqual(pipeline["stages"]["test_planning"]["output"].get("unknowns"), [])
 
     def test_warning_only_stage_keeps_approve_available(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

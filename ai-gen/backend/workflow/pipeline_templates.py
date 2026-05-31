@@ -24,10 +24,11 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         "label": "Epic Planning",
         "stages": [
             {"name": "epic_analysis", "label": "Epic Analysis", "role": "Product", "optional": False, "approval_required": True},
+            {"name": "feature_generation", "label": "Feature Generation", "role": "Product", "optional": False, "approval_required": True},
             {"name": "story_generation", "label": "Story Generation", "role": "Product", "optional": False, "approval_required": True},
             {"name": "review", "label": "Review", "role": "Reviewer", "optional": False, "approval_required": True},
         ],
-        "output_types": ["proposed_stories", "dependencies", "risks"],
+        "output_types": ["features", "stories", "dependencies", "risks"],
     },
     "feature_planning": {
         "name": "feature_planning",

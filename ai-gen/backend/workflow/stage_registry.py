@@ -25,15 +25,16 @@ def run_stage_output(
     stage: str,
     state: Any,
     approved_stage_context: ApprovedStageGetter,
+    effective_context: dict[str, Any] | None = None,
     review_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     review_context = review_context or {}
-    work_item = state.work_item
+    work_item = _contextual_work_item(state.work_item, effective_context)
     refinement = state.refinement
     repo_context = state.repo_context
 
     if stage == "ba":
-        return run_ba_assistant(work_item, refinement, review_context=review_context)
+        return run_ba_assistant(work_item, refinement, review_context=review_context, effective_context=effective_context)
     if stage in {"ui", "ui_optional", "ui_plan"}:
         ba_output = _ba_like_output(work_item, refinement, approved_stage_context("ba"))
         output = run_app_ui_assistant(ba_output, refinement, review_context=review_context)
@@ -86,6 +87,7 @@ def run_stage_output(
             "summary": "Generated proposed child work items from the approved story scope.",
             "proposed_child_tasks": child_tasks,
             "proposed_work_items": proposed_work_items,
+            "generated_work_items": proposed_work_items,
             "acceptance_criteria": ba_like.get("acceptance_criteria", [])[:6],
             "flows": ba_like.get("flows", []),
             "unknowns": [],
@@ -105,8 +107,19 @@ def run_stage_output(
             "acceptance_criteria": _acceptance_from_work_item(work_item, refinement),
             "unknowns": [],
         }
+    if stage == "feature_generation":
+        proposed_features = _feature_candidates(work_item, refinement)
+        return {
+            "assistant": stage,
+            "summary": "Generated proposed features from the approved epic scope.",
+            "proposed_features": proposed_features,
+            "generated_features": proposed_features,
+            "dependencies": _dependencies(work_item, refinement),
+            "risks": _risks(work_item, refinement),
+            "unknowns": [],
+        }
     if stage == "story_generation":
-        analysis = approved_stage_context("epic_analysis") or approved_stage_context("feature_analysis")
+        analysis = approved_stage_context("feature_generation") or approved_stage_context("epic_analysis") or approved_stage_context("feature_analysis")
         flows = list(refinement.get("base_flows", [])) or list(refinement.get("refined_base_flows", []))
         variants = list(refinement.get("variants", [])) or list(refinement.get("refined_variants", []))
         fields = list(refinement.get("fields", [])) or list(refinement.get("refined_fields", []))
@@ -118,23 +131,26 @@ def run_stage_output(
             fields=fields,
             include_ui=_needs_ui(refinement),
             count=4 if approved_stage_context("epic_analysis") else 3,
+            feature_seeds=list(analysis.get("proposed_features", [])),
         )
         return {
             "assistant": "story_generator",
             "summary": "Generated proposed work items from the approved planning scope.",
             "proposed_work_items": proposed_work_items,
+            "generated_work_items": proposed_work_items,
             "dependencies": analysis.get("dependencies", []),
             "risks": analysis.get("risks", []),
             "unknowns": [],
         }
     if stage == "review":
-        analysis = approved_stage_context("story_generation") or approved_stage_context("feature_analysis") or approved_stage_context("epic_analysis")
-        drafts = list(analysis.get("proposed_work_items", []))
+        analysis = approved_stage_context("story_generation") or approved_stage_context("feature_generation") or approved_stage_context("feature_analysis") or approved_stage_context("epic_analysis")
+        drafts = list(analysis.get("generated_work_items") or analysis.get("proposed_work_items", []))
         review_findings = _review_proposed_work_items(drafts)
         return {
             "assistant": stage,
             "summary": "Review the proposed work items before creating them in Azure DevOps.",
             "proposed_work_items": drafts,
+            "generated_work_items": drafts,
             "missing_acceptance_criteria": review_findings["missing_acceptance_criteria"],
             "duplicate_titles": review_findings["duplicate_titles"],
             "ownership_gaps": review_findings["ownership_gaps"],
@@ -143,9 +159,9 @@ def run_stage_output(
             "unknowns": [],
         }
     if stage == "task_analysis":
-        return _analysis_like_output(work_item, refinement, "Task analysis is ready for implementation planning.")
+        return _analysis_like_output(work_item, refinement, "Task analysis is ready for implementation planning.", effective_context=effective_context)
     if stage == "bug_analysis":
-        output = _analysis_like_output(work_item, refinement, "Bug analysis is ready for fix planning.")
+        output = _analysis_like_output(work_item, refinement, "Bug analysis is ready for fix planning.", effective_context=effective_context)
         output["likely_bug_surface"] = refinement.get("refined_surface") or refinement.get("surface")
         return output
     if stage == "impact_analysis":
@@ -226,6 +242,8 @@ def run_stage_critic(stage: str, output: dict[str, Any], state: Any, approved_st
     findings: list[dict[str, Any]] = []
     if output.get("unknowns"):
         findings.append(_finding("ambiguity", "warning", f"{stage} still has open questions.", stage))
+    if stage == "feature_generation" and not output.get("proposed_features"):
+        findings.append(_finding("weak_scope", "warning", "Feature generation did not produce proposed features.", stage))
     if stage == "story_generation" and not output.get("proposed_work_items"):
         findings.append(_finding("weak_scope", "warning", "Story generation did not produce proposed work items.", stage))
     if stage == "task_planning" and not output.get("proposed_work_items"):
@@ -259,7 +277,12 @@ def run_stage_critic(stage: str, output: dict[str, Any], state: Any, approved_st
     }
 
 
-def _analysis_like_output(work_item: dict[str, Any], refinement: dict[str, Any], summary: str) -> dict[str, Any]:
+def _analysis_like_output(
+    work_item: dict[str, Any],
+    refinement: dict[str, Any],
+    summary: str,
+    effective_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     title = _title_or_default(work_item, summary)
     flows = _dedupe(list(refinement.get("refined_base_flows", [])) + list(refinement.get("base_flows", [])))
     variants = _dedupe(list(refinement.get("refined_variants", [])) + list(refinement.get("variants", [])))
@@ -271,7 +294,7 @@ def _analysis_like_output(work_item: dict[str, Any], refinement: dict[str, Any],
         "flows": flows or ["workflow"],
         "variants": variants,
         "business_rules": _business_rules(refinement),
-        "acceptance_criteria": _acceptance_from_work_item(work_item, refinement),
+        "acceptance_criteria": _acceptance_from_work_item(work_item, refinement, effective_context=effective_context),
         "unknowns": [],
     }
 
@@ -316,6 +339,18 @@ def _review_proposed_work_items(drafts: list[dict[str, Any]]) -> dict[str, list[
     }
 
 
+def _feature_candidates(work_item: dict[str, Any], refinement: dict[str, Any]) -> list[dict[str, Any]]:
+    title = _title_or_default(work_item, "Feature").rstrip(".")
+    flows = list(refinement.get("base_flows", [])) or list(refinement.get("refined_base_flows", [])) or ["core"]
+    return [
+        {
+            "title": f"{title}: Feature Slice {index}",
+            "description": f"Organize the {title.lower()} epic into a deliverable feature slice focused on {flow}.",
+        }
+        for index, flow in enumerate(flows[:3] or ["core"], start=1)
+    ]
+
+
 def _ba_like_output(work_item: dict[str, Any], refinement: dict[str, Any], source: dict[str, Any] | None) -> dict[str, Any]:
     if source:
         return source
@@ -331,10 +366,17 @@ def _title_or_default(work_item: dict[str, Any], fallback: str) -> str:
     return fallback
 
 
-def _acceptance_from_work_item(work_item: dict[str, Any], refinement: dict[str, Any]) -> list[str]:
+def _acceptance_from_work_item(
+    work_item: dict[str, Any],
+    refinement: dict[str, Any],
+    effective_context: dict[str, Any] | None = None,
+) -> list[str]:
     acceptance = str(work_item.get("acceptanceCriteria") or work_item.get("acceptance_criteria") or "").strip()
     if acceptance:
         return [line.strip() for line in acceptance.splitlines() if line.strip()][:6]
+    clarifications = [str(item.get("body", "")).strip() for item in (effective_context or {}).get("clarifications", []) if str(item.get("body", "")).strip()]
+    if clarifications:
+        return [f"Include clarified behavior: {clarifications[-1]}."]
     fields = [str(item).strip() for item in refinement.get("refined_fields", []) or refinement.get("fields", []) if str(item).strip()]
     if fields:
         return [f"Support the required fields: {', '.join(fields[:4])}."]
@@ -385,6 +427,16 @@ def _recommended_changes(findings: list[dict[str, Any]]) -> list[str]:
     if not findings:
         return []
     return [finding["message"] for finding in findings[:4]]
+
+
+def _contextual_work_item(work_item: dict[str, Any], effective_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not effective_context:
+        return work_item
+    contextual = dict(work_item)
+    contextual["effective_context_text"] = effective_context.get("effective_text", "")
+    contextual["clarifications"] = effective_context.get("clarifications", [])
+    contextual["handoff_summaries"] = effective_context.get("handoff_summaries", [])
+    return contextual
 
 
 def _finding(finding_type: str, severity: str, message: str, target_stage: str) -> dict[str, Any]:

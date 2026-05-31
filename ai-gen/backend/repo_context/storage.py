@@ -14,8 +14,11 @@ def read_json(path: str | Path, default: Any = None) -> Any:
     json_path = Path(path)
     if not json_path.exists():
         return default
-    with json_path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    try:
+        with json_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (json.JSONDecodeError, OSError):
+        return default
 
 
 def write_json(path: str | Path, data: Any) -> None:

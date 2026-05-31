@@ -61,7 +61,7 @@ def run_dev_assistant(
         "constraint_count": len(constraints),
     }
     observe = {
-        "repo_context_available": bool(repo_context),
+        "repo_context_available": _has_actionable_repo_context(repo_context),
         "breakpoints_found": len(likely_breakpoints),
         "ui_context_used": bool(ui_output and not ui_output.get("skippable")),
     }
@@ -121,6 +121,7 @@ def _build_constraints(ba_output: dict, flow: str | None, review_context: dict) 
 def _select_files(repo_context: dict, flow: str | None) -> list[str]:
     current_file = repo_context.get("session_bias_summary", {}).get("current_file") if repo_context else None
     open_files = list(repo_context.get("open_files", []))
+    selected_execution_files = list(repo_context.get("selected_execution_files", []))
     if not open_files and repo_context.get("session"):
         open_files = list(repo_context["session"].get("open_files", []))
     hotspots = list(repo_context.get("likely_bug_hotspots", []))
@@ -131,6 +132,11 @@ def _select_files(repo_context: dict, flow: str | None) -> list[str]:
         detected_flow=flow,
         max_files=4,
     )
+    for path in selected_execution_files:
+        if len(selected) >= 4:
+            break
+        if path not in selected:
+            selected.append(path)
     if selected:
         return selected
     file_index = list(repo_context.get("file_index", []))
@@ -205,3 +211,18 @@ def _task_summary(ba_output: dict) -> str:
         if cleaned:
             return f"{cleaned}."
     return raw
+
+
+def _has_actionable_repo_context(repo_context: dict) -> bool:
+    if not repo_context:
+        return False
+    if repo_context.get("selected_execution_files"):
+        return True
+    if repo_context.get("open_files"):
+        return True
+    if repo_context.get("likely_bug_hotspots"):
+        return True
+    if repo_context.get("file_index"):
+        return True
+    current_file = repo_context.get("session_bias_summary", {}).get("current_file")
+    return bool(current_file)

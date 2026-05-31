@@ -275,6 +275,60 @@ class AssistantTests(unittest.TestCase):
         self.assertNotIn("# Unknowns", output["execution_packet"])
         self.assertNotIn("Repo-aware task is missing selected files.", output["execution_packet"])
 
+    def test_dev_assistant_uses_selected_execution_files_from_repo_context(self) -> None:
+        ba_output = {
+            "refined_requirement": "Login Screen. Focus first on phone number input, otp verification step.",
+            "flows": ["login", "otp_verification"],
+            "variants": ["phone_otp"],
+            "business_rules": ["Do not bypass credential validation."],
+            "acceptance_criteria": ["Phone number is required."],
+            "unknowns": [],
+        }
+        ui_output = {
+            "screen_name": "Login Form",
+            "screen_type": "form",
+            "fields": [{"name": "phone_number", "validation": ["required"]}, {"name": "otp", "validation": ["required"]}],
+            "actions": ["submit"],
+            "skippable": False,
+        }
+        output = run_dev_assistant(
+            ba_output,
+            ui_output,
+            {"selected_execution_files": ["android-app/ui/LoginScreen.kt", "android-app/viewmodel/LoginViewModel.kt"]},
+            {"surfaces": ["ui_screen"], "variants": ["phone_otp"]},
+        )
+        self.assertEqual(
+            output["selected_files"],
+            ["android-app/ui/LoginScreen.kt", "android-app/viewmodel/LoginViewModel.kt"],
+        )
+        self.assertIn("Files:", output["execution_packet"])
+        self.assertIn("android-app/ui/LoginScreen.kt", output["execution_packet"])
+
+    def test_dev_assistant_marks_repo_context_unavailable_when_only_metadata_exists(self) -> None:
+        ba_output = {
+            "refined_requirement": "Login Screen. Focus first on phone number input, otp verification step.",
+            "flows": ["login", "otp_verification"],
+            "variants": ["phone_otp"],
+            "business_rules": ["Do not bypass credential validation."],
+            "acceptance_criteria": ["Phone number is required."],
+            "unknowns": [],
+        }
+        ui_output = {
+            "screen_name": "Login Form",
+            "screen_type": "form",
+            "fields": [{"name": "phone_number", "validation": ["required"]}, {"name": "otp", "validation": ["required"]}],
+            "actions": ["submit"],
+            "skippable": False,
+        }
+        output = run_dev_assistant(
+            ba_output,
+            ui_output,
+            {"resolved_repo_id": "repo_123", "resolved_branch_name": "main"},
+            {"surfaces": ["ui_screen"], "variants": ["phone_otp"]},
+        )
+        self.assertEqual(output["selected_files"], [])
+        self.assertFalse(output["react"]["observe"]["repo_context_available"])
+
     def test_dev_assistant_strips_review_clarifications_from_task_summary(self) -> None:
         ba_output = {
             "refined_requirement": (
@@ -340,6 +394,25 @@ class AssistantTests(unittest.TestCase):
         self.assertIn("missing_critical_field", finding_types)
         severities = {item["severity"] for item in critic["findings"]}
         self.assertIn("blocking", severities)
+
+    def test_critic_warning_only_stays_approvable(self) -> None:
+        dev_output = {
+            "flow": "login",
+            "surface": "ui_screen",
+            "surfaces": ["ui_screen"],
+            "scope": ["phone number input"],
+            "constraints": ["Do not bypass credential validation."],
+            "selected_files": [],
+            "react": {
+                "observe": {
+                    "repo_context_available": True,
+                }
+            },
+        }
+        critic = run_critic_assistant(dev_output=dev_output)
+        self.assertEqual(critic["decision"], "approve_candidate")
+        self.assertEqual(critic["react"]["decision"], "ready_for_approval")
+        self.assertEqual([item["severity"] for item in critic["findings"]], ["warning"])
 
 
 if __name__ == "__main__":

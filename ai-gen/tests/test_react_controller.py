@@ -49,7 +49,7 @@ class ReactControllerTests(unittest.TestCase):
             draft_handoff_id = pipeline["stages"]["ba"]["handoff_id"]
             self.assertTrue(draft_handoff_id)
             self.assertGreater(pipeline["version"], original_version)
-            self.assertIn("add_clarification", pipeline["allowed_actions"]["current_stage_actions"])
+            self.assertIn("approve", pipeline["allowed_actions"]["current_stage_actions"])
 
             pipeline = controller.add_stage_feedback(
                 pipeline["pipeline_id"],
@@ -243,7 +243,7 @@ class ReactControllerTests(unittest.TestCase):
             pipeline = controller.run_stage(pipeline["pipeline_id"], "test")
             self.assertEqual(pipeline["stages"]["test"]["output"].get("unknowns"), [])
 
-    def test_needs_revision_hides_generate_and_approve(self) -> None:
+    def test_warning_only_stage_keeps_approve_available(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller = PipelineController(temp_dir)
             pipeline = controller.create_pipeline(
@@ -264,9 +264,9 @@ class ReactControllerTests(unittest.TestCase):
             pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
             actions = pipeline["allowed_actions"]["current_stage_actions"]
             self.assertNotIn("generate", actions)
-            self.assertNotIn("approve", actions)
-            self.assertIn("add_clarification", actions)
-            self.assertIn("regenerate_with_clarifications", actions)
+            self.assertIn("approve", actions)
+            self.assertIn("regenerate", actions)
+            self.assertNotIn("add_clarification", actions)
 
     def test_approved_stage_keeps_only_handoff_visibility_in_stage_lists(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -48,13 +48,14 @@ def run_critic_assistant(
             findings.append(_finding("missing_test", "high", "No test cases were produced.", "test"))
 
     overall_risk = _overall_risk(findings)
-    decision = "approve_candidate" if not findings else "needs_revision"
+    has_blocking = any(item["severity"] == "blocking" for item in findings)
+    decision = "needs_revision" if has_blocking else "approve_candidate"
     return {
         "assistant": "critic",
         "overall_risk": overall_risk,
         "findings": findings,
         "recommended_changes": _recommended_changes(findings),
-        "decision": decision if findings else "approve_candidate",
+        "decision": decision,
         "react": {
             "reason": {
                 "known": [stage for stage, output in [("ba", ba_output), ("ui", ui_output), ("dev", dev_output), ("test", test_output)] if output],
@@ -63,7 +64,7 @@ def run_critic_assistant(
             },
             "act": {"finding_count": len(findings)},
             "observe": {"overall_risk": overall_risk},
-            "decision": "needs_revision" if findings else "ready_for_approval",
+            "decision": "needs_revision" if has_blocking else "ready_for_approval",
         },
     }
 

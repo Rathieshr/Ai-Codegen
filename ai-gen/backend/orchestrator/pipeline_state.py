@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 STAGE_ORDER = ["ba", "ui", "dev", "test", "critic"]
+DEFAULT_TEMPLATE_NAME = "legacy_delivery"
 
 
 def utc_now() -> str:
@@ -63,6 +64,10 @@ class PipelineState:
     work_item_id: str
     current_stage: str
     stages: dict[str, StageState]
+    workflow_template: str = DEFAULT_TEMPLATE_NAME
+    stage_order: list[str] = field(default_factory=lambda: list(STAGE_ORDER))
+    stage_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    work_item_classification: dict[str, Any] = field(default_factory=dict)
     version: int = 1
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
@@ -84,6 +89,10 @@ class PipelineState:
             work_item_id=str(data.get("work_item_id", "")),
             current_stage=data.get("current_stage", "ba"),
             stages=stages,
+            workflow_template=data.get("workflow_template", DEFAULT_TEMPLATE_NAME),
+            stage_order=list(data.get("stage_order", STAGE_ORDER)),
+            stage_metadata=data.get("stage_metadata", {}),
+            work_item_classification=data.get("work_item_classification", {}),
             version=int(data.get("version", 1)),
             created_at=data.get("created_at", utc_now()),
             updated_at=data.get("updated_at", utc_now()),
@@ -100,22 +109,29 @@ def create_initial_pipeline_state(
     work_item: dict[str, Any],
     repo_context: dict[str, Any] | None = None,
     refinement: dict[str, Any] | None = None,
+    workflow_template: str = DEFAULT_TEMPLATE_NAME,
+    stage_order: list[str] | None = None,
+    stage_metadata: dict[str, dict[str, Any]] | None = None,
+    work_item_classification: dict[str, Any] | None = None,
 ) -> PipelineState:
     """Create the initial locked/unlocked stage map for a new pipeline."""
 
+    active_order = list(stage_order or STAGE_ORDER)
+    metadata = stage_metadata or {name: {"name": name} for name in active_order}
     stages = {
-        "ba": StageState(stage="ba", status="pending"),
-        "ui": StageState(stage="ui", status="locked"),
-        "dev": StageState(stage="dev", status="locked"),
-        "test": StageState(stage="test", status="locked"),
-        "critic": StageState(stage="critic", status="locked"),
+        name: StageState(stage=name, status="pending" if index == 0 else "locked")
+        for index, name in enumerate(active_order)
     }
     return PipelineState(
         pipeline_id=pipeline_id,
         source=source,
         work_item_id=str(work_item_id),
-        current_stage="ba",
+        current_stage=active_order[0] if active_order else "critic",
         stages=stages,
+        workflow_template=workflow_template,
+        stage_order=active_order,
+        stage_metadata=metadata,
+        work_item_classification=work_item_classification or {},
         work_item=work_item,
         repo_context=repo_context or {},
         refinement=refinement or {},

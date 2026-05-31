@@ -34,6 +34,7 @@ def default_handoff(
         "pipeline_id": pipeline_id,
         "work_item_id": str(work_item_id),
         "stage": stage,
+        "handoff_type": "generic_handoff",
         "version": version,
         "status": "draft",
         "created_at": handoff_timestamp(),

@@ -22,6 +22,9 @@ from backend.orchestrator.approval_gate import (
 )
 from backend.orchestrator.pipeline_state import PipelineState, StageFeedback, StageState, create_initial_pipeline_state, utc_now
 from backend.repo_context.storage import read_json, write_json
+from backend.workflow.pipeline_templates import list_stage_names, stage_metadata_map
+from backend.workflow.stage_registry import run_stage_critic, run_stage_output
+from backend.workflow.workflow_router import route_work_item_to_template
 
 
 class PipelineController:
@@ -40,6 +43,7 @@ class PipelineController:
     ) -> dict:
         pipeline_id = f"pipeline_{uuid4().hex[:12]}"
         work_item_id = str(work_item.get("id") or work_item.get("work_item_id") or uuid4().hex[:8])
+        classification, template = route_work_item_to_template(work_item, refinement=refinement)
         state = create_initial_pipeline_state(
             pipeline_id=pipeline_id,
             source=source,
@@ -47,6 +51,10 @@ class PipelineController:
             work_item=work_item,
             repo_context=repo_context,
             refinement=refinement,
+            workflow_template=template["name"],
+            stage_order=list_stage_names(template),
+            stage_metadata=stage_metadata_map(template),
+            work_item_classification=classification,
         )
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
@@ -165,58 +173,19 @@ class PipelineController:
         return latest_state
 
     def _run_stage_output(self, state: PipelineState, stage: str, review_context: dict | None = None) -> dict:
-        if stage == "ba":
-            return run_ba_assistant(state.work_item, state.refinement, review_context=review_context)
-        if stage == "ui":
-            ba_output = self._approved_stage_context(state, "ba")
-            return run_app_ui_assistant(ba_output, state.refinement, review_context=review_context)
-        if stage == "dev":
-            return run_dev_assistant(
-                ba_output=self._approved_stage_context(state, "ba"),
-                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
-                repo_context=state.repo_context,
-                refinement=state.refinement,
-                review_context=review_context,
-            )
-        if stage == "test":
-            return run_test_assistant(
-                ba_output=self._approved_stage_context(state, "ba"),
-                dev_output=self._approved_stage_context(state, "dev"),
-                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
-                review_context=review_context,
-            )
-        if stage == "critic":
-            return run_critic_assistant(
-                ba_output=state.stages["ba"].output if state.stages["ba"].output else None,
-                ui_output=state.stages["ui"].output if state.stages["ui"].output else None,
-                dev_output=state.stages["dev"].output if state.stages["dev"].output else None,
-                test_output=state.stages["test"].output if state.stages["test"].output else None,
-            )
-        raise ValueError(f"Unknown stage: {stage}")
+        return run_stage_output(
+            stage,
+            state,
+            approved_stage_context=lambda stage_name: self._approved_stage_context(state, stage_name),
+            review_context=review_context,
+        )
 
     def _run_critic_for_stage(self, stage: str, output: dict, state: PipelineState) -> dict:
-        if stage == "ba":
-            return run_critic_assistant(ba_output=output)
-        if stage == "ui":
-            return run_critic_assistant(ba_output=self._approved_stage_context(state, "ba"), ui_output=output)
-        if stage == "dev":
-            return run_critic_assistant(
-                ba_output=self._approved_stage_context(state, "ba"),
-                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
-                dev_output=output,
-            )
-        if stage == "test":
-            return run_critic_assistant(
-                ba_output=self._approved_stage_context(state, "ba"),
-                ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
-                dev_output=self._approved_stage_context(state, "dev"),
-                test_output=output,
-            )
-        return run_critic_assistant(
-            ba_output=self._approved_stage_context(state, "ba") if state.stages["ba"].output else None,
-            ui_output=self._approved_stage_context(state, "ui") if state.stages["ui"].output else None,
-            dev_output=self._approved_stage_context(state, "dev") if state.stages["dev"].output else None,
-            test_output=self._approved_stage_context(state, "test") if state.stages["test"].output else None,
+        return run_stage_critic(
+            stage,
+            output,
+            state,
+            approved_stage_context=lambda stage_name: self._approved_stage_context(state, stage_name),
         )
 
     def _touch_pipeline(self, state: PipelineState) -> None:
@@ -292,7 +261,7 @@ class PipelineController:
                 and not has_blocking_findings
             ):
                 actions["approve_stages"].append(stage_name)
-            if stage_name == "ui" and stage_state.status in {"pending", "generated"} and not stage_state.approved:
+            if self._is_optional_stage(state, stage_name) and stage_state.status in {"pending", "generated"} and not stage_state.approved:
                 actions["skip_stages"].append(stage_name)
             if stage_state.handoff_id:
                 actions["view_handoff_stages"].append(stage_name)
@@ -307,16 +276,16 @@ class PipelineController:
         status = stage_state.status
         if status == "pending" and not stage_state.approved:
             actions.append("generate")
-            if stage_name == "ui":
-                actions.append("skip_ui")
+            if self._is_optional_stage_name(stage_name):
+                actions.append("skip_stage")
         elif status == "generated" and not stage_state.approved:
             actions.append("regenerate")
             if stage_state.handoff_id:
                 actions.append("view_handoff")
             if not has_blocking_findings:
                 actions.append("approve")
-            if stage_name == "ui":
-                actions.append("skip_ui")
+            if self._is_optional_stage_name(stage_name):
+                actions.append("skip_stage")
         elif status == "needs_revision" and not stage_state.approved:
             actions.extend(["add_clarification", "regenerate_with_clarifications"])
             if stage_state.handoff_id:
@@ -376,13 +345,19 @@ class PipelineController:
         return findings
 
     def _active_stage_name(self, state: PipelineState) -> str:
-        for stage_name in ["ba", "ui", "dev", "test", "critic"]:
+        for stage_name in list(getattr(state, "stage_order", []) or []):
             stage_state = state.stages.get(stage_name)
             if not stage_state:
                 continue
             if stage_state.status in {"generated", "needs_revision", "pending"}:
                 return stage_name
         return state.current_stage
+
+    def _is_optional_stage(self, state: PipelineState, stage_name: str) -> bool:
+        return bool(state.stage_metadata.get(stage_name, {}).get("optional"))
+
+    def _is_optional_stage_name(self, stage_name: str) -> bool:
+        return stage_name.endswith("_optional")
 
 
 def _dedupe_findings(findings: list[dict]) -> list[dict]:

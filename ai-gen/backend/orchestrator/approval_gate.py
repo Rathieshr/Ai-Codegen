@@ -78,16 +78,13 @@ def skip_stage(pipeline_state: PipelineState, stage: str, reason: str) -> Pipeli
 
 
 def unlock_next_stage(pipeline_state: PipelineState, stage: str) -> PipelineState:
-    """Unlock the next stage in the fixed pipeline order when rules allow it."""
+    """Unlock the next stage in the configured pipeline order when rules allow it."""
 
-    if stage == "ba":
-        _unlock_if_locked(pipeline_state, "ui")
-    elif stage == "ui":
-        _unlock_if_locked(pipeline_state, "dev")
-    elif stage == "dev":
-        _unlock_if_locked(pipeline_state, "test")
-    elif stage == "test":
-        _unlock_if_locked(pipeline_state, "critic")
+    order = list(getattr(pipeline_state, "stage_order", []) or [])
+    if stage in order:
+        index = order.index(stage)
+        if index + 1 < len(order):
+            _unlock_if_locked(pipeline_state, order[index + 1])
     pipeline_state.updated_at = utc_now()
     return pipeline_state
 

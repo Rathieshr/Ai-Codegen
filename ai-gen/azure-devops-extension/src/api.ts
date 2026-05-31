@@ -80,6 +80,16 @@ export type PipelineState = {
   work_item_id: string;
   current_stage: string;
   stages: Record<string, PipelineStageState>;
+  workflow_template?: string;
+  stage_order?: string[];
+  stage_metadata?: Record<string, { name?: string; label?: string; role?: string; optional?: boolean; approval_required?: boolean }>;
+  work_item_classification?: {
+    artifact_type?: string;
+    intent?: string;
+    complexity?: string;
+    recommended_template?: string;
+    reason?: string;
+  };
   current_stage_findings?: Array<Record<string, unknown>>;
   current_stage_blocking_findings?: Array<Record<string, unknown>>;
   all_findings?: Array<Record<string, unknown>>;
@@ -99,6 +109,45 @@ export type PipelineState = {
   work_item?: Record<string, unknown>;
   repo_context?: Record<string, unknown>;
   refinement?: Record<string, unknown>;
+  draft_work_items?: DraftWorkItem[];
+};
+
+export type DraftWorkItem = {
+  draft_id: string;
+  parent_work_item_id?: string | null;
+  draft_type: string;
+  title: string;
+  description: string;
+  acceptance_criteria: string[];
+  tags: string[];
+  area_path?: string;
+  iteration_path?: string;
+  parent_draft_id?: string | null;
+  child_drafts: DraftWorkItem[];
+  source_stage: string;
+  status: 'draft' | 'approved' | 'created';
+  azure_work_item_id?: number | null;
+};
+
+export type DraftWorkItemsResponse = {
+  pipeline_id: string;
+  workflow_template?: string;
+  draft_work_items: DraftWorkItem[];
+};
+
+export type WorkItemCreateRequest = {
+  draft_id: string;
+  type: string;
+  fields: Record<string, string | null | undefined>;
+  parent_link?: {
+    parent_work_item_id?: string | null;
+    parent_draft_id?: string | null;
+  };
+};
+
+export type DraftWorkItemCreatePayload = {
+  pipeline_id: string;
+  work_item_create_requests: WorkItemCreateRequest[];
 };
 
 export type HandoffRecord = {
@@ -138,6 +187,8 @@ export type AiGenState = {
   capabilities?: BackendCapabilities;
   pipeline?: PipelineState;
   handoff?: HandoffRecord;
+  draftWorkItems?: DraftWorkItem[];
+  lastSyncAt?: string;
 };
 
 export function clearGeneratedState(): void {
@@ -241,6 +292,8 @@ export async function generateFromCurrentWorkItem(): Promise<AiGenState> {
     generatedAt: new Date().toISOString(),
     capabilities,
     pipeline,
+    draftWorkItems: pipeline?.draft_work_items || [],
+    lastSyncAt: new Date().toISOString(),
   };
   saveGeneratedState(state);
   return state;
@@ -382,6 +435,36 @@ export async function loadCapabilities(): Promise<BackendCapabilities | undefine
   }
 }
 
+export async function loadDraftWorkItems(pipelineId: string): Promise<DraftWorkItemsResponse> {
+  return getJson<DraftWorkItemsResponse>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/draft-work-items`);
+}
+
+export async function approveDraftWorkItems(pipelineId: string, draftIds: string[]): Promise<DraftWorkItemsResponse> {
+  return postJson<DraftWorkItemsResponse>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/draft-work-items/approve`, {
+    draft_ids: draftIds
+  });
+}
+
+export async function loadDraftWorkItemCreatePayload(
+  pipelineId: string,
+  draftIds: string[],
+  createChildTasks = true
+): Promise<DraftWorkItemCreatePayload> {
+  return postJson<DraftWorkItemCreatePayload>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/draft-work-items/create`, {
+    draft_ids: draftIds,
+    create_child_tasks: createChildTasks
+  });
+}
+
+export async function markDraftWorkItemsCreated(
+  pipelineId: string,
+  createdItems: Array<{ draft_id: string; azure_work_item_id: number }>
+): Promise<DraftWorkItemsResponse> {
+  return postJson<DraftWorkItemsResponse>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/draft-work-items/created`, {
+    created_items: createdItems
+  });
+}
+
 export async function refreshPipelineState(
   workItem: NormalizedWorkItem,
   currentState?: AiGenState,
@@ -393,6 +476,9 @@ export async function refreshPipelineState(
   ]);
   const targetPipeline = pipelineOverride || pipeline || currentState?.pipeline;
   const targetStage = activeStageName(targetPipeline);
+  const draftWorkItems = targetPipeline?.pipeline_id
+    ? (await loadDraftWorkItems(targetPipeline.pipeline_id).catch(() => undefined))?.draft_work_items || targetPipeline.draft_work_items || currentState?.draftWorkItems
+    : currentState?.draftWorkItems;
   const handoff = targetPipeline && targetStage && targetPipeline.stages[targetStage]?.handoff_id
     ? await loadHandoff(targetPipeline.stages[targetStage]?.handoff_id || '')
     : currentState?.handoff;
@@ -402,10 +488,47 @@ export async function refreshPipelineState(
     generatedAt: new Date().toISOString(),
     capabilities,
     pipeline: targetPipeline,
-    handoff
+    handoff,
+    draftWorkItems,
+    lastSyncAt: new Date().toISOString(),
   };
   saveGeneratedState(refreshed);
   return refreshed;
+}
+
+export async function createAzureDevOpsWorkItems(
+  workItem: NormalizedWorkItem,
+  requests: WorkItemCreateRequest[]
+): Promise<Array<{ draft_id: string; azure_work_item_id: number; title: string; type: string }>> {
+  const pageContext = SDK.getPageContext() as unknown as {
+    webContext: {
+      collection?: { uri?: string };
+      project?: { name?: string; id?: string };
+    };
+  };
+  const collectionUri = pageContext.webContext.collection?.uri || `${window.location.origin}/`;
+  const projectName = pageContext.webContext.project?.name;
+  if (!projectName) {
+    throw new Error('Azure DevOps project context is unavailable.');
+  }
+  const accessToken = await SDK.getAccessToken();
+  const created: Array<{ draft_id: string; azure_work_item_id: number; title: string; type: string }> = [];
+  const parentMapping = new Map<string, number>();
+  for (const request of requests) {
+    const parentId = request.parent_link?.parent_draft_id
+      ? parentMapping.get(request.parent_link.parent_draft_id)
+      : numberOrUndefined(request.parent_link?.parent_work_item_id);
+    const workItemId = await createAzureWorkItem(collectionUri, projectName, accessToken, request, parentId);
+    parentMapping.set(request.draft_id, workItemId);
+    created.push({
+      draft_id: request.draft_id,
+      azure_work_item_id: workItemId,
+      title: String(request.fields['System.Title'] || ''),
+      type: request.type,
+    });
+  }
+  await addCreationComment(collectionUri, projectName, accessToken, workItem.id, created);
+  return created;
 }
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
@@ -467,7 +590,9 @@ function activeStageName(pipeline?: PipelineState): string {
   if (!pipeline) {
     return '';
   }
-  const ordered = ['ba', 'ui', 'dev', 'test', 'critic'];
+  const ordered = Array.isArray(pipeline.stage_order) && pipeline.stage_order.length
+    ? pipeline.stage_order
+    : Object.keys(pipeline.stages || {});
   for (const stage of ordered) {
     const stageState = pipeline.stages[stage];
     if (!stageState) {
@@ -478,4 +603,83 @@ function activeStageName(pipeline?: PipelineState): string {
     }
   }
   return pipeline.current_stage || 'critic';
+}
+
+async function createAzureWorkItem(
+  collectionUri: string,
+  projectName: string,
+  accessToken: string,
+  request: WorkItemCreateRequest,
+  parentWorkItemId?: number
+): Promise<number> {
+  const operations: Array<Record<string, unknown>> = [];
+  for (const [field, value] of Object.entries(request.fields)) {
+    if (value != null && String(value).trim()) {
+      operations.push({ op: 'add', path: `/fields/${field}`, value });
+    }
+  }
+  if (parentWorkItemId) {
+    operations.push({
+      op: 'add',
+      path: '/relations/-',
+      value: {
+        rel: 'System.LinkTypes.Hierarchy-Reverse',
+        url: `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workItems/${parentWorkItemId}`,
+      }
+    });
+  }
+  const typeName = encodeURIComponent(`$${request.type}`);
+  const response = await fetch(
+    `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workitems/${typeName}?api-version=7.1`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json-patch+json'
+      },
+      body: JSON.stringify(operations)
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Azure DevOps returned HTTP ${response.status} while creating ${request.type}.`);
+  }
+  const body = await response.json() as { id: number };
+  return body.id;
+}
+
+async function addCreationComment(
+  collectionUri: string,
+  projectName: string,
+  accessToken: string,
+  parentWorkItemId: number | string,
+  createdItems: Array<{ draft_id: string; azure_work_item_id: number; title: string; type: string }>
+): Promise<void> {
+  if (!createdItems.length || !parentWorkItemId) {
+    return;
+  }
+  const text = [
+    '[ai-gen Work Items Created]',
+    'Created:',
+    ...createdItems.map((item) => `- ${item.type} #${item.azure_work_item_id}: ${item.title}`)
+  ].join('\n');
+  await fetch(
+    `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workItems/${parentWorkItemId}/comments?api-version=7.1-preview.4`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text })
+    }
+  ).catch(() => undefined);
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

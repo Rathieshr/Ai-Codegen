@@ -67,6 +67,55 @@ class WorkflowTemplateTests(unittest.TestCase):
             self.assertEqual(pipeline["workflow_template"], "epic_planning")
             self.assertEqual(pipeline["stage_order"], ["epic_analysis", "story_generation", "review"])
 
+    def test_epic_story_generation_outputs_proposed_work_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 105, "type": "Epic", "title": "Identity modernization"})
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "epic_analysis")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "epic_analysis", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "story_generation")
+            output = pipeline["stages"]["story_generation"]["output"]
+            self.assertTrue(output["proposed_work_items"])
+            self.assertNotIn("proposed_stories", output)
+            self.assertEqual(output["assistant"], "story_generator")
+
+    def test_story_task_planning_outputs_child_work_item_drafts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {"id": 106, "type": "Story", "title": "Phone OTP login"},
+                refinement={
+                    "base_flows": ["login", "otp_verification"],
+                    "variants": ["phone_otp"],
+                    "surfaces": ["ui_screen"],
+                    "fields": ["phone_number", "otp"],
+                },
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "ba", approved_by="tester")
+            pipeline = controller.skip_stage(pipeline["pipeline_id"], "ui_optional", "Use direct task planning for this test")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "task_planning")
+            output = pipeline["stages"]["task_planning"]["output"]
+            self.assertTrue(output["proposed_work_items"])
+            self.assertEqual(output["proposed_work_items"][0]["source_stage"], "task_planning")
+
+    def test_create_request_payload_and_created_mapping_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 107, "type": "Epic", "title": "Identity modernization"})
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "epic_analysis")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "epic_analysis", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "story_generation")
+            drafts = controller.get_draft_work_items(pipeline["pipeline_id"])["draft_work_items"]
+            draft_ids = [drafts[0]["draft_id"]]
+            payload = controller.create_draft_work_items(pipeline["pipeline_id"], draft_ids, create_child_tasks=True)
+            self.assertTrue(payload["work_item_create_requests"])
+            created = controller.mark_draft_work_items_created(
+                pipeline["pipeline_id"],
+                [{"draft_id": payload["work_item_create_requests"][0]["draft_id"], "azure_work_item_id": 9001}],
+            )
+            self.assertTrue(any(item["azure_work_item_id"] == 9001 for item in created["draft_work_items"]))
+
 
 if __name__ == "__main__":
     unittest.main()

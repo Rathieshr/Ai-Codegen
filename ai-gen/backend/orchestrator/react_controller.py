@@ -24,6 +24,7 @@ from backend.orchestrator.pipeline_state import PipelineState, StageFeedback, St
 from backend.repo_context.storage import read_json, write_json
 from backend.workflow.pipeline_templates import list_stage_names, stage_metadata_map
 from backend.workflow.stage_registry import run_stage_critic, run_stage_output
+from backend.workflow.work_item_drafts import approve_drafts, build_create_requests, mark_drafts_created, normalize_drafts
 from backend.workflow.workflow_router import route_work_item_to_template
 
 
@@ -96,6 +97,7 @@ class PipelineController:
         )
         save_handoff(handoff)
         stage_state.handoff_id = handoff["handoff_id"]
+        self._sync_stage_drafts(state, stage, output)
         state.current_stage = stage
         self._touch_pipeline(state)
         self.save_pipeline(state)
@@ -172,6 +174,36 @@ class PipelineController:
                 latest_state = state
         return latest_state
 
+    def get_draft_work_items(self, pipeline_id: str) -> dict:
+        state = self.load_pipeline(pipeline_id)
+        return {
+            "pipeline_id": state.pipeline_id,
+            "workflow_template": state.workflow_template,
+            "draft_work_items": list(state.draft_work_items),
+        }
+
+    def approve_draft_work_items(self, pipeline_id: str, draft_ids: list[str]) -> dict:
+        state = self.load_pipeline(pipeline_id)
+        state.draft_work_items = approve_drafts(state.draft_work_items, draft_ids)
+        self._touch_pipeline(state)
+        self.save_pipeline(state)
+        return self.get_draft_work_items(pipeline_id)
+
+    def create_draft_work_items(self, pipeline_id: str, draft_ids: list[str], create_child_tasks: bool = True) -> dict:
+        state = self.load_pipeline(pipeline_id)
+        selected = self._select_drafts(state.draft_work_items, draft_ids, create_child_tasks=create_child_tasks)
+        return {
+            "pipeline_id": state.pipeline_id,
+            "work_item_create_requests": build_create_requests(selected),
+        }
+
+    def mark_draft_work_items_created(self, pipeline_id: str, created_items: list[dict]) -> dict:
+        state = self.load_pipeline(pipeline_id)
+        state.draft_work_items = mark_drafts_created(state.draft_work_items, created_items)
+        self._touch_pipeline(state)
+        self.save_pipeline(state)
+        return self.get_draft_work_items(pipeline_id)
+
     def _run_stage_output(self, state: PipelineState, stage: str, review_context: dict | None = None) -> dict:
         return run_stage_output(
             stage,
@@ -220,6 +252,11 @@ class PipelineController:
         data = state.to_dict()
         data["allowed_actions"] = self._allowed_actions(state)
         data["current_stage"] = self._active_stage_name(state)
+        data["workflow_template"] = state.workflow_template
+        data["stage_order"] = list(state.stage_order)
+        data["stage_metadata"] = state.stage_metadata
+        data["work_item_classification"] = state.work_item_classification
+        data["draft_work_items"] = list(state.draft_work_items)
         data["current_stage_findings"] = self._current_stage_findings(state)
         data["current_stage_blocking_findings"] = self._current_stage_blocking_findings(state)
         data["all_findings"] = self._all_findings(state)
@@ -358,6 +395,38 @@ class PipelineController:
 
     def _is_optional_stage_name(self, stage_name: str) -> bool:
         return stage_name.endswith("_optional")
+
+    def _sync_stage_drafts(self, state: PipelineState, stage: str, output: dict) -> None:
+        proposed = output.get("proposed_work_items")
+        if not isinstance(proposed, list):
+            return
+        stage_drafts = []
+        for item in proposed:
+            if isinstance(item, dict):
+                copy = dict(item)
+                copy.setdefault("source_stage", stage)
+                stage_drafts.append(copy)
+        preserved = [draft for draft in state.draft_work_items if draft.get("source_stage") != stage]
+        state.draft_work_items = preserved + normalize_drafts(stage_drafts)
+
+    def _select_drafts(self, drafts: list[dict], draft_ids: list[str], create_child_tasks: bool = True) -> list[dict]:
+        by_id = {str(draft.get("draft_id")): dict(draft) for draft in drafts}
+        selected: list[dict] = []
+        pending = [str(item) for item in draft_ids]
+        seen: set[str] = set()
+        while pending:
+            draft_id = pending.pop(0)
+            if draft_id in seen or draft_id not in by_id:
+                continue
+            seen.add(draft_id)
+            draft = by_id[draft_id]
+            selected.append(draft)
+            if create_child_tasks:
+                for child in draft.get("child_drafts", []):
+                    child_id = str(child.get("draft_id", "")).strip()
+                    if child_id:
+                        pending.append(child_id)
+        return normalize_drafts(selected)
 
 
 def _dedupe_findings(findings: list[dict]) -> list[dict]:

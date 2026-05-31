@@ -201,6 +201,20 @@ class PipelineStageFeedbackRequest(BaseModel):
     author: Optional[str] = None
 
 
+class DraftWorkItemApproveRequest(BaseModel):
+    draft_ids: list[str] = Field(default_factory=list)
+
+
+class DraftWorkItemCreateRequest(BaseModel):
+    draft_ids: list[str] = Field(default_factory=list)
+    create_child_tasks: bool = True
+    user_identity: Optional[dict[str, Any]] = None
+
+
+class DraftWorkItemsCreatedRequest(BaseModel):
+    created_items: list[dict[str, Any]] = Field(default_factory=list)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -526,6 +540,38 @@ def get_assistant_pipeline_for_work_item(work_item_id: str) -> dict:
     """Return the latest structured pipeline state for a work item."""
 
     return pipeline_controller.get_pipeline_for_work_item(work_item_id) or {}
+
+
+@app.get("/assist/pipeline/{pipeline_id}/draft-work-items")
+def get_pipeline_draft_work_items(pipeline_id: str) -> dict:
+    """Return the current draft work items for a planning-oriented pipeline."""
+
+    return pipeline_controller.get_draft_work_items(pipeline_id)
+
+
+@app.post("/assist/pipeline/{pipeline_id}/draft-work-items/approve")
+def approve_pipeline_draft_work_items(pipeline_id: str, request: DraftWorkItemApproveRequest) -> dict:
+    """Approve selected draft work items before creation."""
+
+    return pipeline_controller.approve_draft_work_items(pipeline_id, request.draft_ids)
+
+
+@app.post("/assist/pipeline/{pipeline_id}/draft-work-items/create")
+def create_pipeline_draft_work_items(pipeline_id: str, request: DraftWorkItemCreateRequest) -> dict:
+    """Return Azure DevOps work item creation payloads for selected drafts."""
+
+    return pipeline_controller.create_draft_work_items(
+        pipeline_id,
+        request.draft_ids,
+        create_child_tasks=request.create_child_tasks,
+    )
+
+
+@app.post("/assist/pipeline/{pipeline_id}/draft-work-items/created")
+def mark_pipeline_draft_work_items_created(pipeline_id: str, request: DraftWorkItemsCreatedRequest) -> dict:
+    """Record created Azure DevOps work item ids against draft ids."""
+
+    return pipeline_controller.mark_draft_work_items_created(pipeline_id, request.created_items)
 
 
 @app.get("/handoffs/{handoff_id}")

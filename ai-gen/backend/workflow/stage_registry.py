@@ -12,6 +12,10 @@ from backend.assistants import (
     run_test_assistant,
 )
 from .child_task_planner import generate_child_task_preview
+from .work_item_drafts import (
+    build_child_task_drafts_for_story,
+    build_story_drafts_from_epic_or_feature,
+)
 
 
 ApprovedStageGetter = Callable[[str], dict[str, Any]]
@@ -69,10 +73,19 @@ def run_stage_output(
         ba_like = _ba_like_output(work_item, refinement, approved_stage_context("ba"))
         ui_output = approved_stage_context("ui_optional")
         child_tasks = generate_child_task_preview(work_item, ui_output or ba_like, refinement)
+        proposed_work_items = build_child_task_drafts_for_story(
+            work_item,
+            source_stage=stage,
+            title_seed=str(ba_like.get("refined_requirement") or work_item.get("title") or "Story Delivery"),
+            include_ui=bool(ui_output or _needs_ui(refinement)),
+            fields=_field_names(ui_output) or list(refinement.get("fields", [])) or list(refinement.get("refined_fields", [])),
+            variants=list(ba_like.get("variants", [])) or list(refinement.get("variants", [])),
+        )
         return {
             "assistant": stage,
-            "summary": "Proposed child tasks are ready for downstream execution planning.",
+            "summary": "Generated proposed child work items from the approved story scope.",
             "proposed_child_tasks": child_tasks,
+            "proposed_work_items": proposed_work_items,
             "acceptance_criteria": ba_like.get("acceptance_criteria", [])[:6],
             "flows": ba_like.get("flows", []),
             "unknowns": [],
@@ -81,7 +94,6 @@ def run_stage_output(
         return {
             "assistant": stage,
             "summary": _title_or_default(work_item, "Analyze epic scope, dependencies, and risks."),
-            "proposed_stories": _story_candidates(work_item, refinement, 4),
             "dependencies": _dependencies(work_item, refinement),
             "risks": _risks(work_item, refinement),
             "unknowns": [],
@@ -90,32 +102,44 @@ def run_stage_output(
         return {
             "assistant": stage,
             "summary": _title_or_default(work_item, "Analyze feature scope and break it into deliverable stories."),
-            "stories": _story_candidates(work_item, refinement, 3),
-            "tasks": generate_child_task_preview(work_item, {"summary": _title_or_default(work_item, "")}, refinement),
             "acceptance_criteria": _acceptance_from_work_item(work_item, refinement),
             "unknowns": [],
         }
     if stage == "story_generation":
         analysis = approved_stage_context("epic_analysis") or approved_stage_context("feature_analysis")
+        flows = list(refinement.get("base_flows", [])) or list(refinement.get("refined_base_flows", []))
+        variants = list(refinement.get("variants", [])) or list(refinement.get("refined_variants", []))
+        fields = list(refinement.get("fields", [])) or list(refinement.get("refined_fields", []))
+        proposed_work_items = build_story_drafts_from_epic_or_feature(
+            work_item,
+            source_stage=stage,
+            flows=flows,
+            variants=variants,
+            fields=fields,
+            include_ui=_needs_ui(refinement),
+            count=4 if approved_stage_context("epic_analysis") else 3,
+        )
         return {
-            "assistant": stage,
-            "summary": "Generated story candidates for review and task decomposition.",
-            "proposed_stories": analysis.get("proposed_stories") or analysis.get("stories") or _story_candidates(work_item, refinement, 3),
+            "assistant": "story_generator",
+            "summary": "Generated proposed work items from the approved planning scope.",
+            "proposed_work_items": proposed_work_items,
             "dependencies": analysis.get("dependencies", []),
             "risks": analysis.get("risks", []),
             "unknowns": [],
         }
     if stage == "review":
         analysis = approved_stage_context("story_generation") or approved_stage_context("feature_analysis") or approved_stage_context("epic_analysis")
+        drafts = list(analysis.get("proposed_work_items", []))
+        review_findings = _review_proposed_work_items(drafts)
         return {
             "assistant": stage,
-            "summary": "Review the generated planning artifacts before downstream execution.",
-            "checklist": [
-                "Confirm dependencies and sequencing.",
-                "Review risks and missing assumptions.",
-                "Approve the proposed stories or tasks.",
-            ],
-            "artifacts": analysis.get("proposed_stories") or analysis.get("stories") or [],
+            "summary": "Review the proposed work items before creating them in Azure DevOps.",
+            "proposed_work_items": drafts,
+            "missing_acceptance_criteria": review_findings["missing_acceptance_criteria"],
+            "duplicate_titles": review_findings["duplicate_titles"],
+            "ownership_gaps": review_findings["ownership_gaps"],
+            "dependency_issues": review_findings["dependency_issues"],
+            "approval_recommendation": "approve" if not any(review_findings.values()) else "revise",
             "unknowns": [],
         }
     if stage == "task_analysis":
@@ -202,12 +226,19 @@ def run_stage_critic(stage: str, output: dict[str, Any], state: Any, approved_st
     findings: list[dict[str, Any]] = []
     if output.get("unknowns"):
         findings.append(_finding("ambiguity", "warning", f"{stage} still has open questions.", stage))
-    if stage == "story_generation" and not output.get("proposed_stories"):
-        findings.append(_finding("weak_scope", "warning", "Story generation did not produce any stories.", stage))
-    if stage == "task_planning" and not output.get("proposed_child_tasks"):
-        findings.append(_finding("weak_scope", "warning", "Task planning did not produce child tasks.", stage))
-    if stage == "review" and not output.get("artifacts"):
-        findings.append(_finding("weak_scope", "warning", "Review stage has no planning artifacts to inspect.", stage))
+    if stage == "story_generation" and not output.get("proposed_work_items"):
+        findings.append(_finding("weak_scope", "warning", "Story generation did not produce proposed work items.", stage))
+    if stage == "task_planning" and not output.get("proposed_work_items"):
+        findings.append(_finding("weak_scope", "warning", "Task planning did not produce child work items.", stage))
+    if stage == "review":
+        if not output.get("proposed_work_items"):
+            findings.append(_finding("weak_scope", "warning", "Review stage has no proposed work items to inspect.", stage))
+        if output.get("missing_acceptance_criteria"):
+            findings.append(_finding("missing_acceptance_criteria", "warning", "Some proposed work items are missing acceptance criteria.", stage))
+        if output.get("duplicate_titles"):
+            findings.append(_finding("duplicate_work_items", "warning", "Duplicate proposed work item titles were detected.", stage))
+        if output.get("ownership_gaps"):
+            findings.append(_finding("ownership_gap", "warning", "Some proposed tasks do not make ownership clear.", stage))
     has_blocking = any(item["severity"] == "blocking" for item in findings)
     return {
         "assistant": "critic",
@@ -242,6 +273,46 @@ def _analysis_like_output(work_item: dict[str, Any], refinement: dict[str, Any],
         "business_rules": _business_rules(refinement),
         "acceptance_criteria": _acceptance_from_work_item(work_item, refinement),
         "unknowns": [],
+    }
+
+
+def _field_names(ui_output: dict[str, Any] | None) -> list[str]:
+    if not ui_output:
+        return []
+    items = ui_output.get("fields", [])
+    if not isinstance(items, list):
+        return []
+    return [str(field.get("name", "")).strip() for field in items if isinstance(field, dict) and str(field.get("name", "")).strip()]
+
+
+def _needs_ui(refinement: dict[str, Any]) -> bool:
+    surfaces = {str(item).strip().lower() for item in list(refinement.get("surfaces", [])) + list(refinement.get("refined_surfaces", [])) if str(item).strip()}
+    return "ui_screen" in surfaces or "ui_validation" in surfaces or "ui_state" in surfaces
+
+
+def _review_proposed_work_items(drafts: list[dict[str, Any]]) -> dict[str, list[str]]:
+    missing_acceptance: list[str] = []
+    duplicate_titles: list[str] = []
+    ownership_gaps: list[str] = []
+    dependency_issues: list[str] = []
+    seen_titles: set[str] = set()
+    for draft in drafts:
+        title = str(draft.get("title", "")).strip()
+        if title.lower() in seen_titles:
+            duplicate_titles.append(title)
+        elif title:
+            seen_titles.add(title.lower())
+        if not draft.get("acceptance_criteria"):
+            missing_acceptance.append(title or str(draft.get("draft_id", "")))
+        if draft.get("draft_type") == "Task" and not any(keyword in title.lower() for keyword in ["ui:", "dev:", "qa:", "doc"]):
+            ownership_gaps.append(title or str(draft.get("draft_id", "")))
+        if draft.get("parent_draft_id") and not any(item.get("draft_id") == draft.get("parent_draft_id") for item in drafts):
+            dependency_issues.append(title or str(draft.get("draft_id", "")))
+    return {
+        "missing_acceptance_criteria": missing_acceptance,
+        "duplicate_titles": duplicate_titles,
+        "ownership_gaps": ownership_gaps,
+        "dependency_issues": dependency_issues,
     }
 
 

@@ -74,6 +74,7 @@ class PipelineState:
     work_item: dict[str, Any] = field(default_factory=dict)
     repo_context: dict[str, Any] = field(default_factory=dict)
     refinement: dict[str, Any] = field(default_factory=dict)
+    draft_work_items: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -99,6 +100,7 @@ class PipelineState:
             work_item=data.get("work_item", {}),
             repo_context=data.get("repo_context", {}),
             refinement=data.get("refinement", {}),
+            draft_work_items=data.get("draft_work_items", []),
         )
 
 
@@ -135,4 +137,5 @@ def create_initial_pipeline_state(
         work_item=work_item,
         repo_context=repo_context or {},
         refinement=refinement or {},
+        draft_work_items=[],
     )

@@ -238,5 +238,93 @@
     "status": "approved",
     "version": 2,
     "work_item_id": "123"
+  },
+  "handoff_301_epic_analysis_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/epic_analysis_v1.md",
+    "path": ".ai_gen_handoffs/work_items/301/epic_analysis_v1.json",
+    "stage": "epic_analysis",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "301"
+  },
+  "handoff_301_epic_analysis_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/epic_analysis_v2.md",
+    "path": ".ai_gen_handoffs/work_items/301/epic_analysis_v2.json",
+    "stage": "epic_analysis",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "301"
+  },
+  "handoff_301_feature_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/feature_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/301/feature_generation_v1.json",
+    "stage": "feature_generation",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "301"
+  },
+  "handoff_301_feature_generation_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/feature_generation_v2.md",
+    "path": ".ai_gen_handoffs/work_items/301/feature_generation_v2.json",
+    "stage": "feature_generation",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "301"
+  },
+  "handoff_301_review_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/review_v1.md",
+    "path": ".ai_gen_handoffs/work_items/301/review_v1.json",
+    "stage": "review",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "301"
+  },
+  "handoff_301_review_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/review_v2.md",
+    "path": ".ai_gen_handoffs/work_items/301/review_v2.json",
+    "stage": "review",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "301"
+  },
+  "handoff_301_story_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/story_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/301/story_generation_v1.json",
+    "stage": "story_generation",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "301"
+  },
+  "handoff_301_story_generation_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/301/story_generation_v2.md",
+    "path": ".ai_gen_handoffs/work_items/301/story_generation_v2.json",
+    "stage": "story_generation",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "301"
+  },
+  "handoff_302_dev_packet_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/302/dev_packet_v1.md",
+    "path": ".ai_gen_handoffs/work_items/302/dev_packet_v1.json",
+    "stage": "dev_packet",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "302"
+  },
+  "handoff_302_task_analysis_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/302/task_analysis_v1.md",
+    "path": ".ai_gen_handoffs/work_items/302/task_analysis_v1.json",
+    "stage": "task_analysis",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "302"
+  },
+  "handoff_302_task_analysis_v2": {
+    "markdown_path": ".ai_gen_handoffs/work_items/302/task_analysis_v2.md",
+    "path": ".ai_gen_handoffs/work_items/302/task_analysis_v2.json",
+    "stage": "task_analysis",
+    "status": "approved",
+    "version": 2,
+    "work_item_id": "302"
   }
 }

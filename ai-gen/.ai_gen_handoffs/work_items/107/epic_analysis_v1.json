@@ -10,7 +10,7 @@
     "summary": "Identity modernization.",
     "unknowns": []
   },
-  "created_at": "2026-05-31T15:00:29.201542+00:00",
+  "created_at": "2026-06-01T04:10:38.159335+00:00",
   "handoff_id": "handoff_107_epic_analysis_v1",
   "handoff_type": "requirement_handoff",
   "next_actions": [
@@ -18,7 +18,7 @@
     "Approve before moving to the next workflow stage."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_620fc94b0aaf",
+  "pipeline_id": "pipeline_9eaceafab3cd",
   "refinement": {},
   "repo_context": {},
   "source_stage": "epic_analysis",

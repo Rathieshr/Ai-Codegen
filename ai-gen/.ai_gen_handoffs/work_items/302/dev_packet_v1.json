@@ -1,0 +1,70 @@
+{
+  "approved_at": null,
+  "constraints": [
+    "Preserve the approved workflow and safety rules."
+  ],
+  "content": {
+    "assistant": "dev_packet",
+    "constraints": [
+      "Preserve the approved workflow and safety rules."
+    ],
+    "execution_packet": "# Task\n\nImplement resend cooldown.\n\n# Scope\nFlow:\n- workflow\nFirst-pass scope:\n- Capture the approved behavior in implementation-ready acceptance criteria.\n\n# Focus\n- Prefer the smallest safe change.\n\n# Constraints\n- Preserve the approved workflow and safety rules.\n\n# Execution Rules\n\n- Do not repeat broad repo analysis unless necessary.\n- Use the provided scope, constraints, and likely breakpoints first.\n- Do not widen scope unless the listed path fails to explain the task.\n- Avoid re-planning from scratch.\n- Apply the smallest safe change.",
+    "flow": "workflow",
+    "flows": [
+      "workflow"
+    ],
+    "likely_breakpoints": [],
+    "react": {
+      "act": {
+        "constraint_count": 1,
+        "scope": [
+          "Capture the approved behavior in implementation-ready acceptance criteria."
+        ],
+        "selected_files_count": 0
+      },
+      "decision": "ready_for_approval",
+      "observe": {
+        "breakpoints_found": 0,
+        "repo_context_available": false,
+        "ui_context_used": false
+      },
+      "reason": {
+        "goal": "Turn the approved requirement into a small, safe implementation packet.",
+        "known": [
+          "Implement resend cooldown.",
+          "workflow"
+        ],
+        "missing": []
+      }
+    },
+    "scope": [
+      "Capture the approved behavior in implementation-ready acceptance criteria."
+    ],
+    "selected_files": [],
+    "surface": null,
+    "surfaces": [],
+    "task_summary": "Implement resend cooldown.",
+    "variant": null,
+    "variants": []
+  },
+  "created_at": "2026-06-01T04:10:38.153518+00:00",
+  "handoff_id": "handoff_302_dev_packet_v1",
+  "handoff_type": "dev_handoff",
+  "next_actions": [
+    "Review the execution packet.",
+    "Approve before handing work to implementation."
+  ],
+  "open_questions": [],
+  "pipeline_id": "pipeline_96429d32ffff",
+  "refinement": {},
+  "repo_context": {},
+  "source_stage": "dev_packet",
+  "stage": "dev_packet",
+  "status": "draft",
+  "summary": "Implement resend cooldown.",
+  "target_stages": [
+    "test_checklist"
+  ],
+  "version": 1,
+  "work_item_id": "302"
+}

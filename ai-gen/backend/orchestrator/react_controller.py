@@ -16,9 +16,11 @@ from backend.orchestrator.approval_gate import (
 )
 from backend.orchestrator.pipeline_state import PipelineState, StageFeedback, StageState, create_initial_pipeline_state, utc_now
 from backend.repo_context.storage import read_json, write_json
+from backend.workflow.action_visibility import get_allowed_actions
 from backend.workflow.pipeline_templates import list_stage_names, stage_metadata_map
+from backend.workflow.state_machines import WorkflowSnapshot, get_state_machine
 from backend.workflow.stage_registry import run_stage_critic, run_stage_output
-from backend.workflow.work_item_drafts import approve_drafts, build_create_requests, mark_drafts_created, normalize_drafts
+from backend.workflow.work_item_drafts import approve_drafts, build_create_requests, flatten_drafts, mark_drafts_created, normalize_drafts
 from backend.workflow.workflow_router import route_work_item_to_template
 
 
@@ -64,6 +66,9 @@ class PipelineController:
             stage_metadata=stage_metadata_map(template),
             work_item_classification=classification,
         )
+        state.activity.append({"type": "pipeline_created", "timestamp": utc_now(), "workflow_template": template["name"]})
+        if ai_gen_comments:
+            state.activity.append({"type": "comments_loaded", "timestamp": utc_now(), "count": len(ai_gen_comments)})
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
 
@@ -109,6 +114,14 @@ class PipelineController:
         save_handoff(handoff)
         stage_state.handoff_id = handoff["handoff_id"]
         self._sync_stage_drafts(state, stage, output)
+        state.activity.append(
+            {
+                "type": "stage_generated" if not regenerate else "stage_regenerated",
+                "timestamp": utc_now(),
+                "stage": stage,
+                "version": stage_state.version,
+            }
+        )
         state.current_stage = stage
         self._touch_pipeline(state)
         self.save_pipeline(state)
@@ -128,6 +141,8 @@ class PipelineController:
         )
         save_handoff(handoff)
         stage_state.handoff_id = handoff["handoff_id"]
+        state.activity.append({"type": "stage_approved", "timestamp": utc_now(), "stage": stage, "approved_by": approved_by})
+        state.activity.append({"type": "handoff_created", "timestamp": utc_now(), "stage": stage, "handoff_id": handoff["handoff_id"]})
         state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
@@ -156,6 +171,7 @@ class PipelineController:
             comment=normalized,
         )
         stage_state.review_feedback.append(feedback)
+        state.activity.append({"type": "clarification_added", "timestamp": feedback.timestamp, "stage": stage, "author": feedback.author})
         state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
@@ -287,8 +303,12 @@ class PipelineController:
 
     def _serialize_pipeline(self, state: PipelineState) -> dict:
         data = state.to_dict()
+        workflow_state, workflow_summary = self._workflow_status(state)
+        created_items = self._created_work_items(state)
         data["allowed_actions"] = self._allowed_actions(state)
         data["current_stage"] = self._active_stage_name(state)
+        data["workflow_state"] = workflow_state
+        data["workflow_summary"] = workflow_summary
         data["workflow_template"] = state.workflow_template
         data["stage_order"] = list(state.stage_order)
         data["stage_metadata"] = state.stage_metadata
@@ -296,6 +316,7 @@ class PipelineController:
         data["pipeline_context"] = state.pipeline_context
         data["activity"] = list(state.activity)
         data["draft_work_items"] = list(state.draft_work_items)
+        data["created_work_items"] = created_items
         data["current_stage_findings"] = self._current_stage_findings(state)
         data["current_stage_blocking_findings"] = self._current_stage_blocking_findings(state)
         data["all_findings"] = self._all_findings(state)
@@ -314,6 +335,8 @@ class PipelineController:
 
     def _allowed_actions(self, state: PipelineState) -> dict[str, list[str]]:
         current_stage = self._active_stage_name(state)
+        workflow_state, _ = self._workflow_status(state)
+        current_handoff_status = self._current_handoff_status(state, current_stage)
         actions = {
             "generate_stages": [],
             "regenerate_stages": [],
@@ -322,6 +345,12 @@ class PipelineController:
             "view_handoff_stages": [],
             "feedback_stages": [],
             "current_stage_actions": [],
+            "workflow_actions": get_allowed_actions(
+                state.workflow_template,
+                workflow_state,
+                len(flatten_drafts(state.draft_work_items)),
+                current_handoff_status,
+            ),
         }
         for stage_name, stage_state in state.stages.items():
             if stage_state.status == "pending" and not stage_state.approved:
@@ -348,6 +377,49 @@ class PipelineController:
             if stage_name == current_stage:
                 actions["current_stage_actions"] = self._current_stage_actions(stage_name, stage_state, has_blocking_findings)
         return actions
+
+    def _workflow_status(self, state: PipelineState) -> tuple[str, str]:
+        snapshot = WorkflowSnapshot(
+            workflow_template=state.workflow_template,
+            stages={name: stage.to_dict() for name, stage in state.stages.items()},
+            draft_work_items=list(state.draft_work_items),
+        )
+        machine = get_state_machine(state.workflow_template, snapshot)
+        workflow_state = machine.derive_state()
+        return workflow_state, machine.summary_for(workflow_state)
+
+    def _current_handoff_status(self, state: PipelineState, stage_name: str) -> str | None:
+        preferred = [stage_name]
+        if state.workflow_template == "task_execution":
+            preferred = ["dev_packet", "test_checklist", stage_name]
+        elif state.workflow_template == "bug_fix":
+            preferred = ["fix_packet", "regression_tests", stage_name]
+        elif state.workflow_template == "story_delivery":
+            preferred = ["task_planning", "test_planning", stage_name]
+        for candidate in preferred:
+            stage_state = state.stages.get(candidate)
+            if stage_state and stage_state.handoff_id:
+                handoff = load_handoff(stage_state.handoff_id)
+                if handoff:
+                    return str(handoff.get("status", "")).strip() or None
+        return None
+
+    def _created_work_items(self, state: PipelineState) -> list[dict]:
+        created: list[dict] = []
+        for draft in flatten_drafts(state.draft_work_items):
+            if draft.get("status") != "created" or not draft.get("azure_work_item_id"):
+                continue
+            created.append(
+                {
+                    "draft_id": draft.get("draft_id"),
+                    "type": draft.get("draft_type"),
+                    "title": draft.get("title"),
+                    "azure_work_item_id": draft.get("azure_work_item_id"),
+                    "parent_azure_work_item_id": draft.get("parent_azure_work_item_id"),
+                    "parent_draft_id": draft.get("parent_draft_id"),
+                }
+            )
+        return created
 
     def _current_stage_actions(self, stage_name: str, stage_state: StageState, has_blocking_findings: bool) -> list[str]:
         actions: list[str] = []

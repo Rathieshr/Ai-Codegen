@@ -79,6 +79,8 @@ export type PipelineState = {
   source: string;
   work_item_id: string;
   current_stage: string;
+  workflow_state?: string;
+  workflow_summary?: string;
   stages: Record<string, PipelineStageState>;
   workflow_template?: string;
   stage_order?: string[];
@@ -107,6 +109,7 @@ export type PipelineState = {
     view_handoff_stages?: string[];
     feedback_stages?: string[];
     current_stage_actions?: string[];
+    workflow_actions?: string[];
   };
   work_item?: Record<string, unknown>;
   repo_context?: Record<string, unknown>;
@@ -127,6 +130,15 @@ export type PipelineState = {
   };
   context_warnings?: string[];
   draft_work_items?: DraftWorkItem[];
+  activity?: Array<Record<string, unknown>>;
+  created_work_items?: Array<{
+    draft_id?: string;
+    type?: string;
+    title?: string;
+    azure_work_item_id?: number | null;
+    parent_azure_work_item_id?: number | null;
+    parent_draft_id?: string | null;
+  }>;
 };
 
 export type AzureComment = {

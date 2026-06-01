@@ -16,7 +16,8 @@ export type WorkspaceRendererProps = {
   currentSummary: string;
   nextAction: string;
   stageOwner: string;
-  timelineItems: string[];
+  workflowState: string;
+  timelineItems: Array<{ label: string; timestamp?: string }>;
   blockingIssues: string[];
   commentWarning?: string;
   commentSyncWarning?: string;
@@ -27,6 +28,7 @@ export type WorkspaceRendererProps = {
   draftPanel: React.ReactNode;
   childTaskPanel: React.ReactNode;
   handoffPanel: React.ReactNode;
+  createdWorkItemsPanel: React.ReactNode;
   retryCommentSync?: () => void;
   loading: boolean;
 };
@@ -71,7 +73,6 @@ export function SummaryGrid({
         <p className="ai-gen-summary-text">{summary}</p>
         <div className="ai-gen-stage-meta">
           <span><strong>Owner:</strong> {owner}</span>
-          <span><strong>Status:</strong> {status || 'unknown'}</span>
         </div>
       </div>
       <div className="ai-gen-stage-sidebar">
@@ -98,17 +99,17 @@ export function TemplateWorkspaceShell({
       <SummaryGrid
         title={title}
         summary={summary}
-        status={props.currentStage?.status || 'unknown'}
+        status={props.workflowState || props.currentStage?.status || 'unknown'}
         owner={props.stageOwner}
         nextAction={props.nextAction}
       />
       {props.timelineItems.length ? (
-        <details className="ai-gen-detail-block">
-          <summary>Activity Timeline</summary>
+        <div className="ai-gen-stage-panel">
+          <div className="ai-gen-key">Activity Timeline</div>
           <ul className="ai-gen-list">
-            {props.timelineItems.map((item) => <li key={item}>{item}</li>)}
+            {props.timelineItems.map((item, index) => <li key={`${item.label}-${item.timestamp || index}`}>{item.label}{item.timestamp ? ` - ${item.timestamp}` : ''}</li>)}
           </ul>
-        </details>
+        </div>
       ) : null}
       {props.commentWarning ? <div className="ai-gen-warning">{props.commentWarning}</div> : null}
       {props.commentSyncWarning ? (
@@ -142,6 +143,7 @@ export function TemplateWorkspaceShell({
       {props.feedbackPanel}
       {props.stagePanel}
       {props.draftPanel}
+      {props.createdWorkItemsPanel}
       {props.childTaskPanel}
       {props.handoffPanel}
     </>

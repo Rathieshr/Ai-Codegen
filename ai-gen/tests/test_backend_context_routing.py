@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -552,6 +553,41 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["phi_status"], "used")
         self.assertIn("login", data["validated_refinement"]["base_flows"])
         self.assertIn("base_flows", data["raw_response_preview"])
+
+    def test_phi_diagnostic_endpoint_times_out_cleanly(self) -> None:
+        class SlowProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def probe_json(
+                self,
+                system_prompt: str,
+                user_prompt: str,
+                max_tokens: int = 800,
+                timeout_seconds=None,
+            ) -> dict:
+                time.sleep(1.2)
+                return {
+                    "configured": True,
+                    "http_status": 200,
+                    "raw_content": '{"base_flows":["login"]}',
+                    "parsed_json": {"base_flows": ["login"]},
+                    "parse_error": "",
+                }
+
+        request = type("Req", (), {"query": "sign in", "context": {}})()
+        with patch("backend.app.get_refinement_provider", return_value=SlowProvider()), patch(
+            "backend.app.get_refiner_status",
+            return_value={"provider": "azure_phi", "configured": True},
+        ), patch("backend.app.REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS", 0):
+            started = time.time()
+            data = refinement_test(request)
+            elapsed = time.time() - started
+
+        self.assertLess(elapsed, 1.1)
+        self.assertEqual(data["phi_status"], "timeout")
+        self.assertEqual(data["parse_error"], "DiagnosticTimeout")
+        self.assertEqual(data["fallback_used"], True)
 
 
 if __name__ == "__main__":

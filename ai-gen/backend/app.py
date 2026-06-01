@@ -2,6 +2,7 @@
 
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -61,6 +62,7 @@ repo_context_manager = RepoContextManager(
     Path(os.getenv("AI_GEN_REPO_CONTEXT_ROOT", ".ai_gen_repo_context"))
 )
 pipeline_controller = PipelineController(Path(os.getenv("AI_GEN_PIPELINE_ROOT", ".ai_gen_pipelines")))
+REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS = 8
 
 
 class ContextRequest(BaseModel):
@@ -289,29 +291,85 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
         result["fallback_used"] = refined.get("refinement_source") != "phi"
         return result
 
-    probe_result = probe(
+    probe_result = _run_refinement_probe_with_timeout(
+        probe=probe,
         system_prompt=(
             "You are ai-gen semantic refinement engine. Return strict JSON only using canonical engineering metadata."
         ),
         user_prompt=json.dumps(payload, ensure_ascii=True),
         max_tokens=800,
+        timeout_seconds=REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS,
     )
     raw_preview = str(probe_result.get("raw_content", ""))[:1500]
     parsed_json = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
     validated = validate_task_refinement(parsed_json or {})
     has_validated = any(validated.get(key) for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "unknowns"))
+    parse_error = str(probe_result.get("parse_error") or "")
+    if parse_error in {"DiagnosticTimeout", "TimeoutError"}:
+        phi_status = "timeout"
+    else:
+        phi_status = "used" if has_validated else ("unusable_response" if probe_result.get("http_status") else "unavailable")
     result.update(
         {
             "phi_used": bool(probe_result.get("http_status")),
-            "phi_status": "used" if has_validated else ("unusable_response" if probe_result.get("http_status") else "unavailable"),
+            "phi_status": phi_status,
             "raw_response_preview": raw_preview,
             "parsed_json": parsed_json,
-            "parse_error": str(probe_result.get("parse_error") or ""),
+            "parse_error": parse_error,
             "validated_refinement": validated,
             "fallback_used": not has_validated,
         }
     )
     return result
+
+
+def _run_refinement_probe_with_timeout(
+    probe: Any,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    def invoke_probe() -> dict[str, Any]:
+        try:
+            return probe(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
+            )
+        except TypeError:
+            return probe(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=max_tokens,
+            )
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(invoke_probe)
+    try:
+        result = future.result(timeout=timeout_seconds + 1)
+    except FutureTimeoutError:
+        future.cancel()
+        print(f"ai-gen phi probe hard_timeout seconds={timeout_seconds + 1}")
+        return {
+            "configured": True,
+            "http_status": None,
+            "raw_content": "",
+            "parsed_json": {},
+            "parse_error": "DiagnosticTimeout",
+        }
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    if isinstance(result, dict):
+        return result
+    return {
+        "configured": True,
+        "http_status": None,
+        "raw_content": "",
+        "parsed_json": {},
+        "parse_error": "NonDictProbeResult",
+    }
 
 
 @app.post("/context", response_model=ContextResponse)

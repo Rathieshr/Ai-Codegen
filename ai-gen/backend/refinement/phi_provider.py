@@ -35,11 +35,18 @@ class AzurePhiProvider:
         parsed = result.get("parsed_json")
         return parsed if isinstance(parsed, dict) else {}
 
-    def probe_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800) -> dict[str, Any]:
+    def probe_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 800,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, Any]:
         if not self.is_enabled():
             print("ai-gen phi probe configured=no")
             return {"configured": False, "http_status": None, "raw_content": "", "parsed_json": {}, "parse_error": "provider not enabled"}
 
+        request_timeout = max(1, int(timeout_seconds)) if timeout_seconds is not None else self.timeout
         url = f"{self.endpoint}/chat/completions?api-version={self.api_version}"
         payload = {
             "model": self.model,
@@ -62,7 +69,8 @@ class AzurePhiProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            print(f"ai-gen phi probe configured=yes timeout_seconds={request_timeout}")
+            with urllib.request.urlopen(request, timeout=request_timeout) as response:
                 status_code = getattr(response, "status", 200)
                 response_body = response.read().decode("utf-8")
                 print(f"ai-gen phi probe configured=yes http_status={status_code} response_length={len(response_body)}")

@@ -553,7 +553,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "method": "POST",
                     "timeout_seconds": 60,
                     "ping_timeout_seconds": 60,
-                    "diagnostic_timeout_seconds": 75,
+                    "diagnostic_timeout_seconds": 180,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -624,7 +624,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "method": "POST",
                     "timeout_seconds": 60,
                     "ping_timeout_seconds": 60,
-                    "diagnostic_timeout_seconds": 75,
+                    "diagnostic_timeout_seconds": 180,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -693,7 +693,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "method": "POST",
                     "timeout_seconds": 60,
                     "ping_timeout_seconds": 60,
-                    "diagnostic_timeout_seconds": 75,
+                    "diagnostic_timeout_seconds": 180,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -774,7 +774,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "method": "POST",
                     "timeout_seconds": 60,
                     "ping_timeout_seconds": 60,
-                    "diagnostic_timeout_seconds": 75,
+                    "diagnostic_timeout_seconds": 180,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -844,7 +844,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "method": "POST",
                     "timeout_seconds": 60,
                     "ping_timeout_seconds": 60,
-                    "diagnostic_timeout_seconds": 75,
+                    "diagnostic_timeout_seconds": 180,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -886,14 +886,14 @@ class BackendContextRoutingTests(unittest.TestCase):
             os.environ,
             {
                 "AI_GEN_REFINER_TIMEOUT_SECONDS": "60",
-                "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "75",
+                "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "180",
             },
             clear=False,
         ):
             data = refinement_test(request)
 
         self.assertEqual(captured["timeout_seconds"], 60)
-        self.assertEqual(data["diagnostic_timeout_seconds"], 75)
+        self.assertEqual(data["diagnostic_timeout_seconds"], 180)
 
     def test_ping_uses_ping_timeout_env(self) -> None:
         captured = {}
@@ -918,7 +918,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "method": "POST",
                     "timeout_seconds": 60,
                     "ping_timeout_seconds": 44,
-                    "diagnostic_timeout_seconds": 75,
+                    "diagnostic_timeout_seconds": 180,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -992,7 +992,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "api_version": "2024-05-01-preview",
                     "timeout_seconds": 60,
                     "ping_timeout_seconds": 60,
-                    "diagnostic_timeout_seconds": 75,
+                    "diagnostic_timeout_seconds": 180,
                     "response_format_enabled": True,
                     "missing_env": [],
                 }

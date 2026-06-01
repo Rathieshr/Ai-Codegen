@@ -250,7 +250,7 @@ class PhiProviderTests(unittest.TestCase):
                 "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
                 "AI_GEN_REFINER_TIMEOUT_SECONDS": "60",
                 "AI_GEN_REFINER_PING_TIMEOUT_SECONDS": "61",
-                "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "75",
+                "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "180",
             },
             clear=False,
         ):
@@ -259,7 +259,7 @@ class PhiProviderTests(unittest.TestCase):
 
         self.assertEqual(config["timeout_seconds"], 60)
         self.assertEqual(config["ping_timeout_seconds"], 61)
-        self.assertEqual(config["diagnostic_timeout_seconds"], 75)
+        self.assertEqual(config["diagnostic_timeout_seconds"], 180)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ class AzurePhiProvider:
         self.api_version = (os.getenv("AI_GEN_REFINER_API_VERSION") or "2024-05-01-preview").strip()
         self.timeout = _int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60)
         self.ping_timeout = _int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 60)
-        self.diagnostic_timeout = _int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 75)
+        self.diagnostic_timeout = _int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 180)
         self.default_max_tokens = _int_env("AI_GEN_REFINER_MAX_TOKENS", 300)
         self.response_format_enabled = os.getenv("AI_GEN_REFINER_RESPONSE_FORMAT_ENABLED", "1") != "0"
 

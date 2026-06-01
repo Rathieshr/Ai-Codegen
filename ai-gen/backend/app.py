@@ -524,7 +524,7 @@ def _fallback_refinement_config() -> dict[str, Any]:
     status = get_refiner_status()
     timeout_seconds = _safe_int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60)
     ping_timeout_seconds = _safe_int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 60)
-    diagnostic_timeout_seconds = max(_safe_int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 75), timeout_seconds + 1)
+    diagnostic_timeout_seconds = max(_safe_int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 180), timeout_seconds + 1)
     return {
         "backend_status": "ok",
         "provider": status.get("provider"),
@@ -563,7 +563,7 @@ def _provider_timeout_for_mode(mode: str, safe_status: dict[str, Any]) -> int:
 
 
 def _diagnostic_timeout_seconds(safe_status: dict[str, Any], provider_timeout_seconds: int) -> int:
-    configured = max(1, _safe_int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", int(safe_status.get("diagnostic_timeout_seconds") or 75)))
+    configured = max(1, _safe_int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", int(safe_status.get("diagnostic_timeout_seconds") or 180)))
     return max(configured, provider_timeout_seconds + 1)
 
 

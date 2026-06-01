@@ -225,6 +225,7 @@ class DraftWorkItemsCreatedRequest(BaseModel):
 class RefinementTestRequest(BaseModel):
     query: str = Field(..., min_length=1)
     context: dict[str, Any] = Field(default_factory=dict)
+    mode: str = "refine"
 
 
 @app.get("/health")
@@ -248,13 +249,30 @@ def refinement_health() -> dict[str, Any]:
     return get_refiner_status()
 
 
+@app.get("/refinement/config")
+def refinement_config() -> dict[str, Any]:
+    provider = get_refinement_provider()
+    if provider is not None and hasattr(provider, "safe_config"):
+        return provider.safe_config()
+    return _fallback_refinement_config()
+
+
+@app.get("/refinement/debug-curl")
+def refinement_debug_curl(mode: str = "ping") -> dict[str, Any]:
+    provider = get_refinement_provider()
+    if provider is not None and hasattr(provider, "debug_curl"):
+        return {"mode": mode, "curl": provider.debug_curl(mode)}
+    return {"mode": mode, "curl": ""}
+
+
 @app.post("/refinement/test")
 def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
     provider = get_refinement_provider()
-    status = get_refiner_status()
+    safe_status = provider.status_snapshot() if provider is not None and hasattr(provider, "status_snapshot") else _fallback_refinement_config()
+    mode = str(getattr(request, "mode", "refine") or "refine").strip().lower()
     result = {
-        "provider": status.get("provider"),
-        "configured": bool(status.get("configured")),
+        "mode": mode,
+        **safe_status,
         "phi_used": False,
         "phi_status": "not_configured" if not provider else "skipped",
         "raw_response_preview": "",
@@ -262,10 +280,113 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
         "parse_error": "",
         "validated_refinement": {},
         "fallback_used": False,
+        "elapsed_ms": 0,
+        "timeout_seconds": int(safe_status.get("timeout_seconds") or REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS),
+        "attempted_url_preview": str(safe_status.get("final_url_preview") or ""),
+        "attempted_method": str(safe_status.get("method") or "POST"),
+        "max_tokens": 0,
+        "response_format_enabled": False,
+        "json_mode_attempted": False,
+        "json_mode_retry_without_response_format": False,
+        "attempts": [],
+        "failure_reason": "",
+        "failure_message": "",
     }
     if provider is None or not provider.is_enabled():
         return result
 
+    system_prompt, user_prompt, max_tokens = _refinement_test_prompt(request, mode)
+    probe = getattr(provider, "probe_json", None)
+    if not callable(probe):
+        refined = refine_task(request.query, request.context)
+        result["phi_used"] = bool(refined.get("phi_used"))
+        result["phi_status"] = refined.get("phi_status", "skipped")
+        result["validated_refinement"] = refined.get("refinement", {})
+        result["fallback_used"] = refined.get("refinement_source") != "phi"
+        return result
+
+    probe_result = _run_refinement_probe_with_timeout(
+        probe=probe,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_tokens=max_tokens,
+        timeout_seconds=REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS,
+        response_format_enabled=False if mode == "ping" else None,
+        allow_retry_without_response_format=False if mode == "ping" else True,
+    )
+    raw_preview = str(probe_result.get("raw_content", ""))[:1500]
+    parsed_json = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
+    if mode == "ping":
+        validated = {}
+        has_validated = parsed_json.get("status") == "ok"
+    elif mode == "small_refine":
+        validated = parsed_json
+        has_validated = bool(parsed_json)
+    else:
+        validated = validate_task_refinement(parsed_json or {})
+        has_validated = any(validated.get(key) for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "unknowns"))
+    parse_error = str(probe_result.get("parse_error") or "")
+    failure_reason = str(probe_result.get("failure_reason") or "")
+    failure_message = str(probe_result.get("failure_message") or "")
+    if parse_error in {"DiagnosticTimeout", "TimeoutError"} or failure_reason == "timeout":
+        phi_status = "timeout"
+    elif mode == "ping" and has_validated:
+        phi_status = "success"
+    else:
+        phi_status = "used" if has_validated else ("unusable_response" if probe_result.get("http_status") else "unavailable")
+    result.update(
+        {
+            "phi_used": bool(probe_result.get("http_status")),
+            "phi_status": phi_status,
+            "raw_response_preview": raw_preview,
+            "parsed_json": parsed_json,
+            "parse_error": parse_error,
+            "validated_refinement": validated,
+            "fallback_used": not has_validated,
+            "elapsed_ms": int(probe_result.get("elapsed_ms") or 0),
+            "timeout_seconds": int(probe_result.get("timeout_seconds") or REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS),
+            "attempted_url_preview": str(probe_result.get("attempted_url_preview") or ""),
+            "attempted_method": str(probe_result.get("attempted_method") or "POST"),
+            "max_tokens": int(probe_result.get("max_tokens") or max_tokens),
+            "response_format_enabled": bool(probe_result.get("response_format_enabled")),
+            "json_mode_attempted": bool(probe_result.get("json_mode_attempted")),
+            "json_mode_retry_without_response_format": bool(probe_result.get("json_mode_retry_without_response_format")),
+            "attempts": probe_result.get("attempts") if isinstance(probe_result.get("attempts"), list) else [],
+            "failure_reason": failure_reason,
+            "failure_message": failure_message,
+            "backend_status": probe_result.get("backend_status") or safe_status.get("backend_status"),
+            "provider": probe_result.get("provider") or safe_status.get("provider"),
+            "configured": bool(probe_result.get("configured", safe_status.get("configured"))),
+            "enabled": bool(probe_result.get("enabled", safe_status.get("enabled"))),
+            "endpoint_present": bool(probe_result.get("endpoint_present", safe_status.get("endpoint_present"))),
+            "api_key_present": bool(probe_result.get("api_key_present", safe_status.get("api_key_present"))),
+            "model": probe_result.get("model") or safe_status.get("model"),
+            "api_version": probe_result.get("api_version") or safe_status.get("api_version"),
+            "endpoint_host": str(probe_result.get("endpoint_host") or safe_status.get("endpoint_host") or ""),
+            "endpoint_path": str(probe_result.get("endpoint_path") or safe_status.get("endpoint_path") or ""),
+            "final_url_preview": str(probe_result.get("final_url_preview") or safe_status.get("final_url_preview") or ""),
+            "method": str(probe_result.get("method") or safe_status.get("method") or "POST"),
+        }
+    )
+    return result
+
+
+def _refinement_test_prompt(request: RefinementTestRequest, mode: str) -> tuple[str, str, int]:
+    if mode == "ping":
+        return (
+            "Return strict JSON only.",
+            'Return this exact JSON: {"status":"ok"}',
+            50,
+        )
+    if mode == "small_refine":
+        return (
+            "Return strict JSON only.",
+            (
+                'Return JSON with: {"domain":"","features":[]}\n\n'
+                f'Input: {request.query}'
+            ),
+            300,
+        )
     payload = {
         "query": request.query,
         "context": request.context,
@@ -282,45 +403,11 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
             "confidence": "low|medium|high",
         },
     }
-    probe = getattr(provider, "probe_json", None)
-    if not callable(probe):
-        refined = refine_task(request.query, request.context)
-        result["phi_used"] = bool(refined.get("phi_used"))
-        result["phi_status"] = refined.get("phi_status", "skipped")
-        result["validated_refinement"] = refined.get("refinement", {})
-        result["fallback_used"] = refined.get("refinement_source") != "phi"
-        return result
-
-    probe_result = _run_refinement_probe_with_timeout(
-        probe=probe,
-        system_prompt=(
-            "You are ai-gen semantic refinement engine. Return strict JSON only using canonical engineering metadata."
-        ),
-        user_prompt=json.dumps(payload, ensure_ascii=True),
-        max_tokens=800,
-        timeout_seconds=REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS,
+    return (
+        "You are ai-gen semantic refinement engine. Return strict JSON only using canonical engineering metadata.",
+        json.dumps(payload, ensure_ascii=True),
+        300,
     )
-    raw_preview = str(probe_result.get("raw_content", ""))[:1500]
-    parsed_json = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
-    validated = validate_task_refinement(parsed_json or {})
-    has_validated = any(validated.get(key) for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "unknowns"))
-    parse_error = str(probe_result.get("parse_error") or "")
-    if parse_error in {"DiagnosticTimeout", "TimeoutError"}:
-        phi_status = "timeout"
-    else:
-        phi_status = "used" if has_validated else ("unusable_response" if probe_result.get("http_status") else "unavailable")
-    result.update(
-        {
-            "phi_used": bool(probe_result.get("http_status")),
-            "phi_status": phi_status,
-            "raw_response_preview": raw_preview,
-            "parsed_json": parsed_json,
-            "parse_error": parse_error,
-            "validated_refinement": validated,
-            "fallback_used": not has_validated,
-        }
-    )
-    return result
 
 
 def _run_refinement_probe_with_timeout(
@@ -329,6 +416,8 @@ def _run_refinement_probe_with_timeout(
     user_prompt: str,
     max_tokens: int,
     timeout_seconds: int,
+    response_format_enabled: Optional[bool] = None,
+    allow_retry_without_response_format: bool = True,
 ) -> dict[str, Any]:
     def invoke_probe() -> dict[str, Any]:
         try:
@@ -337,13 +426,23 @@ def _run_refinement_probe_with_timeout(
                 user_prompt=user_prompt,
                 max_tokens=max_tokens,
                 timeout_seconds=timeout_seconds,
+                response_format_enabled=response_format_enabled,
+                allow_retry_without_response_format=allow_retry_without_response_format,
             )
         except TypeError:
-            return probe(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                max_tokens=max_tokens,
-            )
+            try:
+                return probe(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    max_tokens=max_tokens,
+                    timeout_seconds=timeout_seconds,
+                )
+            except TypeError:
+                return probe(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    max_tokens=max_tokens,
+                )
 
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(invoke_probe)
@@ -353,23 +452,92 @@ def _run_refinement_probe_with_timeout(
         future.cancel()
         print(f"ai-gen phi probe hard_timeout seconds={timeout_seconds + 1}")
         return {
+            "backend_status": "ok",
+            "provider": "azure_phi",
             "configured": True,
+            "enabled": True,
+            "endpoint_present": True,
+            "api_key_present": True,
+            "model": None,
+            "api_version": None,
+            "endpoint_host": "",
+            "endpoint_path": "",
+            "final_url_preview": "",
+            "method": "POST",
             "http_status": None,
             "raw_content": "",
             "parsed_json": {},
             "parse_error": "DiagnosticTimeout",
+            "elapsed_ms": (timeout_seconds + 1) * 1000,
+            "timeout_seconds": timeout_seconds + 1,
+            "attempted_url_preview": "",
+            "attempted_method": "POST",
+            "max_tokens": max_tokens,
+            "response_format_enabled": bool(response_format_enabled),
+            "json_mode_attempted": bool(response_format_enabled),
+            "json_mode_retry_without_response_format": False,
+            "failure_reason": "timeout",
+            "failure_message": "Azure Phi diagnostic timed out before the provider returned.",
+            "attempts": [
+                {
+                    "attempt_number": 1,
+                    "url_preview": "",
+                    "method": "POST",
+                    "response_format_enabled": bool(response_format_enabled),
+                    "http_status": None,
+                    "status": "timeout",
+                    "elapsed_ms": (timeout_seconds + 1) * 1000,
+                    "timeout_seconds": timeout_seconds + 1,
+                    "raw_response_preview": "",
+                    "error_type": "DiagnosticTimeout",
+                    "error_message": "Azure Phi diagnostic timed out before the provider returned.",
+                }
+            ],
         }
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     if isinstance(result, dict):
         return result
     return {
+        "backend_status": "ok",
+        "provider": "azure_phi",
         "configured": True,
         "http_status": None,
         "raw_content": "",
         "parsed_json": {},
         "parse_error": "NonDictProbeResult",
+        "failure_reason": "parse_error",
+        "failure_message": "Provider probe returned a non-dictionary result.",
     }
+
+
+def _fallback_refinement_config() -> dict[str, Any]:
+    status = get_refiner_status()
+    return {
+        "backend_status": "ok",
+        "provider": status.get("provider"),
+        "configured": bool(status.get("configured")),
+        "enabled": bool(status.get("enabled")),
+        "endpoint_present": bool(status.get("endpoint_present")),
+        "api_key_present": bool(status.get("api_key_present")),
+        "model": status.get("model"),
+        "api_version": status.get("api_version"),
+        "endpoint_host": "",
+        "endpoint_path": "",
+        "final_url_preview": "",
+        "method": "POST",
+        "timeout_seconds": _safe_int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60),
+        "max_tokens": _safe_int_env("AI_GEN_REFINER_MAX_TOKENS", 300),
+        "response_format_enabled": os.getenv("AI_GEN_REFINER_RESPONSE_FORMAT_ENABLED", "1") != "0",
+        "missing_env": [],
+    }
+
+
+def _safe_int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)) or str(default))
+    except ValueError:
+        return default
 
 
 @app.post("/context", response_model=ContextResponse)

@@ -15,6 +15,17 @@ class RefinementProvider(Protocol):
     def refine_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800) -> dict[str, Any]:
         """Return validated-ish JSON or an empty dict on failure."""
 
+    def probe_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 800,
+        timeout_seconds: int | None = None,
+        response_format_enabled: bool | None = None,
+        allow_retry_without_response_format: bool = True,
+    ) -> dict[str, Any]:
+        """Return diagnostic metadata for a JSON probe call."""
+
 
 def get_refinement_provider() -> RefinementProvider | None:
     """Return the configured provider, or None when refinement is disabled."""
@@ -47,6 +58,9 @@ def get_refiner_status() -> dict[str, Any]:
         "enabled": enabled,
         "provider": provider_name or None,
         "model": _env("AI_GEN_REFINER_MODEL"),
+        "api_version": _env("AI_GEN_REFINER_API_VERSION") or "2024-05-01-preview",
+        "endpoint_present": bool(_env("AI_GEN_REFINER_ENDPOINT")),
+        "api_key_present": bool(_env("AI_GEN_REFINER_API_KEY")),
         "configured": configured,
     }
 

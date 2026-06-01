@@ -17,6 +17,8 @@ try:
         capabilities,
         create_assistant_pipeline,
         get_handoff_markdown,
+        refinement_config,
+        refinement_debug_curl,
         refinement_test,
         run_pipeline_epic_plan,
         run_pipeline_stage,
@@ -32,6 +34,8 @@ except ModuleNotFoundError:
     build_context = None
     capabilities = None
     get_handoff_markdown = None
+    refinement_config = None
+    refinement_debug_curl = None
     refinement_test = None
     validate_execution_result = None
     PipelineCreateRequest = None
@@ -533,13 +537,54 @@ class BackendContextRoutingTests(unittest.TestCase):
             def is_enabled(self) -> bool:
                 return True
 
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
+
             def probe_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800) -> dict:
                 return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
                     "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
                     "http_status": 200,
                     "raw_content": '{"base_flows":["login"]}',
                     "parsed_json": {"base_flows": ["login"]},
                     "parse_error": "",
+                    "elapsed_ms": 25,
+                    "timeout_seconds": 8,
+                    "attempted_url_preview": "https://example.test/chat/completions",
+                    "attempted_method": "POST",
+                    "max_tokens": max_tokens,
+                    "response_format_enabled": True,
+                    "json_mode_attempted": True,
+                    "json_mode_retry_without_response_format": False,
+                    "attempts": [],
+                    "failure_reason": "",
+                    "failure_message": "",
                 }
 
         request = type("Req", (), {"query": "sign in", "context": {}})()
@@ -553,11 +598,32 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["phi_status"], "used")
         self.assertIn("login", data["validated_refinement"]["base_flows"])
         self.assertIn("base_flows", data["raw_response_preview"])
+        self.assertEqual(data["max_tokens"], 300)
+        self.assertTrue(data["response_format_enabled"])
 
     def test_phi_diagnostic_endpoint_times_out_cleanly(self) -> None:
         class SlowProvider:
             def is_enabled(self) -> bool:
                 return True
+
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
 
             def probe_json(
                 self,
@@ -588,6 +654,188 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["phi_status"], "timeout")
         self.assertEqual(data["parse_error"], "DiagnosticTimeout")
         self.assertEqual(data["fallback_used"], True)
+        self.assertEqual(data["timeout_seconds"], 1)
+        self.assertEqual(data["attempts"][0]["status"], "timeout")
+
+    def test_phi_ping_mode_uses_small_request(self) -> None:
+        captured = {}
+
+        class PingProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
+
+            def probe_json(
+                self,
+                system_prompt: str,
+                user_prompt: str,
+                max_tokens: int = 800,
+                timeout_seconds=None,
+                response_format_enabled=None,
+                allow_retry_without_response_format=True,
+            ) -> dict:
+                captured["response_format_enabled"] = response_format_enabled
+                captured["allow_retry_without_response_format"] = allow_retry_without_response_format
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "http_status": 200,
+                    "raw_content": '{"status":"ok"}',
+                    "parsed_json": {"status": "ok"},
+                    "parse_error": "",
+                    "elapsed_ms": 42,
+                    "timeout_seconds": timeout_seconds,
+                    "attempted_url_preview": "https://example.test/chat/completions",
+                    "attempted_method": "POST",
+                    "max_tokens": max_tokens,
+                    "response_format_enabled": False,
+                    "json_mode_attempted": False,
+                    "json_mode_retry_without_response_format": False,
+                    "attempts": [],
+                    "failure_reason": "",
+                    "failure_message": "",
+                }
+
+        request = type("Req", (), {"query": "ping", "context": {}, "mode": "ping"})()
+        with patch("backend.app.get_refinement_provider", return_value=PingProvider()), patch(
+            "backend.app.get_refiner_status",
+            return_value={"provider": "azure_phi", "configured": True},
+        ):
+            data = refinement_test(request)
+
+        self.assertEqual(data["mode"], "ping")
+        self.assertEqual(data["max_tokens"], 50)
+        self.assertEqual(data["phi_status"], "success")
+        self.assertEqual(data["parsed_json"]["status"], "ok")
+        self.assertFalse(captured["response_format_enabled"])
+        self.assertFalse(captured["allow_retry_without_response_format"])
+
+    def test_phi_small_refine_mode_returns_parsed_json(self) -> None:
+        class SmallProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
+
+            def probe_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800, timeout_seconds=None) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "http_status": 200,
+                    "raw_content": '{"domain":"travel","features":["booking","payments"]}',
+                    "parsed_json": {"domain": "travel", "features": ["booking", "payments"]},
+                    "parse_error": "",
+                    "elapsed_ms": 55,
+                    "timeout_seconds": timeout_seconds,
+                    "attempted_url_preview": "https://example.test/chat/completions",
+                    "attempted_method": "POST",
+                    "max_tokens": max_tokens,
+                    "response_format_enabled": True,
+                    "json_mode_attempted": True,
+                    "json_mode_retry_without_response_format": False,
+                    "attempts": [],
+                    "failure_reason": "",
+                    "failure_message": "",
+                }
+
+        request = type("Req", (), {"query": "WhatsApp Hotel Booking Platform", "context": {}, "mode": "small_refine"})()
+        with patch("backend.app.get_refinement_provider", return_value=SmallProvider()), patch(
+            "backend.app.get_refiner_status",
+            return_value={"provider": "azure_phi", "configured": True},
+        ):
+            data = refinement_test(request)
+
+        self.assertEqual(data["mode"], "small_refine")
+        self.assertEqual(data["phi_status"], "used")
+        self.assertEqual(data["parsed_json"]["domain"], "travel")
+
+    def test_refinement_debug_curl_hides_api_key(self) -> None:
+        class DebugProvider:
+            def debug_curl(self, mode: str = "ping") -> str:
+                return "curl -H 'api-key: <REDACTED>'"
+
+        with patch("backend.app.get_refinement_provider", return_value=DebugProvider()):
+            data = refinement_debug_curl("ping")
+
+        self.assertEqual(data["mode"], "ping")
+        self.assertIn("<REDACTED>", data["curl"])
+
+    def test_refinement_config_returns_safe_provider_snapshot(self) -> None:
+        class ConfigProvider:
+            def safe_config(self) -> dict:
+                return {
+                    "enabled": True,
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "timeout_seconds": 60,
+                    "response_format_enabled": True,
+                    "missing_env": [],
+                }
+
+        with patch("backend.app.get_refinement_provider", return_value=ConfigProvider()):
+            data = refinement_config()
+
+        self.assertTrue(data["configured"])
+        self.assertEqual(data["endpoint_host"], "example.test")
 
 
 if __name__ == "__main__":

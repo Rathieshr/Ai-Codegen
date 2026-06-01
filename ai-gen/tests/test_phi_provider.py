@@ -199,7 +199,7 @@ class PhiProviderTests(unittest.TestCase):
                 "max_tokens": max_tokens,
                 "error_type": "TimeoutError",
                 "error_message": "timed out",
-                "failure_reason": "timeout",
+                "failure_reason": "provider_timeout",
                 "failure_message": "Azure Phi request timed out before returning a response.",
             }
 
@@ -217,7 +217,7 @@ class PhiProviderTests(unittest.TestCase):
             provider = AzurePhiProvider()
             result = provider.probe_json("Return JSON", "{}", max_tokens=50, timeout_seconds=2)
 
-        self.assertEqual(result["failure_reason"], "timeout")
+        self.assertEqual(result["failure_reason"], "provider_timeout")
         self.assertEqual(len(result["attempts"]), 2)
         self.assertEqual(result["attempts"][0]["status"], "timeout")
 
@@ -238,6 +238,28 @@ class PhiProviderTests(unittest.TestCase):
 
         self.assertIn("api-key: <REDACTED>", curl_command)
         self.assertNotIn("super-secret", curl_command)
+
+    def test_safe_config_exposes_all_timeout_values(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "super-secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+                "AI_GEN_REFINER_TIMEOUT_SECONDS": "60",
+                "AI_GEN_REFINER_PING_TIMEOUT_SECONDS": "61",
+                "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "75",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            config = provider.safe_config()
+
+        self.assertEqual(config["timeout_seconds"], 60)
+        self.assertEqual(config["ping_timeout_seconds"], 61)
+        self.assertEqual(config["diagnostic_timeout_seconds"], 75)
 
 
 if __name__ == "__main__":

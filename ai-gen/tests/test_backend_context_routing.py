@@ -552,6 +552,8 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
                     "method": "POST",
                     "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 75,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -621,6 +623,8 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
                     "method": "POST",
                     "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 75,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -632,7 +636,7 @@ class BackendContextRoutingTests(unittest.TestCase):
                 max_tokens: int = 800,
                 timeout_seconds=None,
             ) -> dict:
-                time.sleep(1.2)
+                time.sleep(2.2)
                 return {
                     "configured": True,
                     "http_status": 200,
@@ -645,17 +649,26 @@ class BackendContextRoutingTests(unittest.TestCase):
         with patch("backend.app.get_refinement_provider", return_value=SlowProvider()), patch(
             "backend.app.get_refiner_status",
             return_value={"provider": "azure_phi", "configured": True},
-        ), patch("backend.app.REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS", 0):
+        ), patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_TIMEOUT_SECONDS": "1",
+                "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "2",
+            },
+            clear=False,
+        ):
             started = time.time()
             data = refinement_test(request)
             elapsed = time.time() - started
 
-        self.assertLess(elapsed, 1.1)
-        self.assertEqual(data["phi_status"], "timeout")
+        self.assertLess(elapsed, 2.35)
+        self.assertEqual(data["phi_status"], "diagnostic_timeout")
         self.assertEqual(data["parse_error"], "DiagnosticTimeout")
         self.assertEqual(data["fallback_used"], True)
-        self.assertEqual(data["timeout_seconds"], 1)
-        self.assertEqual(data["attempts"][0]["status"], "timeout")
+        self.assertEqual(data["provider_timeout_seconds"], 1)
+        self.assertEqual(data["timeout_seconds"], 2)
+        self.assertEqual(data["diagnostic_timeout_seconds"], 2)
+        self.assertEqual(data["attempts"][0]["status"], "diagnostic_timeout")
 
     def test_phi_ping_mode_uses_small_request(self) -> None:
         captured = {}
@@ -679,6 +692,8 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
                     "method": "POST",
                     "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 75,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -758,6 +773,8 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
                     "method": "POST",
                     "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 75,
                     "max_tokens": 300,
                     "response_format_enabled": True,
                 }
@@ -804,6 +821,153 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["phi_status"], "used")
         self.assertEqual(data["parsed_json"]["domain"], "travel")
 
+    def test_small_refine_uses_diagnostic_timeout_env(self) -> None:
+        captured = {}
+
+        class SmallProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 75,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
+
+            def probe_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800, timeout_seconds=None, **kwargs) -> dict:
+                captured["timeout_seconds"] = timeout_seconds
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "http_status": 200,
+                    "raw_content": '{"domain":"travel","features":["booking"]}',
+                    "parsed_json": {"domain": "travel", "features": ["booking"]},
+                    "parse_error": "",
+                    "elapsed_ms": 50,
+                    "timeout_seconds": timeout_seconds,
+                    "attempted_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "attempted_method": "POST",
+                    "max_tokens": max_tokens,
+                    "response_format_enabled": True,
+                    "json_mode_attempted": True,
+                    "json_mode_retry_without_response_format": False,
+                    "attempts": [],
+                    "failure_reason": "",
+                    "failure_message": "",
+                }
+
+        request = type("Req", (), {"query": "WhatsApp Hotel Booking Platform", "context": {}, "mode": "small_refine"})()
+        with patch("backend.app.get_refinement_provider", return_value=SmallProvider()), patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_TIMEOUT_SECONDS": "60",
+                "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "75",
+            },
+            clear=False,
+        ):
+            data = refinement_test(request)
+
+        self.assertEqual(captured["timeout_seconds"], 60)
+        self.assertEqual(data["diagnostic_timeout_seconds"], 75)
+
+    def test_ping_uses_ping_timeout_env(self) -> None:
+        captured = {}
+
+        class PingProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "ping_timeout_seconds": 44,
+                    "diagnostic_timeout_seconds": 75,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
+
+            def probe_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800, timeout_seconds=None, **kwargs) -> dict:
+                captured["timeout_seconds"] = timeout_seconds
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "http_status": 200,
+                    "raw_content": '{"status":"ok"}',
+                    "parsed_json": {"status": "ok"},
+                    "parse_error": "",
+                    "elapsed_ms": 40,
+                    "timeout_seconds": timeout_seconds,
+                    "attempted_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "attempted_method": "POST",
+                    "max_tokens": max_tokens,
+                    "response_format_enabled": False,
+                    "json_mode_attempted": False,
+                    "json_mode_retry_without_response_format": False,
+                    "attempts": [],
+                    "failure_reason": "",
+                    "failure_message": "",
+                }
+
+        request = type("Req", (), {"query": "ping", "context": {}, "mode": "ping"})()
+        with patch("backend.app.get_refinement_provider", return_value=PingProvider()), patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_PING_TIMEOUT_SECONDS": "44",
+            },
+            clear=False,
+        ):
+            data = refinement_test(request)
+
+        self.assertEqual(captured["timeout_seconds"], 44)
+        self.assertEqual(data["provider_timeout_seconds"], 44)
+
     def test_refinement_debug_curl_hides_api_key(self) -> None:
         class DebugProvider:
             def debug_curl(self, mode: str = "ping") -> str:
@@ -827,6 +991,8 @@ class BackendContextRoutingTests(unittest.TestCase):
                     "model": "Phi-4-mini-instruct",
                     "api_version": "2024-05-01-preview",
                     "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 75,
                     "response_format_enabled": True,
                     "missing_env": [],
                 }

@@ -22,6 +22,8 @@ class AzurePhiProvider:
         self.model = (os.getenv("AI_GEN_REFINER_MODEL") or "Phi-4-mini-instruct").strip()
         self.api_version = (os.getenv("AI_GEN_REFINER_API_VERSION") or "2024-05-01-preview").strip()
         self.timeout = _int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60)
+        self.ping_timeout = _int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 60)
+        self.diagnostic_timeout = _int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 75)
         self.default_max_tokens = _int_env("AI_GEN_REFINER_MAX_TOKENS", 300)
         self.response_format_enabled = os.getenv("AI_GEN_REFINER_RESPONSE_FORMAT_ENABLED", "1") != "0"
 
@@ -109,6 +111,8 @@ class AzurePhiProvider:
             "model": self.model or None,
             "api_version": self.api_version,
             "timeout_seconds": self.timeout,
+            "ping_timeout_seconds": self.ping_timeout,
+            "diagnostic_timeout_seconds": max(self.diagnostic_timeout, self.timeout + 1),
             "response_format_enabled": self.response_format_enabled,
             "missing_env": self._missing_env(),
         }
@@ -162,6 +166,8 @@ class AzurePhiProvider:
             "final_url_preview": final_url,
             "method": "POST",
             "timeout_seconds": self.timeout,
+            "ping_timeout_seconds": self.ping_timeout,
+            "diagnostic_timeout_seconds": max(self.diagnostic_timeout, self.timeout + 1),
             "max_tokens": self.default_max_tokens,
             "response_format_enabled": self.response_format_enabled,
             "missing_env": self._missing_env(),
@@ -457,7 +463,7 @@ class AzurePhiProvider:
             return "wrong_endpoint_path"
         normalized_error = (error_type or "").lower()
         if normalized_error in {"timeouterror", "timeout", "sockettimeout"}:
-            return "timeout"
+            return "provider_timeout"
         if normalized_error in {"urlerror", "oserror"}:
             return "connection_error"
         if http_status == 401:
@@ -476,7 +482,7 @@ class AzurePhiProvider:
         messages = {
             "missing_config": "Azure Phi is not fully configured in the backend environment.",
             "wrong_endpoint_path": "Configured endpoint path is missing /models/chat/completions.",
-            "timeout": "Azure Phi request timed out before returning a response.",
+            "provider_timeout": "Azure Phi request timed out before returning a response.",
             "http_401_invalid_key": "Azure Phi rejected the API key.",
             "http_403_forbidden": "Azure Phi access is forbidden for this endpoint or model.",
             "http_404_wrong_endpoint_or_model": "Azure Phi endpoint or model path was not found.",
@@ -489,7 +495,7 @@ class AzurePhiProvider:
 
     def _should_retry_without_response_format(self, result: dict[str, Any]) -> bool:
         return str(result.get("failure_reason") or "") in {
-            "timeout",
+            "provider_timeout",
             "http_404_wrong_endpoint_or_model",
             "http_405_wrong_method_or_path",
             "parse_error",

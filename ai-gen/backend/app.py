@@ -62,7 +62,6 @@ repo_context_manager = RepoContextManager(
     Path(os.getenv("AI_GEN_REPO_CONTEXT_ROOT", ".ai_gen_repo_context"))
 )
 pipeline_controller = PipelineController(Path(os.getenv("AI_GEN_PIPELINE_ROOT", ".ai_gen_pipelines")))
-REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS = 8
 
 
 class ContextRequest(BaseModel):
@@ -270,6 +269,8 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
     provider = get_refinement_provider()
     safe_status = provider.status_snapshot() if provider is not None and hasattr(provider, "status_snapshot") else _fallback_refinement_config()
     mode = str(getattr(request, "mode", "refine") or "refine").strip().lower()
+    provider_timeout_seconds = _provider_timeout_for_mode(mode, safe_status)
+    diagnostic_timeout_seconds = _diagnostic_timeout_seconds(safe_status, provider_timeout_seconds)
     result = {
         "mode": mode,
         **safe_status,
@@ -281,7 +282,9 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
         "validated_refinement": {},
         "fallback_used": False,
         "elapsed_ms": 0,
-        "timeout_seconds": int(safe_status.get("timeout_seconds") or REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS),
+        "timeout_seconds": provider_timeout_seconds,
+        "provider_timeout_seconds": provider_timeout_seconds,
+        "diagnostic_timeout_seconds": diagnostic_timeout_seconds,
         "attempted_url_preview": str(safe_status.get("final_url_preview") or ""),
         "attempted_method": str(safe_status.get("method") or "POST"),
         "max_tokens": 0,
@@ -310,7 +313,8 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         max_tokens=max_tokens,
-        timeout_seconds=REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS,
+        timeout_seconds=provider_timeout_seconds,
+        diagnostic_timeout_seconds=diagnostic_timeout_seconds,
         response_format_enabled=False if mode == "ping" else None,
         allow_retry_without_response_format=False if mode == "ping" else True,
     )
@@ -328,8 +332,10 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
     parse_error = str(probe_result.get("parse_error") or "")
     failure_reason = str(probe_result.get("failure_reason") or "")
     failure_message = str(probe_result.get("failure_message") or "")
-    if parse_error in {"DiagnosticTimeout", "TimeoutError"} or failure_reason == "timeout":
-        phi_status = "timeout"
+    if parse_error == "DiagnosticTimeout" or failure_reason == "diagnostic_timeout":
+        phi_status = "diagnostic_timeout"
+    elif parse_error == "TimeoutError" or failure_reason == "provider_timeout":
+        phi_status = "provider_timeout"
     elif mode == "ping" and has_validated:
         phi_status = "success"
     else:
@@ -344,7 +350,9 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
             "validated_refinement": validated,
             "fallback_used": not has_validated,
             "elapsed_ms": int(probe_result.get("elapsed_ms") or 0),
-            "timeout_seconds": int(probe_result.get("timeout_seconds") or REFINEMENT_DIAGNOSTIC_TIMEOUT_SECONDS),
+            "timeout_seconds": int(probe_result.get("timeout_seconds") or provider_timeout_seconds),
+            "provider_timeout_seconds": provider_timeout_seconds,
+            "diagnostic_timeout_seconds": diagnostic_timeout_seconds,
             "attempted_url_preview": str(probe_result.get("attempted_url_preview") or ""),
             "attempted_method": str(probe_result.get("attempted_method") or "POST"),
             "max_tokens": int(probe_result.get("max_tokens") or max_tokens),
@@ -416,6 +424,7 @@ def _run_refinement_probe_with_timeout(
     user_prompt: str,
     max_tokens: int,
     timeout_seconds: int,
+    diagnostic_timeout_seconds: int,
     response_format_enabled: Optional[bool] = None,
     allow_retry_without_response_format: bool = True,
 ) -> dict[str, Any]:
@@ -447,10 +456,10 @@ def _run_refinement_probe_with_timeout(
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(invoke_probe)
     try:
-        result = future.result(timeout=timeout_seconds + 1)
+        result = future.result(timeout=diagnostic_timeout_seconds)
     except FutureTimeoutError:
         future.cancel()
-        print(f"ai-gen phi probe hard_timeout seconds={timeout_seconds + 1}")
+        print(f"ai-gen phi probe hard_timeout seconds={diagnostic_timeout_seconds}")
         return {
             "backend_status": "ok",
             "provider": "azure_phi",
@@ -468,16 +477,16 @@ def _run_refinement_probe_with_timeout(
             "raw_content": "",
             "parsed_json": {},
             "parse_error": "DiagnosticTimeout",
-            "elapsed_ms": (timeout_seconds + 1) * 1000,
-            "timeout_seconds": timeout_seconds + 1,
+            "elapsed_ms": diagnostic_timeout_seconds * 1000,
+            "timeout_seconds": diagnostic_timeout_seconds,
             "attempted_url_preview": "",
             "attempted_method": "POST",
             "max_tokens": max_tokens,
             "response_format_enabled": bool(response_format_enabled),
             "json_mode_attempted": bool(response_format_enabled),
             "json_mode_retry_without_response_format": False,
-            "failure_reason": "timeout",
-            "failure_message": "Azure Phi diagnostic timed out before the provider returned.",
+            "failure_reason": "diagnostic_timeout",
+            "failure_message": "Azure Phi diagnostic wrapper timed out before the provider returned.",
             "attempts": [
                 {
                     "attempt_number": 1,
@@ -485,12 +494,12 @@ def _run_refinement_probe_with_timeout(
                     "method": "POST",
                     "response_format_enabled": bool(response_format_enabled),
                     "http_status": None,
-                    "status": "timeout",
-                    "elapsed_ms": (timeout_seconds + 1) * 1000,
-                    "timeout_seconds": timeout_seconds + 1,
+                    "status": "diagnostic_timeout",
+                    "elapsed_ms": diagnostic_timeout_seconds * 1000,
+                    "timeout_seconds": diagnostic_timeout_seconds,
                     "raw_response_preview": "",
                     "error_type": "DiagnosticTimeout",
-                    "error_message": "Azure Phi diagnostic timed out before the provider returned.",
+                    "error_message": "Azure Phi diagnostic wrapper timed out before the provider returned.",
                 }
             ],
         }
@@ -513,6 +522,9 @@ def _run_refinement_probe_with_timeout(
 
 def _fallback_refinement_config() -> dict[str, Any]:
     status = get_refiner_status()
+    timeout_seconds = _safe_int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60)
+    ping_timeout_seconds = _safe_int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 60)
+    diagnostic_timeout_seconds = max(_safe_int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 75), timeout_seconds + 1)
     return {
         "backend_status": "ok",
         "provider": status.get("provider"),
@@ -526,7 +538,9 @@ def _fallback_refinement_config() -> dict[str, Any]:
         "endpoint_path": "",
         "final_url_preview": "",
         "method": "POST",
-        "timeout_seconds": _safe_int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60),
+        "timeout_seconds": timeout_seconds,
+        "ping_timeout_seconds": ping_timeout_seconds,
+        "diagnostic_timeout_seconds": diagnostic_timeout_seconds,
         "max_tokens": _safe_int_env("AI_GEN_REFINER_MAX_TOKENS", 300),
         "response_format_enabled": os.getenv("AI_GEN_REFINER_RESPONSE_FORMAT_ENABLED", "1") != "0",
         "missing_env": [],
@@ -538,6 +552,19 @@ def _safe_int_env(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)) or str(default))
     except ValueError:
         return default
+
+
+def _provider_timeout_for_mode(mode: str, safe_status: dict[str, Any]) -> int:
+    if mode == "ping":
+        env_value = _safe_int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 60)
+        return max(1, int(env_value or safe_status.get("ping_timeout_seconds") or 60))
+    env_value = _safe_int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60)
+    return max(1, int(env_value or safe_status.get("timeout_seconds") or 60))
+
+
+def _diagnostic_timeout_seconds(safe_status: dict[str, Any], provider_timeout_seconds: int) -> int:
+    configured = max(1, _safe_int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", int(safe_status.get("diagnostic_timeout_seconds") or 75)))
+    return max(configured, provider_timeout_seconds + 1)
 
 
 @app.post("/context", response_model=ContextResponse)

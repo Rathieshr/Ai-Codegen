@@ -523,6 +523,9 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(updated["workflow_state"], "review_ready")
         self.assertTrue(updated["draft_work_items"])
         self.assertTrue(updated["stages"]["review"]["output"])
+        self.assertTrue(updated["stages"]["feature_generation"]["approved"])
+        self.assertTrue(updated["stages"]["story_generation"]["approved"])
+        self.assertNotEqual(updated["stages"]["feature_generation"]["status"], "locked")
 
     def test_phi_diagnostic_endpoint_returns_parse_status_safely(self) -> None:
         class FakeProvider:
@@ -548,6 +551,7 @@ class BackendContextRoutingTests(unittest.TestCase):
         self.assertEqual(data["provider"], "azure_phi")
         self.assertEqual(data["phi_status"], "used")
         self.assertIn("login", data["validated_refinement"]["base_flows"])
+        self.assertIn("base_flows", data["raw_response_preview"])
 
 
 if __name__ == "__main__":

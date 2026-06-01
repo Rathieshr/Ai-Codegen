@@ -224,7 +224,7 @@
     "summary": "Generated proposed child work items from the approved story scope.",
     "unknowns": []
   },
-  "created_at": "2026-06-01T05:05:38.347231+00:00",
+  "created_at": "2026-06-01T05:28:29.050793+00:00",
   "handoff_id": "handoff_123_task_planning_v1",
   "handoff_type": "story_generation_handoff",
   "next_actions": [
@@ -232,7 +232,7 @@
     "Approve before copying tasks into downstream systems."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_8d2682b3b95f",
+  "pipeline_id": "pipeline_73970ca6ce04",
   "refinement": {
     "base_flows": [
       "login",

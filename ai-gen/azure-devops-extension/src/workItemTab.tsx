@@ -691,7 +691,15 @@ function WorkItemTab() {
         <details>
           <summary>Developer Diagnostics</summary>
           {response?.phi_status === 'unusable_response' ? (
-            <div className="ai-gen-warning">Phi configured but returned unusable structured output. Fallback was used.</div>
+            <div className="ai-gen-warning">
+              <div>Phi configured but returned unusable structured output. Fallback was used.</div>
+              {response?.phi_raw_response_preview ? (
+                <details className="ai-gen-detail-block">
+                  <summary>Raw Phi Preview</summary>
+                  <pre className="ai-gen-prompt">{String(response.phi_raw_response_preview)}</pre>
+                </details>
+              ) : null}
+            </div>
           ) : null}
           <div className="ai-gen-grid">
             <span className="ai-gen-key">Backend</span>
@@ -959,7 +967,7 @@ function WorkflowActionBar({
   return (
     <div className="ai-gen-actions ai-gen-actions-compact">
       {workflowActions.map((action) => {
-        if (action === 'generate_epic_plan' || action === 'generate_feature_breakdown' || action === 'generate_execution_packet' || action === 'analyze_bug' || action === 'design_tests' || action === 'generate_ui_plan' || action === 'start_research_plan') {
+        if (action === 'generate_epic_plan' || action === 'resume_epic_plan' || action === 'generate_feature_breakdown' || action === 'generate_execution_packet' || action === 'analyze_bug' || action === 'design_tests' || action === 'generate_ui_plan' || action === 'start_research_plan') {
           return <button key={action} className="ai-gen-button" onClick={onGenerate} disabled={loading}>{workflowActionLabel(action, workflowTemplate)}</button>;
         }
         if (action === 'approve_plan' || action === 'approve_story') {
@@ -1577,6 +1585,8 @@ function workflowActionLabel(action: string, workflowTemplate: string): string {
   switch (action) {
     case 'generate_epic_plan':
       return 'Generate Epic Plan';
+    case 'resume_epic_plan':
+      return 'Continue Epic Plan';
     case 'generate_feature_breakdown':
       return 'Generate Feature Breakdown';
     case 'approve_plan':

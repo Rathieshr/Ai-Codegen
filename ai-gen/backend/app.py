@@ -135,6 +135,7 @@ class ContextResponse(BaseModel):
     refinement_reason: str = ""
     phi_used: bool = False
     phi_status: str = "skipped"
+    phi_raw_response_preview: str = ""
     refined_base_flows: list[str] = Field(default_factory=list)
     refined_variants: list[str] = Field(default_factory=list)
     refined_surfaces: list[str] = Field(default_factory=list)
@@ -354,6 +355,7 @@ def build_context(request: ContextRequest) -> ContextResponse:
         "refinement_reason": refinement_reason,
         "phi_used": False,
         "phi_status": "skipped",
+        "phi_raw_response_preview": "",
         "refinement": {},
     }
     if refinement_allowed:
@@ -462,6 +464,7 @@ def build_context(request: ContextRequest) -> ContextResponse:
             "refinement_reason": refinement_result.get("refinement_reason", ""),
             "phi_used": bool(refinement_result.get("phi_used")),
             "phi_status": refinement_result.get("phi_status", "skipped"),
+            "phi_raw_response_preview": refinement_result.get("phi_raw_response_preview", ""),
             "refined_base_flows": merged_refinement.get("base_flows", []),
             "refined_variants": merged_refinement.get("variants", []),
             "refined_surfaces": merged_refinement.get("surfaces", []),

@@ -3,13 +3,26 @@ import { OutputList, TemplateWorkspaceShell, WorkspaceRendererProps } from './wo
 
 export default function EpicPlanningRenderer(props: WorkspaceRendererProps) {
   const output = props.currentStage?.output || {};
-  const generatedFeatures = Array.isArray(output.generated_features)
-    ? (output.generated_features as Array<{ title?: string }>).map((item) => String(item.title || '')).filter(Boolean)
+  const analysisOutput = props.pipeline?.stages?.epic_analysis?.output || {};
+  const featureOutput = props.pipeline?.stages?.feature_generation?.output || {};
+  const storyOutput = props.pipeline?.stages?.story_generation?.output || {};
+  const reviewOutput = props.pipeline?.stages?.review?.output || {};
+  const generatedFeatures = Array.isArray(featureOutput.generated_features)
+    ? (featureOutput.generated_features as Array<{ title?: string }>).map((item) => String(item.title || '')).filter(Boolean)
     : [];
-  const generatedStories = Array.isArray(output.generated_work_items)
-    ? (output.generated_work_items as Array<{ children?: Array<{ title?: string }>; title?: string }>)
+  const storySource = Array.isArray(storyOutput.generated_work_items)
+    ? storyOutput.generated_work_items
+    : reviewOutput.generated_work_items;
+  const generatedStories = Array.isArray(storySource)
+    ? (storySource as Array<{ children?: Array<{ title?: string }>; title?: string }>)
       .flatMap((item) => (item.children || []).map((child) => String(child.title || '')).filter(Boolean))
     : [];
+  const stageStatuses = [
+    ['Epic Analysis', props.pipeline?.stages?.epic_analysis?.status || 'locked'],
+    ['Feature Generation', props.pipeline?.stages?.feature_generation?.status || 'locked'],
+    ['Story Generation', props.pipeline?.stages?.story_generation?.status || 'locked'],
+    ['Review', props.pipeline?.stages?.review?.status || 'locked'],
+  ];
   return (
     <TemplateWorkspaceShell
       props={props}
@@ -17,12 +30,13 @@ export default function EpicPlanningRenderer(props: WorkspaceRendererProps) {
       summary={props.currentSummary}
       extra={
         <div className="ai-gen-stage-panel">
-          <OutputList title="Epic Goal" items={[String(output.summary || props.currentSummary)]} />
+          <OutputList title="Epic Goal" items={[String(analysisOutput.goal || analysisOutput.summary || output.summary || props.currentSummary)]} />
           <OutputList title="Expected Outputs" items={['Features', 'Stories', 'Dependencies', 'Risks']} />
-          <OutputList title="Generated Features" items={generatedFeatures.length ? generatedFeatures : (output.proposed_features as Array<{ title?: string }>)?.map((item) => String(item.title || '')).filter(Boolean) || []} />
+          <OutputList title="Internal Progress" items={stageStatuses.map(([label, status]) => `${label}: ${status}`)} />
+          <OutputList title="Generated Features" items={generatedFeatures} />
           <OutputList title="Generated Stories" items={generatedStories} />
-          <OutputList title="Dependencies" items={(output.dependencies as string[]) || []} />
-          <OutputList title="Risks" items={(output.risks as string[]) || []} />
+          <OutputList title="Dependencies" items={(reviewOutput.dependencies as string[]) || (featureOutput.dependencies as string[]) || (analysisOutput.dependencies as string[]) || []} />
+          <OutputList title="Risks" items={(reviewOutput.risks as string[]) || (featureOutput.risks as string[]) || (analysisOutput.risks as string[]) || []} />
         </div>
       }
     />

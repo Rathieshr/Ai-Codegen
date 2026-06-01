@@ -12,11 +12,19 @@ def get_allowed_actions(
     if workflow_template == "epic_planning":
         if workflow_state == "not_generated":
             return ["generate_epic_plan"]
-        if workflow_state in {"generated", "review_ready"}:
+        if workflow_state == "generated":
+            if draft_count == 0:
+                return ["resume_epic_plan"]
+            actions: list[str] = ["approve_plan"]
+            actions.extend(["select_all", "deselect_all"])
+            return actions
+        if workflow_state == "review_ready":
             actions: list[str] = []
             if draft_count > 0:
                 actions.append("approve_plan")
                 actions.extend(["select_all", "deselect_all"])
+            else:
+                actions.append("resume_epic_plan")
             return actions
         if workflow_state == "approved":
             return ["create_selected_work_items"] if draft_count > 0 else []

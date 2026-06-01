@@ -82,8 +82,10 @@ class PipelineController:
 
     def run_stage(self, pipeline_id: str, stage: str, regenerate: bool = False, ai_gen_comments: list[dict] | None = None) -> dict:
         state = self.load_pipeline(pipeline_id)
+        self._log_stage_transition(state, stage, "run_requested", regenerate=regenerate)
         allowed, reason = can_run_stage(state, stage, regenerate=regenerate)
         if not allowed:
+            self._log_stage_transition(state, stage, "run_blocked", regenerate=regenerate, reason=reason)
             raise ValueError(reason)
         if ai_gen_comments is not None:
             state.ai_gen_comments = ai_gen_comments
@@ -114,6 +116,15 @@ class PipelineController:
         save_handoff(handoff)
         stage_state.handoff_id = handoff["handoff_id"]
         self._sync_stage_drafts(state, stage, output)
+        self._log_stage_transition(
+            state,
+            stage,
+            "run_completed",
+            regenerate=regenerate,
+            status=stage_state.status,
+            approved=stage_state.approved,
+            draft_count=len(flatten_drafts(state.draft_work_items)),
+        )
         state.activity.append(
             {
                 "type": "stage_generated" if not regenerate else "stage_regenerated",
@@ -131,6 +142,7 @@ class PipelineController:
         state = self.load_pipeline(pipeline_id)
         if state.workflow_template != "epic_planning":
             raise ValueError("run_epic_plan is only supported for epic_planning workflows.")
+        self._log_stage_transition(state, "epic_plan", "workflow_requested", workflow_template=state.workflow_template)
         if ai_gen_comments is not None:
             state.ai_gen_comments = ai_gen_comments
         errors: list[str] = []
@@ -139,6 +151,14 @@ class PipelineController:
                 stage_state = state.stages.get(stage)
                 if not stage_state:
                     continue
+                self._log_stage_transition(
+                    state,
+                    stage,
+                    "workflow_stage_start",
+                    status=stage_state.status,
+                    has_output=bool(stage_state.output),
+                    approved=stage_state.approved,
+                )
                 if not stage_state.output:
                     output = self._run_stage_output(state, stage, effective_context=self._rebuild_effective_context(state))
                     critic = self._run_critic_for_stage(stage, output, state)
@@ -160,6 +180,14 @@ class PipelineController:
                     save_handoff(handoff)
                     stage_state.handoff_id = handoff["handoff_id"]
                     self._sync_stage_drafts(state, stage, output)
+                    self._log_stage_transition(
+                        state,
+                        stage,
+                        "workflow_stage_generated",
+                        status=stage_state.status,
+                        finding_count=len(unresolved),
+                        draft_count=len(flatten_drafts(state.draft_work_items)),
+                    )
                     state.activity.append({"type": "stage_generated", "timestamp": utc_now(), "stage": stage, "version": stage_state.version})
                 if stage != "review":
                     stage_state = state.stages[stage]
@@ -180,8 +208,16 @@ class PipelineController:
                         stage_state.handoff_id = handoff["handoff_id"]
                     state.activity.append({"type": "stage_approved", "timestamp": utc_now(), "stage": stage, "approved_by": "system_epic_orchestrator"})
                     self._unlock_after_epic_internal_stage(state, stage)
+                    self._log_stage_transition(
+                        state,
+                        stage,
+                        "workflow_stage_approved",
+                        next_stage=self._active_stage_name(state),
+                        draft_count=len(flatten_drafts(state.draft_work_items)),
+                    )
             except Exception as error:
                 errors.append(f"{stage}: {error}")
+                self._log_stage_transition(state, stage, "workflow_stage_failed", error=type(error).__name__, message=str(error))
                 break
         if errors:
             state.pipeline_context = {
@@ -189,7 +225,16 @@ class PipelineController:
                 "warnings": list(dict.fromkeys([*list(state.pipeline_context.get("warnings", [])), *errors])),
             }
             state.activity.append({"type": "epic_plan_partial", "timestamp": utc_now(), "errors": errors})
+            self._log_stage_transition(state, "epic_plan", "workflow_partial", errors=errors)
         state.current_stage = "review" if state.stages.get("review", StageState("review")).output else self._active_stage_name(state)
+        self._log_stage_transition(
+            state,
+            "epic_plan",
+            "workflow_completed",
+            current_stage=state.current_stage,
+            workflow_state=self._workflow_status(state)[0],
+            draft_count=len(flatten_drafts(state.draft_work_items)),
+        )
         self._touch_pipeline(state)
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
@@ -210,6 +255,7 @@ class PipelineController:
         stage_state.handoff_id = handoff["handoff_id"]
         state.activity.append({"type": "stage_approved", "timestamp": utc_now(), "stage": stage, "approved_by": approved_by})
         state.activity.append({"type": "handoff_created", "timestamp": utc_now(), "stage": stage, "handoff_id": handoff["handoff_id"]})
+        self._log_stage_transition(state, stage, "approval_completed", approved_by=approved_by, next_stage=self._active_stage_name(state))
         state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
@@ -354,6 +400,7 @@ class PipelineController:
         next_stage = state.stages.get(order[index + 1])
         if next_stage and next_stage.status == "locked":
             next_stage.status = "pending"
+            self._log_stage_transition(state, stage, "next_stage_unlocked", next_stage=next_stage.stage, next_status=next_stage.status)
 
     def _build_review_context(self, stage_state: StageState) -> dict:
         return {
@@ -580,6 +627,18 @@ class PipelineController:
             if stage_state.status in {"generated", "needs_revision", "pending"}:
                 return stage_name
         return state.current_stage
+
+    def _log_stage_transition(self, state: PipelineState, stage: str, event: str, **details: object) -> None:
+        serialized = " ".join(
+            f"{key}={details[key]!r}" for key in sorted(details) if details[key] is not None
+        )
+        message = (
+            f"ai-gen stage-transition pipeline_id={state.pipeline_id} workflow_template={state.workflow_template} "
+            f"stage={stage} event={event}"
+        )
+        if serialized:
+            message = f"{message} {serialized}"
+        print(message)
 
     def _is_optional_stage(self, state: PipelineState, stage_name: str) -> bool:
         return bool(state.stage_metadata.get(stage_name, {}).get("optional"))

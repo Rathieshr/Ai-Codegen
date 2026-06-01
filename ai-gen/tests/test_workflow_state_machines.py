@@ -44,8 +44,11 @@ class WorkflowStateMachineTests(unittest.TestCase):
         )
 
     def test_epic_approve_hidden_until_review_ready_with_drafts(self) -> None:
-        self.assertEqual(get_allowed_actions("epic_planning", "generated", 0, None), [])
+        self.assertNotIn("approve_plan", get_allowed_actions("epic_planning", "generated", 0, None))
         self.assertIn("approve_plan", get_allowed_actions("epic_planning", "review_ready", 4, None))
+
+    def test_epic_resume_action_shows_when_generated_without_drafts(self) -> None:
+        self.assertEqual(get_allowed_actions("epic_planning", "generated", 0, None), ["resume_epic_plan"])
 
     def test_action_visibility_task_shows_execution_actions(self) -> None:
         actions = get_allowed_actions("task_execution", "packet_ready", 0, "approved")
@@ -64,6 +67,8 @@ class WorkflowStateMachineTests(unittest.TestCase):
             self.assertTrue(pipeline["stages"]["review"]["output"])
             self.assertEqual(pipeline["workflow_state"], "review_ready")
             self.assertTrue(pipeline["draft_work_items"])
+            self.assertNotEqual(pipeline["stages"]["feature_generation"]["status"], "locked")
+            self.assertIn("approve_plan", pipeline["allowed_actions"]["workflow_actions"])
 
 
 if __name__ == "__main__":

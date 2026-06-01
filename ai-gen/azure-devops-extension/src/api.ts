@@ -35,6 +35,7 @@ export type AiGenResponse = {
   refinement_reason?: string;
   phi_used?: boolean;
   phi_status?: string;
+  phi_raw_response_preview?: string;
   refined_base_flows?: string[];
   refined_variants?: string[];
   refined_surfaces?: string[];

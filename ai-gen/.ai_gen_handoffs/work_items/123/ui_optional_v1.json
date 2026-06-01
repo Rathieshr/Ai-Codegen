@@ -74,7 +74,7 @@
       "Make the phone input and verification step easy to understand before submission."
     ]
   },
-  "created_at": "2026-06-01T05:05:38.337230+00:00",
+  "created_at": "2026-06-01T05:28:29.039963+00:00",
   "handoff_id": "handoff_123_ui_optional_v1",
   "handoff_type": "ui_handoff",
   "next_actions": [
@@ -82,7 +82,7 @@
     "Approve or skip the UI stage before task planning."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_8d2682b3b95f",
+  "pipeline_id": "pipeline_73970ca6ce04",
   "refinement": {
     "base_flows": [
       "login",

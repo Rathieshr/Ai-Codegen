@@ -61,6 +61,7 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
             "refinement_reason": "provider unavailable",
             "phi_used": False,
             "phi_status": "not_configured",
+            "phi_raw_response_preview": "",
             "refinement": fallback,
         }
 
@@ -74,11 +75,30 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
         "repo_hints": (context or {}).get("repo_hints", {}),
         "expected_json_schema": EXPECTED_SCHEMA,
     }
-    raw = provider.refine_json(
-        SYSTEM_PROMPT,
-        json.dumps(payload, ensure_ascii=True),
-        max_tokens=800,
-    )
+    probe = getattr(provider, "probe_json", None)
+    probe_result: dict[str, Any] | None = None
+    if callable(probe):
+        candidate = probe(
+            SYSTEM_PROMPT,
+            json.dumps(payload, ensure_ascii=True),
+            max_tokens=800,
+        )
+        if isinstance(candidate, dict):
+            probe_result = candidate
+            raw = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
+        else:
+            raw = provider.refine_json(
+                SYSTEM_PROMPT,
+                json.dumps(payload, ensure_ascii=True),
+                max_tokens=800,
+            )
+    else:
+        raw = provider.refine_json(
+            SYSTEM_PROMPT,
+            json.dumps(payload, ensure_ascii=True),
+            max_tokens=800,
+        )
+    raw_preview = str((probe_result or {}).get("raw_content") or "")[:1500]
     validated = validate_task_refinement(raw)
     if not any(validated.get(key) for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "unknowns")):
         fallback = _deterministic_fallback(query, context)
@@ -90,6 +110,7 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
             "refinement_reason": "provider returned no usable refinement",
             "phi_used": False,
             "phi_status": "unusable_response",
+            "phi_raw_response_preview": raw_preview,
             "refinement": fallback,
         }
 
@@ -101,6 +122,7 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
         "refinement_reason": "provider returned structured refinement",
         "phi_used": True,
         "phi_status": "used",
+        "phi_raw_response_preview": raw_preview,
         "refinement": validated,
     }
 

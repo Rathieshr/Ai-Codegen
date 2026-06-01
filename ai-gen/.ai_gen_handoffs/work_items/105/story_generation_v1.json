@@ -1216,7 +1216,7 @@
     "summary": "Generated proposed work items from the approved planning scope.",
     "unknowns": []
   },
-  "created_at": "2026-06-01T05:05:38.788820+00:00",
+  "created_at": "2026-06-01T05:28:29.465606+00:00",
   "handoff_id": "handoff_105_story_generation_v1",
   "handoff_type": "story_generation_handoff",
   "next_actions": [
@@ -1224,7 +1224,7 @@
     "Approve before feature or epic review sign-off."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_59c07215d16b",
+  "pipeline_id": "pipeline_a33d0ce86dcd",
   "refinement": {},
   "repo_context": {},
   "source_stage": "story_generation",

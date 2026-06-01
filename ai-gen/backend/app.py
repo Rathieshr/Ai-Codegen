@@ -227,6 +227,14 @@ class RefinementTestRequest(BaseModel):
     mode: str = "refine"
 
 
+class RefinementRawHttpTestRequest(BaseModel):
+    query: str = Field(default="ping", min_length=1)
+    mode: str = Field(default="with_model")
+    include_model_field: Optional[bool] = None
+    api_version: Optional[str] = None
+    max_tokens: int = Field(default=50, ge=1, le=1000)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -262,6 +270,37 @@ def refinement_debug_curl(mode: str = "ping") -> dict[str, Any]:
     if provider is not None and hasattr(provider, "debug_curl"):
         return {"mode": mode, "curl": provider.debug_curl(mode)}
     return {"mode": mode, "curl": ""}
+
+
+@app.post("/refinement/raw-http-test")
+def refinement_raw_http_test(request: RefinementRawHttpTestRequest) -> dict[str, Any]:
+    provider = get_refinement_provider()
+    if provider is None or not provider.is_enabled() or not hasattr(provider, "raw_http_test"):
+        return {
+            **_fallback_refinement_config(),
+            "mode": request.mode,
+            "http_status": None,
+            "response_headers": {},
+            "response_body_preview": "",
+            "elapsed_ms": 0,
+            "failure_reason": "missing_config",
+            "failure_message": "Provider is not fully configured.",
+        }
+
+    normalized_mode = (request.mode or "with_model").strip().lower()
+    include_model_field = request.include_model_field
+    if include_model_field is None:
+        include_model_field = normalized_mode != "without_model"
+    system_prompt, user_prompt, max_tokens = _raw_http_test_prompt(request.query, request.max_tokens)
+    timeout_seconds = _provider_timeout_for_mode("ping", provider.status_snapshot())
+    return provider.raw_http_test(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        include_model_field=include_model_field,
+        api_version_override=request.api_version,
+    )
 
 
 @app.post("/refinement/test")
@@ -418,6 +457,21 @@ def _refinement_test_prompt(request: RefinementTestRequest, mode: str) -> tuple[
     )
 
 
+def _raw_http_test_prompt(query: str, max_tokens: int) -> tuple[str, str, int]:
+    normalized_query = (query or "ping").strip() or "ping"
+    if normalized_query.lower() == "ping":
+        return (
+            "Return JSON only.",
+            'Return exactly {"status":"ok"}',
+            min(max_tokens, 50),
+        )
+    return (
+        "Return JSON only.",
+        normalized_query,
+        max_tokens,
+    )
+
+
 def _run_refinement_probe_with_timeout(
     probe: Any,
     system_prompt: str,
@@ -541,6 +595,7 @@ def _fallback_refinement_config() -> dict[str, Any]:
         "timeout_seconds": timeout_seconds,
         "ping_timeout_seconds": ping_timeout_seconds,
         "diagnostic_timeout_seconds": diagnostic_timeout_seconds,
+        "include_model_field": os.getenv("AI_GEN_REFINER_INCLUDE_MODEL_FIELD", "true").strip().lower() not in {"0", "false", "no"},
         "max_tokens": _safe_int_env("AI_GEN_REFINER_MAX_TOKENS", 300),
         "response_format_enabled": os.getenv("AI_GEN_REFINER_RESPONSE_FORMAT_ENABLED", "1") != "0",
         "missing_env": [],

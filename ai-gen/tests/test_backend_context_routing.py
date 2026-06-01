@@ -19,6 +19,7 @@ try:
         get_handoff_markdown,
         refinement_config,
         refinement_debug_curl,
+        refinement_raw_http_test,
         refinement_test,
         run_pipeline_epic_plan,
         run_pipeline_stage,
@@ -36,6 +37,7 @@ except ModuleNotFoundError:
     get_handoff_markdown = None
     refinement_config = None
     refinement_debug_curl = None
+    refinement_raw_http_test = None
     refinement_test = None
     validate_execution_result = None
     PipelineCreateRequest = None
@@ -1002,6 +1004,112 @@ class BackendContextRoutingTests(unittest.TestCase):
 
         self.assertTrue(data["configured"])
         self.assertEqual(data["endpoint_host"], "example.test")
+
+    def test_refinement_raw_http_test_supports_with_and_without_model(self) -> None:
+        captured = []
+
+        class RawProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 180,
+                    "include_model_field": True,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
+
+            def raw_http_test(self, **kwargs) -> dict:
+                captured.append(kwargs)
+                return {
+                    **self.status_snapshot(),
+                    "http_status": 200,
+                    "response_headers": {"content-type": "application/json"},
+                    "response_body_preview": '{"status":"ok"}',
+                    "elapsed_ms": 25,
+                    "timeout_seconds": kwargs["timeout_seconds"],
+                    "include_model_field": kwargs["include_model_field"],
+                    "api_version": kwargs.get("api_version_override") or "2024-05-01-preview",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "failure_reason": "",
+                    "failure_message": "",
+                    "error_type": "",
+                    "error_message": "",
+                }
+
+        with patch("backend.app.get_refinement_provider", return_value=RawProvider()):
+            with_model = refinement_raw_http_test(type("Req", (), {"query": "ping", "mode": "with_model", "include_model_field": None, "api_version": None, "max_tokens": 50})())
+            without_model = refinement_raw_http_test(type("Req", (), {"query": "ping", "mode": "without_model", "include_model_field": None, "api_version": None, "max_tokens": 50})())
+
+        self.assertTrue(captured[0]["include_model_field"])
+        self.assertFalse(captured[1]["include_model_field"])
+        self.assertEqual(with_model["http_status"], 200)
+        self.assertEqual(without_model["http_status"], 200)
+
+    def test_refinement_raw_http_test_supports_api_version_override(self) -> None:
+        class RawProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def status_snapshot(self) -> dict:
+                return {
+                    "backend_status": "ok",
+                    "provider": "azure_phi",
+                    "configured": True,
+                    "enabled": True,
+                    "endpoint_present": True,
+                    "api_key_present": True,
+                    "model": "Phi-4-mini-instruct",
+                    "api_version": "2024-05-01-preview",
+                    "endpoint_host": "example.test",
+                    "endpoint_path": "/models",
+                    "final_url_preview": "https://example.test/models/chat/completions?api-version=2024-05-01-preview",
+                    "method": "POST",
+                    "timeout_seconds": 60,
+                    "ping_timeout_seconds": 60,
+                    "diagnostic_timeout_seconds": 180,
+                    "include_model_field": True,
+                    "max_tokens": 300,
+                    "response_format_enabled": True,
+                }
+
+            def raw_http_test(self, **kwargs) -> dict:
+                return {
+                    **self.status_snapshot(),
+                    "http_status": 404,
+                    "response_headers": {"x-test": "1"},
+                    "response_body_preview": "not found",
+                    "elapsed_ms": 40,
+                    "timeout_seconds": kwargs["timeout_seconds"],
+                    "include_model_field": kwargs["include_model_field"],
+                    "api_version": kwargs.get("api_version_override"),
+                    "final_url_preview": f"https://example.test/models/chat/completions?api-version={kwargs.get('api_version_override')}",
+                    "failure_reason": "http_404_wrong_endpoint_or_model",
+                    "failure_message": "Azure Phi endpoint or model path was not found.",
+                    "error_type": "HTTPError",
+                    "error_message": "404",
+                }
+
+        with patch("backend.app.get_refinement_provider", return_value=RawProvider()):
+            data = refinement_raw_http_test(type("Req", (), {"query": "ping", "mode": "with_model", "include_model_field": True, "api_version": "2024-10-21", "max_tokens": 50})())
+
+        self.assertEqual(data["api_version"], "2024-10-21")
+        self.assertIn("2024-10-21", data["final_url_preview"])
 
 
 if __name__ == "__main__":

@@ -251,6 +251,7 @@ class PhiProviderTests(unittest.TestCase):
                 "AI_GEN_REFINER_TIMEOUT_SECONDS": "60",
                 "AI_GEN_REFINER_PING_TIMEOUT_SECONDS": "61",
                 "AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS": "180",
+                "AI_GEN_REFINER_INCLUDE_MODEL_FIELD": "false",
             },
             clear=False,
         ):
@@ -260,6 +261,59 @@ class PhiProviderTests(unittest.TestCase):
         self.assertEqual(config["timeout_seconds"], 60)
         self.assertEqual(config["ping_timeout_seconds"], 61)
         self.assertEqual(config["diagnostic_timeout_seconds"], 180)
+        self.assertFalse(config["include_model_field"])
+
+    def test_build_payload_can_omit_model_field(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "super-secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+                "AI_GEN_REFINER_INCLUDE_MODEL_FIELD": "false",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            payload = provider._build_payload("Return JSON only.", "Return exactly {}", 50, False)
+
+        self.assertNotIn("model", payload)
+
+    def test_raw_http_test_uses_api_version_override(self) -> None:
+        def fake_raw(self, url, payload, timeout_seconds, started):
+            return {
+                "http_status": 200,
+                "response_headers": {"content-type": "application/json"},
+                "response_body": '{"status":"ok"}',
+                "response_body_preview": '{"status":"ok"}',
+                "response_length": 15,
+                "elapsed_ms": 5,
+            }
+
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "super-secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+            },
+            clear=False,
+        ), patch.object(AzurePhiProvider, "_perform_raw_http", fake_raw):
+            provider = AzurePhiProvider()
+            result = provider.raw_http_test(
+                system_prompt="Return JSON only.",
+                user_prompt='Return exactly {"status":"ok"}',
+                api_version_override="2024-10-21",
+                include_model_field=False,
+            )
+
+        self.assertEqual(result["api_version"], "2024-10-21")
+        self.assertIn("2024-10-21", result["final_url_preview"])
+        self.assertFalse(result["include_model_field"])
 
 
 if __name__ == "__main__":

@@ -396,6 +396,17 @@ export async function runPipelineStage(
   });
 }
 
+export async function runEpicPlan(
+  pipelineId: string,
+  aiGenComments: AzureComment[] = [],
+): Promise<PipelineState> {
+  return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/run-epic-plan`, {
+    stage: 'epic_analysis',
+    regenerate: false,
+    ai_gen_comments: aiGenComments,
+  });
+}
+
 export async function loadPipeline(pipelineId: string): Promise<PipelineState> {
   return getJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}`);
 }

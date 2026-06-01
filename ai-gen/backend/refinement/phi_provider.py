@@ -31,8 +31,14 @@ class AzurePhiProvider:
         )
 
     def refine_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800) -> dict[str, Any]:
+        result = self.probe_json(system_prompt, user_prompt, max_tokens=max_tokens)
+        parsed = result.get("parsed_json")
+        return parsed if isinstance(parsed, dict) else {}
+
+    def probe_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800) -> dict[str, Any]:
         if not self.is_enabled():
-            return {}
+            print("ai-gen phi probe configured=no")
+            return {"configured": False, "http_status": None, "raw_content": "", "parsed_json": {}, "parse_error": "provider not enabled"}
 
         url = f"{self.endpoint}/chat/completions?api-version={self.api_version}"
         payload = {
@@ -57,14 +63,39 @@ class AzurePhiProvider:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = json.loads(response.read().decode("utf-8"))
+                status_code = getattr(response, "status", 200)
+                response_body = response.read().decode("utf-8")
+                print(f"ai-gen phi probe configured=yes http_status={status_code} response_length={len(response_body)}")
+                raw = json.loads(response_body)
         except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as error:
-            print(f"ai-gen refiner error: {type(error).__name__}")
-            return {}
+            http_status = getattr(error, "code", None)
+            print(f"ai-gen phi probe configured=yes http_status={http_status or 'error'} error={type(error).__name__}")
+            return {
+                "configured": True,
+                "http_status": http_status,
+                "raw_content": "",
+                "parsed_json": {},
+                "parse_error": type(error).__name__,
+            }
 
         try:
             content = raw["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-            return parsed if isinstance(parsed, dict) else {}
-        except (KeyError, IndexError, TypeError, ValueError):
-            return {}
+            is_valid = isinstance(parsed, dict)
+            print(f"ai-gen phi probe parse_result={'dict' if is_valid else 'non_dict'} validation_candidate={'yes' if is_valid else 'no'}")
+            return {
+                "configured": True,
+                "http_status": status_code,
+                "raw_content": content,
+                "parsed_json": parsed if is_valid else {},
+                "parse_error": "",
+            }
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            print(f"ai-gen phi probe parse_result=error validation_candidate=no error={type(error).__name__}")
+            return {
+                "configured": True,
+                "http_status": 200,
+                "raw_content": str(raw)[:4000],
+                "parsed_json": {},
+                "parse_error": type(error).__name__,
+            }

@@ -47,7 +47,7 @@
     "variant": null,
     "variants": []
   },
-  "created_at": "2026-06-01T04:10:38.153518+00:00",
+  "created_at": "2026-06-01T05:05:38.678192+00:00",
   "handoff_id": "handoff_302_dev_packet_v1",
   "handoff_type": "dev_handoff",
   "next_actions": [
@@ -55,7 +55,7 @@
     "Approve before handing work to implementation."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_96429d32ffff",
+  "pipeline_id": "pipeline_4d01222092f6",
   "refinement": {},
   "repo_context": {},
   "source_stage": "dev_packet",

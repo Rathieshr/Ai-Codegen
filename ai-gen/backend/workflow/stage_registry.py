@@ -93,11 +93,18 @@ def run_stage_output(
             "unknowns": [],
         }
     if stage == "epic_analysis":
+        goal = str(work_item.get("title") or "Epic goal").strip()
+        description = str(work_item.get("description") or "").strip()
         return {
             "assistant": stage,
-            "summary": _title_or_default(work_item, "Analyze epic scope, dependencies, and risks."),
+            "summary": "Epic analysis completed.",
+            "goal": goal,
+            "scope": [item for item in [goal, description] if item][:3],
+            "business_outcomes": _business_outcomes(work_item, refinement, effective_context),
+            "assumptions": _epic_assumptions(work_item, refinement, effective_context),
             "dependencies": _dependencies(work_item, refinement),
             "risks": _risks(work_item, refinement),
+            "dependency_notes": _dependencies(work_item, refinement),
             "unknowns": [],
         }
     if stage == "feature_analysis":
@@ -337,6 +344,30 @@ def _review_proposed_work_items(drafts: list[dict[str, Any]]) -> dict[str, list[
         "ownership_gaps": ownership_gaps,
         "dependency_issues": dependency_issues,
     }
+
+
+def _business_outcomes(work_item: dict[str, Any], refinement: dict[str, Any], effective_context: dict[str, Any] | None) -> list[str]:
+    outputs: list[str] = []
+    title = str(work_item.get("title") or "").strip()
+    description = str(work_item.get("description") or "").strip()
+    if title:
+        outputs.append(f"Break down {title.lower()} into implementation-ready features and stories.")
+    if any(flow in (refinement or {}).get("base_flows", []) for flow in ("payment", "checkout", "login", "signup")):
+        outputs.append("Preserve the core user journey while decomposing delivery scope.")
+    if description:
+        outputs.append(description[:180])
+    return outputs[:3]
+
+
+def _epic_assumptions(work_item: dict[str, Any], refinement: dict[str, Any], effective_context: dict[str, Any] | None) -> list[str]:
+    assumptions: list[str] = []
+    if str(work_item.get("areaPath") or work_item.get("area_path") or "").strip():
+        assumptions.append("Area path and current team boundaries should remain stable during breakdown.")
+    if (refinement or {}).get("surfaces"):
+        assumptions.append("Generated work items should reflect the refined engineering surfaces.")
+    if not assumptions:
+        assumptions.append("Generated features and stories should stay within the current epic scope.")
+    return assumptions[:3]
 
 
 def _feature_candidates(work_item: dict[str, Any], refinement: dict[str, Any]) -> list[dict[str, Any]]:

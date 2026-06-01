@@ -326,5 +326,69 @@
     "status": "approved",
     "version": 2,
     "work_item_id": "302"
+  },
+  "handoff_303_epic_analysis_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/303/epic_analysis_v1.md",
+    "path": ".ai_gen_handoffs/work_items/303/epic_analysis_v1.json",
+    "stage": "epic_analysis",
+    "status": "approved",
+    "version": 1,
+    "work_item_id": "303"
+  },
+  "handoff_303_feature_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/303/feature_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/303/feature_generation_v1.json",
+    "stage": "feature_generation",
+    "status": "approved",
+    "version": 1,
+    "work_item_id": "303"
+  },
+  "handoff_303_review_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/303/review_v1.md",
+    "path": ".ai_gen_handoffs/work_items/303/review_v1.json",
+    "stage": "review",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "303"
+  },
+  "handoff_303_story_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/303/story_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/303/story_generation_v1.json",
+    "stage": "story_generation",
+    "status": "approved",
+    "version": 1,
+    "work_item_id": "303"
+  },
+  "handoff_777_epic_analysis_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/777/epic_analysis_v1.md",
+    "path": ".ai_gen_handoffs/work_items/777/epic_analysis_v1.json",
+    "stage": "epic_analysis",
+    "status": "approved",
+    "version": 1,
+    "work_item_id": "777"
+  },
+  "handoff_777_feature_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/777/feature_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/777/feature_generation_v1.json",
+    "stage": "feature_generation",
+    "status": "approved",
+    "version": 1,
+    "work_item_id": "777"
+  },
+  "handoff_777_review_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/777/review_v1.md",
+    "path": ".ai_gen_handoffs/work_items/777/review_v1.json",
+    "stage": "review",
+    "status": "draft",
+    "version": 1,
+    "work_item_id": "777"
+  },
+  "handoff_777_story_generation_v1": {
+    "markdown_path": ".ai_gen_handoffs/work_items/777/story_generation_v1.md",
+    "path": ".ai_gen_handoffs/work_items/777/story_generation_v1.json",
+    "stage": "story_generation",
+    "status": "approved",
+    "version": 1,
+    "work_item_id": "777"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "approved_at": "2026-06-01T04:10:38.034549+00:00",
+  "approved_at": "2026-06-01T05:05:38.499633+00:00",
   "constraints": [],
   "content": {
     "assistant": "story_generator",
@@ -1216,7 +1216,7 @@
     "summary": "Generated proposed work items from the approved planning scope.",
     "unknowns": []
   },
-  "created_at": "2026-06-01T04:10:38.034581+00:00",
+  "created_at": "2026-06-01T05:05:38.499656+00:00",
   "handoff_id": "handoff_301_story_generation_v2",
   "handoff_type": "story_generation_handoff",
   "next_actions": [
@@ -1224,7 +1224,7 @@
     "Approve before feature or epic review sign-off."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_106dbfb521c9",
+  "pipeline_id": "pipeline_5654cd379635",
   "refinement": {},
   "repo_context": {},
   "source_stage": "story_generation",

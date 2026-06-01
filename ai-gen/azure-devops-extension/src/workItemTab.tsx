@@ -24,6 +24,7 @@ import {
   PipelineState,
   PipelineStageState,
   refreshPipelineState,
+  runEpicPlan,
   saveGeneratedState,
   skipPipelineStage,
   storeWorkItemCreationResult,
@@ -220,7 +221,11 @@ function WorkItemTab() {
     setState((current) => ({ ...current, loadingMessage: 'Creating pipeline...' }));
     await withPipelineUpdate(async () => {
       const commentLoad = await loadAiGenComments(state.data!.workItem.id);
-      const pipeline = await createPipeline(state.data!.workItem, state.data!.response, commentLoad.comments);
+      let pipeline = await createPipeline(state.data!.workItem, state.data!.response, commentLoad.comments);
+      if (String(pipeline.workflow_template || '') === 'epic_planning') {
+        setState((current) => ({ ...current, loadingMessage: 'Generating Epic Plan...' }));
+        pipeline = await runEpicPlan(pipeline.pipeline_id, commentLoad.comments);
+      }
       return refreshPipelineState(
         state.data!.workItem,
         { ...state.data!, pipeline, commentWarning: commentLoad.warning },
@@ -236,14 +241,16 @@ function WorkItemTab() {
     setState((current) => ({ ...current, loadingMessage: regenerate ? 'Regenerating...' : 'Generating...' }));
     await withPipelineUpdate(async () => {
       const commentLoad = await loadAiGenComments(state.data!.workItem.id);
-      const pipeline = await runPipelineStage(
-        state.data!.pipeline!.pipeline_id,
-        currentStageName,
-        regenerate,
-        undefined,
-        'azure_devops',
-        commentLoad.comments,
-      );
+      const pipeline = String(state.data!.pipeline!.workflow_template || '') === 'epic_planning' && !regenerate
+        ? await runEpicPlan(state.data!.pipeline!.pipeline_id, commentLoad.comments)
+        : await runPipelineStage(
+          state.data!.pipeline!.pipeline_id,
+          currentStageName,
+          regenerate,
+          undefined,
+          'azure_devops',
+          commentLoad.comments,
+        );
       return refreshPipelineState(
         state.data!.workItem,
         { ...state.data!, pipeline, commentWarning: commentLoad.warning },
@@ -683,6 +690,9 @@ function WorkItemTab() {
       <section className="ai-gen-section">
         <details>
           <summary>Developer Diagnostics</summary>
+          {response?.phi_status === 'unusable_response' ? (
+            <div className="ai-gen-warning">Phi configured but returned unusable structured output. Fallback was used.</div>
+          ) : null}
           <div className="ai-gen-grid">
             <span className="ai-gen-key">Backend</span>
             <span>{capabilities?.backend_up ? 'Connected' : 'Unknown'}</span>
@@ -866,6 +876,11 @@ function StagePanel({
   const stageFindings = currentStageFindings;
   const blockingCount = stageFindings.filter((finding) => String(finding.severity || '') === 'blocking').length;
   const warningCount = stageFindings.filter((finding) => String(finding.severity || '') === 'warning').length;
+  const epicHistoryOutputs = pipeline && String(pipeline.workflow_template || '') === 'epic_planning'
+    ? ['epic_analysis', 'feature_generation', 'story_generation']
+      .map((name) => ({ name, output: pipeline.stages[name]?.output || {} }))
+      .filter((item) => Object.keys(item.output).length > 0)
+    : [];
   return (
     <div className="ai-gen-stage-panel">
       {stageFindings.length ? (
@@ -895,8 +910,17 @@ function StagePanel({
         ) : null}
         {Object.keys(stageState.output || {}).length ? (
           <pre className="ai-gen-prompt">{JSON.stringify(stageState.output, null, 2)}</pre>
+        ) : epicHistoryOutputs.length ? (
+          <>
+            {epicHistoryOutputs.map((item) => (
+              <details key={item.name} className="ai-gen-detail-block" open={item.name === 'story_generation'}>
+                <summary>{stageLabel(item.name, pipeline)} Details</summary>
+                <pre className="ai-gen-prompt">{JSON.stringify(item.output, null, 2)}</pre>
+              </details>
+            ))}
+          </>
         ) : (
-          <div className="ai-gen-muted">No stage output yet.</div>
+          <div className="ai-gen-muted">{stageLabel(stage, pipeline)} not generated yet.</div>
         )}
       </details>
     </div>

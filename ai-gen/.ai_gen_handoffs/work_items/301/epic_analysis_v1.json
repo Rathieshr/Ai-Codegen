@@ -3,14 +3,25 @@
   "constraints": [],
   "content": {
     "assistant": "epic_analysis",
+    "assumptions": [
+      "Generated features and stories should stay within the current epic scope."
+    ],
+    "business_outcomes": [
+      "Break down checkout modernization into implementation-ready features and stories."
+    ],
     "dependencies": [],
+    "dependency_notes": [],
+    "goal": "Checkout modernization",
     "risks": [
       "Scope and dependency assumptions should be reviewed before execution."
     ],
-    "summary": "Checkout modernization.",
+    "scope": [
+      "Checkout modernization"
+    ],
+    "summary": "Epic analysis completed.",
     "unknowns": []
   },
-  "created_at": "2026-06-01T04:10:38.001239+00:00",
+  "created_at": "2026-06-01T05:05:38.463905+00:00",
   "handoff_id": "handoff_301_epic_analysis_v1",
   "handoff_type": "requirement_handoff",
   "next_actions": [
@@ -18,13 +29,13 @@
     "Approve before moving to the next workflow stage."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_106dbfb521c9",
+  "pipeline_id": "pipeline_5654cd379635",
   "refinement": {},
   "repo_context": {},
   "source_stage": "epic_analysis",
   "stage": "epic_analysis",
   "status": "draft",
-  "summary": "Checkout modernization.",
+  "summary": "Epic analysis completed.",
   "target_stages": [
     "feature_generation",
     "story_generation"

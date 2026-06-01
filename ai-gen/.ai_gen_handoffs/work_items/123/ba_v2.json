@@ -55,7 +55,7 @@
       "phone_otp"
     ]
   },
-  "created_at": "2026-06-01T04:10:37.875439+00:00",
+  "created_at": "2026-06-01T05:05:38.329534+00:00",
   "handoff_id": "handoff_123_ba_v2",
   "handoff_type": "requirement_handoff",
   "next_actions": [
@@ -63,7 +63,7 @@
     "Approve BA output before UI or dev work."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_c71aa17c1f77",
+  "pipeline_id": "pipeline_8d2682b3b95f",
   "refinement": {
     "base_flows": [
       "login",

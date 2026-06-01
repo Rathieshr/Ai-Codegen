@@ -16,6 +16,8 @@ try:
         capabilities,
         create_assistant_pipeline,
         get_handoff_markdown,
+        refinement_test,
+        run_pipeline_epic_plan,
         run_pipeline_stage,
         validate_execution_result,
     )
@@ -29,10 +31,12 @@ except ModuleNotFoundError:
     build_context = None
     capabilities = None
     get_handoff_markdown = None
+    refinement_test = None
     validate_execution_result = None
     PipelineCreateRequest = None
     PipelineStageRequest = None
     create_assistant_pipeline = None
+    run_pipeline_epic_plan = None
     run_pipeline_stage = None
     PipelineController = None
     RepoContextManager = None
@@ -504,6 +508,46 @@ class BackendContextRoutingTests(unittest.TestCase):
             )
 
         self.assertEqual(updated["stages"]["ba"]["review_feedback"][0]["comment"], "Clarify acceptance criteria")
+
+    def test_run_epic_plan_endpoint_executes_internal_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch("backend.app.pipeline_controller", pipeline_controller := type("Holder", (), {})()):
+            controller = PipelineController(temp_dir)
+            pipeline_controller.create_pipeline = controller.create_pipeline
+            pipeline_controller.run_epic_plan = controller.run_epic_plan
+            pipeline = create_assistant_pipeline(PipelineCreateRequest(work_item={"id": 777, "type": "Epic", "title": "Identity modernization"}))
+            updated = run_pipeline_epic_plan(
+                pipeline["pipeline_id"],
+                PipelineStageRequest(stage="epic_analysis"),
+            )
+
+        self.assertEqual(updated["workflow_state"], "review_ready")
+        self.assertTrue(updated["draft_work_items"])
+        self.assertTrue(updated["stages"]["review"]["output"])
+
+    def test_phi_diagnostic_endpoint_returns_parse_status_safely(self) -> None:
+        class FakeProvider:
+            def is_enabled(self) -> bool:
+                return True
+
+            def probe_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800) -> dict:
+                return {
+                    "configured": True,
+                    "http_status": 200,
+                    "raw_content": '{"base_flows":["login"]}',
+                    "parsed_json": {"base_flows": ["login"]},
+                    "parse_error": "",
+                }
+
+        request = type("Req", (), {"query": "sign in", "context": {}})()
+        with patch("backend.app.get_refinement_provider", return_value=FakeProvider()), patch(
+            "backend.app.get_refiner_status",
+            return_value={"provider": "azure_phi", "configured": True},
+        ):
+            data = refinement_test(request)
+
+        self.assertEqual(data["provider"], "azure_phi")
+        self.assertEqual(data["phi_status"], "used")
+        self.assertIn("login", data["validated_refinement"]["base_flows"])
 
 
 if __name__ == "__main__":

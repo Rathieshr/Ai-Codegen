@@ -1,0 +1,43 @@
+{
+  "approved_at": "2026-06-01T05:05:38.619112+00:00",
+  "constraints": [],
+  "content": {
+    "assistant": "feature_generation",
+    "dependencies": [],
+    "generated_features": [
+      {
+        "description": "Organize the identity modernization epic into a deliverable feature slice focused on core.",
+        "title": "Identity modernization: Feature Slice 1"
+      }
+    ],
+    "proposed_features": [
+      {
+        "description": "Organize the identity modernization epic into a deliverable feature slice focused on core.",
+        "title": "Identity modernization: Feature Slice 1"
+      }
+    ],
+    "risks": [
+      "Scope and dependency assumptions should be reviewed before execution."
+    ],
+    "summary": "Generated proposed features from the approved epic scope.",
+    "unknowns": []
+  },
+  "created_at": "2026-06-01T05:05:38.619123+00:00",
+  "handoff_id": "handoff_303_feature_generation_v1",
+  "handoff_type": "generic_handoff",
+  "next_actions": [],
+  "open_questions": [],
+  "pipeline_id": "pipeline_3017b0bff36a",
+  "refinement": {},
+  "repo_context": {},
+  "source_stage": "feature_generation",
+  "stage": "feature_generation",
+  "status": "approved",
+  "summary": "Feature_Generation handoff",
+  "target_stages": [
+    "story_generation",
+    "review"
+  ],
+  "version": 1,
+  "work_item_id": "303"
+}

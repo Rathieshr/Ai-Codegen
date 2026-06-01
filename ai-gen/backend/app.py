@@ -1,6 +1,7 @@
 """FastAPI backend for generating Codex-ready business context."""
 
 import os
+import json
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -17,8 +18,9 @@ from backend.execution_validator import ExecutionContext, snapshot_selected_file
 from backend.intent_detector import detect_intent
 from backend.model_router import detect_execution_target, get_available_targets
 from backend.orchestrator.react_controller import PipelineController
-from backend.refinement.provider import get_refiner_status
+from backend.refinement.provider import get_refiner_status, get_refinement_provider
 from backend.refinement.refinement_decider import should_use_refiner
+from backend.refinement.schema_validator import validate_task_refinement
 from backend.refinement.task_refiner import refine_task
 from backend.repo_context.bug_localizer import detect_bug_surface, score_bug_hotspots
 from backend.repo_context.cross_flow import build_flow_relationships, get_related_flows
@@ -217,6 +219,11 @@ class DraftWorkItemsCreatedRequest(BaseModel):
     created_items: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class RefinementTestRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -236,6 +243,74 @@ def refinement_health() -> dict[str, Any]:
     """Return non-secret refiner configuration status."""
 
     return get_refiner_status()
+
+
+@app.post("/refinement/test")
+def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
+    provider = get_refinement_provider()
+    status = get_refiner_status()
+    result = {
+        "provider": status.get("provider"),
+        "configured": bool(status.get("configured")),
+        "phi_used": False,
+        "phi_status": "not_configured" if not provider else "skipped",
+        "raw_response_preview": "",
+        "parsed_json": {},
+        "parse_error": "",
+        "validated_refinement": {},
+        "fallback_used": False,
+    }
+    if provider is None or not provider.is_enabled():
+        return result
+
+    payload = {
+        "query": request.query,
+        "context": request.context,
+        "expected_json_schema": {
+            "base_flows": [],
+            "variants": [],
+            "surfaces": [],
+            "fields": [],
+            "validations": [],
+            "scope_hints": [],
+            "actors": [],
+            "states": [],
+            "unknowns": [],
+            "confidence": "low|medium|high",
+        },
+    }
+    probe = getattr(provider, "probe_json", None)
+    if not callable(probe):
+        refined = refine_task(request.query, request.context)
+        result["phi_used"] = bool(refined.get("phi_used"))
+        result["phi_status"] = refined.get("phi_status", "skipped")
+        result["validated_refinement"] = refined.get("refinement", {})
+        result["fallback_used"] = refined.get("refinement_source") != "phi"
+        return result
+
+    probe_result = probe(
+        system_prompt=(
+            "You are ai-gen semantic refinement engine. Return strict JSON only using canonical engineering metadata."
+        ),
+        user_prompt=json.dumps(payload, ensure_ascii=True),
+        max_tokens=800,
+    )
+    raw_preview = str(probe_result.get("raw_content", ""))[:1500]
+    parsed_json = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
+    validated = validate_task_refinement(parsed_json or {})
+    has_validated = any(validated.get(key) for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "unknowns"))
+    result.update(
+        {
+            "phi_used": bool(probe_result.get("http_status")),
+            "phi_status": "used" if has_validated else ("unusable_response" if probe_result.get("http_status") else "unavailable"),
+            "raw_response_preview": raw_preview,
+            "parsed_json": parsed_json,
+            "parse_error": str(probe_result.get("parse_error") or ""),
+            "validated_refinement": validated,
+            "fallback_used": not has_validated,
+        }
+    )
+    return result
 
 
 @app.post("/context", response_model=ContextResponse)
@@ -506,6 +581,16 @@ def run_pipeline_stage(pipeline_id: str, request: PipelineStageRequest) -> dict:
         pipeline_id,
         request.stage,
         regenerate=request.regenerate,
+        ai_gen_comments=request.ai_gen_comments,
+    )
+
+
+@app.post("/assist/pipeline/{pipeline_id}/run-epic-plan")
+def run_pipeline_epic_plan(pipeline_id: str, request: PipelineStageRequest) -> dict:
+    """Run the full Epic Planning flow in one user action."""
+
+    return pipeline_controller.run_epic_plan(
+        pipeline_id,
         ai_gen_comments=request.ai_gen_comments,
     )
 

@@ -127,6 +127,73 @@ class PipelineController:
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
 
+    def run_epic_plan(self, pipeline_id: str, ai_gen_comments: list[dict] | None = None) -> dict:
+        state = self.load_pipeline(pipeline_id)
+        if state.workflow_template != "epic_planning":
+            raise ValueError("run_epic_plan is only supported for epic_planning workflows.")
+        if ai_gen_comments is not None:
+            state.ai_gen_comments = ai_gen_comments
+        errors: list[str] = []
+        for stage in ["epic_analysis", "feature_generation", "story_generation", "review"]:
+            try:
+                stage_state = state.stages.get(stage)
+                if not stage_state:
+                    continue
+                if not stage_state.output:
+                    output = self._run_stage_output(state, stage, effective_context=self._rebuild_effective_context(state))
+                    critic = self._run_critic_for_stage(stage, output, state)
+                    unresolved, resolved = self._split_findings(stage_state, critic)
+                    stage_state.output = output
+                    stage_state.critic = critic
+                    stage_state.status = "needs_revision" if critic.get("decision") == "needs_revision" else "generated"
+                    stage_state.version = stage_state.version + 1 if stage_state.version else 1
+                    stage_state.unresolved_findings = unresolved
+                    stage_state.resolved_findings = resolved
+                    handoff = build_handoff(
+                        pipeline_state=state,
+                        stage=stage,
+                        stage_output=output,
+                        refinement=state.refinement,
+                        repo_context=state.repo_context,
+                        status="draft",
+                    )
+                    save_handoff(handoff)
+                    stage_state.handoff_id = handoff["handoff_id"]
+                    self._sync_stage_drafts(state, stage, output)
+                    state.activity.append({"type": "stage_generated", "timestamp": utc_now(), "stage": stage, "version": stage_state.version})
+                if stage != "review":
+                    stage_state = state.stages[stage]
+                    stage_state.approved = True
+                    stage_state.approved_at = utc_now()
+                    stage_state.approved_by = "system_epic_orchestrator"
+                    stage_state.status = "approved"
+                    if stage_state.handoff_id:
+                        handoff = build_handoff(
+                            pipeline_state=state,
+                            stage=stage,
+                            stage_output=stage_state.output,
+                            refinement=state.refinement,
+                            repo_context=state.repo_context,
+                            status="approved",
+                        )
+                        save_handoff(handoff)
+                        stage_state.handoff_id = handoff["handoff_id"]
+                    state.activity.append({"type": "stage_approved", "timestamp": utc_now(), "stage": stage, "approved_by": "system_epic_orchestrator"})
+                    self._unlock_after_epic_internal_stage(state, stage)
+            except Exception as error:
+                errors.append(f"{stage}: {error}")
+                break
+        if errors:
+            state.pipeline_context = {
+                **state.pipeline_context,
+                "warnings": list(dict.fromkeys([*list(state.pipeline_context.get("warnings", [])), *errors])),
+            }
+            state.activity.append({"type": "epic_plan_partial", "timestamp": utc_now(), "errors": errors})
+        state.current_stage = "review" if state.stages.get("review", StageState("review")).output else self._active_stage_name(state)
+        self._touch_pipeline(state)
+        self.save_pipeline(state)
+        return self._serialize_pipeline(state)
+
     def approve_stage(self, pipeline_id: str, stage: str, approved_by: str | None = None) -> dict:
         state = self.load_pipeline(pipeline_id)
         state = apply_approval(state, stage, approved_by=approved_by)
@@ -276,6 +343,17 @@ class PipelineController:
     def _touch_pipeline(self, state: PipelineState) -> None:
         state.version += 1
         state.updated_at = utc_now()
+
+    def _unlock_after_epic_internal_stage(self, state: PipelineState, stage: str) -> None:
+        order = state.stage_order
+        if stage not in order:
+            return
+        index = order.index(stage)
+        if index + 1 >= len(order):
+            return
+        next_stage = state.stages.get(order[index + 1])
+        if next_stage and next_stage.status == "locked":
+            next_stage.status = "pending"
 
     def _build_review_context(self, stage_state: StageState) -> dict:
         return {

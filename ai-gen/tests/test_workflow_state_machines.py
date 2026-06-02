@@ -98,6 +98,31 @@ class WorkflowStateMachineTests(unittest.TestCase):
             self.assertIn("add_clarification", pipeline["allowed_actions"]["workflow_actions"])
             self.assertIn("regenerate_with_clarifications", pipeline["allowed_actions"]["workflow_actions"])
 
+    def test_story_delivery_becomes_planned_after_regeneration_clears_unknowns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {"id": 308, "type": "User Story", "title": "Phone OTP login"},
+                refinement={
+                    "base_flows": ["login", "otp_verification"],
+                    "variants": ["phone_otp"],
+                    "surfaces": ["ui_screen"],
+                    "fields": ["phone_number", "otp"],
+                    "validations": ["auth_required"],
+                },
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            pipeline = controller.add_stage_feedback(
+                pipeline["pipeline_id"],
+                "ba",
+                "OTP expires in 120 seconds. Retry allowed 3 times. Second factor screen required.",
+                "reviewer",
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
+            self.assertEqual(pipeline["workflow_state"], "planned")
+            self.assertEqual(pipeline["workflow_summary"], "Story plan generated and awaiting approval.")
+            self.assertIn("approve_story", pipeline["allowed_actions"]["workflow_actions"])
+
     def test_run_epic_plan_runs_internal_stages_and_creates_drafts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller = PipelineController(temp_dir)

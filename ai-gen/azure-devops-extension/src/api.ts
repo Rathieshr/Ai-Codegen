@@ -4,6 +4,7 @@ import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-e
 const BACKEND_URL = 'https://ai-codegen-production.up.railway.app/context';
 const STATE_KEY = 'ai-gen:last-result';
 const CAPABILITIES_URL = 'https://ai-codegen-production.up.railway.app/capabilities';
+const REFINEMENT_HEALTH_URL = 'https://ai-codegen-production.up.railway.app/refinement/health';
 const PIPELINE_CREATE_URL = 'https://ai-codegen-production.up.railway.app/assist/pipeline/create';
 const PIPELINE_BASE_URL = 'https://ai-codegen-production.up.railway.app/assist/pipeline';
 const HANDOFFS_URL = 'https://ai-codegen-production.up.railway.app/handoffs';
@@ -220,6 +221,15 @@ export type BackendCapabilities = {
     provider?: string | null;
     model?: string | null;
     configured?: boolean;
+    deployment?: string | null;
+  };
+  refinerHealth?: {
+    deployment?: string | null;
+    health?: string;
+    last_success?: string | null;
+    last_failure?: string | null;
+    average_latency_ms?: number;
+    consecutive_failures?: number;
   };
 };
 
@@ -490,11 +500,22 @@ export async function loadLatestHandoff(workItemId: number | string, stage: stri
 
 export async function loadCapabilities(): Promise<BackendCapabilities | undefined> {
   try {
-    const response = await fetch(CAPABILITIES_URL, { method: 'GET' });
-    if (!response.ok) {
+    const [capabilityResponse, healthResponse] = await Promise.all([
+      fetch(CAPABILITIES_URL, { method: 'GET' }),
+      fetch(REFINEMENT_HEALTH_URL, { method: 'GET' }).catch(() => undefined),
+    ]);
+    if (!capabilityResponse.ok) {
       return undefined;
     }
-    return await response.json() as BackendCapabilities;
+    const capabilities = await capabilityResponse.json() as BackendCapabilities;
+    if (healthResponse && healthResponse.ok) {
+      const health = await healthResponse.json() as BackendCapabilities["refinerHealth"];
+      capabilities.refinerHealth = health;
+      if (capabilities.refiner) {
+        capabilities.refiner.deployment = health?.deployment || capabilities.refiner.deployment;
+      }
+    }
+    return capabilities;
   } catch {
     return undefined;
   }
@@ -556,7 +577,7 @@ export async function refreshPipelineState(
     : currentState?.draftWorkItems;
   const handoff = targetPipeline && targetStage && targetPipeline.stages[targetStage]?.handoff_id
     ? await loadHandoff(targetPipeline.stages[targetStage]?.handoff_id || '')
-    : currentState?.handoff;
+    : undefined;
   const refreshed = {
     workItem,
     response: currentState?.response || await generateAiGenPrompt(workItem),

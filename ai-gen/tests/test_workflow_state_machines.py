@@ -56,6 +56,30 @@ class WorkflowStateMachineTests(unittest.TestCase):
         self.assertIn("copy_execution_packet", actions)
         self.assertNotIn("approve_plan", actions)
 
+    def test_ui_task_requires_ui_handoff_after_ui_plan_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 304, "type": "UI Task", "title": "Login screen"})
+            self.assertEqual(pipeline["workflow_state"], "not_generated")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui_plan")
+            self.assertEqual(pipeline["workflow_state"], "ui_plan_ready")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "ui_plan", approved_by="tester")
+            self.assertEqual(pipeline["workflow_state"], "handoff_pending")
+            self.assertEqual(pipeline["current_stage"], "ui_handoff")
+            self.assertIn("generate_ui_handoff", pipeline["allowed_actions"]["workflow_actions"])
+            self.assertNotIn("view_handoff", pipeline["allowed_actions"]["workflow_actions"])
+
+    def test_ui_task_handoff_ready_summary_and_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 305, "type": "UI Task", "title": "Login screen"})
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui_plan")
+            pipeline = controller.approve_stage(pipeline["pipeline_id"], "ui_plan", approved_by="tester")
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ui_handoff")
+            self.assertEqual(pipeline["workflow_state"], "handoff_ready")
+            self.assertEqual(pipeline["workflow_summary"], "UI handoff is ready for approval.")
+            self.assertIn("approve_plan", pipeline["allowed_actions"]["workflow_actions"])
+
     def test_run_epic_plan_runs_internal_stages_and_creates_drafts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller = PipelineController(temp_dir)

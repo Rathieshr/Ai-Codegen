@@ -698,7 +698,9 @@ function WorkItemTab() {
                   <summary>Raw Phi Preview</summary>
                   <pre className="ai-gen-prompt">{String(response.phi_raw_response_preview)}</pre>
                 </details>
-              ) : null}
+              ) : (
+                <div className="ai-gen-subtle">No raw Phi preview was captured for this response.</div>
+              )}
             </div>
           ) : null}
           <div className="ai-gen-grid">
@@ -710,8 +712,18 @@ function WorkItemTab() {
             <span>{capabilities?.refiner?.provider || 'Not configured'}</span>
             <span className="ai-gen-key">Model</span>
             <span>{capabilities?.refiner?.model || 'Not configured'}</span>
+            <span className="ai-gen-key">Deployment</span>
+            <span>{capabilities?.refinerHealth?.deployment || capabilities?.refiner?.deployment || 'Not configured'}</span>
             <span className="ai-gen-key">Configured</span>
             <span>{capabilities?.refiner?.configured ? 'Yes' : 'No'}</span>
+            <span className="ai-gen-key">Health</span>
+            <span>{capabilities?.refinerHealth?.health || 'unknown'}</span>
+            <span className="ai-gen-key">Last Success</span>
+            <span>{capabilities?.refinerHealth?.last_success || 'Never'}</span>
+            <span className="ai-gen-key">Last Failure</span>
+            <span>{capabilities?.refinerHealth?.last_failure || 'None'}</span>
+            <span className="ai-gen-key">Latency</span>
+            <span>{typeof capabilities?.refinerHealth?.average_latency_ms === 'number' ? `${capabilities.refinerHealth.average_latency_ms} ms` : 'unknown'}</span>
             <span className="ai-gen-key">Comment Sync</span>
             <span>{state.data?.commentSyncWarning ? 'Needs Retry' : 'Ready'}</span>
             <span className="ai-gen-key">Pipeline Metadata</span>
@@ -967,7 +979,7 @@ function WorkflowActionBar({
   return (
     <div className="ai-gen-actions ai-gen-actions-compact">
       {workflowActions.map((action) => {
-        if (action === 'generate_epic_plan' || action === 'resume_epic_plan' || action === 'generate_feature_breakdown' || action === 'generate_execution_packet' || action === 'analyze_bug' || action === 'design_tests' || action === 'generate_ui_plan' || action === 'start_research_plan') {
+        if (action === 'generate_epic_plan' || action === 'resume_epic_plan' || action === 'generate_feature_breakdown' || action === 'generate_execution_packet' || action === 'analyze_bug' || action === 'design_tests' || action === 'generate_ui_plan' || action === 'generate_ui_handoff' || action === 'start_research_plan') {
           return <button key={action} className="ai-gen-button" onClick={onGenerate} disabled={loading}>{workflowActionLabel(action, workflowTemplate)}</button>;
         }
         if (action === 'approve_plan' || action === 'approve_story') {
@@ -1198,11 +1210,25 @@ function PipelineHandoff({ handoff, workflowTemplate }: { handoff?: HandoffRecor
   if (['epic_planning', 'feature_planning'].includes(workflowTemplate)) {
     return null;
   }
+  const executionWorkflow = ['task_execution', 'bug_fix'].includes(workflowTemplate);
   const canOpenInVsCode = Boolean(
-    handoff?.handoff_id
+    executionWorkflow
+    && handoff?.handoff_id
     && handoff?.status === 'approved'
     && (handoff?.execution_packet || handoff?.content?.execution_packet)
   );
+  const canCopyExecutionPacket = Boolean(
+    executionWorkflow
+    && (handoff?.execution_packet || handoff?.content?.execution_packet)
+  );
+  const emptySummary = workflowTemplate === 'ui_task'
+    ? 'UI handoff not generated yet'
+    : 'Handoff not approved yet';
+  const emptyDetail = workflowTemplate === 'ui_task'
+    ? 'Generate and approve the UI Handoff stage to complete this workflow.'
+    : executionWorkflow
+      ? 'Approve the current execution stage to open it directly in VS Code.'
+      : 'Generate and approve the current stage handoff to continue.';
 
   const downloadHandoff = () => {
     if (!handoff) {
@@ -1261,24 +1287,28 @@ function PipelineHandoff({ handoff, workflowTemplate }: { handoff?: HandoffRecor
       <div className="ai-gen-handoff-header">
         <div>
           <div className="ai-gen-key">Handoff</div>
-          <div>{handoff?.summary || 'Dev handoff not approved yet'}</div>
+          <div>{handoff?.summary || emptySummary}</div>
           <div className="ai-gen-muted">
             {handoff
               ? `${formatTemplateStageName(handoff.stage)} v${handoff.version} ${handoff.status === 'approved' ? `approved ${handoff.approved_at || ''}` : 'draft - not approved'}`
-              : 'Approve the Dev stage to open it directly in VS Code.'}
+              : emptyDetail}
           </div>
         </div>
         <span className={`ai-gen-badge ${handoff?.status || 'draft'}`}>{handoff?.status || 'draft'}</span>
       </div>
       <div className="ai-gen-actions ai-gen-actions-compact">
-        <button className="ai-gen-button secondary" onClick={openInVsCode} disabled={!canOpenInVsCode}>Open in VS Code</button>
+        {executionWorkflow ? (
+          <button className="ai-gen-button secondary" onClick={openInVsCode} disabled={!canOpenInVsCode}>Open in VS Code</button>
+        ) : null}
         <button className="ai-gen-button secondary" onClick={copyHandoffId} disabled={!handoff?.handoff_id}>Copy Handoff ID</button>
-        <button className="ai-gen-button secondary" onClick={copyExecutionPacket} disabled={!handoff?.execution_packet && !handoff?.content?.execution_packet}>Copy Execution Packet</button>
+        {executionWorkflow ? (
+          <button className="ai-gen-button secondary" onClick={copyExecutionPacket} disabled={!canCopyExecutionPacket}>Copy Execution Packet</button>
+        ) : null}
         <button className="ai-gen-button secondary" onClick={copyHandoff} disabled={!handoff}>Copy JSON</button>
         <button className="ai-gen-button secondary" onClick={copyHandoffMarkdown} disabled={!handoff}>Copy Markdown</button>
         <button className="ai-gen-button secondary" onClick={downloadHandoff} disabled={!handoff}>Download</button>
       </div>
-      {!canOpenInVsCode ? <div className="ai-gen-muted">An approved execution-ready handoff is not available yet.</div> : null}
+      {executionWorkflow && !canOpenInVsCode ? <div className="ai-gen-muted">An approved execution-ready handoff is not available yet.</div> : null}
       {handoff?.constraints?.length ? <ListSection title="Constraints" items={handoff.constraints} /> : null}
       {handoff?.open_questions?.length ? <WarningSection title="Open Questions" items={handoff.open_questions} /> : null}
       {handoff?.next_actions?.length ? <ListSection title="Next Actions" items={handoff.next_actions} /> : null}
@@ -1444,7 +1474,15 @@ function buildTimeline(pipeline?: PipelineState): Array<{ label: string; timesta
       items.push({ label, timestamp: String(activity.timestamp || '') || undefined });
     }
   }
-  return items;
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.label}::${item.timestamp || ''}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function activityLabel(activity: Record<string, unknown>, pipeline: PipelineState): string {
@@ -1627,6 +1665,8 @@ function workflowActionLabel(action: string, workflowTemplate: string): string {
       return 'Design Tests';
     case 'generate_ui_plan':
       return 'Generate UI Plan';
+    case 'generate_ui_handoff':
+      return 'Generate UI Handoff';
     case 'start_research_plan':
       return 'Start Research Plan';
     case 'complete_recommendation':

@@ -95,6 +95,13 @@ def get_allowed_actions(
             return ["generate_ui_plan"]
         if workflow_state == "ui_plan_ready":
             return ["approve_plan"]
+        if workflow_state == "handoff_pending":
+            return ["generate_ui_handoff"]
+        if workflow_state == "handoff_ready":
+            actions = ["approve_plan"]
+            if handoff_status:
+                actions.append("view_handoff")
+            return actions
         return ["view_handoff"] if handoff_status else []
 
     if workflow_template == "spike":

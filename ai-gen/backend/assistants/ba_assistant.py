@@ -40,7 +40,7 @@ def run_ba_assistant(
     actors = _infer_actors(combined)
     flows = _dedupe(refined_flows + ([base_flow] if base_flow else []))
     business_rules = _business_rules(combined, refinement)
-    acceptance_criteria = _parse_acceptance_criteria(acceptance_text, refinement, review_context)
+    acceptance_criteria = _parse_acceptance_criteria(acceptance_text, refinement, review_context, effective_context)
     unknowns = _dedupe(
         list(refinement.get("refinement_unknowns", []))
         + list(refinement.get("unknowns", []))
@@ -49,8 +49,9 @@ def run_ba_assistant(
     )
     unknowns = _filter_answered_unknowns(unknowns, review_context, effective_context)
     refined_requirement = _refined_requirement(title, description, refinement)
-    if review_context.get("review_feedback"):
-        refined_requirement = f"{refined_requirement.rstrip('.')} Review clarifications: {_feedback_summary(review_context)}."
+    feedback_summary = _feedback_summary(review_context, effective_context)
+    if feedback_summary:
+        refined_requirement = f"{refined_requirement.rstrip('.')} Review clarifications: {feedback_summary}."
 
     reason = {
         "known": _dedupe(
@@ -90,8 +91,13 @@ def run_ba_assistant(
     }
 
 
-def _feedback_summary(review_context: dict[str, Any]) -> str:
+def _feedback_summary(review_context: dict[str, Any], effective_context: dict[str, Any] | None = None) -> str:
     comments = [str(item.get("comment", "")).strip() for item in review_context.get("review_feedback", [])]
+    comments.extend(
+        str(item.get("body", "")).strip()
+        for item in (effective_context or {}).get("clarifications", [])
+        if str(item.get("body", "")).strip()
+    )
     return "; ".join(comment for comment in comments[:2] if comment)
 
 
@@ -286,7 +292,12 @@ def _business_rules(text: str, refinement: dict[str, Any]) -> list[str]:
     return _dedupe(rules)
 
 
-def _parse_acceptance_criteria(text: str, refinement: dict[str, Any], review_context: dict[str, Any]) -> list[str]:
+def _parse_acceptance_criteria(
+    text: str,
+    refinement: dict[str, Any],
+    review_context: dict[str, Any],
+    effective_context: dict[str, Any] | None = None,
+) -> list[str]:
     items: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.strip().lstrip("-*0123456789. ").strip()
@@ -306,8 +317,17 @@ def _parse_acceptance_criteria(text: str, refinement: dict[str, Any], review_con
         "acceptance criteria" in str(item.get("message", "")).lower()
         for item in review_context.get("critic_findings", [])
     )
-    for feedback in review_context.get("review_feedback", []):
-        comment = str(feedback.get("comment", "")).strip()
+    feedback_comments = [
+        str(feedback.get("comment", "")).strip()
+        for feedback in review_context.get("review_feedback", [])
+        if str(feedback.get("comment", "")).strip()
+    ]
+    feedback_comments.extend(
+        str(item.get("body", "")).strip()
+        for item in (effective_context or {}).get("clarifications", [])
+        if str(item.get("body", "")).strip()
+    )
+    for comment in feedback_comments:
         if not comment:
             continue
         if "acceptance criteria" in comment.lower() or "acceptance:" in comment.lower():

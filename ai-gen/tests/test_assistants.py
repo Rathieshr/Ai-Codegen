@@ -182,6 +182,39 @@ class AssistantTests(unittest.TestCase):
             ],
         )
 
+    def test_ba_assistant_uses_effective_context_clarifications_for_acceptance_criteria(self) -> None:
+        output = run_ba_assistant(
+            {
+                "title": "OnBoarding Screen for user boarding activities",
+                "description": "",
+                "acceptanceCriteria": "",
+                "tags": [],
+            },
+            {
+                "base_flows": ["signup"],
+                "surfaces": ["ui_screen"],
+            },
+            {
+                "review_feedback": [],
+                "critic_findings": [
+                    {
+                        "severity": "blocking",
+                        "message": "Requirement is missing clear acceptance criteria.",
+                    }
+                ],
+            },
+            {
+                "clarifications": [
+                    {
+                        "body": "User can start onboarding from the first screen; required onboarding inputs are shown; signup continues after valid submission"
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(len(output["acceptance_criteria"]), 3)
+        self.assertIn("Review clarifications", output["refined_requirement"])
+
     def test_ui_assistant_outputs_fields_and_states(self) -> None:
         ba_output = {
             "refined_requirement": "Add a login screen with phone number.",

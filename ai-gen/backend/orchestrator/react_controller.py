@@ -99,7 +99,7 @@ class PipelineController:
         unresolved, resolved = self._split_findings(stage_state, critic)
         stage_state.output = output
         stage_state.critic = critic
-        stage_state.status = "needs_revision" if critic.get("decision") == "needs_revision" else "generated"
+        stage_state.status = self._stage_status_after_run(state, stage, output, critic)
         stage_state.approved = False
         stage_state.approved_at = None
         stage_state.approved_by = None
@@ -165,7 +165,7 @@ class PipelineController:
                     unresolved, resolved = self._split_findings(stage_state, critic)
                     stage_state.output = output
                     stage_state.critic = critic
-                    stage_state.status = "needs_revision" if critic.get("decision") == "needs_revision" else "generated"
+                    stage_state.status = self._stage_status_after_run(state, stage, output, critic)
                     stage_state.version = stage_state.version + 1 if stage_state.version else 1
                     stage_state.unresolved_findings = unresolved
                     stage_state.resolved_findings = resolved
@@ -569,6 +569,14 @@ class PipelineController:
             if stage_state.handoff_id:
                 actions.extend(["view_handoff", "copy_handoff"])
         return actions
+
+    def _stage_status_after_run(self, state: PipelineState, stage: str, output: dict, critic: dict | None) -> str:
+        if (critic or {}).get("decision") == "needs_revision":
+            return "needs_revision"
+        if state.workflow_template == "story_delivery" and stage in {"ba", "ui_optional"}:
+            if list(output.get("unknowns") or []):
+                return "needs_revision"
+        return "generated"
 
     def _approved_stage_context(self, state: PipelineState, stage: str) -> dict:
         stage_state = state.stages.get(stage)

@@ -49,7 +49,8 @@ class ReactControllerTests(unittest.TestCase):
             draft_handoff_id = pipeline["stages"]["ba"]["handoff_id"]
             self.assertTrue(draft_handoff_id)
             self.assertGreater(pipeline["version"], original_version)
-            self.assertIn("approve", pipeline["allowed_actions"]["current_stage_actions"])
+            self.assertIn("add_clarification", pipeline["allowed_actions"]["current_stage_actions"])
+            self.assertIn("regenerate_with_clarifications", pipeline["allowed_actions"]["current_stage_actions"])
 
             pipeline = controller.add_stage_feedback(
                 pipeline["pipeline_id"],
@@ -267,6 +268,33 @@ class ReactControllerTests(unittest.TestCase):
             self.assertIn("approve", actions)
             self.assertIn("regenerate", actions)
             self.assertNotIn("add_clarification", actions)
+
+    def test_story_ba_unknowns_require_clarification_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {
+                    "id": 124,
+                    "type": "User Story",
+                    "title": "Phone OTP login",
+                    "description": "User signs in with phone number and otp.",
+                    "acceptanceCriteria": "",
+                },
+                refinement={
+                    "base_flows": ["login", "otp_verification"],
+                    "variants": ["phone_otp"],
+                    "surfaces": ["ui_screen"],
+                    "fields": ["phone_number", "otp"],
+                    "validations": ["auth_required"],
+                },
+            )
+            self.assertIn("generate_story_plan", pipeline["allowed_actions"]["workflow_actions"])
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            self.assertEqual(pipeline["stages"]["ba"]["status"], "needs_revision")
+            self.assertEqual(pipeline["current_stage"], "ba")
+            self.assertIn("add_clarification", pipeline["allowed_actions"]["current_stage_actions"])
+            self.assertIn("regenerate_with_clarifications", pipeline["allowed_actions"]["current_stage_actions"])
+            self.assertNotIn("approve", pipeline["allowed_actions"]["current_stage_actions"])
 
     def test_approved_stage_keeps_only_handoff_visibility_in_stage_lists(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

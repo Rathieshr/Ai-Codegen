@@ -80,6 +80,24 @@ class WorkflowStateMachineTests(unittest.TestCase):
             self.assertEqual(pipeline["workflow_summary"], "UI handoff is ready for approval.")
             self.assertIn("approve_plan", pipeline["allowed_actions"]["workflow_actions"])
 
+    def test_story_delivery_starts_with_generate_story_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 306, "type": "User Story", "title": "Phone OTP login"})
+            self.assertEqual(pipeline["workflow_state"], "not_generated")
+            self.assertEqual(pipeline["workflow_summary"], "Generate a story plan.")
+            self.assertIn("generate_story_plan", pipeline["allowed_actions"]["workflow_actions"])
+
+    def test_story_delivery_with_unknowns_stays_in_clarification_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 307, "type": "User Story", "title": "Phone OTP login"})
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            self.assertEqual(pipeline["workflow_state"], "needs_clarification")
+            self.assertEqual(pipeline["workflow_summary"], "Clarifications are required before approval.")
+            self.assertIn("add_clarification", pipeline["allowed_actions"]["workflow_actions"])
+            self.assertIn("regenerate_with_clarifications", pipeline["allowed_actions"]["workflow_actions"])
+
     def test_run_epic_plan_runs_internal_stages_and_creates_drafts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller = PipelineController(temp_dir)

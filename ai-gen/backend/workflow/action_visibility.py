@@ -47,6 +47,8 @@ def get_allowed_actions(
         return []
 
     if workflow_template == "story_delivery":
+        if workflow_state == "not_generated":
+            return ["generate_story_plan"]
         if workflow_state == "needs_clarification":
             return ["add_clarification", "regenerate_with_clarifications"]
         if workflow_state == "planned":

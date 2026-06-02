@@ -979,7 +979,7 @@ function WorkflowActionBar({
   return (
     <div className="ai-gen-actions ai-gen-actions-compact">
       {workflowActions.map((action) => {
-        if (action === 'generate_epic_plan' || action === 'resume_epic_plan' || action === 'generate_feature_breakdown' || action === 'generate_execution_packet' || action === 'analyze_bug' || action === 'design_tests' || action === 'generate_ui_plan' || action === 'generate_ui_handoff' || action === 'start_research_plan') {
+        if (action === 'generate_epic_plan' || action === 'resume_epic_plan' || action === 'generate_feature_breakdown' || action === 'generate_story_plan' || action === 'generate_execution_packet' || action === 'analyze_bug' || action === 'design_tests' || action === 'generate_ui_plan' || action === 'generate_ui_handoff' || action === 'start_research_plan') {
           return <button key={action} className="ai-gen-button" onClick={onGenerate} disabled={loading}>{workflowActionLabel(action, workflowTemplate)}</button>;
         }
         if (action === 'approve_plan' || action === 'approve_story') {
@@ -1489,7 +1489,7 @@ function activityLabel(activity: Record<string, unknown>, pipeline: PipelineStat
   const stage = typeof activity.stage === 'string' ? stageLabel(activity.stage, pipeline) : '';
   switch (String(activity.type || '')) {
     case 'pipeline_created':
-      return 'Pipeline Created';
+      return '';
     case 'comments_loaded':
       return `Comments Loaded (${String(activity.count || '0')})`;
     case 'clarification_added':
@@ -1627,6 +1627,8 @@ function workflowActionLabel(action: string, workflowTemplate: string): string {
       return 'Continue Epic Plan';
     case 'generate_feature_breakdown':
       return 'Generate Feature Breakdown';
+    case 'generate_story_plan':
+      return 'Generate Story Plan';
     case 'approve_plan':
       return workflowTemplate === 'story_delivery' ? 'Approve Story' : 'Approve Plan';
     case 'select_all':

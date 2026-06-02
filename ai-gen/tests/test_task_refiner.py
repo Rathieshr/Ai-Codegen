@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import patch
 
-from backend.refinement.task_refiner import refine_task
+from backend.refinement.task_refiner import refine_epic_stage, refine_task
 
 
 class TaskRefinerTests(unittest.TestCase):
@@ -68,6 +68,77 @@ class TaskRefinerTests(unittest.TestCase):
         self.assertEqual(result["semantic_mapping_applied"], False)
         self.assertEqual(result["refinement_used"], False)
         self.assertEqual(result["refinement_source"], "none")
+
+    def test_unusable_phi_response_keeps_parsed_json_preview_for_diagnostics(self) -> None:
+        provider = unittest.mock.Mock()
+        provider.is_enabled.return_value = True
+        provider.probe_json.return_value = {
+            "http_status": 200,
+            "parsed_json": {"domain": "travel", "features": ["booking"]},
+            "raw_content": "",
+            "raw_response_preview": "",
+        }
+        with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=provider):
+            result = refine_task("WhatsApp Hotel Booking Platform")
+
+        self.assertEqual(result["phi_status"], "unusable_response")
+        self.assertIn('"domain": "travel"', result["phi_raw_response_preview"])
+
+    def test_epic_stage_can_salvage_feature_titles_from_generated_work_items(self) -> None:
+        provider = unittest.mock.Mock()
+        provider.is_enabled.return_value = True
+        provider.probe_json.return_value = {
+            "http_status": 200,
+            "parsed_json": {
+                "generated_work_items": [
+                    {"draft_type": "Feature", "title": "Checkout Modernization"},
+                    {"draft_type": "Feature", "title": "Payment Reliability"},
+                ]
+            },
+            "raw_content": "",
+            "raw_response_preview": "",
+        }
+        with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=provider):
+            result = refine_epic_stage(
+                "feature_generation",
+                {"id": "1", "type": "Epic", "title": "Commerce Platform"},
+                {"generated_features": []},
+                {"effective_text": "Epic about checkout and payment."},
+            )
+
+        self.assertEqual(result["provider_used"], "azure_phi")
+        self.assertEqual(result["parsed"]["features"], ["Checkout Modernization", "Payment Reliability"])
+
+    def test_epic_stage_can_salvage_story_titles_from_rich_work_item_tree(self) -> None:
+        provider = unittest.mock.Mock()
+        provider.is_enabled.return_value = True
+        provider.probe_json.return_value = {
+            "http_status": 200,
+            "parsed_json": {
+                "generated_work_items": [
+                    {
+                        "draft_type": "Feature",
+                        "title": "Checkout Modernization",
+                        "child_drafts": [
+                            {"draft_type": "User Story", "title": "Review Order"},
+                            {"draft_type": "User Story", "title": "Edit Cart"},
+                        ],
+                    }
+                ]
+            },
+            "raw_content": "",
+            "raw_response_preview": "",
+        }
+        with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=provider):
+            result = refine_epic_stage(
+                "story_generation",
+                {"id": "1", "type": "Epic", "title": "Commerce Platform"},
+                {"generated_features": [{"title": "Checkout Modernization"}]},
+                {"effective_text": "Epic about checkout and payment."},
+            )
+
+        self.assertEqual(result["provider_used"], "azure_phi")
+        self.assertEqual(result["parsed"]["stories"], ["Review Order", "Edit Cart"])
 
 
 if __name__ == "__main__":

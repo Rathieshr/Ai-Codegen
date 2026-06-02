@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -9,7 +10,7 @@ class PhiProviderTests(unittest.TestCase):
     def test_response_format_disabled_omits_response_format(self) -> None:
         captured = {}
 
-        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number):
+        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number, **kwargs):
             captured["include_response_format"] = include_response_format
             return {
                 "attempt_number": attempt_number,
@@ -51,7 +52,7 @@ class PhiProviderTests(unittest.TestCase):
     def test_retry_without_response_format_is_attempted(self) -> None:
         attempts = []
 
-        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number):
+        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number, **kwargs):
             attempts.append(include_response_format)
             if include_response_format:
                 return {
@@ -182,7 +183,7 @@ class PhiProviderTests(unittest.TestCase):
         self.assertIn("method or path", result["failure_message"])
 
     def test_timeout_result_keeps_attempt_history(self) -> None:
-        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number):
+        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number, **kwargs):
             return {
                 "attempt_number": attempt_number,
                 "url_preview": "https://example.test/models/chat/completions?api-version=1",
@@ -220,6 +221,43 @@ class PhiProviderTests(unittest.TestCase):
         self.assertEqual(result["failure_reason"], "provider_timeout")
         self.assertEqual(len(result["attempts"]), 2)
         self.assertEqual(result["attempts"][0]["status"], "timeout")
+
+    def test_parse_success_response_accepts_fenced_json_content(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            response = provider._parse_success_response(
+                attempt_number=1,
+                url=provider.final_url(),
+                include_response_format=False,
+                timeout_seconds=60,
+                max_tokens=50,
+                http_status=200,
+                response_body=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "```json\n{\"normalized_query\":\"Implement login form validation\"}\n```"
+                                }
+                            }
+                        ]
+                    }
+                ),
+                elapsed_ms=100,
+            )
+
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["parsed_json"]["normalized_query"], "Implement login form validation")
 
     def test_debug_curl_hides_key(self) -> None:
         with patch.dict(
@@ -281,6 +319,44 @@ class PhiProviderTests(unittest.TestCase):
 
         self.assertNotIn("model", payload)
 
+    def test_foundry_models_endpoint_defaults_to_omitting_model_field(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi-integrate.services.ai.azure.com/models",
+                "AI_GEN_REFINER_API_KEY": "super-secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+            },
+            clear=False,
+        ):
+            os.environ.pop("AI_GEN_REFINER_INCLUDE_MODEL_FIELD", None)
+            provider = AzurePhiProvider()
+            payload = provider._build_payload("Return JSON only.", 'Return exactly {"status":"ok"}', 50, False)
+
+        self.assertFalse(provider.include_model_field)
+        self.assertNotIn("model", payload)
+
+    def test_explicit_env_can_force_model_field_on_for_foundry_endpoint(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi-integrate.services.ai.azure.com/models",
+                "AI_GEN_REFINER_API_KEY": "super-secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+                "AI_GEN_REFINER_INCLUDE_MODEL_FIELD": "true",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            payload = provider._build_payload("Return JSON only.", 'Return exactly {"status":"ok"}', 50, False)
+
+        self.assertTrue(provider.include_model_field)
+        self.assertEqual(payload["model"], "Phi-4-mini-instruct")
+
     def test_raw_http_test_uses_api_version_override(self) -> None:
         def fake_raw(self, url, payload, timeout_seconds, started):
             return {
@@ -314,6 +390,53 @@ class PhiProviderTests(unittest.TestCase):
         self.assertEqual(result["api_version"], "2024-10-21")
         self.assertIn("2024-10-21", result["final_url_preview"])
         self.assertFalse(result["include_model_field"])
+
+    def test_deployment_env_is_used_for_payload_and_health(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "super-secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+                "AI_GEN_REFINER_DEPLOYMENT": "Phi-4-mini-reasoning",
+                "AI_GEN_REFINER_INCLUDE_MODEL_FIELD": "true",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            payload = provider._build_payload("Return JSON only.", 'Return exactly {"status":"ok"}', 50, False)
+            health = provider.health_snapshot()
+
+        self.assertEqual(payload["model"], "Phi-4-mini-reasoning")
+        self.assertEqual(health["deployment"], "Phi-4-mini-reasoning")
+        self.assertEqual(health["health"], "healthy")
+
+    def test_health_degrades_after_consecutive_failures(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "super-secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+                "AI_GEN_REFINER_DEPLOYMENT": "Phi-4-mini-reasoning-health",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            provider._record_failure(1000)
+            provider._record_failure(1000)
+            provider._record_failure(1000)
+            degraded = provider.health_snapshot()
+            provider._record_failure(1000)
+            provider._record_failure(1000)
+            unhealthy = provider.health_snapshot()
+
+        self.assertEqual(degraded["health"], "degraded")
+        self.assertEqual(unhealthy["health"], "unhealthy")
 
 
 if __name__ == "__main__":

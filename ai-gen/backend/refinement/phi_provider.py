@@ -12,6 +12,9 @@ import urllib.request
 from typing import Any
 
 
+_DEPLOYMENT_METRICS: dict[str, dict[str, Any]] = {}
+
+
 class AzurePhiProvider:
     """Minimal Azure AI Foundry chat-completions client for strict JSON refinement."""
 
@@ -20,16 +23,33 @@ class AzurePhiProvider:
         self.endpoint = (os.getenv("AI_GEN_REFINER_ENDPOINT") or "").strip().rstrip("/")
         self.api_key = (os.getenv("AI_GEN_REFINER_API_KEY") or "").strip()
         self.model = (os.getenv("AI_GEN_REFINER_MODEL") or "Phi-4-mini-instruct").strip()
+        self.deployment = (os.getenv("AI_GEN_REFINER_DEPLOYMENT") or self.model).strip()
         self.api_version = (os.getenv("AI_GEN_REFINER_API_VERSION") or "2024-05-01-preview").strip()
         self.timeout = _int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60)
         self.ping_timeout = _int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 60)
         self.diagnostic_timeout = _int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 180)
         self.default_max_tokens = _int_env("AI_GEN_REFINER_MAX_TOKENS", 300)
-        self.include_model_field = os.getenv("AI_GEN_REFINER_INCLUDE_MODEL_FIELD", "true").strip().lower() not in {"0", "false", "no"}
+        include_model_env = os.getenv("AI_GEN_REFINER_INCLUDE_MODEL_FIELD")
+        if include_model_env is None or not include_model_env.strip():
+            self.include_model_field = self._default_include_model_field()
+        else:
+            self.include_model_field = include_model_env.strip().lower() not in {"0", "false", "no"}
         self.response_format_enabled = os.getenv("AI_GEN_REFINER_RESPONSE_FORMAT_ENABLED", "1") != "0"
 
     def is_enabled(self) -> bool:
         return bool(self.enabled and self.endpoint and self.api_key and self.model)
+
+    def health_snapshot(self) -> dict[str, Any]:
+        metrics = self._deployment_metrics()
+        return {
+            "deployment": self.deployment,
+            "health": self._deployment_health(metrics["consecutive_failures"]),
+            "last_success": metrics["last_success_timestamp"],
+            "last_failure": metrics["last_failure_timestamp"],
+            "average_latency_ms": metrics["average_latency_ms"],
+            "consecutive_failures": metrics["consecutive_failures"],
+            "provider_used": "azure_phi",
+        }
 
     def refine_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 800) -> dict[str, Any]:
         result = self.probe_json(system_prompt, user_prompt, max_tokens=max_tokens)
@@ -44,6 +64,8 @@ class AzurePhiProvider:
         timeout_seconds: int | None = None,
         response_format_enabled: bool | None = None,
         allow_retry_without_response_format: bool = True,
+        include_model_field: bool | None = None,
+        api_version_override: str | None = None,
     ) -> dict[str, Any]:
         if not self.is_enabled():
             return self._empty_result("missing_config", "Provider is not fully configured.")
@@ -60,6 +82,8 @@ class AzurePhiProvider:
             timeout_seconds=request_timeout,
             include_response_format=use_response_format,
             attempt_number=1,
+            include_model_field=include_model_field,
+            api_version_override=api_version_override,
         )
         attempts.append(first_attempt)
 
@@ -74,12 +98,15 @@ class AzurePhiProvider:
                 timeout_seconds=request_timeout,
                 include_response_format=False,
                 attempt_number=2,
+                include_model_field=include_model_field,
+                api_version_override=api_version_override,
             )
             attempts.append(retry_attempt)
             final_attempt = retry_attempt
 
         summary = {
             **self.status_snapshot(),
+            **self.health_snapshot(),
             "configured": True,
             "http_status": final_attempt.get("http_status"),
             "status": final_attempt.get("status"),
@@ -91,6 +118,8 @@ class AzurePhiProvider:
             "timeout_seconds": int(final_attempt.get("timeout_seconds") or request_timeout),
             "attempted_url_preview": final_attempt.get("url_preview", ""),
             "attempted_method": final_attempt.get("method", "POST"),
+            "include_model_field": self._resolve_include_model_field(include_model_field),
+            "api_version": api_version_override or self.api_version,
             "max_tokens": int(final_attempt.get("max_tokens") or effective_max_tokens),
             "response_format_enabled": bool(final_attempt.get("response_format_enabled")),
             "json_mode_attempted": bool(use_response_format),
@@ -107,6 +136,8 @@ class AzurePhiProvider:
             "enabled": self.enabled,
             "provider": "azure_phi",
             "configured": self.is_enabled(),
+            "deployment": self.deployment,
+            "deployment_health": self.health_snapshot()["health"],
             "endpoint_host": status["endpoint_host"],
             "endpoint_path": status["endpoint_path"],
             "model": self.model or None,
@@ -159,6 +190,8 @@ class AzurePhiProvider:
             "provider": "azure_phi",
             "configured": self.is_enabled(),
             "enabled": self.enabled,
+            "deployment": self.deployment,
+            "deployment_health": self.health_snapshot()["health"],
             "endpoint_present": bool(self.endpoint),
             "api_key_present": bool(self.api_key),
             "model": self.model or None,
@@ -227,7 +260,7 @@ class AzurePhiProvider:
             "max_tokens": max_tokens,
         }
         if self._resolve_include_model_field(include_model_field):
-            payload["model"] = self.model
+            payload["model"] = self.deployment or self.model
         if include_response_format:
             payload["response_format"] = {"type": "json_object"}
         return payload
@@ -240,19 +273,22 @@ class AzurePhiProvider:
         timeout_seconds: int,
         include_response_format: bool,
         attempt_number: int,
+        include_model_field: bool | None = None,
+        api_version_override: str | None = None,
     ) -> dict[str, Any]:
-        url = self.final_url()
+        url = self.final_url(api_version_override=api_version_override)
         payload = self._build_payload(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=max_tokens,
             include_response_format=include_response_format,
+            include_model_field=include_model_field,
         )
         started = time.time()
         try:
             print(
                 "ai-gen phi probe configured=yes "
-                f"attempt={attempt_number} timeout_seconds={timeout_seconds} max_tokens={max_tokens} response_format_enabled={include_response_format}"
+                f"attempt={attempt_number} timeout_seconds={timeout_seconds} max_tokens={max_tokens} response_format_enabled={include_response_format} deployment={self.deployment}"
             )
             return self._perform_http_request(
                 url=url,
@@ -414,7 +450,7 @@ class AzurePhiProvider:
         try:
             raw = json.loads(response_body)
             content = raw["choices"][0]["message"]["content"]
-            parsed_json = json.loads(content)
+            parsed_json = json.loads(_normalize_json_content(content))
             if not isinstance(parsed_json, dict):
                 return self._structured_attempt(
                     attempt_number=attempt_number,
@@ -434,6 +470,7 @@ class AzurePhiProvider:
                     error_message="Model returned JSON that was not an object.",
                 )
             print("ai-gen phi probe parse_result=dict validation_candidate=yes")
+            self._record_success(elapsed_ms)
             return self._structured_attempt(
                 attempt_number=attempt_number,
                 url=url,
@@ -453,6 +490,7 @@ class AzurePhiProvider:
             )
         except (KeyError, IndexError, TypeError, ValueError) as error:
             print(f"ai-gen phi probe parse_result=error validation_candidate=no error={type(error).__name__}")
+            self._record_failure(elapsed_ms)
             return self._structured_attempt(
                 attempt_number=attempt_number,
                 url=url,
@@ -487,10 +525,11 @@ class AzurePhiProvider:
         elapsed_ms = int((time.time() - started) * 1000)
         failure_reason = self._classify_failure(http_status, error_type, url)
         failure_message = self._failure_message(failure_reason)
-        status = "timeout" if failure_reason == "timeout" else "error"
+        self._record_failure(elapsed_ms)
+        status = "timeout" if failure_reason in {"timeout", "provider_timeout"} else "error"
         print(
             "ai-gen phi probe "
-            f"http_status={http_status or 'error'} error={error_type} elapsed_ms={elapsed_ms} failure_reason={failure_reason}"
+            f"http_status={http_status or 'error'} error={error_type} elapsed_ms={elapsed_ms} failure_reason={failure_reason} deployment={self.deployment}"
         )
         return self._structured_attempt(
             attempt_number=attempt_number,
@@ -698,9 +737,74 @@ class AzurePhiProvider:
             return self.include_model_field
         return bool(include_model_field)
 
+    def _default_include_model_field(self) -> bool:
+        if not self.endpoint:
+            return True
+        parsed = urllib.parse.urlparse(self.endpoint if "://" in self.endpoint else f"https://{self.endpoint}")
+        host = (parsed.netloc or parsed.path or "").lower()
+        path = self._normalize_endpoint_path(parsed.path or "/")
+        if host.endswith(".services.ai.azure.com") and path.startswith("/models/chat/completions"):
+            return False
+        return True
+
+    def _deployment_metrics(self) -> dict[str, Any]:
+        metrics = _DEPLOYMENT_METRICS.get(self.deployment)
+        if metrics is None:
+            metrics = {
+                "deployment_name": self.deployment,
+                "last_success_timestamp": None,
+                "last_failure_timestamp": None,
+                "consecutive_failures": 0,
+                "average_latency_ms": 0,
+                "success_count": 0,
+            }
+            _DEPLOYMENT_METRICS[self.deployment] = metrics
+        return metrics
+
+    def _record_success(self, elapsed_ms: int) -> None:
+        metrics = self._deployment_metrics()
+        metrics["last_success_timestamp"] = _utc_now()
+        metrics["consecutive_failures"] = 0
+        metrics["success_count"] = int(metrics.get("success_count") or 0) + 1
+        previous_average = int(metrics.get("average_latency_ms") or 0)
+        count = metrics["success_count"]
+        metrics["average_latency_ms"] = int(((previous_average * (count - 1)) + max(0, elapsed_ms)) / count)
+
+    def _record_failure(self, elapsed_ms: int) -> None:
+        metrics = self._deployment_metrics()
+        metrics["last_failure_timestamp"] = _utc_now()
+        metrics["consecutive_failures"] = int(metrics.get("consecutive_failures") or 0) + 1
+        if not metrics.get("average_latency_ms"):
+            metrics["average_latency_ms"] = max(0, elapsed_ms)
+
+    def _deployment_health(self, consecutive_failures: int) -> str:
+        if consecutive_failures >= 5:
+            return "unhealthy"
+        if consecutive_failures >= 3:
+            return "degraded"
+        return "healthy"
+
+
+def _normalize_json_content(content: Any) -> str:
+    if not isinstance(content, str):
+        return json.dumps(content)
+    normalized = content.strip()
+    if normalized.startswith("```"):
+        lines = normalized.splitlines()
+        if lines:
+            lines = lines[1:]
+        while lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        normalized = "\n".join(lines).strip()
+    return normalized
+
 
 def _int_env(name: str, default: int) -> int:
     try:
         return max(1, int(os.getenv(name, str(default))))
     except ValueError:
         return default
+
+
+def _utc_now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

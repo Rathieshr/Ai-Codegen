@@ -171,7 +171,27 @@ function WorkItemTab() {
   }
 
   async function copyPrompt() {
-    const prompt = state.data?.response.optimized_prompt || '';
+    let prompt = '';
+    if (currentStage?.handoff_id) {
+      const markdown = await loadHandoffMarkdown(currentStage.handoff_id);
+      prompt = String(markdown || '');
+    }
+    if (!prompt && currentStage?.output) {
+      const output = currentStage.output as Record<string, unknown>;
+      prompt = String(
+        output.execution_packet
+        || output.refined_requirement
+        || output.summary
+        || output.task_summary
+        || ''
+      ).trim();
+      if (!prompt && Object.keys(output).length) {
+        prompt = JSON.stringify(output, null, 2);
+      }
+    }
+    if (!prompt) {
+      prompt = state.data?.response.optimized_prompt || '';
+    }
     if (!prompt) {
       return;
     }
@@ -767,7 +787,7 @@ function WorkItemTab() {
         <section className="ai-gen-section">
           <h2>Actions</h2>
           <div className="ai-gen-actions">
-            <button className="ai-gen-button" onClick={copyPrompt} disabled={!response?.optimized_prompt}>
+            <button className="ai-gen-button" onClick={copyPrompt} disabled={!response?.optimized_prompt && !currentStage?.handoff_id && !currentStage?.output}>
               Copy Prompt
             </button>
             <button className="ai-gen-button secondary" onClick={refresh} disabled={state.loading}>

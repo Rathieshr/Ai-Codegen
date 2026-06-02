@@ -302,11 +302,39 @@ def _parse_acceptance_criteria(text: str, refinement: dict[str, Any], review_con
         variants = list(refinement.get("refined_variants", [])) or list(refinement.get("variants", []))
         if "phone_otp" in variants:
             items.append("Authenticate the user with phone number entry followed by OTP verification.")
+    missing_acceptance_criteria = any(
+        "acceptance criteria" in str(item.get("message", "")).lower()
+        for item in review_context.get("critic_findings", [])
+    )
     for feedback in review_context.get("review_feedback", []):
         comment = str(feedback.get("comment", "")).strip()
-        if comment and ("acceptance criteria" in comment.lower() or "acceptance:" in comment.lower()):
-            items.append(comment.rstrip(".") + ".")
+        if not comment:
+            continue
+        if "acceptance criteria" in comment.lower() or "acceptance:" in comment.lower():
+            items.extend(_extract_acceptance_items(comment))
+            continue
+        if missing_acceptance_criteria and not items:
+            items.extend(_extract_acceptance_items(comment))
     return _dedupe(items)
+
+
+def _extract_acceptance_items(comment: str) -> list[str]:
+    normalized = comment.strip()
+    lowered = normalized.lower()
+    for prefix in ("acceptance criteria:", "acceptance:"):
+        if lowered.startswith(prefix):
+            normalized = normalized[len(prefix):].strip()
+            break
+    parts = [segment.strip() for segment in normalized.replace("\r", "\n").splitlines()]
+    if len(parts) == 1:
+        parts = [segment.strip() for segment in normalized.split(";")]
+    output: list[str] = []
+    for part in parts:
+        line = part.strip().lstrip("-*0123456789. ").strip()
+        if line:
+            normalized = line[0].upper() + line[1:] if line else line
+            output.append(normalized.rstrip(".") + ".")
+    return output
 
 
 def _detect_unknowns(text: str, variant: str | None) -> list[str]:

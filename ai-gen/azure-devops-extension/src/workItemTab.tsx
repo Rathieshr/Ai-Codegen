@@ -5,6 +5,7 @@ import {
   addAiGenComment,
   clearGeneratedState,
   approveDraftWorkItems,
+  AiGenResponse,
   AiGenState,
   approvePipelineStage,
   addStageFeedback,
@@ -131,8 +132,10 @@ function WorkItemTab() {
   const workflowState = String(pipeline?.workflow_state || 'not_generated');
   const currentStageActions = pipeline?.allowed_actions?.current_stage_actions || [];
   const workflowActions = pipeline?.allowed_actions?.workflow_actions || [];
-  const canAddFeedback = currentStageActions.includes('add_clarification');
-  const canRegenerateWithClarifications = currentStageActions.includes('regenerate_with_clarifications');
+  const clarificationRequired = workflowState === 'needs_clarification';
+  const hasStoredClarifications = Boolean((currentStage?.review_feedback || []).length);
+  const canAddFeedback = clarificationRequired || currentStageActions.includes('add_clarification');
+  const canRegenerateWithClarifications = clarificationRequired || currentStageActions.includes('regenerate_with_clarifications');
   const currentStageFindings = Array.isArray(pipeline?.current_stage_findings) ? pipeline?.current_stage_findings as Array<Record<string, unknown>> : [];
   const blockingFindings = Array.isArray(pipeline?.current_stage_blocking_findings)
     ? pipeline?.current_stage_blocking_findings as Array<Record<string, unknown>>
@@ -171,23 +174,10 @@ function WorkItemTab() {
   }
 
   async function copyPrompt() {
-    let prompt = '';
-    if (currentStage?.handoff_id) {
+    let prompt = buildStagePrompt(currentStageName, currentStage, pipeline, response);
+    if (!prompt && currentStage?.handoff_id) {
       const markdown = await loadHandoffMarkdown(currentStage.handoff_id);
       prompt = String(markdown || '');
-    }
-    if (!prompt && currentStage?.output) {
-      const output = currentStage.output as Record<string, unknown>;
-      prompt = String(
-        output.execution_packet
-        || output.refined_requirement
-        || output.summary
-        || output.task_summary
-        || ''
-      ).trim();
-      if (!prompt && Object.keys(output).length) {
-        prompt = JSON.stringify(output, null, 2);
-      }
     }
     if (!prompt) {
       prompt = state.data?.response.optimized_prompt || '';
@@ -366,43 +356,13 @@ function WorkItemTab() {
     });
   }
 
-  async function addClarification(andRegenerate = false) {
+  async function saveClarification() {
     if (!state.data?.pipeline || !currentStageName || !clarification.trim()) {
       return;
     }
     const comment = clarification.trim();
-    setState((current) => ({ ...current, loadingMessage: andRegenerate ? 'Regenerating with clarifications...' : 'Saving clarification...' }));
+    setState((current) => ({ ...current, loadingMessage: 'Saving clarification...' }));
     await withPipelineUpdate(async () => {
-      if (andRegenerate) {
-        const commentLoad = await loadAiGenComments(state.data!.workItem.id);
-        const regenerated = await runPipelineStage(
-          state.data!.pipeline!.pipeline_id,
-          currentStageName,
-          true,
-          comment,
-          'azure_devops',
-          commentLoad.comments,
-        );
-        const revisionLines = [
-          `Stage: ${stageLabel(currentStageName, regenerated)}`,
-          comment,
-        ];
-        try {
-          await syncComment('Revision', revisionLines);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unable to sync Azure DevOps comment.';
-          setPendingCommentSync({ kind: 'Revision', lines: revisionLines });
-          setState((current) => current.data
-            ? { ...current, data: { ...current.data, commentSyncWarning: message } }
-            : current);
-        }
-        setClarification('');
-        return refreshPipelineState(
-          state.data!.workItem,
-          { ...state.data!, pipeline: regenerated, commentWarning: commentLoad.warning },
-          regenerated
-        );
-      }
       const pipeline = await addStageFeedback(state.data!.pipeline!.pipeline_id, currentStageName, comment);
       const clarificationLines = [
         `Stage: ${stageLabel(currentStageName, pipeline)}`,
@@ -422,6 +382,49 @@ function WorkItemTab() {
         state.data!.workItem,
         { ...state.data!, pipeline },
         pipeline
+      );
+    });
+  }
+
+  async function regenerateWithClarifications() {
+    if (!state.data?.pipeline || !currentStageName) {
+      return;
+    }
+    const comment = clarification.trim();
+    if (!comment && !hasStoredClarifications) {
+      return;
+    }
+    setState((current) => ({ ...current, loadingMessage: 'Regenerating with clarifications...' }));
+    await withPipelineUpdate(async () => {
+      const commentLoad = await loadAiGenComments(state.data!.workItem.id);
+      const regenerated = await runPipelineStage(
+        state.data!.pipeline!.pipeline_id,
+        currentStageName,
+        true,
+        comment || undefined,
+        'azure_devops',
+        commentLoad.comments,
+      );
+      if (comment) {
+        const revisionLines = [
+          `Stage: ${stageLabel(currentStageName, regenerated)}`,
+          comment,
+        ];
+        try {
+          await syncComment('Revision', revisionLines);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unable to sync Azure DevOps comment.';
+          setPendingCommentSync({ kind: 'Revision', lines: revisionLines });
+          setState((current) => current.data
+            ? { ...current, data: { ...current.data, commentSyncWarning: message } }
+            : current);
+        }
+      }
+      setClarification('');
+      return refreshPipelineState(
+        state.data!.workItem,
+        { ...state.data!, pipeline: regenerated, commentWarning: commentLoad.warning },
+        regenerated
       );
     });
   }
@@ -638,6 +641,7 @@ function WorkItemTab() {
                   loading={state.loading}
                   onGenerate={() => generateStage(false)}
                   onRegenerate={() => generateStage(true)}
+                  onRegenerateWithClarifications={() => regenerateWithClarifications()}
                   onApprove={() => approveStage()}
                   onSkip={() => skipCurrentStage()}
                   onRefresh={() => refreshPipeline()}
@@ -656,10 +660,11 @@ function WorkItemTab() {
                   reviewFeedback={currentStage.review_feedback || []}
                   clarification={clarification}
                   onClarificationChange={setClarification}
-                  onAddClarification={() => addClarification(false)}
-                  onRegenerateWithClarifications={() => addClarification(true)}
+                  onAddClarification={() => saveClarification()}
+                  onRegenerateWithClarifications={() => regenerateWithClarifications()}
                   canAddFeedback={canAddFeedback}
                   canRegenerate={canRegenerateWithClarifications}
+                  hasStoredClarifications={hasStoredClarifications}
                   loading={state.loading}
                   stageState={currentStage}
                 />
@@ -814,6 +819,7 @@ function FeedbackPanel({
   onRegenerateWithClarifications,
   canAddFeedback,
   canRegenerate,
+  hasStoredClarifications,
   loading,
   stageState,
 }: {
@@ -827,6 +833,7 @@ function FeedbackPanel({
   onRegenerateWithClarifications: () => void;
   canAddFeedback: boolean;
   canRegenerate: boolean;
+  hasStoredClarifications: boolean;
   loading: boolean;
   stageState: PipelineStageState;
 }) {
@@ -856,7 +863,7 @@ function FeedbackPanel({
           <button className="ai-gen-button secondary" onClick={onAddClarification} disabled={loading || !canAddFeedback || !clarification.trim()}>
             Add Clarification
           </button>
-          <button className="ai-gen-button" onClick={onRegenerateWithClarifications} disabled={loading || !canRegenerate || !clarification.trim()}>
+          <button className="ai-gen-button" onClick={onRegenerateWithClarifications} disabled={loading || !canRegenerate || (!clarification.trim() && !hasStoredClarifications)}>
             Regenerate with Clarifications
           </button>
         </div>
@@ -973,6 +980,7 @@ function WorkflowActionBar({
   loading,
   onGenerate,
   onRegenerate,
+  onRegenerateWithClarifications,
   onApprove,
   onSkip,
   onRefresh,
@@ -987,6 +995,7 @@ function WorkflowActionBar({
   loading: boolean;
   onGenerate: () => void;
   onRegenerate: () => void;
+  onRegenerateWithClarifications: () => void;
   onApprove: () => void;
   onSkip: () => void;
   onRefresh: () => void;
@@ -1008,7 +1017,10 @@ function WorkflowActionBar({
         if (action === 'add_clarification') {
           return null;
         }
-        if (action === 'regenerate_with_clarifications' || action === 'regenerate_story' || action === 'generate_fix_packet' || action === 'generate_regression_checklist' || action === 'generate_tasks' || action === 'complete_recommendation') {
+        if (action === 'regenerate_with_clarifications') {
+          return <button key={action} className="ai-gen-button secondary" onClick={onRegenerateWithClarifications} disabled={loading}>{workflowActionLabel(action, workflowTemplate)}</button>;
+        }
+        if (action === 'regenerate_story' || action === 'generate_fix_packet' || action === 'generate_regression_checklist' || action === 'generate_tasks' || action === 'complete_recommendation') {
           return <button key={action} className="ai-gen-button secondary" onClick={onRegenerate} disabled={loading}>{workflowActionLabel(action, workflowTemplate)}</button>;
         }
         if (action === 'select_all') {
@@ -1581,6 +1593,95 @@ function workflowSummary(pipeline: PipelineState, stage: string, stageState?: Pi
   }
   const output = stageState?.output || {};
   return String(output.summary || output.task_summary || output.refined_requirement || `${stageLabel(stage, pipeline)} is ready.`);
+}
+
+function buildStagePrompt(
+  stageName: string | undefined,
+  stage: PipelineStageState | undefined,
+  pipeline: PipelineState | undefined,
+  response: AiGenResponse | undefined,
+): string {
+  if (!stage || !stage.output) {
+    return '';
+  }
+  const output = stage.output as Record<string, unknown>;
+  if (stageName && stageName !== 'ba' && typeof output.execution_packet === 'string' && output.execution_packet.trim()) {
+    return output.execution_packet.trim();
+  }
+  const sections: string[] = [];
+  const primary = String(
+    output.refined_requirement
+    || output.summary
+    || output.task_summary
+    || output.execution_packet
+    || ''
+  ).trim();
+  if (primary) {
+    sections.push('# Task', primary);
+  }
+  const clarifications = (stage.review_feedback || [])
+    .map((item) => String(item.comment || '').trim())
+    .filter(Boolean);
+  if (clarifications.length) {
+    sections.push('# Clarified Points', ...clarifications.map((item) => `- ${item}`));
+  }
+  const refinementLines = buildRefinementLines(pipeline, response);
+  if (refinementLines.length) {
+    sections.push('# Semantic Refinement', ...refinementLines.map((line) => `- ${line}`));
+  }
+  const acceptanceCriteria = asStringList(output.acceptance_criteria);
+  if (acceptanceCriteria.length) {
+    sections.push('# Acceptance Criteria', ...acceptanceCriteria.map((item) => `- ${item}`));
+  }
+  const constraints = asStringList(output.business_rules);
+  if (constraints.length) {
+    sections.push('# Constraints', ...constraints.map((item) => `- ${item}`));
+  }
+  const unknowns = asStringList(output.unknowns);
+  if (unknowns.length) {
+    sections.push('# Remaining Unknowns', ...unknowns.map((item) => `- ${item}`));
+  }
+  if (!sections.length && Object.keys(output).length) {
+    return JSON.stringify(output, null, 2);
+  }
+  return sections.join('\n\n').trim();
+}
+
+function buildRefinementLines(pipeline: PipelineState | undefined, response: AiGenResponse | undefined): string[] {
+  const refinement = (pipeline?.refinement || {}) as Record<string, unknown>;
+  const flows = asStringList(refinement.base_flows || response?.refined_base_flows);
+  const variants = asStringList(refinement.variants || response?.refined_variants);
+  const surfaces = asStringList(refinement.surfaces || response?.refined_surfaces);
+  const fields = asStringList(refinement.fields || response?.refined_fields);
+  const validations = asStringList(refinement.validations || response?.refined_validations);
+  const scope = asStringList(refinement.scope_hints || refinement.first_pass_scope || response?.refined_scope);
+  const lines: string[] = [];
+  if (flows.length) {
+    lines.push(`Flows: ${flows.join(', ')}`);
+  }
+  if (variants.length) {
+    lines.push(`Variants: ${variants.join(', ')}`);
+  }
+  if (surfaces.length) {
+    lines.push(`Surfaces: ${surfaces.join(', ')}`);
+  }
+  if (fields.length) {
+    lines.push(`Fields: ${fields.join(', ')}`);
+  }
+  if (validations.length) {
+    lines.push(`Validations: ${validations.join(', ')}`);
+  }
+  if (scope.length) {
+    lines.push(`Scope: ${scope.join(', ')}`);
+  }
+  return lines;
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
 function stageNextAction(workflowActions: string[], pipeline?: PipelineState): string {

@@ -146,6 +146,42 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(output["unknowns"], [])
         self.assertTrue(provider.refine_json.called)
 
+    def test_ba_assistant_promotes_plain_clarification_to_acceptance_criteria_when_missing(self) -> None:
+        output = run_ba_assistant(
+            {
+                "title": "OnBoarding Screen for user boarding activities",
+                "description": "",
+                "acceptanceCriteria": "",
+                "tags": [],
+            },
+            {
+                "base_flows": ["signup"],
+                "surfaces": ["ui_screen"],
+            },
+            {
+                "review_feedback": [
+                    {
+                        "comment": "User can start onboarding from the first screen; required onboarding inputs are shown; signup continues after valid submission"
+                    }
+                ],
+                "critic_findings": [
+                    {
+                        "severity": "blocking",
+                        "message": "Requirement is missing clear acceptance criteria.",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(
+            output["acceptance_criteria"],
+            [
+                "User can start onboarding from the first screen.",
+                "Required onboarding inputs are shown.",
+                "Signup continues after valid submission.",
+            ],
+        )
+
     def test_ui_assistant_outputs_fields_and_states(self) -> None:
         ba_output = {
             "refined_requirement": "Add a login screen with phone number.",

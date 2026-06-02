@@ -103,6 +103,43 @@ class ReactControllerTests(unittest.TestCase):
             pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
             self.assertIn("Review clarifications", pipeline["stages"]["ba"]["output"]["refined_requirement"])
 
+    def test_ba_regeneration_refreshes_refinement_from_clarified_effective_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline(
+                {
+                    "id": 123,
+                    "title": "Login Screen",
+                    "description": "Need a user story for login.",
+                    "acceptanceCriteria": "",
+                },
+                refinement={"base_flows": ["login"]},
+            )
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            pipeline = controller.add_stage_feedback(
+                pipeline["pipeline_id"],
+                "ba",
+                "Use phone number and OTP verification after the first step.",
+                "reviewer",
+            )
+            with patch("backend.orchestrator.react_controller.refine_task") as mock_refine_task:
+                mock_refine_task.return_value = {
+                    "refinement": {
+                        "base_flows": ["login", "otp_verification"],
+                        "variants": ["phone_otp"],
+                        "fields": ["phone_number", "otp"],
+                        "scope_hints": ["phone number input", "otp verification step"],
+                    }
+                }
+                pipeline = controller.run_stage(pipeline["pipeline_id"], "ba", regenerate=True)
+
+            self.assertTrue(mock_refine_task.called)
+            refined_query = mock_refine_task.call_args.args[0]
+            self.assertIn("Pipeline feedback (ba): Use phone number and OTP verification after the first step.", refined_query)
+            self.assertEqual(pipeline["refinement"]["base_flows"], ["login", "otp_verification"])
+            self.assertEqual(pipeline["refinement"]["variants"], ["phone_otp"])
+            self.assertEqual(pipeline["refinement"]["fields"], ["phone_number", "otp"])
+
     def test_regeneration_resolves_matching_findings(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller = PipelineController(temp_dir)

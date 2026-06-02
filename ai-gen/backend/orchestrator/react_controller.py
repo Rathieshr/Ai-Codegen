@@ -14,6 +14,14 @@ from backend.orchestrator.approval_gate import (
     can_run_stage,
     skip_stage as apply_skip,
 )
+from backend.refinement.canonical_vocabulary import (
+    normalize_field,
+    normalize_flow,
+    normalize_surface,
+    normalize_validation,
+    normalize_variant,
+)
+from backend.refinement.task_refiner import refine_task
 from backend.orchestrator.pipeline_state import PipelineState, StageFeedback, StageState, create_initial_pipeline_state, utc_now
 from backend.repo_context.storage import read_json, write_json
 from backend.workflow.action_visibility import get_allowed_actions
@@ -92,6 +100,9 @@ class PipelineController:
         stage_state = state.stages[stage]
         stage_state.version = stage_state.version + 1 if regenerate or stage_state.version else 1
         effective_context = self._rebuild_effective_context(state)
+        has_effective_feedback = bool(effective_context.get("clarifications") or effective_context.get("pipeline_feedback"))
+        if regenerate or (stage == "ba" and has_effective_feedback):
+            state.refinement = self._refresh_refinement_from_effective_context(state, effective_context)
         state.pipeline_context = self._pipeline_context_summary(effective_context, comment_count=len(state.ai_gen_comments))
         review_context = self._build_review_context(stage_state) if regenerate else None
         output = self._run_stage_output(state, stage, effective_context=effective_context, review_context=review_context)
@@ -706,6 +717,22 @@ class PipelineController:
             approved_handoffs=self._approved_handoffs(state),
         )
 
+    def _refresh_refinement_from_effective_context(self, state: PipelineState, effective_context: dict) -> dict:
+        query = str(effective_context.get("effective_text") or state.work_item.get("title") or "").strip()
+        if not query:
+            return state.refinement
+        context = {
+            "source": state.source,
+            "work_item": state.work_item,
+            "constraints": list((state.refinement or {}).get("validations", [])),
+            "repo_hints": state.repo_context.get("session_bias_summary") or {},
+        }
+        refreshed = refine_task(query, context)
+        candidate = dict(refreshed.get("refinement") or {})
+        if not candidate:
+            return state.refinement
+        return _merge_refinement(state.refinement, candidate)
+
     def _approved_handoffs(self, state: PipelineState) -> list[dict]:
         output: list[dict] = []
         for stage_name in state.stage_order:
@@ -751,4 +778,78 @@ def _dedupe_findings(findings: list[dict]) -> list[dict]:
         if finding_id and finding_id not in seen:
             seen.add(finding_id)
             output.append(finding)
+    return output
+
+
+def _merge_refinement(existing: dict | None, candidate: dict) -> dict:
+    merged = dict(existing or {})
+    candidate = _normalize_refinement_candidate(candidate)
+    override_keys = {"base_flows"}
+    stable_keys = {"variants", "surfaces"}
+    enrich_keys = {
+        "fields",
+        "validations",
+        "scope_hints",
+        "first_pass_scope",
+        "actors",
+        "states",
+        "unknowns",
+        "focus_rules",
+    }
+    for key in override_keys | stable_keys | enrich_keys:
+        if key not in candidate and key not in merged:
+            continue
+        existing_values = list(merged.get(key, []))
+        candidate_values = list(candidate.get(key, []))
+        if key in override_keys and candidate_values:
+            merged[key] = _dedupe_text(candidate_values)
+        elif key in stable_keys and existing_values:
+            merged[key] = _dedupe_text(existing_values)
+        else:
+            merged[key] = _dedupe_text(existing_values + candidate_values)
+    scalar_keys = ["base_flow", "variant", "surface", "flow_suggestion", "confidence"]
+    for key in scalar_keys:
+        value = candidate.get(key)
+        if isinstance(value, str) and value.strip():
+            merged[key] = value.strip()
+    return merged
+
+
+def _normalize_refinement_candidate(candidate: dict) -> dict:
+    normalized = dict(candidate or {})
+    list_normalizers = {
+        "base_flows": normalize_flow,
+        "variants": normalize_variant,
+        "surfaces": normalize_surface,
+        "fields": normalize_field,
+        "validations": normalize_validation,
+    }
+    for key, normalizer in list_normalizers.items():
+        values = normalized.get(key)
+        if not isinstance(values, list):
+            continue
+        normalized[key] = [item for item in (normalizer(str(value)) for value in values) if item]
+    scalar_normalizers = {
+        "base_flow": normalize_flow,
+        "variant": normalize_variant,
+        "surface": normalize_surface,
+    }
+    for key, normalizer in scalar_normalizers.items():
+        value = normalized.get(key)
+        if value is None:
+            continue
+        normalized_value = normalizer(str(value))
+        if normalized_value:
+            normalized[key] = normalized_value
+        else:
+            normalized.pop(key, None)
+    return normalized
+
+
+def _dedupe_text(values: list) -> list[str]:
+    output: list[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        if normalized and normalized not in output:
+            output.append(normalized)
     return output

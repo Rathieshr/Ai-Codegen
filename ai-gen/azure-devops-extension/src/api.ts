@@ -437,10 +437,25 @@ export async function loadPipelineForWorkItem(workItemId: number | string): Prom
 }
 
 export async function approvePipelineStage(pipelineId: string, stage: string, approvedBy = 'azure_devops'): Promise<PipelineState> {
-  return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/approve-stage`, {
+  const url = `${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/approve-stage`;
+  const body = {
     stage,
     approved_by: approvedBy
-  });
+  };
+  try {
+    return await postJson<PipelineState>(url, body);
+  } catch (firstError) {
+    try {
+      return await postJson<PipelineState>(url, body);
+    } catch (secondError) {
+      const pipeline = await loadPipeline(pipelineId).catch(() => undefined);
+      const stageState = pipeline?.stages?.[stage];
+      if (pipeline && stageState && (stageState.approved || Boolean(stageState.handoff_id))) {
+        return pipeline;
+      }
+      throw secondError instanceof Error ? secondError : firstError;
+    }
+  }
 }
 
 export async function skipPipelineStage(pipelineId: string, stage: string, reason: string): Promise<PipelineState> {

@@ -41,6 +41,37 @@ type ViewState = {
   data?: AiGenState;
 };
 
+type BoundaryState = {
+  error?: string;
+};
+
+class ExtensionErrorBoundary extends React.Component<{ children: React.ReactNode }, BoundaryState> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = {};
+  }
+
+  static getDerivedStateFromError(error: Error): BoundaryState {
+    return { error: error.message || 'Unexpected extension error.' };
+  }
+
+  componentDidCatch(error: Error): void {
+    // Keep this lightweight so Azure DevOps can still render the tab shell.
+    console.error('ai-gen tab render failed', error);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <main className="ai-gen-page">
+          <div className="ai-gen-error">ai-gen failed to load: {this.state.error}</div>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function WorkItemTab() {
   const [state, setState] = useState<ViewState>({
     loading: false,
@@ -562,7 +593,7 @@ function WorkItemTab() {
           <span className="ai-gen-key">Type</span>
           <span>{workItem?.type || 'Unknown'}</span>
           <span className="ai-gen-key">Tags</span>
-          <span>{workItem?.tags.join(', ') || 'None'}</span>
+          <span>{Array.isArray(workItem?.tags) ? (workItem?.tags.join(', ') || 'None') : 'None'}</span>
           <span className="ai-gen-key">Workflow Template</span>
           <span>{formatTemplateName(String(pipeline?.workflow_template || recommendation.workflowLabel || ''))}</span>
           <span className="ai-gen-key">Confidence</span>
@@ -1605,21 +1636,26 @@ function buildStagePrompt(
     return '';
   }
   const output = stage.output as Record<string, unknown>;
+  const baseOutput = resolvePromptBaseOutput(stageName, stage, pipeline);
   if (stageName && stageName !== 'ba' && typeof output.execution_packet === 'string' && output.execution_packet.trim()) {
     return output.execution_packet.trim();
   }
   const sections: string[] = [];
   const primary = String(
-    output.refined_requirement
-    || output.summary
+    baseOutput.refined_requirement
+    || baseOutput.summary
+    || baseOutput.task_summary
+    || output.refined_requirement
+    || (isPlannerSummary(stageName, output.summary) ? '' : output.summary)
     || output.task_summary
+    || baseOutput.execution_packet
     || output.execution_packet
     || ''
   ).trim();
   if (primary) {
     sections.push('# Task', primary);
   }
-  const clarifications = (stage.review_feedback || [])
+  const clarifications = collectPromptClarifications(stageName, stage, pipeline)
     .map((item) => String(item.comment || '').trim())
     .filter(Boolean);
   if (clarifications.length) {
@@ -1629,15 +1665,19 @@ function buildStagePrompt(
   if (refinementLines.length) {
     sections.push('# Semantic Refinement', ...refinementLines.map((line) => `- ${line}`));
   }
-  const acceptanceCriteria = asStringList(output.acceptance_criteria);
+  const acceptanceCriteria = asStringList(baseOutput.acceptance_criteria || output.acceptance_criteria);
   if (acceptanceCriteria.length) {
     sections.push('# Acceptance Criteria', ...acceptanceCriteria.map((item) => `- ${item}`));
   }
-  const constraints = asStringList(output.business_rules);
+  const constraints = asStringList(baseOutput.business_rules || output.business_rules);
   if (constraints.length) {
     sections.push('# Constraints', ...constraints.map((item) => `- ${item}`));
   }
-  const unknowns = asStringList(output.unknowns);
+  const childTasks = asGeneratedTitles(output.generated_work_items || output.proposed_work_items);
+  if (childTasks.length) {
+    sections.push('# Proposed Child Tasks', ...childTasks.map((item) => `- ${item}`));
+  }
+  const unknowns = asStringList(baseOutput.unknowns || output.unknowns);
   if (unknowns.length) {
     sections.push('# Remaining Unknowns', ...unknowns.map((item) => `- ${item}`));
   }
@@ -1645,6 +1685,72 @@ function buildStagePrompt(
     return JSON.stringify(output, null, 2);
   }
   return sections.join('\n\n').trim();
+}
+
+function resolvePromptBaseOutput(
+  stageName: string | undefined,
+  stage: PipelineStageState,
+  pipeline: PipelineState | undefined,
+): Record<string, unknown> {
+  const current = stage.output as Record<string, unknown>;
+  if (!pipeline || !stageName) {
+    return current;
+  }
+  if (!['task_planning', 'test_planning', 'ui_optional'].includes(stageName)) {
+    return current;
+  }
+  const baOutput = pipeline.stages?.ba?.output;
+  if (baOutput && typeof baOutput === 'object') {
+    return baOutput as Record<string, unknown>;
+  }
+  return current;
+}
+
+function collectPromptClarifications(
+  stageName: string | undefined,
+  stage: PipelineStageState,
+  pipeline: PipelineState | undefined,
+): Array<{ comment?: string }> {
+  const items: Array<{ comment?: string }> = [];
+  const addFeedback = (feedback: PipelineStageState['review_feedback']) => {
+    (feedback || []).forEach((item) => {
+      if (!item?.comment) {
+        return;
+      }
+      if (!items.some((existing) => String(existing.comment || '').trim() === String(item.comment || '').trim())) {
+        items.push(item);
+      }
+    });
+  };
+  addFeedback(stage.review_feedback);
+  if (pipeline && stageName && ['task_planning', 'test_planning', 'ui_optional'].includes(stageName)) {
+    addFeedback(pipeline.stages?.ba?.review_feedback);
+  }
+  return items;
+}
+
+function isPlannerSummary(stageName: string | undefined, summary: unknown): boolean {
+  const text = String(summary || '').trim().toLowerCase();
+  if (!text) {
+    return false;
+  }
+  return ['task_planning', 'test_planning'].includes(String(stageName || ''))
+    && text.startsWith('generated proposed child work items');
+}
+
+function asGeneratedTitles(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return '';
+      }
+      const record = item as Record<string, unknown>;
+      return String(record.title || record.task_summary || '').trim();
+    })
+    .filter(Boolean);
 }
 
 function buildRefinementLines(pipeline: PipelineState | undefined, response: AiGenResponse | undefined): string[] {
@@ -1844,5 +1950,9 @@ function formatConfidence(response?: { execution_confidence?: number; execution_
 
 const rootElement = document.getElementById('root');
 if (rootElement) {
-  createRoot(rootElement).render(<WorkItemTab />);
+  createRoot(rootElement).render(
+    <ExtensionErrorBoundary>
+      <WorkItemTab />
+    </ExtensionErrorBoundary>
+  );
 }

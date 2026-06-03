@@ -175,17 +175,18 @@ def build_child_task_drafts_for_story(
     fields: list[str],
     variants: list[str],
 ) -> list[dict[str, Any]]:
+    cleaned_title = _clean_story_title_seed(title_seed)
     area_path = _field(work_item, "areaPath", "area_path")
     iteration_path = _field(work_item, "iterationPath", "iteration_path")
     tags = _tags(work_item)
     parent_work_item_id = work_item.get("id") or work_item.get("work_item_id")
     return _child_task_drafts(
         make_work_item_draft(
-            draft_id=make_draft_id(source_stage, title_seed, 1),
+            draft_id=make_draft_id(source_stage, cleaned_title, 1),
             parent_work_item_id=parent_work_item_id,
             draft_type="Task",
-            title=f"Story Delivery: {title_seed}",
-            description=f"Coordinate the implementation plan for {title_seed.lower()} before execution begins.",
+            title=cleaned_title,
+            description=f"Coordinate the implementation plan for {cleaned_title.lower()} before execution begins.",
             acceptance_criteria=[
                 "Execution scope is small and well-defined.",
                 "Dependencies and ownership are clear.",
@@ -398,6 +399,22 @@ def _child_task_drafts(
             )
         )
     return child_drafts
+
+
+def _clean_story_title_seed(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Approved Story"
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\bReview clarifications:\b.*$", "", text, flags=re.IGNORECASE).strip(" .;:-")
+    text = re.sub(r"^(Story Delivery:\s*)", "", text, flags=re.IGNORECASE).strip()
+    parts = [part.strip() for part in re.split(r"[;|]", text) if part.strip()]
+    deduped: list[str] = []
+    for part in parts:
+        if part.lower() not in {item.lower() for item in deduped}:
+            deduped.append(part)
+    cleaned = "; ".join(deduped).strip()
+    return cleaned or "Approved Story"
 
 
 def _depth(draft: dict[str, Any], flat: list[dict[str, Any]]) -> int:

@@ -45,6 +45,33 @@ type BoundaryState = {
   error?: string;
 };
 
+type StorySessionState = {
+  refinementVersion?: number;
+  acceptanceVersion?: number;
+  taskBreakdownVersion?: number;
+};
+
+type StoryWorkflowStepId = 'refinement' | 'acceptance' | 'task_breakdown' | 'code_generation_prompt';
+
+type StoryWorkflowModel = {
+  currentStep: StoryWorkflowStepId;
+  refinedStory: string;
+  acceptanceCriteria: string[];
+  proposedTasks: DraftWorkItem[];
+  openQuestion: string;
+  clarificationHint: string;
+  finalCodePrompt: string;
+  refinementApproved: boolean;
+  acceptanceApproved: boolean;
+  taskBreakdownApproved: boolean;
+  canApproveCurrentStep: boolean;
+  canRegenerateCurrentStep: boolean;
+  canCreateSelectedTasks: boolean;
+  createdItems: Array<{ type?: string; azure_work_item_id?: number | null; title?: string; parent_azure_work_item_id?: number | null }>;
+};
+
+const STORY_SESSION_PREFIX = 'ai-gen:story-workflow:';
+
 class ExtensionErrorBoundary extends React.Component<{ children: React.ReactNode }, BoundaryState> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
@@ -85,6 +112,7 @@ function WorkItemTab() {
   const [selectedDraftIds, setSelectedDraftIds] = useState<string[]>([]);
   const [createdDraftsPreview, setCreatedDraftsPreview] = useState<Array<{ draft_id: string; azure_work_item_id: number | null; title: string; type: string; status: 'created' | 'failed' | 'skipped'; creation_error?: string | null }>>([]);
   const [pendingCommentSync, setPendingCommentSync] = useState<{ kind: 'Clarification' | 'Approval' | 'Handoff' | 'Revision'; lines: string[] } | undefined>(undefined);
+  const [storySession, setStorySession] = useState<StorySessionState>({});
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
@@ -184,6 +212,22 @@ function WorkItemTab() {
     () => selectWorkspaceRenderer(pipeline?.workflow_template || pipeline?.work_item_classification?.recommended_template),
     [pipeline?.workflow_template, pipeline?.work_item_classification?.recommended_template]
   );
+  const storyPipelineId = pipeline?.workflow_template === 'story_delivery' ? pipeline.pipeline_id : undefined;
+
+  useEffect(() => {
+    if (!storyPipelineId) {
+      setStorySession({});
+      return;
+    }
+    setStorySession(loadStorySessionState(storyPipelineId));
+  }, [storyPipelineId]);
+
+  useEffect(() => {
+    if (!storyPipelineId) {
+      return;
+    }
+    saveStorySessionState(storyPipelineId, storySession);
+  }, [storyPipelineId, storySession]);
 
   useEffect(() => {
     setSelectedChildTaskTitles([]);
@@ -191,6 +235,11 @@ function WorkItemTab() {
     setSelectedDraftIds([]);
     setCreatedDraftsPreview([]);
   }, [state.data?.pipeline?.pipeline_id, currentStageName]);
+
+  const storyWorkflowModel = useMemo(
+    () => buildStoryWorkflowModel(pipeline, response, draftWorkItems, storySession),
+    [pipeline, response, draftWorkItems, storySession]
+  );
 
   async function refresh() {
     setState((current) => ({ ...current, loading: true, loadingMessage: 'Refreshing...', error: '' }));
@@ -205,7 +254,16 @@ function WorkItemTab() {
   }
 
   async function copyPrompt() {
-    let prompt = buildStagePrompt(currentStageName, currentStage, pipeline, response);
+    let prompt = '';
+    if (String(pipeline?.workflow_template || '') === 'story_delivery') {
+      prompt = storyWorkflowModel.finalCodePrompt;
+    }
+    if (!prompt && isStoryTaskPlanning && draftWorkItems.length) {
+      prompt = buildStoryDevImplementationPrompt(draftWorkItems, pipeline, response);
+    }
+    if (!prompt) {
+      prompt = buildStagePrompt(currentStageName, currentStage, pipeline, response);
+    }
     if (!prompt && currentStage?.handoff_id) {
       const markdown = await loadHandoffMarkdown(currentStage.handoff_id);
       prompt = String(markdown || '');
@@ -526,7 +584,110 @@ function WorkItemTab() {
     });
   }
 
-  const showRefinement = Boolean(
+  async function approveCurrentStoryStep() {
+    if (!pipeline || String(pipeline.workflow_template || '') !== 'story_delivery') {
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'refinement') {
+      const baVersion = Number(pipeline.stages.ba?.version || 0);
+      setStorySession((current) => ({ ...current, refinementVersion: baVersion }));
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'acceptance') {
+      if (!state.data?.pipeline) {
+        return;
+      }
+      setState((current) => ({ ...current, loadingMessage: 'Approving story...' }));
+      await withPipelineUpdate(async () => {
+        let nextPipeline = await approvePipelineStage(state.data!.pipeline!.pipeline_id, 'ba');
+        const uiOptional = nextPipeline.stages.ui_optional;
+        if (uiOptional && uiOptional.status === 'pending' && !Object.keys(uiOptional.output || {}).length) {
+          nextPipeline = await skipPipelineStage(
+            nextPipeline.pipeline_id,
+            'ui_optional',
+            'Guided story workflow skipped the separate UI planning stage.'
+          );
+        }
+        const baVersion = Number(nextPipeline.stages.ba?.version || 0);
+        setStorySession((current) => ({
+          ...current,
+          refinementVersion: baVersion,
+          acceptanceVersion: baVersion,
+        }));
+        return refreshPipelineState(
+          state.data!.workItem,
+          { ...state.data!, pipeline: nextPipeline },
+          nextPipeline
+        );
+      });
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'task_breakdown') {
+      const taskVersion = Number(pipeline.stages.task_planning?.version || 0);
+      setStorySession((current) => ({ ...current, taskBreakdownVersion: taskVersion }));
+    }
+  }
+
+  async function regenerateCurrentStoryStep() {
+    if (!pipeline || String(pipeline.workflow_template || '') !== 'story_delivery') {
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'task_breakdown') {
+      setState((current) => ({ ...current, loadingMessage: storyWorkflowModel.proposedTasks.length ? 'Regenerating task breakdown...' : 'Generating task breakdown...' }));
+      await withPipelineUpdate(async () => {
+        const commentLoad = await loadAiGenComments(state.data!.workItem.id);
+        let nextPipeline = state.data!.pipeline!;
+        const uiOptional = nextPipeline.stages.ui_optional;
+        if (uiOptional && uiOptional.status === 'pending' && !Object.keys(uiOptional.output || {}).length) {
+          nextPipeline = await skipPipelineStage(
+            nextPipeline.pipeline_id,
+            'ui_optional',
+            'Guided story workflow skipped the separate UI planning stage.'
+          );
+        }
+        nextPipeline = await runPipelineStage(
+          nextPipeline.pipeline_id,
+          'task_planning',
+          storyWorkflowModel.proposedTasks.length > 0,
+          undefined,
+          'azure_devops',
+          commentLoad.comments,
+        );
+        setStorySession((current) => ({ ...current, taskBreakdownVersion: undefined }));
+        return refreshPipelineState(
+          state.data!.workItem,
+          { ...state.data!, pipeline: nextPipeline, commentWarning: commentLoad.warning },
+          nextPipeline
+        );
+      });
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'code_generation_prompt') {
+      setStorySession((current) => ({ ...current, taskBreakdownVersion: undefined }));
+      return;
+    }
+    await regenerateWithClarifications();
+  }
+
+  function editCurrentStoryStep() {
+    if (!pipeline || String(pipeline.workflow_template || '') !== 'story_delivery') {
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'acceptance') {
+      setStorySession((current) => ({ ...current, acceptanceVersion: undefined, taskBreakdownVersion: undefined }));
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'task_breakdown') {
+      setStorySession((current) => ({ ...current, taskBreakdownVersion: undefined }));
+      return;
+    }
+    if (storyWorkflowModel.currentStep === 'code_generation_prompt') {
+      setStorySession((current) => ({ ...current, taskBreakdownVersion: undefined }));
+    }
+  }
+
+  const isStoryWorkflow = String(pipeline?.workflow_template || '') === 'story_delivery';
+  const showRefinement = !isStoryWorkflow && Boolean(
     response?.semantic_mapping_applied
     || response?.refinement_used
     || response?.refined_base_flows?.length
@@ -550,7 +711,27 @@ function WorkItemTab() {
   const timelineItems = buildTimeline(pipeline);
   const contextWarnings = [...(pipeline?.context_warnings || []), ...(pipeline?.pipeline_context?.warnings || [])];
   const workflowConfidence = String(pipeline?.work_item_classification?.confidence || inferWorkflowConfidence(workItem?.type || ''));
-  const showPromptActions = ['task_execution', 'bug_fix', 'story_delivery', 'ui_task', 'qa_task', 'spike'].includes(String(pipeline?.workflow_template || ''));
+  const showPromptActions = ['task_execution', 'bug_fix', 'ui_task', 'qa_task', 'spike'].includes(String(pipeline?.workflow_template || ''));
+  const storyWorkflowPanel = isStoryWorkflow ? (
+    <StoryWorkflowPanel
+      model={storyWorkflowModel}
+      clarification={clarification}
+      onClarificationChange={setClarification}
+      onAddClarification={() => saveClarification()}
+      onApprove={() => void approveCurrentStoryStep()}
+      onEdit={() => editCurrentStoryStep()}
+      onRegenerate={() => void regenerateCurrentStoryStep()}
+      onCopyPrompt={() => void copyPrompt()}
+      onSelectAll={() => setSelectedDraftIds(storyWorkflowModel.proposedTasks.map((item) => item.draft_id))}
+      onDeselectAll={() => setSelectedDraftIds([])}
+      onApproveDrafts={() => void approveSelectedDraftsAction()}
+      onCreateSelected={() => void createSelectedDraftWorkItemsAction()}
+      selectedDraftIds={selectedDraftIds}
+      onToggleDraft={(draftId) => setSelectedDraftIds((current) => current.includes(draftId) ? current.filter((item) => item !== draftId) : [...current, draftId])}
+      loading={state.loading}
+      hasStoredClarifications={hasStoredClarifications}
+    />
+  ) : null;
 
   return (
     <main className="ai-gen-page">
@@ -664,8 +845,10 @@ function WorkItemTab() {
               commentSyncWarning: state.data?.commentSyncWarning,
               contextWarnings,
               loading: state.loading,
+              storyWorkflowPanel,
               retryCommentSync: pendingCommentSync ? () => void retryCommentSync() : undefined,
               actionBar: (
+                isStoryWorkflow ? null : (
                 <WorkflowActionBar
                   workflowActions={workflowActions}
                   workflowTemplate={String(pipeline.workflow_template || '')}
@@ -682,8 +865,9 @@ function WorkItemTab() {
                   onDeselectAll={() => setSelectedDraftIds([])}
                   onCreateSelected={() => createSelectedDraftWorkItemsAction()}
                 />
+                )
               ),
-              feedbackPanel: currentStage && (blockingFindings.length || warningFindings.length || suggestionFindings.length || canAddFeedback || canRegenerateWithClarifications || (currentStage.review_feedback || []).length) ? (
+              feedbackPanel: !isStoryWorkflow && currentStage && (blockingFindings.length || warningFindings.length || suggestionFindings.length || canAddFeedback || canRegenerateWithClarifications || (currentStage.review_feedback || []).length) ? (
                 <FeedbackPanel
                   blockingFindings={blockingFindings}
                   warningFindings={warningFindings}
@@ -700,7 +884,7 @@ function WorkItemTab() {
                   stageState={currentStage}
                 />
               ) : null,
-              stagePanel: currentStage ? (
+              stagePanel: !isStoryWorkflow && currentStage ? (
                 <StagePanel
                   stage={currentStageName}
                   stageState={currentStage}
@@ -709,7 +893,7 @@ function WorkItemTab() {
                   pipeline={pipeline}
                 />
               ) : null,
-              draftPanel: ((isPlanningTemplate || isStoryTaskPlanning) && currentStageDrafts.length > 0) ? (
+              draftPanel: !isStoryWorkflow && ((isPlanningTemplate || isStoryTaskPlanning) && currentStageDrafts.length > 0) ? (
                 <DraftWorkItemsPanel
                   workflowTemplate={String(pipeline.workflow_template || '')}
                   drafts={currentStageDrafts}
@@ -724,10 +908,10 @@ function WorkItemTab() {
                   loading={state.loading}
                 />
               ) : null,
-              createdWorkItemsPanel: pipeline?.created_work_items?.length ? (
+              createdWorkItemsPanel: !isStoryWorkflow && pipeline?.created_work_items?.length ? (
                 <CreatedWorkItemsPanel items={pipeline.created_work_items} />
               ) : null,
-              childTaskPanel: proposedChildTasks.length ? (
+              childTaskPanel: !isStoryWorkflow && proposedChildTasks.length ? (
                 <ChildTaskPlannerCard
                   tasks={proposedChildTasks}
                   selectedTitles={selectedChildTaskTitles}
@@ -737,7 +921,7 @@ function WorkItemTab() {
                   loading={state.loading}
                 />
               ) : null,
-              handoffPanel: <PipelineHandoff handoff={state.data?.handoff} workflowTemplate={String(pipeline.workflow_template || '')} />,
+              handoffPanel: isStoryWorkflow ? null : <PipelineHandoff handoff={state.data?.handoff} workflowTemplate={String(pipeline.workflow_template || '')} />,
             })}
           </>
         )}
@@ -1001,6 +1185,190 @@ function StagePanel({
           <div className="ai-gen-muted">{stageLabel(stage, pipeline)} not generated yet.</div>
         )}
       </details>
+    </div>
+  );
+}
+
+function StoryWorkflowPanel({
+  model,
+  clarification,
+  onClarificationChange,
+  onAddClarification,
+  onApprove,
+  onEdit,
+  onRegenerate,
+  onCopyPrompt,
+  onSelectAll,
+  onDeselectAll,
+  onApproveDrafts,
+  onCreateSelected,
+  selectedDraftIds,
+  onToggleDraft,
+  loading,
+  hasStoredClarifications,
+}: {
+  model: StoryWorkflowModel;
+  clarification: string;
+  onClarificationChange: (value: string) => void;
+  onAddClarification: () => void;
+  onApprove: () => void;
+  onEdit: () => void;
+  onRegenerate: () => void;
+  onCopyPrompt: () => void;
+  onSelectAll: () => void;
+  onDeselectAll: () => void;
+  onApproveDrafts: () => void;
+  onCreateSelected: () => void;
+  selectedDraftIds: string[];
+  onToggleDraft: (draftId: string) => void;
+  loading: boolean;
+  hasStoredClarifications: boolean;
+}) {
+  const steps: Array<{ id: StoryWorkflowStepId; label: string; complete: boolean }> = [
+    { id: 'refinement', label: 'User Story Refinement', complete: model.refinementApproved },
+    { id: 'acceptance', label: 'Acceptance Criteria', complete: model.acceptanceApproved },
+    { id: 'task_breakdown', label: 'Task Breakdown', complete: model.taskBreakdownApproved },
+    { id: 'code_generation_prompt', label: 'Code Generation Prompt', complete: Boolean(model.finalCodePrompt) },
+  ];
+  return (
+    <div className="ai-gen-stage-panel">
+      <div className="ai-gen-stage-bar">
+        {steps.map((step) => (
+          <div key={step.id} className={`ai-gen-stage-chip ${model.currentStep === step.id ? 'active' : step.complete ? 'approved' : 'pending'}`}>
+            <span>{step.label}</span>
+            <small>{step.complete ? 'Approved' : model.currentStep === step.id ? 'Current' : 'Pending'}</small>
+          </div>
+        ))}
+      </div>
+
+      <div className="ai-gen-subsection">
+        <div className="ai-gen-key">Current Question</div>
+        <div>{model.openQuestion}</div>
+      </div>
+
+      {(model.currentStep === 'refinement' || model.currentStep === 'acceptance') ? (
+        <div className="ai-gen-subsection">
+          <div className="ai-gen-key">Your Answer</div>
+          <textarea
+            className="ai-gen-textarea"
+            value={clarification}
+            placeholder={model.clarificationHint}
+            onChange={(event) => onClarificationChange(event.target.value)}
+          />
+          <div className="ai-gen-actions ai-gen-actions-compact">
+            <button className="ai-gen-button secondary" onClick={onAddClarification} disabled={loading || !clarification.trim()}>
+              Add Clarification
+            </button>
+            <button className="ai-gen-button secondary" onClick={onRegenerate} disabled={loading || (!clarification.trim() && !hasStoredClarifications)}>
+              Regenerate
+            </button>
+            <button className="ai-gen-button" onClick={onApprove} disabled={loading || !model.canApproveCurrentStep}>
+              Approve
+            </button>
+            <button className="ai-gen-button secondary" onClick={onEdit} disabled={loading}>
+              Edit
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {model.refinedStory ? (
+        <div className="ai-gen-subsection">
+          <div className="ai-gen-key">Refined Story</div>
+          <div>{model.refinedStory}</div>
+        </div>
+      ) : null}
+
+      {model.acceptanceCriteria.length ? (
+        <ListSection title="Acceptance Criteria" items={model.acceptanceCriteria} />
+      ) : model.currentStep === 'acceptance' ? (
+        <div className="ai-gen-warning">Acceptance criteria are not ready yet. Add clarification and regenerate this stage.</div>
+      ) : null}
+
+      {model.currentStep === 'task_breakdown' ? (
+        <>
+          <div className="ai-gen-subsection">
+            <div className="ai-gen-key">Proposed Tasks</div>
+            <div className="ai-gen-muted">These are proposed tasks only. They are not created in Azure DevOps until creation succeeds.</div>
+          </div>
+          {model.proposedTasks.length ? (
+            <ul className="ai-gen-list">
+              {model.proposedTasks.map((draft) => (
+                <li key={draft.draft_id}>
+                  <label>
+                    <input type="checkbox" checked={selectedDraftIds.includes(draft.draft_id)} onChange={() => onToggleDraft(draft.draft_id)} />
+                    {' '}
+                    <strong>{draft.title}</strong>
+                  </label>
+                  <div className="ai-gen-muted">{draft.description}</div>
+                  <div className="ai-gen-muted">
+                    {draft.azure_work_item_id ? `Created in Azure DevOps #${draft.azure_work_item_id}` : 'Not created yet'}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="ai-gen-muted">No proposed tasks yet.</div>
+          )}
+          <div className="ai-gen-actions ai-gen-actions-compact">
+            <button className="ai-gen-button secondary" onClick={onSelectAll} disabled={loading || !model.proposedTasks.length}>
+              Select All
+            </button>
+            <button className="ai-gen-button secondary" onClick={onDeselectAll} disabled={loading || !selectedDraftIds.length}>
+              Deselect All
+            </button>
+            <button className="ai-gen-button secondary" onClick={onApproveDrafts} disabled={loading || !selectedDraftIds.length}>
+              Approve Proposed Tasks
+            </button>
+            <button className="ai-gen-button secondary" onClick={onRegenerate} disabled={loading}>
+              Regenerate
+            </button>
+            <button className="ai-gen-button" onClick={onApprove} disabled={loading || !model.canApproveCurrentStep}>
+              Approve
+            </button>
+            <button className="ai-gen-button secondary" onClick={onEdit} disabled={loading}>
+              Edit
+            </button>
+            <button className="ai-gen-button secondary" onClick={onCreateSelected} disabled={loading || !model.canCreateSelectedTasks}>
+              Create Selected Child Tasks
+            </button>
+          </div>
+          <div className="ai-gen-subsection">
+            <div className="ai-gen-key">Created in Azure DevOps</div>
+            {model.createdItems.length ? (
+              <ul className="ai-gen-list">
+                {model.createdItems.map((item) => (
+                  <li key={`${item.type}-${item.azure_work_item_id}-${item.title}`}>
+                    <strong>{item.type}</strong> #{item.azure_work_item_id} - {item.title}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="ai-gen-muted">Not created yet</div>
+            )}
+          </div>
+        </>
+      ) : null}
+
+      {model.currentStep === 'code_generation_prompt' ? (
+        <>
+          <div className="ai-gen-subsection">
+            <div className="ai-gen-key">Final Code Generation Prompt</div>
+            <pre className="ai-gen-prompt">{model.finalCodePrompt || 'Prompt is not ready yet.'}</pre>
+          </div>
+          <div className="ai-gen-actions ai-gen-actions-compact">
+            <button className="ai-gen-button" onClick={onCopyPrompt} disabled={loading || !model.finalCodePrompt}>
+              Copy Prompt
+            </button>
+            <button className="ai-gen-button secondary" onClick={onEdit} disabled={loading}>
+              Edit
+            </button>
+            <button className="ai-gen-button secondary" onClick={onRegenerate} disabled={loading}>
+              Regenerate
+            </button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1626,6 +1994,93 @@ function workflowSummary(pipeline: PipelineState, stage: string, stageState?: Pi
   return String(output.summary || output.task_summary || output.refined_requirement || `${stageLabel(stage, pipeline)} is ready.`);
 }
 
+function buildStoryWorkflowModel(
+  pipeline: PipelineState | undefined,
+  response: AiGenResponse | undefined,
+  draftWorkItems: DraftWorkItem[],
+  storySession: StorySessionState,
+): StoryWorkflowModel {
+  const baStage = pipeline?.stages?.ba;
+  const baOutput = (baStage?.output || {}) as Record<string, unknown>;
+  const taskStage = pipeline?.stages?.task_planning;
+  const taskOutput = (taskStage?.output || {}) as Record<string, unknown>;
+  const proposedTasks = draftWorkItems.filter((draft) => draft.source_stage === 'task_planning');
+  const baVersion = Number(baStage?.version || 0);
+  const taskVersion = Number(taskStage?.version || 0);
+  const refinementApproved = Boolean(baVersion && storySession.refinementVersion === baVersion);
+  const acceptanceApproved = Boolean(baVersion && storySession.acceptanceVersion === baVersion && baStage?.approved);
+  const taskBreakdownApproved = Boolean(taskVersion && storySession.taskBreakdownVersion === taskVersion);
+  const unknowns = asStringList(baOutput.unknowns);
+  const acceptanceCriteria = asStringList(baOutput.acceptance_criteria);
+  const refinedStory = String(baOutput.refined_requirement || baOutput.summary || '').trim();
+
+  let currentStep: StoryWorkflowStepId = 'refinement';
+  if (baStage?.output && refinementApproved && !unknowns.length) {
+    currentStep = 'acceptance';
+  }
+  if (acceptanceApproved) {
+    currentStep = 'task_breakdown';
+  }
+  if (taskStage?.output && taskBreakdownApproved) {
+    currentStep = 'code_generation_prompt';
+  }
+  if (unknowns.length) {
+    currentStep = 'refinement';
+  }
+
+  const openQuestion = currentStep === 'refinement'
+    ? unknowns[0] || 'Is this refined user story accurate and complete?'
+    : currentStep === 'acceptance'
+      ? 'Do these acceptance criteria define done clearly enough to plan delivery tasks?'
+      : currentStep === 'task_breakdown'
+        ? (proposedTasks.length
+          ? 'Do these proposed tasks reflect the approved story and ownership clearly?'
+          : 'Generate a task breakdown for the approved story?')
+        : 'Is the final code-generation prompt ready to use in Codex or another coding model?';
+
+  return {
+    currentStep,
+    refinedStory,
+    acceptanceCriteria,
+    proposedTasks,
+    openQuestion,
+    clarificationHint: 'Add the exact missing detail or acceptance outcome here.',
+    finalCodePrompt: buildStoryDevImplementationPrompt(draftWorkItems, pipeline, response),
+    refinementApproved,
+    acceptanceApproved,
+    taskBreakdownApproved,
+    canApproveCurrentStep: (
+      (currentStep === 'refinement' && Boolean(refinedStory) && !unknowns.length)
+      || (currentStep === 'acceptance' && acceptanceCriteria.length > 0)
+      || (currentStep === 'task_breakdown' && proposedTasks.length > 0)
+      || (currentStep === 'code_generation_prompt' && Boolean(buildStoryDevImplementationPrompt(draftWorkItems, pipeline, response)))
+    ),
+    canRegenerateCurrentStep: currentStep !== 'code_generation_prompt' || proposedTasks.length > 0,
+    canCreateSelectedTasks: proposedTasks.some((draft) => !draft.azure_work_item_id),
+    createdItems: pipeline?.created_work_items || [],
+  };
+}
+
+function loadStorySessionState(pipelineId: string): StorySessionState {
+  try {
+    const raw = window.sessionStorage.getItem(`${STORY_SESSION_PREFIX}${pipelineId}`);
+    if (!raw) {
+      return {};
+    }
+    return JSON.parse(raw) as StorySessionState;
+  } catch {
+    return {};
+  }
+}
+
+function saveStorySessionState(pipelineId: string, state: StorySessionState): void {
+  try {
+    window.sessionStorage.setItem(`${STORY_SESSION_PREFIX}${pipelineId}`, JSON.stringify(state));
+  } catch {
+    // Ignore session persistence failures; the workflow still works for the current render.
+  }
+}
+
 function buildStagePrompt(
   stageName: string | undefined,
   stage: PipelineStageState | undefined,
@@ -1684,6 +2139,69 @@ function buildStagePrompt(
   if (!sections.length && Object.keys(output).length) {
     return JSON.stringify(output, null, 2);
   }
+  return sections.join('\n\n').trim();
+}
+
+function buildStoryDevImplementationPrompt(
+  drafts: DraftWorkItem[],
+  pipeline: PipelineState | undefined,
+  response: AiGenResponse | undefined,
+): string {
+  const flattened = flattenDrafts(drafts);
+  const devDraft = flattened.find((draft) => isDevDraft(draft)) || flattened[0];
+  if (!devDraft) {
+    return '';
+  }
+  const baOutput = (pipeline?.stages?.ba?.output || {}) as Record<string, unknown>;
+  const sections: string[] = [];
+  const requirement = String(
+    baOutput.refined_requirement
+    || devDraft.title
+    || devDraft.description
+    || ''
+  ).trim();
+  if (requirement) {
+    sections.push('# Task', requirement);
+  }
+  const implementationGoal = String(devDraft.description || '').trim();
+  if (implementationGoal) {
+    sections.push('# Implementation Goal', implementationGoal);
+  }
+  const clarifications = collectPromptClarifications('task_planning', { review_feedback: [], output: {}, stage: 'task_planning', status: '', approved: false, version: 0 } as PipelineStageState, pipeline)
+    .map((item) => String(item.comment || '').trim())
+    .filter(Boolean);
+  if (clarifications.length) {
+    sections.push('# Clarified Points', ...clarifications.map((item) => `- ${item}`));
+  }
+  const refinementLines = buildRefinementLines(pipeline, response);
+  if (refinementLines.length) {
+    sections.push('# Semantic Refinement', ...refinementLines.map((line) => `- ${line}`));
+  }
+  const acceptanceCriteria = dedupeStrings([
+    ...asStringList(baOutput.acceptance_criteria),
+    ...asStringList(devDraft.acceptance_criteria),
+  ]);
+  if (acceptanceCriteria.length) {
+    sections.push('# Acceptance Criteria', ...acceptanceCriteria.map((item) => `- ${item}`));
+  }
+  const constraints = dedupeStrings([
+    ...asStringList(baOutput.business_rules),
+  ]);
+  if (constraints.length) {
+    sections.push('# Constraints', ...constraints.map((item) => `- ${item}`));
+  }
+  const relatedTasks = flattened
+    .filter((draft) => draft.draft_id !== devDraft.draft_id)
+    .map((draft) => `${draft.draft_type}: ${draft.title}`);
+  if (relatedTasks.length) {
+    sections.push('# Related Tasks', ...relatedTasks.map((item) => `- ${item}`));
+  }
+  sections.push(
+    '# Delivery Notes',
+    '- Implement the approved story scope.',
+    '- Preserve the clarified validation and authentication behavior.',
+    '- Keep the change scoped to the requirement and acceptance criteria above.',
+  );
   return sections.join('\n\n').trim();
 }
 
@@ -1751,6 +2269,23 @@ function asGeneratedTitles(value: unknown): string[] {
       return String(record.title || record.task_summary || '').trim();
     })
     .filter(Boolean);
+}
+
+function isDevDraft(draft: DraftWorkItem): boolean {
+  const draftType = String(draft.draft_type || draft.type || '').toLowerCase();
+  const title = String(draft.title || '').toLowerCase();
+  return draftType.includes('dev') || title.startsWith('dev task:') || title.startsWith('implement ');
+}
+
+function dedupeStrings(items: string[]): string[] {
+  const output: string[] = [];
+  for (const item of items) {
+    const normalized = String(item || '').trim();
+    if (normalized && !output.includes(normalized)) {
+      output.push(normalized);
+    }
+  }
+  return output;
 }
 
 function buildRefinementLines(pipeline: PipelineState | undefined, response: AiGenResponse | undefined): string[] {

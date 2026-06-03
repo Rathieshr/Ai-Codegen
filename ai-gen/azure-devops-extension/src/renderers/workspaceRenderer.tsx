@@ -29,6 +29,7 @@ export type WorkspaceRendererProps = {
   childTaskPanel: React.ReactNode;
   handoffPanel: React.ReactNode;
   createdWorkItemsPanel: React.ReactNode;
+  storyWorkflowPanel?: React.ReactNode;
   retryCommentSync?: () => void;
   loading: boolean;
 };

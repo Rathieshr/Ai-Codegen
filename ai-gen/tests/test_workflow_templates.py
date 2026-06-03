@@ -72,11 +72,14 @@ class WorkflowTemplateTests(unittest.TestCase):
             controller = PipelineController(temp_dir)
             pipeline = controller.create_pipeline({"id": 105, "type": "Epic", "title": "Identity modernization"})
             pipeline = controller.run_stage(pipeline["pipeline_id"], "epic_analysis")
+            self.assertIn(pipeline["stages"]["epic_analysis"]["output"]["provider_used"], {"azure_phi", "domain_fallback", "deterministic_fallback"})
             pipeline = controller.approve_stage(pipeline["pipeline_id"], "epic_analysis", approved_by="tester")
             pipeline = controller.run_stage(pipeline["pipeline_id"], "feature_generation")
+            self.assertIn(pipeline["stages"]["feature_generation"]["output"]["provider_used"], {"azure_phi", "domain_fallback", "deterministic_fallback"})
             pipeline = controller.approve_stage(pipeline["pipeline_id"], "feature_generation", approved_by="tester")
             pipeline = controller.run_stage(pipeline["pipeline_id"], "story_generation")
             output = pipeline["stages"]["story_generation"]["output"]
+            self.assertIn(output["provider_used"], {"azure_phi", "domain_fallback", "deterministic_fallback"})
             self.assertTrue(output["proposed_work_items"])
             self.assertTrue(output["generated_work_items"])
             self.assertEqual(output["generated_work_items"][0]["draft_type"], "Feature")
@@ -105,6 +108,12 @@ class WorkflowTemplateTests(unittest.TestCase):
             self.assertTrue(output["generated_work_items"])
             self.assertEqual(output["proposed_work_items"][0]["source_stage"], "task_planning")
             self.assertIn(output["generated_work_items"][0]["draft_type"], {"Task"})
+            self.assertNotIn("Review clarifications:", output["generated_work_items"][0]["title"])
+            self.assertTrue(
+                output["generated_work_items"][0]["title"].startswith("UI Task:")
+                or output["generated_work_items"][0]["title"].startswith("Dev Task:")
+            )
+            self.assertIsNone(output["generated_work_items"][0]["azure_work_item_id"])
 
     def test_create_request_payload_and_created_mapping_work(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

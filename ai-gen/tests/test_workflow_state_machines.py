@@ -123,6 +123,13 @@ class WorkflowStateMachineTests(unittest.TestCase):
             self.assertEqual(pipeline["workflow_summary"], "Story plan generated and awaiting approval.")
             self.assertIn("approve_story", pipeline["allowed_actions"]["workflow_actions"])
 
+    def test_story_delivery_requires_ba_approval_before_task_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = PipelineController(temp_dir)
+            pipeline = controller.create_pipeline({"id": 309, "type": "User Story", "title": "Phone OTP login"})
+            pipeline = controller.run_stage(pipeline["pipeline_id"], "ba")
+            self.assertEqual(pipeline["stages"]["task_planning"]["status"], "locked")
+
     def test_run_epic_plan_runs_internal_stages_and_creates_drafts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller = PipelineController(temp_dir)

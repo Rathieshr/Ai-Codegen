@@ -199,16 +199,39 @@ def _preview_probe_result(probe_result: dict[str, Any] | None, raw: dict[str, An
         if isinstance(value, str) and value.strip():
             return value[:1500]
     parsed = probe_result.get("parsed_json")
-    if isinstance(parsed, dict) and parsed:
+    if parsed:
         try:
             return json.dumps(parsed, ensure_ascii=True)[:1500]
         except (TypeError, ValueError):
-            pass
-    if isinstance(raw, dict) and raw:
+            return str(parsed)[:1500]
+    attempts = probe_result.get("attempts")
+    if isinstance(attempts, list):
+        for attempt in reversed(attempts):
+            if not isinstance(attempt, dict):
+                continue
+            for key in ("raw_content", "raw_response_preview"):
+                value = attempt.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value[:1500]
+            attempt_parsed = attempt.get("parsed_json")
+            if attempt_parsed:
+                try:
+                    return json.dumps(attempt_parsed, ensure_ascii=True)[:1500]
+                except (TypeError, ValueError):
+                    return str(attempt_parsed)[:1500]
+            for key in ("failure_message", "error_message", "parse_error"):
+                value = attempt.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value[:1500]
+    if raw:
         try:
             return json.dumps(raw, ensure_ascii=True)[:1500]
         except (TypeError, ValueError):
             return str(raw)[:1500]
+    for key in ("failure_message", "error_message", "parse_error"):
+        value = probe_result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value[:1500]
     return ""
 
 

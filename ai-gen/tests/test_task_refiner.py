@@ -84,6 +84,42 @@ class TaskRefinerTests(unittest.TestCase):
         self.assertEqual(result["phi_status"], "unusable_response")
         self.assertIn('"domain": "travel"', result["phi_raw_response_preview"])
 
+    def test_unusable_phi_response_keeps_attempt_level_preview_for_diagnostics(self) -> None:
+        provider = unittest.mock.Mock()
+        provider.is_enabled.return_value = True
+        provider.probe_json.return_value = {
+            "http_status": 200,
+            "parsed_json": {},
+            "raw_content": "",
+            "raw_response_preview": "",
+            "attempts": [
+                {
+                    "raw_response_preview": '{"choices":[{"message":{"content":"```json',
+                    "parsed_json": {},
+                }
+            ],
+        }
+        with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=provider):
+            result = refine_task("WhatsApp Hotel Booking Platform")
+
+        self.assertEqual(result["phi_status"], "unusable_response")
+        self.assertIn('"choices"', result["phi_raw_response_preview"])
+
+    def test_unusable_phi_response_keeps_non_dict_parsed_payload_for_diagnostics(self) -> None:
+        provider = unittest.mock.Mock()
+        provider.is_enabled.return_value = True
+        provider.probe_json.return_value = {
+            "http_status": 200,
+            "parsed_json": ["travel", "booking"],
+            "raw_content": "",
+            "raw_response_preview": "",
+        }
+        with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=provider):
+            result = refine_task("WhatsApp Hotel Booking Platform")
+
+        self.assertEqual(result["phi_status"], "unusable_response")
+        self.assertIn("travel", result["phi_raw_response_preview"])
+
     def test_epic_stage_can_salvage_feature_titles_from_generated_work_items(self) -> None:
         provider = unittest.mock.Mock()
         provider.is_enabled.return_value = True

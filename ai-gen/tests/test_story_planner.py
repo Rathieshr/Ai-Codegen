@@ -6,6 +6,19 @@ from unittest.mock import patch
 from backend.story_planner.service import StoryPlannerService
 
 
+class FakePhiProvider:
+    def __init__(self, responses: list[dict]) -> None:
+        self.responses = responses
+        self.calls: list[dict] = []
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def probe_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt, **kwargs})
+        return {"parsed_json": self.responses.pop(0) if self.responses else {}}
+
+
 class StoryPlannerServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.service = StoryPlannerService()
@@ -96,6 +109,51 @@ class StoryPlannerServiceTests(unittest.TestCase):
         )
         self.assertEqual(updated["created_story_id"], 4001)
         self.assertEqual(updated["tasks"][0]["status"], "created")
+
+    def test_phi_refines_story_acceptance_tasks_and_prompt(self) -> None:
+        provider = FakePhiProvider(
+            [
+                {
+                    "title": "OTP Login",
+                    "description": "As a customer, I want OTP login so I can securely access my account.",
+                    "business_value": "Customers can access accounts safely without passwords.",
+                },
+                {
+                    "acceptance_criteria": [
+                        "Given a valid phone number, when OTP is requested, then an OTP is sent.",
+                        "Given a valid OTP, when submitted before expiry, then the customer is authenticated.",
+                    ]
+                },
+                {
+                    "tasks": [
+                        {
+                            "title": "Build OTP login form",
+                            "description": "Create the phone number and OTP entry experience.",
+                            "estimated_effort": "M",
+                        },
+                        {
+                            "title": "Validate OTP authentication",
+                            "description": "Implement OTP submit, expiry, and retry handling.",
+                            "estimated_effort": "M",
+                        },
+                    ]
+                },
+                {
+                    "code_generation_prompt": "# Task\nImplement OTP login using the approved acceptance criteria."
+                },
+            ]
+        )
+        with patch("backend.story_planner.service.get_refinement_provider", return_value=provider):
+            session = self.service.start_session("OTP login")
+            self.assertEqual(session["story"]["title"], "OTP Login")
+            session = self.service.approve_stage(session["session_id"], "refined_story")
+            self.assertEqual(session["acceptance_criteria"][0], "Given a valid phone number, when OTP is requested, then an OTP is sent.")
+            session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+            self.assertEqual(session["tasks"][0]["title"], "Build OTP login form")
+            session = self.service.approve_stage(session["session_id"], "tasks")
+            self.assertIn("Implement OTP login", session["code_generation_prompt"])
+        self.assertEqual(len(provider.calls), 4)
+        self.assertTrue(all(call["response_format_enabled"] is False for call in provider.calls))
 
 
 if __name__ == "__main__":

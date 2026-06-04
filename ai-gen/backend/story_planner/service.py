@@ -10,6 +10,8 @@ import urllib.request
 from typing import Any
 from uuid import uuid4
 
+from backend.refinement.provider import get_refinement_provider
+
 from .devops_mapping import build_acceptance_html, build_creation_preview, build_story_description
 from .models import PlannerSession, TaskDraft, utc_now
 
@@ -23,7 +25,7 @@ class StoryPlannerService:
         if not normalized:
             raise ValueError("Requirement is required.")
         session_id = f"storyplan_{uuid4().hex[:12]}"
-        story = _refine_story(normalized)
+        story = _refine_story_with_phi(normalized)
         session = PlannerSession(
             session_id=session_id,
             requirement=normalized,
@@ -130,7 +132,7 @@ class StoryPlannerService:
             session.acceptance_criteria = []
             session.tasks = []
             session.code_generation_prompt = ""
-            story = _refine_story(_merge_requirement_with_feedback(session.requirement, note))
+            story = _refine_story_with_phi(_merge_requirement_with_feedback(session.requirement, note))
             session.title = story["title"]
             session.description = story["description"]
             session.business_value = story["business_value"]
@@ -140,12 +142,12 @@ class StoryPlannerService:
             session.tasks_approved = False
             session.tasks = []
             session.code_generation_prompt = ""
-            session.acceptance_criteria = _generate_acceptance_criteria(session, note)
+            session.acceptance_criteria = _generate_acceptance_criteria_with_phi(session, note)
             session.current_stage = "acceptance_criteria"
         elif stage == "tasks":
             session.tasks_approved = False
             session.code_generation_prompt = ""
-            session.tasks = _generate_tasks(session, note)
+            session.tasks = _generate_tasks_with_phi(session, note)
             session.current_stage = "tasks"
         else:
             raise ValueError(f"Unsupported stage for regeneration: {stage}")
@@ -157,19 +159,19 @@ class StoryPlannerService:
         session = self._session(session_id)
         if stage == "refined_story":
             session.story_approved = True
-            session.acceptance_criteria = _generate_acceptance_criteria(session)
+            session.acceptance_criteria = _generate_acceptance_criteria_with_phi(session)
             session.current_stage = "acceptance_criteria"
         elif stage == "acceptance_criteria":
             if not session.acceptance_criteria:
                 raise ValueError("Acceptance criteria must exist before approval.")
             session.acceptance_approved = True
-            session.tasks = _generate_tasks(session)
+            session.tasks = _generate_tasks_with_phi(session)
             session.current_stage = "tasks"
         elif stage == "tasks":
             if not session.tasks:
                 raise ValueError("Tasks must exist before approval.")
             session.tasks_approved = True
-            session.code_generation_prompt = _build_code_prompt(session)
+            session.code_generation_prompt = _build_code_prompt_with_phi(session)
             session.current_stage = "azure_devops_creation"
         else:
             raise ValueError(f"Unsupported stage for approval: {stage}")
@@ -261,6 +263,30 @@ class StoryPlannerService:
             session.user_input_hint = ""
 
 
+def _refine_story_with_phi(requirement: str) -> dict[str, str]:
+    parsed = _probe_phi_json(
+        "You refine requirements into Azure DevOps-ready user stories. Return strict JSON only.",
+        {
+            "task": "Refine this requirement into a user story.",
+            "requirement": requirement,
+            "expected_json_schema": {
+                "title": "short user story title",
+                "description": "As a <actor>, I want <capability> so I can <value>.",
+                "business_value": "clear business value",
+            },
+        },
+        max_tokens=350,
+    )
+    story = {
+        "title": _clean_text(parsed.get("title")),
+        "description": _clean_text(parsed.get("description")),
+        "business_value": _clean_text(parsed.get("business_value")),
+    }
+    if story["title"] and story["description"] and story["business_value"]:
+        return story
+    return _refine_story(requirement)
+
+
 def _refine_story(requirement: str) -> dict[str, str]:
     normalized = " ".join(requirement.split()).strip()
     actor_match = re.search(r"as\s+a[n]?\s+(?P<actor>.*?),(?:\s*i\s+want|\s*i'd like|\s*i\s+need)", normalized, flags=re.IGNORECASE)
@@ -273,6 +299,32 @@ def _refine_story(requirement: str) -> dict[str, str]:
     description = f"As a {actor}, I want {intent} so I can {value or 'complete the workflow successfully'}."
     business_value = value or f"Improve the {subject.lower()} experience for {actor}."
     return {"title": title, "description": description, "business_value": business_value}
+
+
+def _generate_acceptance_criteria_with_phi(session: PlannerSession, note: str = "") -> list[str]:
+    parsed = _probe_phi_json(
+        "You generate clear testable Azure DevOps acceptance criteria. Return strict JSON only.",
+        {
+            "task": "Generate acceptance criteria for the approved user story.",
+            "requirement": session.requirement,
+            "story": {
+                "title": session.title,
+                "description": session.description,
+                "business_value": session.business_value,
+            },
+            "clarification": note,
+            "expected_json_schema": {
+                "acceptance_criteria": [
+                    "Given <context>, when <action>, then <observable result>."
+                ]
+            },
+        },
+        max_tokens=600,
+    )
+    criteria = _normalize_acceptance(parsed.get("acceptance_criteria"))
+    if len(criteria) >= 2:
+        return criteria
+    return _generate_acceptance_criteria(session, note)
 
 
 def _generate_acceptance_criteria(session: PlannerSession, note: str = "") -> list[str]:
@@ -289,6 +341,36 @@ def _generate_acceptance_criteria(session: PlannerSession, note: str = "") -> li
     if note:
         criteria.append(f"Include this clarified behavior: {note.strip()}.")
     return _dedupe_text(criteria)
+
+
+def _generate_tasks_with_phi(session: PlannerSession, note: str = "") -> list[TaskDraft]:
+    parsed = _probe_phi_json(
+        "You break approved user stories into focused Azure DevOps child tasks. Return strict JSON only.",
+        {
+            "task": "Generate implementation, QA, and supporting tasks for this approved story.",
+            "story": {
+                "title": session.title,
+                "description": session.description,
+                "business_value": session.business_value,
+            },
+            "acceptance_criteria": session.acceptance_criteria,
+            "clarification": note,
+            "expected_json_schema": {
+                "tasks": [
+                    {
+                        "title": "specific task title",
+                        "description": "specific task description",
+                        "estimated_effort": "S|M|L",
+                    }
+                ]
+            },
+        },
+        max_tokens=700,
+    )
+    tasks = _normalize_tasks(parsed.get("tasks"))
+    if len(tasks) >= 2:
+        return [_with_new_task_id(task) for task in tasks]
+    return _generate_tasks(session, note)
 
 
 def _generate_tasks(session: PlannerSession, note: str = "") -> list[TaskDraft]:
@@ -325,6 +407,37 @@ def _generate_tasks(session: PlannerSession, note: str = "") -> list[TaskDraft]:
     return tasks
 
 
+def _build_code_prompt_with_phi(session: PlannerSession) -> str:
+    parsed = _probe_phi_json(
+        "You write concise code-generation prompts for implementation models. Return strict JSON only.",
+        {
+            "task": "Create the final code-generation prompt for implementing this approved story.",
+            "story": {
+                "title": session.title,
+                "description": session.description,
+                "business_value": session.business_value,
+            },
+            "acceptance_criteria": session.acceptance_criteria,
+            "tasks": [task.to_dict() for task in session.tasks],
+            "expected_json_schema": {
+                "code_generation_prompt": "markdown prompt containing only the implementation brief",
+            },
+            "rules": [
+                "Do not include debug metadata.",
+                "Do not include approval history.",
+                "Keep the prompt focused on implementation.",
+            ],
+        },
+        max_tokens=900,
+    )
+    prompt = str(parsed.get("code_generation_prompt") or "").strip()
+    if prompt and "# Task" in prompt:
+        return prompt
+    if prompt:
+        return f"# Task\n{prompt}".strip()
+    return _build_code_prompt(session)
+
+
 def _build_code_prompt(session: PlannerSession) -> str:
     sections = [
         "# Task",
@@ -348,6 +461,36 @@ def _build_code_prompt(session: PlannerSession) -> str:
         ]
     )
     return "\n".join(sections).strip()
+
+
+def _probe_phi_json(system_prompt: str, payload: dict[str, Any], max_tokens: int) -> dict[str, Any]:
+    provider = get_refinement_provider()
+    if provider is None or not provider.is_enabled():
+        return {}
+    probe = getattr(provider, "probe_json", None)
+    try:
+        if callable(probe):
+            result = probe(
+                system_prompt,
+                json.dumps(payload, ensure_ascii=True),
+                max_tokens=max_tokens,
+                response_format_enabled=False,
+                allow_retry_without_response_format=False,
+            )
+            parsed = result.get("parsed_json") if isinstance(result, dict) else {}
+            return parsed if isinstance(parsed, dict) else {}
+        raw = provider.refine_json(system_prompt, json.dumps(payload, ensure_ascii=True), max_tokens=max_tokens)
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _with_new_task_id(task: TaskDraft) -> TaskDraft:
+    task.id = f"task_{uuid4().hex[:8]}"
+    task.status = "pending"
+    task.azure_work_item_id = None
+    task.error = None
+    return task
 
 
 def _clean_text(value: Any) -> str:

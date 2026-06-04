@@ -5,7 +5,8 @@ import { IWorkItemFormService, WorkItemTrackingRestClient, WorkItemTrackingServi
 import { CreationPreview, PlannerSession, WorkItemContext } from './storyPlannerTypes';
 
 const BASE_URL = 'https://ai-codegen-production.up.railway.app/story-planner';
-const REQUEST_TIMEOUT_MS = 12000;
+const BACKEND_REQUEST_TIMEOUT_MS = 180000;
+const AZURE_REQUEST_TIMEOUT_MS = 30000;
 
 type CreationResultPayload = {
   story: {
@@ -152,7 +153,7 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetchWithTimeout(url, { method: 'GET' });
+  const response = await fetchWithTimeout(url, { method: 'GET' }, BACKEND_REQUEST_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
   }
@@ -160,20 +161,24 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    BACKEND_REQUEST_TIMEOUT_MS
+  );
   if (!response.ok) {
     throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AZURE_REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
@@ -189,7 +194,7 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
 async function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
   let timer = 0;
   const timeout = new Promise<never>((_, reject) => {
-    timer = window.setTimeout(() => reject(new Error(message)), REQUEST_TIMEOUT_MS);
+    timer = window.setTimeout(() => reject(new Error(message)), AZURE_REQUEST_TIMEOUT_MS);
   });
   try {
     return await Promise.race([promise, timeout]);

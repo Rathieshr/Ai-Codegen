@@ -319,7 +319,7 @@ def _generate_acceptance_criteria_with_phi(session: PlannerSession, note: str = 
                 ]
             },
         },
-        max_tokens=600,
+        max_tokens=350,
     )
     criteria = _normalize_acceptance(parsed.get("acceptance_criteria"))
     if len(criteria) >= 2:
@@ -365,7 +365,7 @@ def _generate_tasks_with_phi(session: PlannerSession, note: str = "") -> list[Ta
                 ]
             },
         },
-        max_tokens=700,
+        max_tokens=450,
     )
     tasks = _normalize_tasks(parsed.get("tasks"))
     if len(tasks) >= 2:
@@ -428,7 +428,7 @@ def _build_code_prompt_with_phi(session: PlannerSession) -> str:
                 "Keep the prompt focused on implementation.",
             ],
         },
-        max_tokens=900,
+        max_tokens=500,
     )
     prompt = str(parsed.get("code_generation_prompt") or "").strip()
     if prompt and "# Task" in prompt:
@@ -474,6 +474,7 @@ def _probe_phi_json(system_prompt: str, payload: dict[str, Any], max_tokens: int
                 system_prompt,
                 json.dumps(payload, ensure_ascii=True),
                 max_tokens=max_tokens,
+                timeout_seconds=_story_planner_phi_timeout_seconds(),
                 response_format_enabled=False,
                 allow_retry_without_response_format=False,
             )
@@ -483,6 +484,13 @@ def _probe_phi_json(system_prompt: str, payload: dict[str, Any], max_tokens: int
         return raw if isinstance(raw, dict) else {}
     except Exception:
         return {}
+
+
+def _story_planner_phi_timeout_seconds() -> int:
+    try:
+        return max(3, int(os.getenv("AI_GEN_STORY_PLANNER_PHI_TIMEOUT_SECONDS", "10")))
+    except (TypeError, ValueError):
+        return 10
 
 
 def _with_new_task_id(task: TaskDraft) -> TaskDraft:

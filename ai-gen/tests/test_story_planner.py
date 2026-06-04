@@ -154,6 +154,7 @@ class StoryPlannerServiceTests(unittest.TestCase):
             self.assertIn("Implement OTP login", session["code_generation_prompt"])
         self.assertEqual(len(provider.calls), 4)
         self.assertTrue(all(call["response_format_enabled"] is False for call in provider.calls))
+        self.assertTrue(all(call["timeout_seconds"] == 10 for call in provider.calls))
 
 
 if __name__ == "__main__":

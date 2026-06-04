@@ -68,6 +68,7 @@ export type WorkItemContext = {
   acceptanceCriteria: string;
   comments: string[];
   project: string;
+  collectionUri?: string;
 };
 
 export type CreationPreview = {

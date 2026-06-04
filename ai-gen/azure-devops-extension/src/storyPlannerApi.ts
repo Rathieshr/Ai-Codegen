@@ -2,7 +2,6 @@ import * as SDK from 'azure-devops-extension-sdk';
 import { CommonServiceIds, IProjectPageService } from 'azure-devops-extension-api/Common/CommonServices';
 import { getClient } from 'azure-devops-extension-api/Common/Client';
 import { IWorkItemFormService, WorkItemTrackingRestClient, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
-import * as WebApi from 'azure-devops-extension-api/WebApi/WebApi';
 import { CreationPreview, PlannerSession, WorkItemContext } from './storyPlannerTypes';
 
 const BASE_URL = 'https://ai-codegen-production.up.railway.app/story-planner';
@@ -55,6 +54,7 @@ export async function getCurrentWorkItemContext(): Promise<WorkItemContext> {
     acceptanceCriteria: String(fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || ''),
     comments,
     project: String(project?.name || SDK.getWebContext().project?.name || ''),
+    collectionUri: getCollectionUri(),
   };
 }
 
@@ -87,66 +87,42 @@ export async function storeCreationResult(sessionId: string, payload: CreationRe
 }
 
 export async function createAzureDevOpsItems(preview: CreationPreview, workItem: WorkItemContext): Promise<CreationResultPayload> {
-  const client = getClient(WorkItemTrackingRestClient);
-  const storyPatch: WebApi.JsonPatchOperation[] = [
-    { op: WebApi.Operation.Add, path: '/fields/System.Title', value: preview.preview.story.fields['System.Title'] || preview.preview.story.title, from: '' },
-    { op: WebApi.Operation.Add, path: '/fields/System.Description', value: preview.preview.story.fields['System.Description'] || preview.preview.story.description, from: '' },
-    { op: WebApi.Operation.Add, path: '/fields/Microsoft.VSTS.Common.AcceptanceCriteria', value: preview.preview.story.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || '', from: '' },
-  ];
-  if (workItem.id > 0) {
-    storyPatch.push({
-      op: WebApi.Operation.Add,
-      path: '/relations/-',
-      from: '',
-      value: {
-        rel: 'System.LinkTypes.Hierarchy-Reverse',
-        url: buildWorkItemUrl(workItem.id),
-      },
-    });
+  const collectionUri = workItem.collectionUri || getCollectionUri();
+  const accessToken = await withTimeout(SDK.getAccessToken(), 'Timed out while requesting Azure DevOps access token.');
+  if (!collectionUri || !workItem.project) {
+    throw new Error('Azure DevOps project context is unavailable.');
   }
-
   const storyResult: CreationResultPayload['story'] = { status: 'creating' };
   const taskResults: CreationResultPayload['tasks'] = [];
 
   try {
-    const story = await withTimeout(
-      client.createWorkItem(storyPatch, workItem.project, preview.preview.story.type),
+    const storyId = await createWorkItemViaRest(
+      collectionUri,
+      workItem.project,
+      accessToken,
+      preview.preview.story.type,
+      preview.preview.story.fields,
+      workItem.id > 0 ? workItem.id : undefined,
       'Timed out while creating the Azure DevOps User Story.'
     );
-    storyResult.azure_work_item_id = story.id;
+    storyResult.azure_work_item_id = storyId;
     storyResult.status = 'created';
 
     for (const task of preview.preview.tasks) {
-      const taskPatch: WebApi.JsonPatchOperation[] = [
-        { op: WebApi.Operation.Add, path: '/fields/System.Title', value: task.fields['System.Title'] || task.title, from: '' },
-        { op: WebApi.Operation.Add, path: '/fields/System.Description', value: task.fields['System.Description'] || task.description, from: '' },
-      ];
-      if (task.fields['Microsoft.VSTS.Scheduling.StoryPoints']) {
-        taskPatch.push({
-          op: WebApi.Operation.Add,
-          path: '/fields/Microsoft.VSTS.Scheduling.StoryPoints',
-          from: '',
-          value: task.fields['Microsoft.VSTS.Scheduling.StoryPoints'],
-        });
-      }
-      taskPatch.push({
-        op: WebApi.Operation.Add,
-        path: '/relations/-',
-        from: '',
-        value: {
-          rel: 'System.LinkTypes.Hierarchy-Reverse',
-          url: buildWorkItemUrl(Number(story.id)),
-        },
-      });
       try {
-        const createdTask = await withTimeout(
-          client.createWorkItem(taskPatch, workItem.project, task.type),
+        const createdTaskId = await createWorkItemViaRest(
+          collectionUri,
+          workItem.project,
+          accessToken,
+          task.type,
+          task.fields,
+          storyId,
           `Timed out while creating Azure DevOps task: ${task.title}`
         );
         taskResults.push({
           id: task.id,
           title: task.title,
-          azure_work_item_id: createdTask.id,
+          azure_work_item_id: createdTaskId,
           status: 'created',
         });
       } catch (error) {
@@ -173,12 +149,6 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
   }
 
   return { story: storyResult, tasks: taskResults };
-}
-
-function buildWorkItemUrl(workItemId: number): string {
-  const host = SDK.getHost();
-  const project = SDK.getWebContext().project?.name || '';
-  return `${window.location.origin}/${encodeURIComponent(host.name)}/${encodeURIComponent(project)}/_apis/wit/workItems/${workItemId}`;
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -246,4 +216,64 @@ async function loadWorkItemComments(workItemId: number, project: string): Promis
   } catch {
     return [];
   }
+}
+
+async function createWorkItemViaRest(
+  collectionUri: string,
+  projectName: string,
+  accessToken: string,
+  type: string,
+  fields: Record<string, string | null>,
+  parentWorkItemId?: number,
+  timeoutMessage?: string
+): Promise<number> {
+  const operations: Array<Record<string, unknown>> = [];
+  for (const [field, value] of Object.entries(fields)) {
+    if (value != null && String(value).trim()) {
+      operations.push({ op: 'add', path: `/fields/${field}`, value });
+    }
+  }
+  if (parentWorkItemId) {
+    operations.push({
+      op: 'add',
+      path: '/relations/-',
+      value: {
+        rel: 'System.LinkTypes.Hierarchy-Reverse',
+        url: `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workItems/${parentWorkItemId}`,
+      },
+    });
+  }
+  const typeName = encodeURIComponent(`$${type}`);
+  const response = await withTimeout(
+    fetch(
+      `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workitems/${typeName}?api-version=7.1`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json-patch+json',
+        },
+        body: JSON.stringify(operations),
+      }
+    ),
+    timeoutMessage || `Timed out while creating Azure DevOps ${type}.`
+  );
+  if (!response.ok) {
+    throw new Error(`Azure DevOps returned HTTP ${response.status} while creating ${type}.`);
+  }
+  const body = await response.json() as { id: number };
+  return body.id;
+}
+
+function getCollectionUri(): string {
+  const pageContext = SDK.getPageContext() as unknown as {
+    webContext?: {
+      collection?: { uri?: string };
+    };
+  };
+  return pageContext.webContext?.collection?.uri || `${window.location.origin}/`;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value.slice(0, -1) : value;
 }

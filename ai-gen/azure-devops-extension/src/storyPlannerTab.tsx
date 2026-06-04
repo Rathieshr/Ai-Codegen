@@ -377,7 +377,7 @@ function StoryPlannerTab() {
   );
 
   async function copyPrompt() {
-    const prompt = view.session?.code_generation_prompt || '';
+    const prompt = (view.session?.code_generation_prompt || buildFallbackPrompt(view.session)).trim();
     if (!prompt) {
       setView((current) => ({ ...current, error: 'Code-generation prompt is not ready yet.' }));
       return;
@@ -452,6 +452,26 @@ function htmlToText(value: string): string {
 
 function cleanText(value: string): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function buildFallbackPrompt(session?: PlannerSession): string {
+  if (!session) {
+    return '';
+  }
+  const sections = [
+    '# Task',
+    session.story.description || session.requirement,
+    '',
+    '# Business Value',
+    `- ${session.story.business_value || 'Deliver the approved user story clearly and safely.'}`,
+    '',
+    '# Acceptance Criteria',
+    ...session.acceptance_criteria.map((item) => `- ${item}`),
+    '',
+    '# Proposed Tasks',
+    ...session.tasks.map((task) => `- ${task.title}: ${task.description}`),
+  ];
+  return sections.join('\n').trim();
 }
 
 const rootNode = document.getElementById('root');

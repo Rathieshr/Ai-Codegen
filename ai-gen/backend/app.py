@@ -2,6 +2,7 @@
 
 import os
 import json
+import inspect
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, Optional
@@ -22,7 +23,7 @@ from backend.orchestrator.react_controller import PipelineController
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 from backend.refinement.refinement_decider import should_use_refiner
 from backend.refinement.schema_validator import validate_task_refinement
-from backend.refinement.task_refiner import refine_task
+from backend.refinement.task_refiner import refine_epic_stage, refine_task
 from backend.repo_context.bug_localizer import detect_bug_surface, score_bug_hotspots
 from backend.repo_context.cross_flow import build_flow_relationships, get_related_flows
 from backend.repo_context.indexer import bootstrap_repo_index, update_changed_files
@@ -31,6 +32,7 @@ from backend.repo_context.models import SessionContext
 from backend.repo_context.storage import read_json
 from backend.repo_context.retrieval_bias import collect_session_bias_signals, rank_logic_units_with_bias
 from backend.status import get_status
+from backend.story_planner import story_planner_service
 from backend.work_item_optimizer import optimize_work_item_request
 from context_builder.builder import ContextBuilder
 from context_builder.execution_packets import (
@@ -225,6 +227,9 @@ class RefinementTestRequest(BaseModel):
     query: str = Field(..., min_length=1)
     context: dict[str, Any] = Field(default_factory=dict)
     mode: str = "refine"
+    include_model_field: Optional[bool] = None
+    api_version: Optional[str] = None
+    max_tokens: int = Field(default=300, ge=1, le=1000)
 
 
 class RefinementRawHttpTestRequest(BaseModel):
@@ -233,6 +238,32 @@ class RefinementRawHttpTestRequest(BaseModel):
     include_model_field: Optional[bool] = None
     api_version: Optional[str] = None
     max_tokens: int = Field(default=50, ge=1, le=1000)
+
+
+class RefinementSmokeTestRequest(BaseModel):
+    query: str = Field(default="WhatsApp Hotel Booking Platform", min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+    include_model_field: Optional[bool] = None
+    api_version: Optional[str] = None
+
+
+class StoryPlannerStartRequest(BaseModel):
+    requirement: str = Field(..., min_length=1)
+
+
+class StoryPlannerEditRequest(BaseModel):
+    stage: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoryPlannerStageRequest(BaseModel):
+    stage: str
+    user_input: str = ""
+
+
+class StoryPlannerCreationResultRequest(BaseModel):
+    story: dict[str, Any] = Field(default_factory=dict)
+    tasks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @app.get("/health")
@@ -249,11 +280,68 @@ def capabilities() -> dict:
     return get_status()
 
 
+@app.post("/story-planner/sessions")
+def start_story_planner_session(request: StoryPlannerStartRequest) -> dict:
+    return story_planner_service.start_session(request.requirement)
+
+
+@app.get("/story-planner/sessions/{session_id}")
+def get_story_planner_session(session_id: str) -> dict:
+    return story_planner_service.get_session(session_id)
+
+
+@app.post("/story-planner/sessions/{session_id}/edit")
+def edit_story_planner_stage(session_id: str, request: StoryPlannerEditRequest) -> dict:
+    return story_planner_service.edit_stage(session_id, request.stage, request.payload)
+
+
+@app.post("/story-planner/sessions/{session_id}/regenerate")
+def regenerate_story_planner_stage(session_id: str, request: StoryPlannerStageRequest) -> dict:
+    return story_planner_service.regenerate_stage(session_id, request.stage, request.user_input)
+
+
+@app.post("/story-planner/sessions/{session_id}/approve")
+def approve_story_planner_stage(session_id: str, request: StoryPlannerStageRequest) -> dict:
+    return story_planner_service.approve_stage(session_id, request.stage)
+
+
+@app.post("/story-planner/sessions/{session_id}/creation-preview")
+def preview_story_planner_work_items(session_id: str) -> dict:
+    return story_planner_service.get_creation_preview(session_id)
+
+
+@app.post("/story-planner/sessions/{session_id}/creation-result")
+def store_story_planner_creation_result(session_id: str, request: StoryPlannerCreationResultRequest) -> dict:
+    return story_planner_service.store_creation_result(session_id, request.story, request.tasks)
+
+
+@app.post("/story-planner/sessions/{session_id}/create-work-items")
+def create_story_planner_work_items(session_id: str) -> dict:
+    return story_planner_service.create_work_items(session_id)
+
+
 @app.get("/refinement/health")
 def refinement_health() -> dict[str, Any]:
-    """Return non-secret refiner configuration status."""
+    """Return non-secret refiner health status."""
 
-    return get_refiner_status()
+    provider = get_refinement_provider()
+    if provider is not None and hasattr(provider, "health_snapshot"):
+        return {
+            **provider.health_snapshot(),
+            "provider": "azure_phi",
+            "configured": provider.is_enabled(),
+        }
+    status = get_refiner_status()
+    return {
+        "deployment": status.get("deployment"),
+        "health": "unhealthy" if status.get("configured") else "not_configured",
+        "last_success": None,
+        "last_failure": None,
+        "average_latency_ms": 0,
+        "consecutive_failures": 0,
+        "provider": status.get("provider"),
+        "configured": status.get("configured"),
+    }
 
 
 @app.get("/refinement/config")
@@ -308,6 +396,8 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
     provider = get_refinement_provider()
     safe_status = provider.status_snapshot() if provider is not None and hasattr(provider, "status_snapshot") else _fallback_refinement_config()
     mode = str(getattr(request, "mode", "refine") or "refine").strip().lower()
+    include_model_field = getattr(request, "include_model_field", None)
+    api_version = getattr(request, "api_version", None)
     provider_timeout_seconds = _provider_timeout_for_mode(mode, safe_status)
     diagnostic_timeout_seconds = _diagnostic_timeout_seconds(safe_status, provider_timeout_seconds)
     result = {
@@ -328,6 +418,7 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
         "attempted_method": str(safe_status.get("method") or "POST"),
         "max_tokens": 0,
         "response_format_enabled": False,
+        "include_model_field": include_model_field if include_model_field is not None else safe_status.get("include_model_field"),
         "json_mode_attempted": False,
         "json_mode_retry_without_response_format": False,
         "attempts": [],
@@ -356,6 +447,8 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
         diagnostic_timeout_seconds=diagnostic_timeout_seconds,
         response_format_enabled=False if mode == "ping" else None,
         allow_retry_without_response_format=False if mode == "ping" else True,
+        include_model_field=include_model_field,
+        api_version_override=api_version,
     )
     raw_preview = str(probe_result.get("raw_content", ""))[:1500]
     parsed_json = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
@@ -396,6 +489,7 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
             "attempted_method": str(probe_result.get("attempted_method") or "POST"),
             "max_tokens": int(probe_result.get("max_tokens") or max_tokens),
             "response_format_enabled": bool(probe_result.get("response_format_enabled")),
+            "include_model_field": probe_result.get("include_model_field", include_model_field if include_model_field is not None else safe_status.get("include_model_field")),
             "json_mode_attempted": bool(probe_result.get("json_mode_attempted")),
             "json_mode_retry_without_response_format": bool(probe_result.get("json_mode_retry_without_response_format")),
             "attempts": probe_result.get("attempts") if isinstance(probe_result.get("attempts"), list) else [],
@@ -418,12 +512,85 @@ def refinement_test(request: RefinementTestRequest) -> dict[str, Any]:
     return result
 
 
+@app.post("/refinement/smoke-test")
+def refinement_smoke_test(request: RefinementSmokeTestRequest) -> dict[str, Any]:
+    provider = get_refinement_provider()
+    if provider is None or not provider.is_enabled():
+        return {
+            "provider": "azure_phi",
+            "configured": False,
+            "deployment": get_refiner_status().get("deployment"),
+            "tests": [],
+        }
+
+    ping = _run_refinement_probe_with_timeout(
+        probe=provider.probe_json,
+        system_prompt="Return strict JSON only.",
+        user_prompt='Return this exact JSON: {"status":"ok"}',
+        max_tokens=50,
+        timeout_seconds=_provider_timeout_for_mode("ping", provider.status_snapshot()),
+        diagnostic_timeout_seconds=_diagnostic_timeout_seconds(provider.status_snapshot(), _provider_timeout_for_mode("ping", provider.status_snapshot())),
+        response_format_enabled=False,
+        allow_retry_without_response_format=False,
+        include_model_field=request.include_model_field,
+        api_version_override=request.api_version,
+    )
+    small = _run_refinement_probe_with_timeout(
+        probe=provider.probe_json,
+        system_prompt="Return strict JSON only.",
+        user_prompt=f'Return JSON with: {{"domain":"","features":[]}}\\n\\nInput: {request.query}',
+        max_tokens=220,
+        timeout_seconds=_provider_timeout_for_mode("small_refine", provider.status_snapshot()),
+        diagnostic_timeout_seconds=_diagnostic_timeout_seconds(provider.status_snapshot(), _provider_timeout_for_mode("small_refine", provider.status_snapshot())),
+        response_format_enabled=False,
+        allow_retry_without_response_format=False,
+        include_model_field=request.include_model_field,
+        api_version_override=request.api_version,
+    )
+    feature = refine_epic_stage(
+        "feature_generation",
+        request.context.get("work_item") if isinstance(request.context.get("work_item"), dict) else {"title": request.query, "description": request.context.get("description", "")},
+        upstream={"generated_features": []},
+        effective_context={"effective_text": str(request.query)},
+    )
+    return {
+        "provider": "azure_phi",
+        "configured": provider.is_enabled(),
+        "deployment": provider.health_snapshot().get("deployment"),
+        "health": provider.health_snapshot().get("health"),
+        "tests": [
+            {
+                "name": "ping",
+                "phi_status": "success" if isinstance(ping.get("parsed_json"), dict) and ping.get("parsed_json", {}).get("status") == "ok" else ping.get("failure_reason") or ping.get("status"),
+                "elapsed_ms": ping.get("elapsed_ms"),
+                "failure_reason": ping.get("failure_reason"),
+                "attempts": ping.get("attempts", []),
+            },
+            {
+                "name": "small_json_extraction",
+                "phi_status": "success" if isinstance(small.get("parsed_json"), dict) and small.get("parsed_json") else small.get("failure_reason") or small.get("status"),
+                "elapsed_ms": small.get("elapsed_ms"),
+                "failure_reason": small.get("failure_reason"),
+                "attempts": small.get("attempts", []),
+            },
+            {
+                "name": "feature_generation",
+                "provider_used": feature.get("provider_used"),
+                "phi_status": feature.get("phi_status"),
+                "elapsed_ms": None,
+                "parsed": feature.get("parsed"),
+            },
+        ],
+    }
+
+
 def _refinement_test_prompt(request: RefinementTestRequest, mode: str) -> tuple[str, str, int]:
+    max_tokens = max(1, int(getattr(request, "max_tokens", 300) or 300))
     if mode == "ping":
         return (
             "Return strict JSON only.",
             'Return this exact JSON: {"status":"ok"}',
-            50,
+            min(max_tokens, 50),
         )
     if mode == "small_refine":
         return (
@@ -432,7 +599,7 @@ def _refinement_test_prompt(request: RefinementTestRequest, mode: str) -> tuple[
                 'Return JSON with: {"domain":"","features":[]}\n\n'
                 f'Input: {request.query}'
             ),
-            300,
+            min(max_tokens, 300),
         )
     payload = {
         "query": request.query,
@@ -453,7 +620,7 @@ def _refinement_test_prompt(request: RefinementTestRequest, mode: str) -> tuple[
     return (
         "You are ai-gen semantic refinement engine. Return strict JSON only using canonical engineering metadata.",
         json.dumps(payload, ensure_ascii=True),
-        300,
+        min(max_tokens, 300),
     )
 
 
@@ -481,31 +648,40 @@ def _run_refinement_probe_with_timeout(
     diagnostic_timeout_seconds: int,
     response_format_enabled: Optional[bool] = None,
     allow_retry_without_response_format: bool = True,
+    include_model_field: Optional[bool] = None,
+    api_version_override: Optional[str] = None,
 ) -> dict[str, Any]:
     def invoke_probe() -> dict[str, Any]:
+        kwargs = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "max_tokens": max_tokens,
+            "timeout_seconds": timeout_seconds,
+            "response_format_enabled": response_format_enabled,
+            "allow_retry_without_response_format": allow_retry_without_response_format,
+            "include_model_field": include_model_field,
+            "api_version_override": api_version_override,
+        }
         try:
+            signature = inspect.signature(probe)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is None:
             return probe(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_tokens=max_tokens,
-                timeout_seconds=timeout_seconds,
-                response_format_enabled=response_format_enabled,
-                allow_retry_without_response_format=allow_retry_without_response_format,
             )
-        except TypeError:
-            try:
-                return probe(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=max_tokens,
-                    timeout_seconds=timeout_seconds,
-                )
-            except TypeError:
-                return probe(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=max_tokens,
-                )
+        accepts_var_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+        if accepts_var_kwargs:
+            filtered_kwargs = {key: value for key, value in kwargs.items() if value is not None}
+        else:
+            filtered_kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in signature.parameters and value is not None
+            }
+        return probe(**filtered_kwargs)
 
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(invoke_probe)

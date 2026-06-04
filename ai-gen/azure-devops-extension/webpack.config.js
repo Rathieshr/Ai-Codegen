@@ -2,6 +2,7 @@ const path = require('path');
 
 module.exports = {
   entry: {
+    storyPlannerTab: './src/storyPlannerTab.tsx',
     workItemTab: './src/workItemTab.tsx',
     workItemAction: './src/workItemAction.ts'
   },

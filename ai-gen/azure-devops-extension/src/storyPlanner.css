@@ -1,0 +1,141 @@
+body {
+  margin: 0;
+  font-family: "Segoe UI", sans-serif;
+  background: #f6f8fb;
+  color: #172b4d;
+}
+
+.planner-shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.planner-card {
+  background: #fff;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.planner-title {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.planner-subtle {
+  color: #53657d;
+  font-size: 14px;
+}
+
+.planner-steps {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.planner-step {
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfe;
+  font-size: 12px;
+}
+
+.planner-step.active {
+  border-color: #0078d4;
+  background: #eef6ff;
+}
+
+.planner-step.done {
+  background: #eefbf3;
+}
+
+.planner-label {
+  font-size: 12px;
+  color: #53657d;
+  font-weight: 600;
+}
+
+.planner-textarea,
+.planner-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #c7d2e0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.planner-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.planner-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.planner-button {
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  background: #0078d4;
+  color: white;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.planner-button.secondary {
+  background: #e8eef5;
+  color: #172b4d;
+}
+
+.planner-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.planner-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.planner-task {
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.planner-status-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.planner-status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfcfe;
+}
+
+.planner-error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  padding: 12px;
+}

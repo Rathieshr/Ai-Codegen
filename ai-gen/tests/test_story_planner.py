@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+from backend.story_planner.service import StoryPlannerService
+
+
+class StoryPlannerServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = StoryPlannerService()
+
+    def test_start_session_generates_refined_story_stage(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        self.assertEqual(session["current_stage"], "refined_story")
+        self.assertTrue(session["story"]["title"])
+        self.assertTrue(session["story"]["description"])
+        self.assertTrue(session["story"]["business_value"])
+
+    def test_stage_transition_requires_approval(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        self.assertEqual(session["current_stage"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        self.assertEqual(session["current_stage"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        self.assertEqual(session["current_stage"], "tasks")
+
+    def test_regenerate_acceptance_updates_criteria(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.regenerate_stage(session["session_id"], "acceptance_criteria", "OTP should expire after 120 seconds.")
+        self.assertIn("120 seconds", " ".join(session["acceptance_criteria"]))
+
+    def test_copy_prompt_source_is_final_code_generation_prompt(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "tasks")
+        self.assertEqual(session["current_stage"], "azure_devops_creation")
+        self.assertTrue(session["code_generation_prompt"].startswith("# Task"))
+        self.assertNotIn("routing", session["code_generation_prompt"].lower())
+
+    def test_tasks_are_not_marked_created_before_devops_success(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        for task in session["tasks"]:
+            self.assertEqual(task["status"], "pending")
+            self.assertIsNone(task["azure_work_item_id"])
+
+    def test_create_work_items_updates_statuses_only_on_success(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "tasks")
+        with patch("backend.story_planner.service._create_story_work_item", return_value={"id": 101}), patch(
+            "backend.story_planner.service._create_child_task_work_item",
+            side_effect=[{"id": 201}, ValueError("Azure DevOps unavailable"), {"id": 203}],
+        ):
+            updated = self.service.create_work_items(session["session_id"])
+        self.assertEqual(updated["created_story_id"], 101)
+        statuses = [task["status"] for task in updated["tasks"]]
+        self.assertIn("created", statuses)
+        self.assertIn("failed", statuses)
+
+    def test_story_failure_is_not_reported_as_created(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "tasks")
+        with patch("backend.story_planner.service._create_story_work_item", side_effect=ValueError("PAT invalid")):
+            updated = self.service.create_work_items(session["session_id"])
+        self.assertEqual(updated["current_stage"], "azure_devops_creation")
+        self.assertEqual(updated["created_summary"]["story"]["status"], "failed")
+        self.assertIn("PAT invalid", updated["created_summary"]["story"]["error"])
+
+    def test_creation_preview_uses_approved_story_and_tasks(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "tasks")
+        preview = self.service.get_creation_preview(session["session_id"])
+        self.assertEqual(preview["preview"]["story"]["type"], "User Story")
+        self.assertGreater(len(preview["preview"]["tasks"]), 0)
+
+    def test_creation_result_marks_real_created_statuses(self) -> None:
+        session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "tasks")
+        task_id = session["tasks"][0]["id"]
+        updated = self.service.store_creation_result(
+            session["session_id"],
+            {"azure_work_item_id": 4001, "status": "created"},
+            [{"id": task_id, "title": session["tasks"][0]["title"], "azure_work_item_id": 4002, "status": "created"}],
+        )
+        self.assertEqual(updated["created_story_id"], 4001)
+        self.assertEqual(updated["tasks"][0]["status"], "created")
+
+
+if __name__ == "__main__":
+    unittest.main()

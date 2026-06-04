@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "ai-gen-work-item-tools",
   "publisher": "AiIntelliCodegen",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "name": "ai-gen Work Item Tools",
   "description": "Convert Azure DevOps work items into ai-gen execution packets.",
   "public": false,
@@ -41,7 +41,7 @@
   ],
   "contributions": [
     {
-      "id": "ai-story-planner.work-item-tab",
+      "id": "ai-gen.work-item-tab",
       "type": "ms.vss-work-web.work-item-form-page",
       "targets": [
         "ms.vss-work-web.work-item-form"
@@ -49,17 +49,6 @@
       "properties": {
         "name": "AI Story Planner",
         "uri": "storyPlannerTab.html"
-      }
-    },
-    {
-      "id": "ai-gen.work-item-tab",
-      "type": "ms.vss-work-web.work-item-form-page",
-      "targets": [
-        "ms.vss-work-web.work-item-form"
-      ],
-      "properties": {
-        "name": "ai-gen",
-        "uri": "workItemTab.html"
       }
     },
     {

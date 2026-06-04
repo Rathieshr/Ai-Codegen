@@ -65,6 +65,8 @@ export type WorkItemContext = {
   title: string;
   type: string;
   description: string;
+  acceptanceCriteria: string;
+  comments: string[];
   project: string;
 };
 

@@ -34,6 +34,7 @@ export async function getCurrentWorkItemContext(): Promise<WorkItemContext> {
       'System.Title',
       'System.WorkItemType',
       'System.Description',
+      'Microsoft.VSTS.Common.AcceptanceCriteria',
     ]),
     'Timed out while loading Azure DevOps work item fields.'
   );
@@ -45,11 +46,14 @@ export async function getCurrentWorkItemContext(): Promise<WorkItemContext> {
     projectService.getProject(),
     'Timed out while reading the current Azure DevOps project.'
   );
+  const comments = await loadWorkItemComments(Number(fields['System.Id'] || 0), String(project?.name || SDK.getWebContext().project?.name || ''));
   return {
     id: Number(fields['System.Id'] || 0),
     title: String(fields['System.Title'] || ''),
     type: String(fields['System.WorkItemType'] || ''),
     description: String(fields['System.Description'] || ''),
+    acceptanceCriteria: String(fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || ''),
+    comments,
     project: String(project?.name || SDK.getWebContext().project?.name || ''),
   };
 }
@@ -215,5 +219,25 @@ async function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> 
     return await Promise.race([promise, timeout]);
   } finally {
     window.clearTimeout(timer);
+  }
+}
+
+async function loadWorkItemComments(workItemId: number, project: string): Promise<string[]> {
+  if (!workItemId || !project) {
+    return [];
+  }
+  try {
+    const client = getClient(WorkItemTrackingRestClient);
+    const response = await withTimeout(
+      client.getComments(workItemId, project, undefined, 10),
+      'Timed out while loading Azure DevOps comments.'
+    );
+    const comments = Array.isArray(response?.comments) ? response.comments : [];
+    return comments
+      .map((comment) => String(comment?.text || '').trim())
+      .filter(Boolean)
+      .slice(-5);
+  } catch {
+    return [];
   }
 }

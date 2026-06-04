@@ -41,7 +41,7 @@ function StoryPlannerTab() {
             window.sessionStorage.removeItem(SESSION_KEY);
           }
         }
-        setRequirement(session?.requirement || workItem.description || workItem.title || '');
+        setRequirement(session?.requirement || buildSeedRequirement(workItem));
         setView({
           loading: false,
           loadingMessage: '',
@@ -69,6 +69,17 @@ function StoryPlannerTab() {
   }, []);
 
   const currentStage = view.session?.current_stage;
+  const seedWarning = useMemo(() => {
+    if (!view.workItem || view.session) {
+      return '';
+    }
+    const hasDescription = Boolean(cleanText(view.workItem.description));
+    const hasAcceptance = Boolean(cleanText(view.workItem.acceptanceCriteria));
+    if (!hasDescription && !hasAcceptance) {
+      return 'This work item has no description or acceptance criteria yet. Review and confirm the requirement below before starting planning.';
+    }
+    return '';
+  }, [view.workItem, view.session]);
   const steps = useMemo(
     () => [
       { id: 'requirement', label: 'Requirement', done: Boolean(view.session) },
@@ -331,6 +342,7 @@ function StoryPlannerTab() {
 
       {!view.session ? (
         <section className="planner-card">
+          {seedWarning ? <div className="planner-subtle">{seedWarning}</div> : null}
           <div className="planner-label">Requirement</div>
           <textarea
             className="planner-textarea"
@@ -363,6 +375,50 @@ function StoryPlannerTab() {
       )}
     </main>
   );
+}
+
+function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {
+  if (!workItem) {
+    return '';
+  }
+  const parts: string[] = [];
+  const title = cleanText(workItem.title);
+  const description = htmlToText(workItem.description);
+  const acceptance = htmlToText(workItem.acceptanceCriteria);
+  const comments = (workItem.comments || []).map(htmlToText).map(cleanText).filter(Boolean);
+
+  if (title) {
+    parts.push(`Title: ${title}`);
+  }
+  if (description) {
+    parts.push(`Description: ${description}`);
+  }
+  if (acceptance) {
+    parts.push(`Acceptance Criteria: ${acceptance}`);
+  }
+  if (comments.length) {
+    parts.push(`Discussion Notes: ${comments.join(' ')}`);
+  }
+  return parts.join('\n\n');
+}
+
+function htmlToText(value: string): string {
+  return cleanText(
+    String(value || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<li>/gi, '- ')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+  );
+}
+
+function cleanText(value: string): string {
+  return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
 const rootNode = document.getElementById('root');

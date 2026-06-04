@@ -304,7 +304,7 @@ function StoryPlannerTab() {
     if (session.current_stage === 'azure_devops_creation') {
       return (
         <div className="planner-actions">
-          <button className="planner-button secondary" onClick={() => navigator.clipboard.writeText(session.code_generation_prompt)}>Copy Prompt</button>
+          <button className="planner-button secondary" onClick={() => void copyPrompt()}>Copy Prompt</button>
           <button className="planner-button" onClick={createItems}>Create Azure DevOps Work Items</button>
         </div>
       );
@@ -341,7 +341,7 @@ function StoryPlannerTab() {
       {view.loading ? <div className="planner-subtle">{view.loadingMessage}</div> : null}
 
       {!view.session ? (
-        <section className="planner-card">
+      <section className="planner-card">
           {seedWarning ? <div className="planner-subtle">{seedWarning}</div> : null}
           <div className="planner-label">Requirement</div>
           <textarea
@@ -375,6 +375,39 @@ function StoryPlannerTab() {
       )}
     </main>
   );
+
+  async function copyPrompt() {
+    const prompt = view.session?.code_generation_prompt || '';
+    if (!prompt) {
+      setView((current) => ({ ...current, error: 'Code-generation prompt is not ready yet.' }));
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(prompt);
+        return;
+      }
+    } catch {
+      // fall through to manual copy
+    }
+    const area = document.createElement('textarea');
+    area.value = prompt;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    try {
+      const copied = document.execCommand('copy');
+      document.body.removeChild(area);
+      if (copied) {
+        return;
+      }
+    } catch {
+      document.body.removeChild(area);
+    }
+    window.prompt('Copy the code-generation prompt:', prompt);
+  }
 }
 
 function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {

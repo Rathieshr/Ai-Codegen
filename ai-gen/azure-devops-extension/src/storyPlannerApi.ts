@@ -109,7 +109,10 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
   const taskResults: CreationResultPayload['tasks'] = [];
 
   try {
-    const story = await client.createWorkItem(storyPatch, workItem.project, preview.preview.story.type);
+    const story = await withTimeout(
+      client.createWorkItem(storyPatch, workItem.project, preview.preview.story.type),
+      'Timed out while creating the Azure DevOps User Story.'
+    );
     storyResult.azure_work_item_id = story.id;
     storyResult.status = 'created';
 
@@ -136,7 +139,10 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
         },
       });
       try {
-        const createdTask = await client.createWorkItem(taskPatch, workItem.project, task.type);
+        const createdTask = await withTimeout(
+          client.createWorkItem(taskPatch, workItem.project, task.type),
+          `Timed out while creating Azure DevOps task: ${task.title}`
+        );
         taskResults.push({
           id: task.id,
           title: task.title,

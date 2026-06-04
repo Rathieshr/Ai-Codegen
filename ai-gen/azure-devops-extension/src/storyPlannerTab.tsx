@@ -25,6 +25,8 @@ function StoryPlannerTab() {
   });
   const [requirement, setRequirement] = useState('');
   const [activeInput, setActiveInput] = useState('');
+  const [copyMessage, setCopyMessage] = useState('');
+  const [manualPrompt, setManualPrompt] = useState('');
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
@@ -114,7 +116,7 @@ function StoryPlannerTab() {
     if (session) {
       window.sessionStorage.setItem(SESSION_KEY, session.session_id);
       setActiveInput('');
-      setView((current) => ({ ...current, session }));
+      setView((current) => ({ ...current, session, preview: undefined }));
     }
   }
 
@@ -135,7 +137,7 @@ function StoryPlannerTab() {
     }
     const session = await withLoading('Saving edits...', () => editPlannerStage(view.session!.session_id, stage, payload));
     if (session) {
-      setView((current) => ({ ...current, session }));
+      setView((current) => ({ ...current, session, preview: undefined }));
     }
   }
 
@@ -146,7 +148,7 @@ function StoryPlannerTab() {
     );
     if (session) {
       setActiveInput('');
-      setView((current) => ({ ...current, session }));
+      setView((current) => ({ ...current, session, preview: undefined }));
     }
   }
 
@@ -157,15 +159,17 @@ function StoryPlannerTab() {
     );
     if (session) {
       setActiveInput('');
-      setView((current) => ({ ...current, session }));
+      setView((current) => ({ ...current, session, preview: undefined }));
     }
   }
 
   async function createItems() {
-    if (!view.session || !view.workItem) return;
-    const preview = await withLoading('Preparing Azure DevOps work items...', () => loadCreationPreview(view.session!.session_id));
-    if (!preview) return;
-    setView((current) => ({ ...current, preview }));
+    if (!view.session || !view.workItem || !view.preview) return;
+    const confirmed = window.confirm('Create the approved User Story and child Tasks in Azure DevOps?');
+    if (!confirmed) {
+      return;
+    }
+    const preview = view.preview;
     const result = await withLoading('Creating Azure DevOps work items...', () => createAzureDevOpsItems(preview, view.workItem!));
     if (!result) return;
     const session = await withLoading('Saving creation results...', () =>
@@ -173,6 +177,14 @@ function StoryPlannerTab() {
     );
     if (session) {
       setView((current) => ({ ...current, session, preview }));
+    }
+  }
+
+  async function prepareCreationPreview() {
+    if (!view.session) return;
+    const preview = await withLoading('Preparing Azure DevOps work items...', () => loadCreationPreview(view.session!.session_id));
+    if (preview) {
+      setView((current) => ({ ...current, preview }));
     }
   }
 
@@ -304,16 +316,20 @@ function StoryPlannerTab() {
     if (session.current_stage === 'azure_devops_creation') {
       return (
         <div className="planner-actions">
-          <button className="planner-button secondary" onClick={() => void copyPrompt()}>Copy Prompt</button>
-          <button className="planner-button" onClick={createItems}>Create Azure DevOps Work Items</button>
+          <button className="planner-button secondary" onClick={() => void copyPrompt()} disabled={view.loading}>Copy Prompt</button>
+          {!view.preview ? (
+            <button className="planner-button" onClick={prepareCreationPreview} disabled={view.loading}>Preview Azure DevOps Work Items</button>
+          ) : (
+            <button className="planner-button" onClick={createItems} disabled={view.loading}>Create Azure DevOps Work Items</button>
+          )}
         </div>
       );
     }
     return (
       <div className="planner-actions">
-        <button className="planner-button secondary" onClick={saveCurrentStage}>Edit</button>
-        <button className="planner-button secondary" onClick={regenerate}>Regenerate</button>
-        <button className="planner-button" onClick={approve}>Approve</button>
+        <button className="planner-button secondary" onClick={saveCurrentStage} disabled={view.loading}>Edit</button>
+        <button className="planner-button secondary" onClick={regenerate} disabled={view.loading}>Regenerate</button>
+        <button className="planner-button" onClick={approve} disabled={view.loading}>Approve</button>
       </div>
     );
   }
@@ -339,6 +355,7 @@ function StoryPlannerTab() {
 
       {view.error ? <div className="planner-error">{view.error}</div> : null}
       {view.loading ? <div className="planner-subtle">{view.loadingMessage}</div> : null}
+      {copyMessage ? <div className="planner-subtle">{copyMessage}</div> : null}
 
       {!view.session ? (
       <section className="planner-card">
@@ -371,12 +388,20 @@ function StoryPlannerTab() {
           ) : null}
           {renderStageBody(view.session)}
           {renderActions(view.session)}
+          {manualPrompt ? (
+            <>
+              <div className="planner-label">Manual Copy Prompt</div>
+              <textarea className="planner-textarea" readOnly value={manualPrompt} onFocus={(event) => event.currentTarget.select()} />
+            </>
+          ) : null}
         </section>
       )}
     </main>
   );
 
   async function copyPrompt() {
+    setCopyMessage('');
+    setManualPrompt('');
     const prompt = (view.session?.code_generation_prompt || buildFallbackPrompt(view.session)).trim();
     if (!prompt) {
       setView((current) => ({ ...current, error: 'Code-generation prompt is not ready yet.' }));
@@ -384,7 +409,8 @@ function StoryPlannerTab() {
     }
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(prompt);
+        await promiseWithTimeout(navigator.clipboard.writeText(prompt), 1500);
+        setCopyMessage('Code-generation prompt copied.');
         return;
       }
     } catch {
@@ -401,12 +427,14 @@ function StoryPlannerTab() {
       const copied = document.execCommand('copy');
       document.body.removeChild(area);
       if (copied) {
+        setCopyMessage('Code-generation prompt copied.');
         return;
       }
     } catch {
       document.body.removeChild(area);
     }
-    window.prompt('Copy the code-generation prompt:', prompt);
+    setManualPrompt(prompt);
+    setCopyMessage('Clipboard access was blocked. Select the prompt below to copy it manually.');
   }
 }
 
@@ -472,6 +500,18 @@ function buildFallbackPrompt(session?: PlannerSession): string {
     ...session.tasks.map((task) => `- ${task.title}: ${task.description}`),
   ];
   return sections.join('\n').trim();
+}
+
+async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error('Clipboard timed out.')), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 const rootNode = document.getElementById('root');

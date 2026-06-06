@@ -87,8 +87,13 @@ export async function storeCreationResult(sessionId: string, payload: CreationRe
   return postJson<PlannerSession>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}/creation-result`, payload);
 }
 
-export async function createAzureDevOpsItems(preview: CreationPreview, workItem: WorkItemContext): Promise<CreationResultPayload> {
+export async function createAzureDevOpsItems(
+  preview: CreationPreview,
+  workItem: WorkItemContext,
+  onProgress: (message: string) => void = () => undefined
+): Promise<CreationResultPayload> {
   const collectionUri = workItem.collectionUri || getCollectionUri();
+  onProgress('Requesting Azure DevOps access token.');
   const accessToken = await withTimeout(SDK.getAccessToken(), 'Timed out while requesting Azure DevOps access token.');
   if (!collectionUri || !workItem.project) {
     throw new Error('Azure DevOps project context is unavailable.');
@@ -97,6 +102,7 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
   const taskResults: CreationResultPayload['tasks'] = [];
 
   try {
+    onProgress(`Creating User Story: ${preview.preview.story.title}`);
     const storyId = await createWorkItemViaRest(
       collectionUri,
       workItem.project,
@@ -108,9 +114,11 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
     );
     storyResult.azure_work_item_id = storyId;
     storyResult.status = 'created';
+    onProgress(`Created User Story #${storyId}.`);
 
     for (const task of preview.preview.tasks) {
       try {
+        onProgress(`Creating Task: ${task.title}`);
         const createdTaskId = await createWorkItemViaRest(
           collectionUri,
           workItem.project,
@@ -126,7 +134,9 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
           azure_work_item_id: createdTaskId,
           status: 'created',
         });
+        onProgress(`Created Task #${createdTaskId}: ${task.title}`);
       } catch (error) {
+        onProgress(`Task failed: ${task.title} - ${error instanceof Error ? error.message : String(error)}`);
         taskResults.push({
           id: task.id,
           title: task.title,
@@ -139,6 +149,7 @@ export async function createAzureDevOpsItems(preview: CreationPreview, workItem:
   } catch (error) {
     storyResult.status = 'failed';
     storyResult.error = error instanceof Error ? error.message : String(error);
+    onProgress(`User Story creation failed: ${storyResult.error}`);
     for (const task of preview.preview.tasks) {
       taskResults.push({
         id: task.id,
@@ -244,11 +255,11 @@ async function createWorkItemViaRest(
       path: '/relations/-',
       value: {
         rel: 'System.LinkTypes.Hierarchy-Reverse',
-        url: `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workItems/${parentWorkItemId}`,
+        url: `${trimTrailingSlash(collectionUri)}/_apis/wit/workItems/${parentWorkItemId}`,
       },
     });
   }
-  const typeName = encodeURIComponent(`$${type}`);
+  const typeName = `$${encodeURIComponent(type)}`;
   const response = await withTimeout(
     fetch(
       `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workitems/${typeName}?api-version=7.1`,
@@ -264,7 +275,13 @@ async function createWorkItemViaRest(
     timeoutMessage || `Timed out while creating Azure DevOps ${type}.`
   );
   if (!response.ok) {
-    throw new Error(`Azure DevOps returned HTTP ${response.status} while creating ${type}.`);
+    let body = '';
+    try {
+      body = await response.text();
+    } catch {
+      body = '';
+    }
+    throw new Error(`Azure DevOps returned HTTP ${response.status} while creating ${type}${body ? `: ${body.slice(0, 600)}` : ''}.`);
   }
   const body = await response.json() as { id: number };
   return body.id;

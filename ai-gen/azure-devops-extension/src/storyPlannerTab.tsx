@@ -28,6 +28,14 @@ function StoryPlannerTab() {
   const [copyMessage, setCopyMessage] = useState('');
   const [manualPrompt, setManualPrompt] = useState('');
 
+  function addActivity(message: string) {
+    const timestamp = new Date().toLocaleTimeString();
+    setView((current) => ({
+      ...current,
+      activity: [`${timestamp} - ${message}`, ...(current.activity || [])].slice(0, 8),
+    }));
+  }
+
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
     SDK.ready().then(async () => {
@@ -96,11 +104,13 @@ function StoryPlannerTab() {
 
   async function withLoading<T>(message: string, action: () => Promise<T>) {
     setView((current) => ({ ...current, loading: true, loadingMessage: message, error: '' }));
+    addActivity(message);
     try {
       const result = await action();
       setView((current) => ({ ...current, loading: false, loadingMessage: '', error: '' }));
       return result;
     } catch (error) {
+      addActivity(`Failed: ${error instanceof Error ? error.message : String(error)}`);
       setView((current) => ({
         ...current,
         loading: false,
@@ -170,8 +180,16 @@ function StoryPlannerTab() {
       return;
     }
     const preview = view.preview;
-    const result = await withLoading('Creating Azure DevOps work items...', () => createAzureDevOpsItems(preview, view.workItem!));
+    const result = await withLoading('Creating Azure DevOps work items...', () => createAzureDevOpsItems(preview, view.workItem!, addActivity));
     if (!result) return;
+    if (result.story.status !== 'created') {
+      setView((current) => ({
+        ...current,
+        loading: false,
+        loadingMessage: '',
+        error: result.story.error || 'Azure DevOps did not create the User Story.',
+      }));
+    }
     const session = await withLoading('Saving creation results...', () =>
       storeCreationResult(view.session!.session_id, result)
     );
@@ -184,6 +202,7 @@ function StoryPlannerTab() {
     if (!view.session) return;
     const preview = await withLoading('Preparing Azure DevOps work items...', () => loadCreationPreview(view.session!.session_id));
     if (preview) {
+      addActivity(`Prepared Azure DevOps preview with ${preview.preview.tasks.length} child task(s).`);
       setView((current) => ({ ...current, preview }));
     }
   }
@@ -388,6 +407,14 @@ function StoryPlannerTab() {
           ) : null}
           {renderStageBody(view.session)}
           {renderActions(view.session)}
+          {view.activity?.length ? (
+            <>
+              <div className="planner-label">Activity</div>
+              <ul className="planner-list">
+                {view.activity.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </>
+          ) : null}
           {manualPrompt ? (
             <>
               <div className="planner-label">Manual Copy Prompt</div>
@@ -401,16 +428,17 @@ function StoryPlannerTab() {
 
   async function copyPrompt() {
     setCopyMessage('');
-    setManualPrompt('');
     const prompt = (view.session?.code_generation_prompt || buildFallbackPrompt(view.session)).trim();
     if (!prompt) {
       setView((current) => ({ ...current, error: 'Code-generation prompt is not ready yet.' }));
       return;
     }
+    setManualPrompt(prompt);
     try {
       if (navigator.clipboard?.writeText) {
         await promiseWithTimeout(navigator.clipboard.writeText(prompt), 1500);
-        setCopyMessage('Code-generation prompt copied.');
+        setCopyMessage('Code-generation prompt copied. The prompt is also shown below.');
+        addActivity('Code-generation prompt copied and shown.');
         return;
       }
     } catch {
@@ -427,14 +455,15 @@ function StoryPlannerTab() {
       const copied = document.execCommand('copy');
       document.body.removeChild(area);
       if (copied) {
-        setCopyMessage('Code-generation prompt copied.');
+        setCopyMessage('Code-generation prompt copied. The prompt is also shown below.');
+        addActivity('Code-generation prompt copied and shown.');
         return;
       }
     } catch {
       document.body.removeChild(area);
     }
-    setManualPrompt(prompt);
     setCopyMessage('Clipboard access was blocked. Select the prompt below to copy it manually.');
+    addActivity('Clipboard access was blocked; manual prompt shown.');
   }
 }
 

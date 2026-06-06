@@ -101,4 +101,5 @@ export type PlannerViewState = {
   session?: PlannerSession;
   workItem?: WorkItemContext;
   preview?: CreationPreview;
+  activity?: string[];
 };

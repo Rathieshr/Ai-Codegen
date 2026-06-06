@@ -340,13 +340,18 @@ function StoryPlannerTab() {
   }
 
   function renderActions(session: PlannerSession) {
+    const promptActions = session.code_generation_prompt ? (
+      <>
+        <button className="planner-button secondary" onClick={() => void copyPrompt()} disabled={view.loading}>Copy Prompt</button>
+      </>
+    ) : null;
     if (session.current_stage === 'success') {
-      return null;
+      return promptActions ? <div className="planner-actions">{promptActions}</div> : null;
     }
     if (session.current_stage === 'azure_devops_creation') {
       return (
         <div className="planner-actions">
-          <button className="planner-button secondary" onClick={() => void copyPrompt()} disabled={view.loading}>Copy Prompt</button>
+          {promptActions}
           {!view.preview ? (
             <button className="planner-button" onClick={prepareCreationPreview} disabled={view.loading}>Preview Azure DevOps Work Items</button>
           ) : (
@@ -357,6 +362,7 @@ function StoryPlannerTab() {
     }
     return (
       <div className="planner-actions">
+        {promptActions}
         <button className="planner-button secondary" onClick={saveCurrentStage} disabled={view.loading}>Edit</button>
         <button className="planner-button secondary" onClick={regenerate} disabled={view.loading}>Regenerate</button>
         <button className="planner-button" onClick={approve} disabled={view.loading}>Approve</button>
@@ -476,6 +482,7 @@ function StoryPlannerTab() {
     setCopyMessage('Clipboard access was blocked. Select the prompt below to copy it manually.');
     addActivity('Clipboard access was blocked; manual prompt shown.');
   }
+
 }
 
 function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {

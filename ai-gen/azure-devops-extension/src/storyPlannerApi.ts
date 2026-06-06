@@ -23,6 +23,15 @@ type CreationResultPayload = {
   }>;
 };
 
+export function buildVsCodePromptUri(session: PlannerSession): string {
+  const backendUrl = BASE_URL.replace(/\/story-planner$/, '');
+  const params = new URLSearchParams({
+    backendUrl,
+    sessionId: session.session_id,
+  });
+  return `vscode://rathiesh.ai-gen-vscode/loadStoryPrompt?${params.toString()}`;
+}
+
 export async function getCurrentWorkItemContext(): Promise<WorkItemContext> {
   const service = await withTimeout(
     SDK.getService<IWorkItemFormService>(WorkItemTrackingServiceIds.WorkItemFormService),

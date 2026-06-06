@@ -1,103 +1,62 @@
 import * as vscode from 'vscode';
 
-export type SidebarRequestOptions = {
-  includeSelection: boolean;
-  includeFile: boolean;
+export type PlannerTask = {
+  id: string;
+  title: string;
+  description: string;
+  estimated_effort?: string;
+  status: 'pending' | 'creating' | 'created' | 'failed';
+  azure_work_item_id?: number | null;
+  error?: string | null;
 };
 
-export type SidebarState = {
-  backendMode: string;
-  activeBackendSource: string;
-  backendUrl: string;
-  backendReason: string;
+export type PlannerSession = {
+  session_id: string;
+  requirement: string;
+  current_stage: 'refined_story' | 'acceptance_criteria' | 'tasks' | 'azure_devops_creation' | 'success';
+  story: {
+    title: string;
+    description: string;
+    business_value: string;
+  };
+  acceptance_criteria: string[];
+  tasks: PlannerTask[];
+  code_generation_prompt: string;
+  question: string;
+  user_input_hint: string;
+  story_approved: boolean;
+  acceptance_approved: boolean;
+  tasks_approved: boolean;
+  created_story_id?: number | null;
+  created_story_status?: 'pending' | 'creating' | 'created' | 'failed';
+  created_story_error?: string | null;
+  created_tasks: Array<{ title: string; status: string; azure_work_item_id?: number | null; error?: string }>;
+  created_summary?: {
+    story?: { azure_work_item_id?: number | null; status?: string };
+    tasks?: Array<{ title: string; status: string; azure_work_item_id?: number | null; error?: string }>;
+  };
+  error_message?: string;
+  updated_at?: string;
+};
+
+export type PlannerViewState = {
   backendStatus: string;
-  codexAvailable: boolean;
-  localEnabled: boolean;
-  localAvailable: boolean;
-  localProvider: string;
-  localModel: string;
-  localBaseUrl: string;
-  cloudEnabled: boolean;
-  refinerEnabled: boolean;
-  refinerProvider: string;
-  refinerModel: string;
-  refinerConfigured: boolean;
-  warnings: string[];
-  statusMessage: string;
+  backendUrl: string;
+  loading: boolean;
+  loadingMessage: string;
   errorMessage: string;
-  latest?: SidebarResult;
-};
-
-export type SidebarResult = {
-  query: string;
-  prompt: string;
-  generatedAt: string;
-  loadedHandoff?: string;
-  matchedLogic: string;
-  tokenEstimate: string;
-  executionTarget: string;
-  executionReason: string;
-  promptMode?: string;
-  promptModeReason?: string;
-  executionConfidence?: string;
-  executionConfidenceSignals?: string;
-  selectedExecutionFiles?: string;
-  driftDetected?: boolean;
-  validationDriftScore?: string;
-  constraintViolations?: string;
-  riskyChanges?: string;
-  validationSummary?: string;
-  retryRequired?: boolean;
-  retryReason?: string;
-  retryStrategy?: string;
-  correctedExecutionPrompt?: string;
-  semanticMappingApplied?: boolean;
-  refinementUsed?: boolean;
-  refinementSource?: string;
-  refinementProvider?: string;
-  refinementReason?: string;
-  phiUsed?: boolean;
-  phiStatus?: string;
-  refinedBaseFlow?: string;
-  refinedVariant?: string;
-  refinedSurface?: string;
-  refinedFields?: string;
-  refinedValidations?: string;
-  refinedScope?: string;
-  refinedActors?: string;
-  refinedStates?: string;
-  refinementUnknowns?: string;
-  refinementConfidence?: string;
-  availableTargets: string;
-  planningEnabled: boolean;
-  planSummary: string;
-  resolvedRepoId?: string;
-  resolvedBranchName?: string;
-  repoIdentityMode?: string;
-  retrievalBiasApplied?: boolean;
-  sessionBiasSummary?: string;
-  linkedFlows?: string;
-  impactedComponents?: string;
-  constraints?: string;
-  plan?: string;
-  flow?: string;
-  criticalSteps?: string;
-  localOutput?: string;
+  session?: PlannerSession;
 };
 
 type SidebarHandlers = {
-  previewTask(query: string, options: SidebarRequestOptions): Promise<SidebarState>;
-  explainTask(options: SidebarRequestOptions): Promise<SidebarState>;
-  copyPrompt(): Promise<SidebarState>;
-  sendToCodex(): Promise<SidebarState>;
-  refreshHandoff(): Promise<SidebarState>;
-  reloadPipeline(): Promise<SidebarState>;
-  snapshotExecution(): Promise<SidebarState>;
-  validateExecution(): Promise<SidebarState>;
-  retryExecution(): Promise<SidebarState>;
-  checkBackend(): Promise<SidebarState>;
-  refreshStatus(): Promise<SidebarState>;
-  getState(): SidebarState;
+  startPlanning(requirement: string): Promise<PlannerViewState>;
+  saveEdits(stage: string, payload: Record<string, unknown>): Promise<PlannerViewState>;
+  regenerate(stage: string, userInput: string): Promise<PlannerViewState>;
+  approve(stage: string): Promise<PlannerViewState>;
+  copyPrompt(): Promise<PlannerViewState>;
+  createWorkItems(): Promise<PlannerViewState>;
+  refreshState(): Promise<PlannerViewState>;
+  getState(): PlannerViewState;
 };
 
 export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
@@ -119,83 +78,70 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
     this.postState(this.handlers.getState());
 
-    webviewView.webview.onDidReceiveMessage(async (message) => {
+    webviewView.webview.onDidReceiveMessage(async (message: { type: string; payload?: Record<string, unknown> }) => {
       try {
         await this.handleMessage(message);
       } catch (error) {
         const messageText = error instanceof Error ? error.message : String(error);
         this.postState({
           ...this.handlers.getState(),
+          loading: false,
+          loadingMessage: '',
           errorMessage: messageText,
-          statusMessage: 'Request failed.'
         });
         vscode.window.showErrorMessage(messageText);
       }
     });
   }
 
-  public update(state: SidebarState): void {
+  public update(state: PlannerViewState): void {
     this.postState(state);
   }
 
-  private async handleMessage(message: { type: string; query?: string; includeSelection?: boolean; includeFile?: boolean }) {
-    const options = {
-      includeSelection: message.includeSelection !== false,
-      includeFile: message.includeFile !== false
-    };
-
+  private async handleMessage(message: { type: string; payload?: Record<string, unknown> }) {
     this.postState({
       ...this.handlers.getState(),
-      statusMessage: 'Working...',
-      errorMessage: ''
+      loading: true,
+      loadingMessage: 'Working...',
+      errorMessage: '',
     });
 
-    let state: SidebarState;
+    const payload = message.payload || {};
+    let state: PlannerViewState;
     switch (message.type) {
-      case 'previewTask':
-        state = await this.handlers.previewTask((message.query || '').trim(), options);
+      case 'startPlanning':
+        state = await this.handlers.startPlanning(String(payload.requirement || ''));
         break;
-      case 'explainTask':
-        state = await this.handlers.explainTask(options);
+      case 'saveEdits':
+        state = await this.handlers.saveEdits(String(payload.stage || ''), payload.values as Record<string, unknown>);
+        break;
+      case 'regenerate':
+        state = await this.handlers.regenerate(String(payload.stage || ''), String(payload.userInput || ''));
+        break;
+      case 'approve':
+        state = await this.handlers.approve(String(payload.stage || ''));
         break;
       case 'copyPrompt':
         state = await this.handlers.copyPrompt();
         break;
-      case 'sendToCodex':
-        state = await this.handlers.sendToCodex();
+      case 'createWorkItems':
+        state = await this.handlers.createWorkItems();
         break;
-      case 'refreshHandoff':
-        state = await this.handlers.refreshHandoff();
-        break;
-      case 'reloadPipeline':
-        state = await this.handlers.reloadPipeline();
-        break;
-      case 'snapshot':
-        state = await this.handlers.snapshotExecution();
-        break;
-      case 'validateExecution':
-        state = await this.handlers.validateExecution();
-        break;
-      case 'retryExecution':
-        state = await this.handlers.retryExecution();
-        break;
-      case 'checkBackend':
-        state = await this.handlers.checkBackend();
-        break;
-      case 'refreshStatus':
-        state = await this.handlers.refreshStatus();
+      case 'refreshState':
+        state = await this.handlers.refreshState();
         break;
       default:
         state = {
           ...this.handlers.getState(),
-          errorMessage: `Unknown sidebar action: ${message.type}`,
-          statusMessage: 'Unknown action.'
+          loading: false,
+          loadingMessage: '',
+          errorMessage: `Unknown action: ${message.type}`,
         };
     }
     this.postState(state);
   }
 
-  private postState(state: SidebarState): void {
+  private postState(state: PlannerViewState): void {
     this.view?.webview.postMessage({ type: 'state', state });
   }
 
@@ -207,261 +153,312 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
-  <title>ai-gen</title>
+  <title>AI Story Planner</title>
   <style>
-    body { color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); margin: 0; padding: 12px; }
-    h1 { font-size: 18px; margin: 0 0 10px; }
-    h2 { font-size: 13px; margin: 16px 0 8px; color: var(--vscode-descriptionForeground); text-transform: uppercase; letter-spacing: 0; }
-    textarea { width: 100%; min-height: 86px; box-sizing: border-box; resize: vertical; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); border-radius: 4px; padding: 8px; }
-    button { margin: 4px 4px 4px 0; padding: 6px 8px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 4px; cursor: pointer; }
+    body { margin: 0; padding: 16px; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
+    h1,h2,h3 { margin: 0; }
+    .page { display: grid; gap: 16px; }
+    .hero { display: grid; gap: 6px; }
+    .muted { color: var(--vscode-descriptionForeground); }
+    .card { border: 1px solid var(--vscode-input-border); border-radius: 6px; padding: 14px; background: var(--vscode-sideBar-background); display: grid; gap: 12px; }
+    .stage-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+    .stage-chip { border: 1px solid var(--vscode-input-border); border-radius: 6px; padding: 8px; background: var(--vscode-editor-background); font-size: 12px; }
+    .stage-chip.active { border-color: var(--vscode-focusBorder); }
+    .stage-chip.done { background: color-mix(in srgb, var(--vscode-button-background) 18%, transparent); }
+    .label { font-size: 12px; color: var(--vscode-descriptionForeground); }
+    textarea, input[type="text"] { width: 100%; box-sizing: border-box; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); border-radius: 4px; padding: 8px; }
+    textarea { min-height: 96px; resize: vertical; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { border: 0; border-radius: 4px; padding: 7px 12px; cursor: pointer; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
     button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
-    button:hover { background: var(--vscode-button-hoverBackground); }
-    label { display: block; margin: 6px 0; }
-    .status { border: 1px solid var(--vscode-sideBarSectionHeader-border); border-radius: 6px; padding: 8px; background: var(--vscode-editor-background); }
-    .meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; }
-    .key { color: var(--vscode-descriptionForeground); }
-    .message { margin-top: 8px; color: var(--vscode-descriptionForeground); }
-    .error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
-    pre { white-space: pre-wrap; word-break: break-word; background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 6px; max-height: 240px; overflow: auto; }
-    details { margin: 8px 0; border-top: 1px solid var(--vscode-sideBarSectionHeader-border); padding-top: 8px; }
-    summary { cursor: pointer; font-weight: 600; }
-    .empty { color: var(--vscode-descriptionForeground); font-style: italic; }
-    .card { border: 1px solid var(--vscode-sideBarSectionHeader-border); border-radius: 6px; padding: 8px; background: var(--vscode-editor-background); margin-top: 12px; }
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); margin-left: 6px; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    ul { margin: 0; padding-left: 18px; }
+    .status { font-size: 12px; color: var(--vscode-descriptionForeground); }
+    .error { border: 1px solid var(--vscode-errorForeground); color: var(--vscode-errorForeground); border-radius: 6px; padding: 10px; }
+    .success { border: 1px solid var(--vscode-testing-iconPassed); border-radius: 6px; padding: 10px; }
+    .task { border: 1px solid var(--vscode-input-border); border-radius: 6px; padding: 10px; display: grid; gap: 8px; }
+    .task-header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .two-col { display: grid; gap: 12px; }
+    .readout { white-space: pre-wrap; border: 1px solid var(--vscode-input-border); border-radius: 6px; padding: 10px; background: var(--vscode-textCodeBlock-background); }
   </style>
 </head>
 <body>
-  <h1>ai-gen</h1>
-  <section class="status">
-    <div class="meta">
-      <span class="key">Backend</span><span id="backendStatus">unknown</span>
-      <span class="key">Backend Mode</span><span id="backendMode">auto</span>
-      <span class="key">Active Backend</span><span id="activeBackend">none</span>
-      <span class="key">Backend URL</span><span id="backendUrl">not available</span>
-      <span class="key">Backend Reason</span><span id="backendReason">not resolved</span>
-      <span class="key">Codex</span><span id="codexStatus">unknown</span>
-      <span class="key">Local</span><span id="localStatus">unknown</span>
-      <span class="key">Ollama</span><span id="ollamaStatus">unknown</span>
-      <span class="key">Model</span><span id="modelStatus">unknown</span>
-      <span class="key">Base URL</span><span id="baseUrlStatus">unknown</span>
-      <span class="key">Cloud</span><span id="cloudStatus">unknown</span>
-      <span class="key">Refiner</span><span id="refinerStatus">unknown</span>
-      <span class="key">Provider</span><span id="refinerProviderStatus">unknown</span>
-      <span class="key">Refiner Model</span><span id="refinerModelStatus">unknown</span>
-      <span class="key">Configured</span><span id="refinerConfiguredStatus">unknown</span>
-    </div>
-    <div id="warnings"></div>
-    <div id="statusMessage" class="message"></div>
-    <div id="errorMessage" class="error"></div>
-  </section>
-
-  <h2>Task</h2>
-  <textarea id="query" placeholder="Add OTP login"></textarea>
-  <label><input id="includeSelection" type="checkbox" checked> Include current selection</label>
-  <label><input id="includeFile" type="checkbox" checked> Include current file</label>
-  <div>
-    <button id="preview">Preview</button>
-    <button id="explain" class="secondary">Explain</button>
-    <button id="copy" class="secondary">Copy Packet</button>
-    <button id="send">Send to Codex</button>
-    <button id="refreshHandoff" class="secondary">Load / Refresh Handoff</button>
-    <button id="reloadPipeline" class="secondary">Refresh</button>
-    <button id="snapshot" class="secondary">Snapshot</button>
-    <button id="validate" class="secondary">Validate Last Execution</button>
-    <button id="retry" class="secondary">Retry Execution</button>
-    <button id="check" class="secondary">Check Backend</button>
-  </div>
-
-  <h2>Execution</h2>
-  <section id="result" class="empty">No prompt generated yet.</section>
-
+  <div id="app" class="page"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const $ = (id) => document.getElementById(id);
+    const app = document.getElementById('app');
+    let latestState = {
+      backendStatus: 'unknown',
+      backendUrl: '',
+      loading: false,
+      loadingMessage: '',
+      errorMessage: '',
+      session: undefined,
+    };
 
-    function options() {
-      return {
-        includeSelection: $('includeSelection').checked,
-        includeFile: $('includeFile').checked
-      };
+    const stageLabels = {
+      requirement: 'Requirement',
+      refined_story: 'Refined Story',
+      acceptance_criteria: 'Acceptance Criteria',
+      tasks: 'Tasks',
+      azure_devops_creation: 'Azure DevOps',
+      success: 'Success Summary',
+    };
+
+    function post(type, payload = {}) {
+      vscode.postMessage({ type, payload });
     }
 
-    function post(type) {
-      vscode.postMessage({ type, query: $('query').value, ...options() });
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
     }
 
-    $('preview').addEventListener('click', () => post('previewTask'));
-    $('explain').addEventListener('click', () => post('explainTask'));
-    $('copy').addEventListener('click', () => post('copyPrompt'));
-    $('send').addEventListener('click', () => post('sendToCodex'));
-    $('refreshHandoff').addEventListener('click', () => post('refreshHandoff'));
-    $('reloadPipeline').addEventListener('click', () => post('reloadPipeline'));
-    $('snapshot').addEventListener('click', () => post('snapshot'));
-    $('validate').addEventListener('click', () => post('validateExecution'));
-    $('retry').addEventListener('click', () => post('retryExecution'));
-    $('check').addEventListener('click', () => post('checkBackend'));
+    function renderRequirementStart() {
+      return \`
+        <div class="card">
+          <div class="hero">
+            <h1>AI Story Planner</h1>
+            <div class="muted">Turn a requirement into an approved user story, acceptance criteria, tasks, and Azure DevOps work items.</div>
+          </div>
+          <div class="label">Requirement</div>
+          <textarea id="requirementInput" placeholder="As a customer, I want OTP login so I can securely access my account."></textarea>
+          <div class="actions">
+            <button id="startBtn">Start Planning</button>
+            <button class="secondary" id="refreshBtn">Refresh</button>
+          </div>
+        </div>
+      \`;
+    }
 
-    window.addEventListener('message', (event) => {
-      if (event.data?.type !== 'state') return;
-      renderState(event.data.state);
-    });
+    function stageRow(session) {
+      const order = ['requirement', 'refined_story', 'acceptance_criteria', 'tasks', 'azure_devops_creation', 'success'];
+      return '<div class="stage-row">' + order.map((stage) => {
+        const done =
+          stage === 'requirement' ? true :
+          stage === 'refined_story' ? session.story_approved :
+          stage === 'acceptance_criteria' ? session.acceptance_approved :
+          stage === 'tasks' ? session.tasks_approved :
+          stage === 'azure_devops_creation' ? session.current_stage === 'success' || session.current_stage === 'azure_devops_creation' :
+          session.current_stage === 'success';
+        const active = session.current_stage === stage;
+        const status =
+          stage === 'requirement' ? 'Entered' :
+          stage === 'azure_devops_creation' && session.current_stage === 'azure_devops_creation' ? 'Ready' :
+          done ? 'Approved' : active ? 'Current' : 'Pending';
+        return \`<div class="stage-chip \${done ? 'done' : ''} \${active ? 'active' : ''}"><strong>\${stageLabels[stage]}</strong><div class="status">\${status}</div></div>\`;
+      }).join('') + '</div>';
+    }
 
-    function renderState(state) {
-      $('backendStatus').textContent = state.backendStatus === 'connected' ? 'Connected' : 'Disconnected';
-      $('backendMode').textContent = state.backendMode || 'auto';
-      $('activeBackend').textContent = state.activeBackendSource || 'none';
-      $('backendUrl').textContent = state.backendUrl || 'Not available';
-      $('backendReason').textContent = state.backendReason || '';
-      $('codexStatus').textContent = state.codexAvailable ? 'Available' : 'Unavailable';
-      $('localStatus').textContent = state.localEnabled ? 'Enabled' : 'Disabled';
-      $('ollamaStatus').textContent = state.localProvider === 'ollama'
-        ? (state.localAvailable ? 'Reachable' : 'Unreachable')
-        : 'Not configured';
-      $('modelStatus').textContent = state.localModel || 'Not configured';
-      $('baseUrlStatus').textContent = state.localBaseUrl || 'Not configured';
-      $('cloudStatus').textContent = state.cloudEnabled ? 'Enabled' : 'Disabled';
-      $('refinerStatus').textContent = state.refinerEnabled ? 'Enabled' : 'Disabled';
-      $('refinerProviderStatus').textContent = state.refinerProvider || 'Not configured';
-      $('refinerModelStatus').textContent = state.refinerModel || 'Not configured';
-      $('refinerConfiguredStatus').textContent = state.refinerConfigured ? 'Yes' : 'No';
-      $('warnings').innerHTML = renderWarnings(state.warnings || []);
-      $('statusMessage').textContent = state.statusMessage || '';
-      $('errorMessage').textContent = state.errorMessage || '';
-      const backendConnected = state.backendStatus === 'connected';
-      $('preview').disabled = !backendConnected;
-      $('explain').disabled = !backendConnected;
-      $('refreshHandoff').disabled = !backendConnected;
-      $('reloadPipeline').disabled = !backendConnected;
-      $('snapshot').disabled = !backendConnected;
-      $('validate').disabled = !backendConnected;
-      $('retry').disabled = !backendConnected;
-      $('check').disabled = false;
+    function storyFields(session) {
+      return \`
+        <div class="two-col">
+          <div>
+            <div class="label">Title</div>
+            <input type="text" id="storyTitle" value="\${escapeHtml(session.story.title)}" />
+          </div>
+          <div>
+            <div class="label">Business Value</div>
+            <textarea id="storyBusinessValue">\${escapeHtml(session.story.business_value)}</textarea>
+          </div>
+          <div>
+            <div class="label">Description</div>
+            <textarea id="storyDescription">\${escapeHtml(session.story.description)}</textarea>
+          </div>
+        </div>
+      \`;
+    }
 
-      if (!state.latest) {
-        $('result').className = 'empty';
-        $('result').textContent = 'No prompt generated yet.';
+    function acceptanceFields(session) {
+      return \`
+        <div>
+          <div class="label">Acceptance Criteria</div>
+          <textarea id="acceptanceCriteriaInput">\${escapeHtml((session.acceptance_criteria || []).join('\\n'))}</textarea>
+        </div>
+      \`;
+    }
+
+    function taskFields(session) {
+      return '<div class="two-col">' + (session.tasks || []).map((task, index) => \`
+        <div class="task">
+          <div class="task-header">
+            <strong>Task \${index + 1}</strong>
+            <span class="status">\${task.azure_work_item_id ? 'Created in Azure DevOps' : task.status === 'failed' ? 'Failed' : 'Not created yet'}</span>
+          </div>
+          <div>
+            <div class="label">Task Title</div>
+            <input type="text" data-task-field="title" data-task-index="\${index}" value="\${escapeHtml(task.title)}" />
+          </div>
+          <div>
+            <div class="label">Task Description</div>
+            <textarea data-task-field="description" data-task-index="\${index}">\${escapeHtml(task.description)}</textarea>
+          </div>
+          <div>
+            <div class="label">Estimated Effort</div>
+            <input type="text" data-task-field="estimated_effort" data-task-index="\${index}" value="\${escapeHtml(task.estimated_effort || '')}" />
+          </div>
+        </div>
+      \`).join('') + '</div>';
+    }
+
+    function promptView(session) {
+      return \`
+        <div>
+          <div class="label">Final Code Generation Prompt</div>
+          <div class="readout">\${escapeHtml(session.code_generation_prompt || '')}</div>
+        </div>
+      \`;
+    }
+
+    function successView(session) {
+      const storyLine = session.created_summary?.story?.azure_work_item_id
+        ? 'User Story #' + session.created_summary.story.azure_work_item_id + ' created.'
+        : 'User Story was not created.';
+      const taskLines = (session.created_summary?.tasks || []).map((task) => '<li>' + escapeHtml(task.title + ': ' + (task.status === 'created' ? 'Created #' + task.azure_work_item_id : 'Failed')) + '</li>').join('');
+      return \`
+        <div class="success">
+          <strong>Work item creation finished.</strong>
+          <div class="muted">\${escapeHtml(storyLine)}</div>
+          <ul>\${taskLines || '<li>No child tasks were created.</li>'}</ul>
+        </div>
+      \`;
+    }
+
+    function actionButtons(session) {
+      if (session.current_stage === 'refined_story') {
+        return \`
+          <div class="actions">
+            <button id="saveStoryBtn" class="secondary">Edit</button>
+            <button id="regenStoryBtn" class="secondary">Regenerate</button>
+            <button id="approveStoryBtn">Approve</button>
+          </div>
+        \`;
+      }
+      if (session.current_stage === 'acceptance_criteria') {
+        return \`
+          <div class="actions">
+            <button id="saveAcceptanceBtn" class="secondary">Edit</button>
+            <button id="regenAcceptanceBtn" class="secondary">Regenerate</button>
+            <button id="approveAcceptanceBtn">Approve</button>
+          </div>
+        \`;
+      }
+      if (session.current_stage === 'tasks') {
+        return \`
+          <div class="actions">
+            <button id="saveTasksBtn" class="secondary">Edit</button>
+            <button id="regenTasksBtn" class="secondary">Regenerate</button>
+            <button id="approveTasksBtn">Approve</button>
+          </div>
+        \`;
+      }
+      if (session.current_stage === 'azure_devops_creation') {
+        return \`
+          <div class="actions">
+            <button id="copyPromptBtn" class="secondary">Copy Prompt</button>
+            <button id="createWorkItemsBtn" class="secondary">Create Azure DevOps Work Items</button>
+          </div>
+        \`;
+      }
+      return '<div class="actions"><button id="refreshBtn">Refresh</button></div>';
+    }
+
+    function currentStageBody(session) {
+      if (session.current_stage === 'refined_story') return storyFields(session);
+      if (session.current_stage === 'acceptance_criteria') return acceptanceFields(session);
+      if (session.current_stage === 'tasks') return taskFields(session);
+      if (session.current_stage === 'azure_devops_creation') return promptView(session);
+      return successView(session);
+    }
+
+    function sessionView(session) {
+      return \`
+        <div class="card">
+          <div class="hero">
+            <h1>AI Story Planner</h1>
+            <div class="muted">Guide one requirement through story approval, task planning, and Azure DevOps creation.</div>
+          </div>
+          \${stageRow(session)}
+          <div>
+            <div class="label">Current Question</div>
+            <div>\${escapeHtml(session.question || '')}</div>
+          </div>
+          \${(session.current_stage === 'refined_story' || session.current_stage === 'acceptance_criteria' || session.current_stage === 'tasks') ? \`
+            <div>
+              <div class="label">Your Input</div>
+              <textarea id="activeUserInput" placeholder="\${escapeHtml(session.user_input_hint || '')}"></textarea>
+            </div>
+          \` : ''}
+          \${currentStageBody(session)}
+          \${actionButtons(session)}
+          <div class="status">Last updated: \${escapeHtml(session.updated_at || '')}</div>
+        </div>
+      \`;
+    }
+
+    function render() {
+      const error = latestState.errorMessage ? '<div class="error">' + escapeHtml(latestState.errorMessage) + '</div>' : '';
+      const loading = latestState.loading ? '<div class="status">' + escapeHtml(latestState.loadingMessage || 'Working...') + '</div>' : '';
+      app.innerHTML = error + loading + (latestState.session ? sessionView(latestState.session) : renderRequirementStart());
+      wireEvents();
+    }
+
+    function wireEvents() {
+      const byId = (id) => document.getElementById(id);
+      const startBtn = byId('startBtn');
+      if (startBtn) {
+        startBtn.onclick = () => post('startPlanning', { requirement: byId('requirementInput').value });
+      }
+      const refreshBtn = byId('refreshBtn');
+      if (refreshBtn) {
+        refreshBtn.onclick = () => post('refreshState');
+      }
+      const session = latestState.session;
+      if (!session) {
         return;
       }
+      const userInput = () => (byId('activeUserInput') ? byId('activeUserInput').value : '');
+      const storyPayload = () => ({
+        title: byId('storyTitle')?.value || '',
+        description: byId('storyDescription')?.value || '',
+        business_value: byId('storyBusinessValue')?.value || '',
+      });
+      const acceptancePayload = () => ({
+        acceptance_criteria: (byId('acceptanceCriteriaInput')?.value || '').split('\\n').map((line) => line.trim()).filter(Boolean),
+      });
+      const tasksPayload = () => ({
+        tasks: Array.from(document.querySelectorAll('[data-task-index]')).reduce((acc, node) => {
+          const index = Number(node.getAttribute('data-task-index') || 0);
+          const field = node.getAttribute('data-task-field');
+          acc[index] = acc[index] || { id: session.tasks[index]?.id || '' };
+          acc[index][field] = node.value;
+          return acc;
+        }, []).filter(Boolean),
+      });
 
-      const result = state.latest;
-      $('query').value = result.query || $('query').value;
-      $('result').className = '';
-      $('result').innerHTML = [
-        summary(result),
-        packet(result),
-        validation(result),
-        detail('Refinement', refinement(result), true),
-        detail('Open Questions', result.refinementUnknowns),
-        detail('Repo Status', repoStatus(result), false),
-        detail('Final Execution Packet', result.prompt, true),
-        detail('Extra Context', extraContext(result), false)
-      ].join('');
+      byId('saveStoryBtn')?.addEventListener('click', () => post('saveEdits', { stage: 'refined_story', values: storyPayload() }));
+      byId('regenStoryBtn')?.addEventListener('click', () => post('regenerate', { stage: 'refined_story', userInput: userInput() }));
+      byId('approveStoryBtn')?.addEventListener('click', () => post('approve', { stage: 'refined_story' }));
+      byId('saveAcceptanceBtn')?.addEventListener('click', () => post('saveEdits', { stage: 'acceptance_criteria', values: acceptancePayload() }));
+      byId('regenAcceptanceBtn')?.addEventListener('click', () => post('regenerate', { stage: 'acceptance_criteria', userInput: userInput() }));
+      byId('approveAcceptanceBtn')?.addEventListener('click', () => post('approve', { stage: 'acceptance_criteria' }));
+      byId('saveTasksBtn')?.addEventListener('click', () => post('saveEdits', { stage: 'tasks', values: tasksPayload() }));
+      byId('regenTasksBtn')?.addEventListener('click', () => post('regenerate', { stage: 'tasks', userInput: userInput() }));
+      byId('approveTasksBtn')?.addEventListener('click', () => post('approve', { stage: 'tasks' }));
+      byId('copyPromptBtn')?.addEventListener('click', () => post('copyPrompt'));
+      byId('createWorkItemsBtn')?.addEventListener('click', () => post('createWorkItems'));
     }
 
-    function summary(result) {
-      return '<div class="card"><div class="meta">' +
-        row('Query', esc(result.query)) +
-        row('Loaded Handoff', esc(result.loadedHandoff || 'none')) +
-        row('Execution Target', esc(result.executionTarget)) +
-        row('Prompt Mode', esc(result.promptMode || 'unknown')) +
-        row('Execution Confidence', esc(result.executionConfidence || 'unknown')) +
-        row('Selected Files', esc(result.selectedExecutionFiles || 'not selected')) +
-        '</div></div>';
-    }
+    window.addEventListener('message', (event) => {
+      if (event.data?.type === 'state') {
+        latestState = event.data.state;
+        render();
+      }
+    });
 
-    function packet(result) {
-      return '<div class="card"><strong>Execution packet</strong><pre>' + esc(result.prompt || '') + '</pre></div>';
-    }
-
-    function validation(result) {
-      const lines = [];
-      lines.push('Drift: ' + (result.driftDetected ? 'yes' : 'no'));
-      if (result.validationDriftScore) lines.push('Drift score: ' + result.validationDriftScore);
-      if (result.validationSummary) lines.push(result.validationSummary);
-      if (result.constraintViolations) lines.push('Constraint violations:\\n' + result.constraintViolations);
-      if (result.riskyChanges) lines.push('Risky changes:\\n' + result.riskyChanges);
-      if (result.retryRequired) lines.push('Retry recommended: yes');
-      if (result.retryReason) lines.push('Retry reason: ' + result.retryReason);
-      if (!lines.length) return '';
-      return '<div class="card"><strong>Validation result</strong><pre>' + esc(lines.join('\\n\\n')) + '</pre></div>';
-    }
-
-    function row(key, value) {
-      return '<span class="key">' + key + '</span><span>' + value + '</span>';
-    }
-
-    function detail(title, content, open) {
-      if (!content) return '';
-      return '<details ' + (open ? 'open' : '') + '><summary>' + title + '</summary><pre>' + esc(content) + '</pre></details>';
-    }
-
-    function refinement(result) {
-      const lines = [];
-      const hasRefinement = result.refinementUsed
-        || result.semanticMappingApplied
-        || result.refinedVariant
-        || result.refinedSurface
-        || result.refinedFields
-        || result.refinedValidations
-        || result.refinementUnknowns;
-      if (!hasRefinement) return '';
-      lines.push('Semantic Refinement Status: ' + (result.semanticMappingApplied ? 'Applied' : 'Not Applied'));
-      if (result.refinementSource) lines.push('Source: ' + result.refinementSource);
-      if (result.phiStatus) lines.push('Phi: ' + result.phiStatus);
-      if (result.refinementProvider) lines.push('Provider: ' + result.refinementProvider);
-      if (result.refinementConfidence) lines.push('Confidence: ' + result.refinementConfidence);
-      if (result.refinementReason) lines.push('Reason: ' + result.refinementReason);
-      if (result.refinedBaseFlow) lines.push('Flows:\n' + result.refinedBaseFlow);
-      if (result.refinedVariant) lines.push('Variants:\n' + result.refinedVariant);
-      if (result.refinedSurface) lines.push('Surfaces:\n' + result.refinedSurface);
-      if (result.refinedFields) lines.push('Fields:\n' + result.refinedFields);
-      if (result.refinedValidations) lines.push('Validations:\n' + result.refinedValidations);
-      if (result.refinedActors) lines.push('Actors:\n' + result.refinedActors);
-      if (result.refinedStates) lines.push('States:\n' + result.refinedStates);
-      return lines.join('\n');
-    }
-
-    function repoStatus(result) {
-      const lines = [];
-      lines.push('Backend: ' + (result.executionTarget ? 'ready' : 'unknown'));
-      if (result.resolvedRepoId) lines.push('Repo ID: ' + result.resolvedRepoId);
-      if (result.resolvedBranchName) lines.push('Branch: ' + result.resolvedBranchName);
-      if (result.repoIdentityMode) lines.push('Identity: ' + result.repoIdentityMode);
-      lines.push('Retrieval bias: ' + (result.retrievalBiasApplied ? 'applied' : 'not applied'));
-      if (result.sessionBiasSummary) lines.push(result.sessionBiasSummary);
-      return lines.join('\n');
-    }
-
-    function extraContext(result) {
-      const lines = [];
-      if (result.flow) lines.push('Flow:\n' + result.flow);
-      if (result.linkedFlows) lines.push('Linked flows:\n' + result.linkedFlows);
-      if (result.impactedComponents) lines.push('Impacted components:\n' + result.impactedComponents);
-      if (result.constraints) lines.push('Constraints:\n' + result.constraints);
-      if (result.plan) lines.push('Plan:\n' + result.plan);
-      if (result.criticalSteps) lines.push('Critical steps:\n' + result.criticalSteps);
-      if (result.localOutput) lines.push('Local output:\n' + result.localOutput);
-      if (result.executionConfidenceSignals) lines.push('Confidence signals:\n' + result.executionConfidenceSignals);
-      if (result.correctedExecutionPrompt) lines.push('Corrected retry packet:\n' + result.correctedExecutionPrompt);
-      return lines.join('\n\n');
-    }
-
-    function renderWarnings(warnings) {
-      if (!warnings.length) return '';
-      return '<details open><summary>Warnings</summary><pre>' + esc(warnings.join('\\n')) + '</pre></details>';
-    }
-
-    function esc(value) {
-      return String(value || '').replace(/[&<>"']/g, (char) => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-      }[char]));
-    }
-
-    post('refreshStatus');
+    render();
   </script>
 </body>
 </html>`;
@@ -469,10 +466,10 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
 }
 
 function getNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let nonce = '';
-  for (let i = 0; i < 32; i++) {
-    nonce += chars.charAt(Math.floor(Math.random() * chars.length));
+  let text = '';
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let index = 0; index < 32; index += 1) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
   }
-  return nonce;
+  return text;
 }

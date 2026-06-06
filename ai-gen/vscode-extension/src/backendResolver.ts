@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 export type BackendMode = 'auto' | 'local' | 'railway';
-export type BackendSource = 'local' | 'railway' | 'none';
+export type BackendSource = 'local' | 'railway' | 'uri' | 'none';
 
 export type BackendResolution = {
   url: string | null;
@@ -158,6 +158,18 @@ export function handoffListUrl(baseUrl: string, workItemId: string, stage = 'dev
     status
   });
   return `${normalizeBaseUrl(baseUrl)}/handoffs?${params.toString()}`;
+}
+
+export function storyPlannerSessionsUrl(baseUrl: string): string {
+  return `${normalizeBaseUrl(baseUrl)}/story-planner/sessions`;
+}
+
+export function storyPlannerSessionUrl(baseUrl: string, sessionId: string): string {
+  return `${storyPlannerSessionsUrl(baseUrl)}/${encodeURIComponent(sessionId)}`;
+}
+
+export function storyPlannerStageUrl(baseUrl: string, sessionId: string, action: 'edit' | 'regenerate' | 'approve' | 'create-work-items'): string {
+  return `${storyPlannerSessionUrl(baseUrl, sessionId)}/${action}`;
 }
 
 function normalizeBaseUrl(value: string | undefined): string {

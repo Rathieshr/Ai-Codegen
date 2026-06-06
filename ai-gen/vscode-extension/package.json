@@ -1,7 +1,7 @@
 {
   "name": "ai-gen-vscode",
   "displayName": "ai-gen",
-  "description": "Send editor context zto ai-gen and display Codex-ready prompts.",
+  "description": "AI Story Planner for guided Azure DevOps user story planning.",
   "version": "0.2.3",
   "publisher": "rathiesh",
   "engines": {
@@ -11,22 +11,10 @@
     "Other"
   ],
   "activationEvents": [
-    "onUri",
     "onView:aiGen.sidebar",
-    "onCommand:ai-gen.ask",
-    "onCommand:ai-gen.explainFlow",
-    "onCommand:ai-gen.generateSafely",
-    "onCommand:ai-gen.sendToCodex",
-    "onCommand:ai-gen.refreshHandoff",
-    "onCommand:ai-gen.reloadPipeline",
-    "onCommand:ai-gen.validateExecution",
-    "onCommand:ai-gen.retryExecution",
-    "onCommand:ai-gen.copyPrompt",
-    "onCommand:ai-gen.checkBackend",
+    "onCommand:ai-gen.openStoryPlanner",
     "onCommand:ai-gen.refreshBackendResolution",
-    "onCommand:ai-gen.loadHandoffById",
-    "onCommand:ai-gen.loadHandoffForWorkItem",
-    "onCommand:ai-gen.loadLatestDevHandoffForWorkItem"
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -50,60 +38,12 @@
     },
     "commands": [
       {
-        "command": "ai-gen.ask",
-        "title": "ai-gen: Ask"
-      },
-      {
-        "command": "ai-gen.explainFlow",
-        "title": "ai-gen: Explain Relevant Flow"
-      },
-      {
-        "command": "ai-gen.generateSafely",
-        "title": "ai-gen: Generate Safely"
-      },
-      {
-        "command": "ai-gen.sendToCodex",
-        "title": "ai-gen: Send Last Prompt to Codex"
-      },
-      {
-        "command": "ai-gen.refreshHandoff",
-        "title": "ai-gen: Refresh Loaded Handoff"
-      },
-      {
-        "command": "ai-gen.reloadPipeline",
-        "title": "ai-gen: Reload Pipeline Context"
-      },
-      {
-        "command": "ai-gen.validateExecution",
-        "title": "ai-gen: Validate Last Execution"
-      },
-      {
-        "command": "ai-gen.retryExecution",
-        "title": "ai-gen: Retry Last Execution"
-      },
-      {
-        "command": "ai-gen.copyPrompt",
-        "title": "ai-gen: Copy Last Prompt"
-      },
-      {
-        "command": "ai-gen.checkBackend",
-        "title": "ai-gen: Check Backend Connection"
+        "command": "ai-gen.openStoryPlanner",
+        "title": "ai-gen: Open AI Story Planner"
       },
       {
         "command": "ai-gen.refreshBackendResolution",
         "title": "ai-gen: Refresh Backend Resolution"
-      },
-      {
-        "command": "ai-gen.loadHandoffById",
-        "title": "ai-gen: Load Handoff by ID"
-      },
-      {
-        "command": "ai-gen.loadHandoffForWorkItem",
-        "title": "ai-gen: Load Approved Handoff for Work Item"
-      },
-      {
-        "command": "ai-gen.loadLatestDevHandoffForWorkItem",
-        "title": "ai-gen: Load Latest Dev Handoff for Work Item"
       }
     ],
     "configuration": {

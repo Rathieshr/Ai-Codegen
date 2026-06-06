@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   approvePlannerStage,
+  buildVsCodePromptUri,
   createAzureDevOpsItems,
   editPlannerStage,
   getCurrentWorkItemContext,
@@ -343,6 +344,7 @@ function StoryPlannerTab() {
     const promptActions = session.code_generation_prompt ? (
       <>
         <button className="planner-button secondary" onClick={() => void copyPrompt()} disabled={view.loading}>Copy Prompt</button>
+        <button className="planner-button secondary" onClick={() => openPromptInVsCode(session)} disabled={view.loading}>Send Prompt to VS Code</button>
       </>
     ) : null;
     if (session.current_stage === 'success') {
@@ -483,6 +485,15 @@ function StoryPlannerTab() {
     addActivity('Clipboard access was blocked; manual prompt shown.');
   }
 
+  function openPromptInVsCode(session: PlannerSession) {
+    if (!session.code_generation_prompt) {
+      setView((current) => ({ ...current, error: 'Code-generation prompt is not ready yet.' }));
+      return;
+    }
+    window.open(buildVsCodePromptUri(session), '_blank');
+    addActivity('Sent code-generation prompt handoff to VS Code.');
+    setCopyMessage('VS Code handoff opened. If VS Code asks for permission, allow ai-gen to open.');
+  }
 }
 
 function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {

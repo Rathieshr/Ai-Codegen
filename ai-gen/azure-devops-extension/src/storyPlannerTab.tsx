@@ -15,7 +15,7 @@ import {
 import { CreationPreview, PlannerSession, PlannerStage, PlannerViewState } from './storyPlannerTypes';
 import './storyPlanner.css';
 
-const SESSION_KEY = 'ai-story-planner:session-id';
+const SESSION_KEY_PREFIX = 'ai-story-planner:session-id';
 
 function StoryPlannerTab() {
   const [view, setView] = useState<PlannerViewState>({
@@ -42,13 +42,14 @@ function StoryPlannerTab() {
       SDK.notifyLoadSucceeded();
       try {
         const workItem = await getCurrentWorkItemContext();
-        const sessionId = window.sessionStorage.getItem(SESSION_KEY) || '';
+        const sessionKey = buildSessionKey(workItem);
+        const sessionId = window.sessionStorage.getItem(sessionKey) || '';
         let session: PlannerSession | undefined;
         if (sessionId) {
           try {
             session = await loadPlannerSession(sessionId);
           } catch {
-            window.sessionStorage.removeItem(SESSION_KEY);
+            window.sessionStorage.removeItem(sessionKey);
           }
         }
         setRequirement(session?.requirement || buildSeedRequirement(workItem));
@@ -122,9 +123,11 @@ function StoryPlannerTab() {
   }
 
   async function start() {
-    const session = await withLoading('Generating refined story...', () => startPlannerSession(requirement));
+    const session = await withLoading('Generating refined story...', () => startPlannerSession(requirement, view.workItem));
     if (session) {
-      window.sessionStorage.setItem(SESSION_KEY, session.session_id);
+      if (view.workItem) {
+        window.sessionStorage.setItem(buildSessionKey(view.workItem), session.session_id);
+      }
       setActiveInput('');
       setView((current) => ({ ...current, session, preview: undefined }));
     }
@@ -175,7 +178,7 @@ function StoryPlannerTab() {
 
   async function createItems() {
     if (!view.session || !view.workItem || !view.preview) return;
-    const confirmed = window.confirm('Create the approved User Story and child Tasks in Azure DevOps?');
+    const confirmed = window.confirm(creationConfirmText(view.preview, view.workItem));
     if (!confirmed) {
       return;
     }
@@ -283,18 +286,26 @@ function StoryPlannerTab() {
 
   function renderCreationPreview(preview?: CreationPreview) {
     if (!preview) {
-      return <div className="planner-subtle">The approved story and tasks are ready to create in Azure DevOps.</div>;
+      return <div className="planner-subtle">{creationReadyText(view.session)}</div>;
     }
     return (
       <div className="planner-status-grid">
-        <div className="planner-task">
-          <div className="planner-label">User Story</div>
-          <strong>{preview.preview.story.title}</strong>
-          <div>{preview.preview.story.description}</div>
-          <ul className="planner-list">
-            {preview.preview.story.acceptance_criteria.map((item) => <li key={item}>{item}</li>)}
-          </ul>
-        </div>
+        {preview.preview.story ? (
+          <div className="planner-task">
+            <div className="planner-label">User Story</div>
+            <strong>{preview.preview.story.title}</strong>
+            <div>{preview.preview.story.description}</div>
+            <ul className="planner-list">
+              {preview.preview.story.acceptance_criteria.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </div>
+        ) : (
+          <div className="planner-task">
+            <div className="planner-label">Parent User Story</div>
+            <strong>{view.workItem?.title || `#${preview.preview.parent_work_item_id || view.workItem?.id}`}</strong>
+            <div className="planner-subtle">No duplicate User Story will be created. Tasks will be linked under this work item.</div>
+          </div>
+        )}
         {preview.preview.tasks.map((task) => (
           <div key={task.id} className="planner-task">
             <div className="planner-label">Proposed Task</div>
@@ -311,10 +322,10 @@ function StoryPlannerTab() {
     return (
       <div className="planner-status-grid">
         <div className="planner-status-row">
-          <span>User Story</span>
+          <span>{session.planner_kind === 'user_story' ? 'Parent User Story' : 'User Story'}</span>
           <span>
             {session.created_summary?.story?.status === 'created'
-              ? `Created #${session.created_summary?.story?.azure_work_item_id}`
+              ? `${session.planner_kind === 'user_story' ? 'Used' : 'Created'} #${session.created_summary?.story?.azure_work_item_id}`
               : `Failed${session.created_summary?.story?.error ? `: ${session.created_summary.story.error}` : ''}`}
           </span>
         </div>
@@ -490,6 +501,33 @@ function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {
     parts.push(`Discussion Notes: ${comments.join(' ')}`);
   }
   return parts.join('\n\n');
+}
+
+function buildSessionKey(workItem: PlannerViewState['workItem']): string {
+  if (!workItem?.id) {
+    return `${SESSION_KEY_PREFIX}:new`;
+  }
+  return `${SESSION_KEY_PREFIX}:${cleanText(workItem.type).toLowerCase()}:${workItem.id}`;
+}
+
+function creationReadyText(session?: PlannerSession): string {
+  if (session?.planner_kind === 'user_story') {
+    return 'The approved child Tasks are ready to create under the current User Story.';
+  }
+  if (session?.planner_kind === 'epic') {
+    return 'The approved plan is ready to create Azure DevOps work items under the current Epic.';
+  }
+  if (session?.planner_kind === 'feature') {
+    return 'The approved plan is ready to create Azure DevOps work items under the current Feature.';
+  }
+  return 'The approved story and tasks are ready to create in Azure DevOps.';
+}
+
+function creationConfirmText(preview: CreationPreview, workItem: PlannerViewState['workItem']): string {
+  if (!preview.preview.story) {
+    return `Create ${preview.preview.tasks.length} child Task(s) under ${workItem?.type || 'User Story'} #${preview.preview.parent_work_item_id || workItem?.id}?`;
+  }
+  return `Create the approved User Story and ${preview.preview.tasks.length} child Task(s) in Azure DevOps?`;
 }
 
 function htmlToText(value: string): string {

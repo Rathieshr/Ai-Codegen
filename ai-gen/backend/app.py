@@ -249,6 +249,8 @@ class RefinementSmokeTestRequest(BaseModel):
 
 class StoryPlannerStartRequest(BaseModel):
     requirement: str = Field(..., min_length=1)
+    work_item_id: Optional[int] = None
+    work_item_type: str = ""
 
 
 class StoryPlannerEditRequest(BaseModel):
@@ -282,7 +284,11 @@ def capabilities() -> dict:
 
 @app.post("/story-planner/sessions")
 def start_story_planner_session(request: StoryPlannerStartRequest) -> dict:
-    return story_planner_service.start_session(request.requirement)
+    return story_planner_service.start_session(
+        request.requirement,
+        work_item_id=request.work_item_id,
+        work_item_type=request.work_item_type,
+    )
 
 
 @app.get("/story-planner/sessions/{session_id}")

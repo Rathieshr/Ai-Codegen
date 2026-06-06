@@ -20,16 +20,26 @@ class StoryPlannerService:
     def __init__(self) -> None:
         self._sessions: dict[str, PlannerSession] = {}
 
-    def start_session(self, requirement: str) -> dict[str, Any]:
+    def start_session(
+        self,
+        requirement: str,
+        work_item_id: int | None = None,
+        work_item_type: str = "",
+    ) -> dict[str, Any]:
         normalized = " ".join(str(requirement or "").split()).strip()
         if not normalized:
             raise ValueError("Requirement is required.")
         session_id = f"storyplan_{uuid4().hex[:12]}"
         story = _refine_story_with_phi(normalized)
+        normalized_type = _clean_text(work_item_type)
+        planner_kind = _planner_kind(normalized_type)
         session = PlannerSession(
             session_id=session_id,
             requirement=normalized,
             current_stage="refined_story",
+            source_work_item_id=work_item_id if isinstance(work_item_id, int) and work_item_id > 0 else None,
+            source_work_item_type=normalized_type,
+            planner_kind=planner_kind,
             title=story["title"],
             description=story["description"],
             business_value=story["business_value"],
@@ -185,27 +195,34 @@ class StoryPlannerService:
             raise ValueError("Approve tasks before creating Azure DevOps work items.")
         session.created_story_status = "creating"
         created_tasks: list[dict[str, Any]] = []
-        try:
-            story_create = _create_story_work_item(session)
-            session.created_story_id = story_create["id"]
+        if session.planner_kind == "user_story":
+            if not session.source_work_item_id:
+                raise ValueError("Current User Story id is required before creating child tasks.")
+            session.created_story_id = session.source_work_item_id
             session.created_story_status = "created"
             session.created_story_error = None
-        except Exception as error:  # noqa: BLE001
-            session.created_story_id = None
-            session.created_story_status = "failed"
-            session.created_story_error = str(error)
-            session.created_tasks = [
-                {
-                    "title": task.title,
-                    "status": "pending",
-                    "azure_work_item_id": None,
-                }
-                for task in session.tasks
-            ]
-            session.error_message = str(error)
-            session.current_stage = "azure_devops_creation"
-            self._refresh_stage_prompts(session)
-            return session.to_dict()
+        else:
+            try:
+                story_create = _create_story_work_item(session)
+                session.created_story_id = story_create["id"]
+                session.created_story_status = "created"
+                session.created_story_error = None
+            except Exception as error:  # noqa: BLE001
+                session.created_story_id = None
+                session.created_story_status = "failed"
+                session.created_story_error = str(error)
+                session.created_tasks = [
+                    {
+                        "title": task.title,
+                        "status": "pending",
+                        "azure_work_item_id": None,
+                    }
+                    for task in session.tasks
+                ]
+                session.error_message = str(error)
+                session.current_stage = "azure_devops_creation"
+                self._refresh_stage_prompts(session)
+                return session.to_dict()
 
         for task in session.tasks:
             task.status = "creating"
@@ -285,6 +302,17 @@ def _refine_story_with_phi(requirement: str) -> dict[str, str]:
     if story["title"] and story["description"] and story["business_value"]:
         return story
     return _refine_story(requirement)
+
+
+def _planner_kind(work_item_type: str) -> str:
+    normalized = _clean_text(work_item_type).lower().replace("_", " ")
+    if normalized == "epic":
+        return "epic"
+    if normalized == "feature":
+        return "feature"
+    if normalized in {"user story", "story"}:
+        return "user_story"
+    return "story"
 
 
 def _refine_story(requirement: str) -> dict[str, str]:

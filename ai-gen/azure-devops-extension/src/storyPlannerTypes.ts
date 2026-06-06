@@ -19,6 +19,9 @@ export type PlannerSession = {
   session_id: string;
   requirement: string;
   current_stage: PlannerStage;
+  source_work_item_id?: number | null;
+  source_work_item_type?: string;
+  planner_kind?: 'epic' | 'feature' | 'user_story' | 'story';
   story: {
     title: string;
     description: string;
@@ -75,6 +78,9 @@ export type CreationPreview = {
   session_id: string;
   current_stage: string;
   preview: {
+    mode?: 'epic' | 'feature' | 'user_story' | 'story';
+    parent_work_item_id?: number | null;
+    parent_work_item_type?: string;
     story: {
       type: string;
       title: string;
@@ -82,7 +88,7 @@ export type CreationPreview = {
       business_value: string;
       acceptance_criteria: string[];
       fields: Record<string, string | null>;
-    };
+    } | null;
     tasks: Array<{
       id: string;
       type: string;

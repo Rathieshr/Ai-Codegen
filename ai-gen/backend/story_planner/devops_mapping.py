@@ -6,19 +6,23 @@ from .models import PlannerSession, TaskDraft
 
 
 def build_creation_preview(session: PlannerSession) -> dict[str, Any]:
-    return {
-        "story": {
-            "type": "User Story",
-            "title": session.title,
-            "description": session.description,
-            "business_value": session.business_value,
-            "acceptance_criteria": list(session.acceptance_criteria),
-            "fields": {
-                "System.Title": session.title,
-                "System.Description": build_story_description(session),
-                "Microsoft.VSTS.Common.AcceptanceCriteria": build_acceptance_html(session.acceptance_criteria),
-            },
+    story_preview = None if session.planner_kind == "user_story" else {
+        "type": "User Story",
+        "title": session.title,
+        "description": session.description,
+        "business_value": session.business_value,
+        "acceptance_criteria": list(session.acceptance_criteria),
+        "fields": {
+            "System.Title": session.title,
+            "System.Description": build_story_description(session),
+            "Microsoft.VSTS.Common.AcceptanceCriteria": build_acceptance_html(session.acceptance_criteria),
         },
+    }
+    return {
+        "mode": session.planner_kind,
+        "parent_work_item_id": session.source_work_item_id,
+        "parent_work_item_type": session.source_work_item_type,
+        "story": story_preview,
         "tasks": [build_task_preview(task) for task in session.tasks],
     }
 

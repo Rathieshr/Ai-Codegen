@@ -36,6 +36,9 @@ class PlannerSession:
     session_id: str
     requirement: str
     current_stage: str
+    source_work_item_id: int | None = None
+    source_work_item_type: str = ""
+    planner_kind: str = "story"
     title: str = ""
     description: str = ""
     business_value: str = ""
@@ -60,6 +63,9 @@ class PlannerSession:
             "session_id": self.session_id,
             "requirement": self.requirement,
             "current_stage": self.current_stage,
+            "source_work_item_id": self.source_work_item_id,
+            "source_work_item_type": self.source_work_item_type,
+            "planner_kind": self.planner_kind,
             "story": {
                 "title": self.title,
                 "description": self.description,

@@ -59,8 +59,12 @@ export async function getCurrentWorkItemContext(): Promise<WorkItemContext> {
   };
 }
 
-export async function startPlannerSession(requirement: string): Promise<PlannerSession> {
-  return postJson<PlannerSession>(`${BASE_URL}/sessions`, { requirement });
+export async function startPlannerSession(requirement: string, workItem?: WorkItemContext): Promise<PlannerSession> {
+  return postJson<PlannerSession>(`${BASE_URL}/sessions`, {
+    requirement,
+    work_item_id: workItem?.id || null,
+    work_item_type: workItem?.type || '',
+  });
 }
 
 export async function loadPlannerSession(sessionId: string): Promise<PlannerSession> {
@@ -102,19 +106,28 @@ export async function createAzureDevOpsItems(
   const taskResults: CreationResultPayload['tasks'] = [];
 
   try {
-    onProgress(`Creating User Story: ${preview.preview.story.title}`);
-    const storyId = await createWorkItemViaRest(
-      collectionUri,
-      workItem.project,
-      accessToken,
-      preview.preview.story.type,
-      preview.preview.story.fields,
-      workItem.id > 0 ? workItem.id : undefined,
-      'Timed out while creating the Azure DevOps User Story.'
-    );
+    let storyId = Number(preview.preview.parent_work_item_id || 0);
+    if (preview.preview.story) {
+      onProgress(`Creating User Story: ${preview.preview.story.title}`);
+      storyId = await createWorkItemViaRest(
+        collectionUri,
+        workItem.project,
+        accessToken,
+        preview.preview.story.type,
+        preview.preview.story.fields,
+        workItem.id > 0 ? workItem.id : undefined,
+        'Timed out while creating the Azure DevOps User Story.'
+      );
+      onProgress(`Created User Story #${storyId}.`);
+    } else {
+      storyId = storyId || workItem.id;
+      if (!storyId) {
+        throw new Error('Current Azure DevOps work item id is unavailable, so child Tasks cannot be linked.');
+      }
+      onProgress(`Using current ${workItem.type || 'User Story'} #${storyId} as task parent.`);
+    }
     storyResult.azure_work_item_id = storyId;
     storyResult.status = 'created';
-    onProgress(`Created User Story #${storyId}.`);
 
     for (const task of preview.preview.tasks) {
       try {

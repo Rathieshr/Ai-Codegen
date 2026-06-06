@@ -105,6 +105,22 @@ class StoryPlannerServiceTests(unittest.TestCase):
         task_fields = preview["preview"]["tasks"][0]["fields"]
         self.assertNotIn("Microsoft.VSTS.Scheduling.StoryPoints", task_fields)
 
+    def test_user_story_session_creates_child_task_preview_only(self) -> None:
+        session = self.service.start_session(
+            "Login Screen with OTP and validation",
+            work_item_id=12,
+            work_item_type="User Story",
+        )
+        self.assertEqual(session["planner_kind"], "user_story")
+        self.assertEqual(session["source_work_item_id"], 12)
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "tasks")
+        preview = self.service.get_creation_preview(session["session_id"])
+        self.assertIsNone(preview["preview"]["story"])
+        self.assertEqual(preview["preview"]["parent_work_item_id"], 12)
+        self.assertGreater(len(preview["preview"]["tasks"]), 0)
+
     def test_creation_result_marks_real_created_statuses(self) -> None:
         session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
         session = self.service.approve_stage(session["session_id"], "refined_story")

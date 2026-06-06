@@ -42,7 +42,6 @@ def build_task_preview(task: TaskDraft) -> dict[str, Any]:
         "fields": {
             "System.Title": task.title,
             "System.Description": f"<p>{_escape_html(task.description)}</p>",
-            "Microsoft.VSTS.Scheduling.StoryPoints": task.estimated_effort or None,
         },
     }
 

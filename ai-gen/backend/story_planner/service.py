@@ -609,8 +609,6 @@ def _create_child_task_work_item(session: PlannerSession, task: TaskDraft, paren
             },
         },
     ]
-    if task.estimated_effort:
-        ops.append({"op": "add", "path": "/fields/Microsoft.VSTS.Scheduling.StoryPoints", "value": task.estimated_effort})
     return _create_work_item("Task", ops)
 
 

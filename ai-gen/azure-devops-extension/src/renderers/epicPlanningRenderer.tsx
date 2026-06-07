@@ -2,10 +2,13 @@ import React from 'react';
 import { OutputList, TemplateWorkspaceShell, WorkspaceRendererProps } from './workspaceRenderer';
 
 type DraftItem = {
+  draft_id?: string;
   title?: string;
   description?: string;
   draft_type?: string;
   type?: string;
+  status?: string;
+  azure_work_item_id?: number | null;
   acceptance_criteria?: string[];
   children?: DraftItem[];
   child_drafts?: DraftItem[];
@@ -24,7 +27,10 @@ export default function EpicPlanningRenderer(props: WorkspaceRendererProps) {
   const storySource = Array.isArray(storyOutput.generated_work_items)
     ? storyOutput.generated_work_items
     : reviewOutput.generated_work_items;
-  const planningTree = normalizePlanningTree(Array.isArray(storySource) ? storySource as DraftItem[] : [], generatedFeatures);
+  const planningDrafts = props.planningDrafts?.length
+    ? props.planningDrafts as DraftItem[]
+    : Array.isArray(storySource) ? storySource as DraftItem[] : [];
+  const planningTree = normalizePlanningTree(planningDrafts, generatedFeatures);
   const stageStatuses = [
     ['Epic Analysis', props.pipeline?.stages?.epic_analysis?.status || 'locked'],
     ['Feature Generation', props.pipeline?.stages?.feature_generation?.status || 'locked'],
@@ -42,9 +48,26 @@ export default function EpicPlanningRenderer(props: WorkspaceRendererProps) {
           <OutputList title="Expected Outputs" items={['Features', 'Stories', 'Dependencies', 'Risks']} />
           {sourceLabel ? <OutputList title="Generation Source" items={[sourceLabel]} /> : null}
           <OutputList title="Internal Progress" items={stageStatuses.map(([label, status]) => `${label}: ${status}`)} />
-          <PlanningTree items={planningTree} />
+          <PlanningTree
+            items={planningTree}
+            selectedDraftIds={props.selectedDraftIds || []}
+            onToggleDraft={props.onToggleDraft}
+          />
           <OutputList title="Dependencies" items={(reviewOutput.dependencies as string[]) || (featureOutput.dependencies as string[]) || (analysisOutput.dependencies as string[]) || []} />
           <OutputList title="Risks" items={(reviewOutput.risks as string[]) || (featureOutput.risks as string[]) || (analysisOutput.risks as string[]) || []} />
+          {planningTree.length ? (
+            <div className="ai-gen-actions ai-gen-actions-compact">
+              <button className="ai-gen-button secondary" onClick={props.onSelectAllDrafts} disabled={props.loading}>
+                Select All
+              </button>
+              <button className="ai-gen-button secondary" onClick={props.onDeselectAllDrafts} disabled={props.loading || !(props.selectedDraftIds || []).length}>
+                Deselect All
+              </button>
+              <button className="ai-gen-button" onClick={props.onCreateSelectedDrafts} disabled={props.loading || !(props.selectedDraftIds || []).length}>
+                Create Selected Work Items
+              </button>
+            </div>
+          ) : null}
         </div>
       }
     />
@@ -54,7 +77,7 @@ export default function EpicPlanningRenderer(props: WorkspaceRendererProps) {
 function normalizePlanningTree(items: DraftItem[], fallbackFeatures: string[]): DraftItem[] {
   const features = items
     .filter((item) => String(item.draft_type || item.type || '').toLowerCase() === 'feature' || (item.children || item.child_drafts || []).length)
-    .map((item) => ({ ...item, children: item.children || item.child_drafts || [] }));
+    .map((item) => ({ ...item, children: mergeDraftChildren(item) }));
   if (features.length) {
     return features;
   }
@@ -68,7 +91,15 @@ function normalizePlanningTree(items: DraftItem[], fallbackFeatures: string[]): 
   return fallbackFeatures.map((title) => ({ title, children: [] }));
 }
 
-function PlanningTree({ items }: { items: DraftItem[] }) {
+function PlanningTree({
+  items,
+  selectedDraftIds,
+  onToggleDraft,
+}: {
+  items: DraftItem[];
+  selectedDraftIds: string[];
+  onToggleDraft?: (draftId: string) => void;
+}) {
   if (!items.length) {
     return null;
   }
@@ -77,10 +108,18 @@ function PlanningTree({ items }: { items: DraftItem[] }) {
       <div className="ai-gen-key">Proposed Work Items</div>
       <div className="ai-gen-planning-tree">
         {items.map((feature, index) => {
-          const stories = feature.children || feature.child_drafts || [];
+          const stories = mergeDraftChildren(feature);
+          const featureId = String(feature.draft_id || '');
           return (
             <div className="ai-gen-plan-card" key={`${feature.title || 'feature'}-${index}`}>
               <div className="ai-gen-plan-card-header">
+                {featureId ? (
+                  <input
+                    type="checkbox"
+                    checked={selectedDraftIds.includes(featureId)}
+                    onChange={() => onToggleDraft?.(featureId)}
+                  />
+                ) : null}
                 <span className="ai-gen-plan-type">Feature</span>
                 <strong>{feature.title || 'Untitled feature'}</strong>
               </div>
@@ -90,6 +129,13 @@ function PlanningTree({ items }: { items: DraftItem[] }) {
                   {stories.map((story, storyIndex) => (
                     <div className="ai-gen-plan-child" key={`${story.title || 'story'}-${storyIndex}`}>
                       <div>
+                        {story.draft_id ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedDraftIds.includes(story.draft_id)}
+                            onChange={() => onToggleDraft?.(story.draft_id || '')}
+                          />
+                        ) : null}
                         <span className="ai-gen-plan-type">Story</span>
                         <strong>{story.title || 'Untitled story'}</strong>
                       </div>
@@ -107,4 +153,18 @@ function PlanningTree({ items }: { items: DraftItem[] }) {
       </div>
     </div>
   );
+}
+
+function mergeDraftChildren(item: DraftItem): DraftItem[] {
+  const merged: DraftItem[] = [];
+  const seen = new Set<string>();
+  for (const child of [...(item.children || []), ...(item.child_drafts || [])]) {
+    const key = String(child.draft_id || child.title || '').trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(child);
+  }
+  return merged;
 }

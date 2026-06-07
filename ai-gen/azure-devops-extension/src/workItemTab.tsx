@@ -208,6 +208,7 @@ function WorkItemTab() {
   const currentStageDrafts = draftWorkItems.filter((draft) => draft.source_stage === currentStageName);
   const isPlanningTemplate = ['epic_planning', 'feature_planning'].includes(String(pipeline?.workflow_template || ''));
   const isStoryTaskPlanning = String(pipeline?.workflow_template || '') === 'story_delivery' && currentStageName === 'task_planning';
+  const planningDrafts = isPlanningTemplate ? draftWorkItems : currentStageDrafts;
   const workspaceRenderer = useMemo(
     () => selectWorkspaceRenderer(pipeline?.workflow_template || pipeline?.work_item_classification?.recommended_template),
     [pipeline?.workflow_template, pipeline?.work_item_classification?.recommended_template]
@@ -235,6 +236,13 @@ function WorkItemTab() {
     setSelectedDraftIds([]);
     setCreatedDraftsPreview([]);
   }, [state.data?.pipeline?.pipeline_id, currentStageName]);
+
+  useEffect(() => {
+    if (!isPlanningTemplate || selectedDraftIds.length || !planningDrafts.length) {
+      return;
+    }
+    setSelectedDraftIds(flattenDrafts(planningDrafts).filter((draft) => draft.status !== 'created').map((item) => item.draft_id));
+  }, [isPlanningTemplate, planningDrafts.length, selectedDraftIds.length]);
 
   const storyWorkflowModel = useMemo(
     () => buildStoryWorkflowModel(pipeline, response, draftWorkItems, storySession),
@@ -556,6 +564,7 @@ function WorkItemTab() {
 
   async function createSelectedDraftWorkItemsAction() {
     if (!state.data?.pipeline || !selectedDraftIds.length) {
+      setState((current) => ({ ...current, error: 'Select at least one proposed work item before creating it.' }));
       return;
     }
     const count = selectedDraftIds.length;
@@ -861,7 +870,7 @@ function WorkItemTab() {
                   onRefresh={() => refreshPipeline()}
                   onViewHandoff={() => viewCurrentHandoff()}
                   onCopyPacket={() => copyExecutionPacket()}
-                  onSelectAll={() => setSelectedDraftIds(flattenDrafts(currentStageDrafts).map((item) => item.draft_id))}
+                  onSelectAll={() => setSelectedDraftIds(flattenDrafts(planningDrafts).map((item) => item.draft_id))}
                   onDeselectAll={() => setSelectedDraftIds([])}
                   onCreateSelected={() => createSelectedDraftWorkItemsAction()}
                 />
@@ -922,6 +931,12 @@ function WorkItemTab() {
                 />
               ) : null,
               handoffPanel: isStoryWorkflow ? null : <PipelineHandoff handoff={state.data?.handoff} workflowTemplate={String(pipeline.workflow_template || '')} />,
+              planningDrafts,
+              selectedDraftIds,
+              onToggleDraft: (draftId) => setSelectedDraftIds((current) => current.includes(draftId) ? current.filter((item) => item !== draftId) : [...current, draftId]),
+              onSelectAllDrafts: () => setSelectedDraftIds(flattenDrafts(planningDrafts).filter((draft) => draft.status !== 'created').map((item) => item.draft_id)),
+              onDeselectAllDrafts: () => setSelectedDraftIds([]),
+              onCreateSelectedDrafts: () => void createSelectedDraftWorkItemsAction(),
             })}
           </>
         )}
@@ -1604,7 +1619,7 @@ function DraftWorkItemRow({
   level?: number;
 }) {
   const checked = selectedDraftIds.includes(draft.draft_id);
-  const children = draft.children || draft.child_drafts || [];
+  const children = mergeDraftChildren(draft);
   return (
     <li style={{ marginLeft: `${level * 16}px` }}>
       <label>
@@ -1942,11 +1957,38 @@ function activityLabel(activity: Record<string, unknown>, pipeline: PipelineStat
 
 function flattenDrafts(drafts: DraftWorkItem[]): DraftWorkItem[] {
   const items: DraftWorkItem[] = [];
-  for (const draft of drafts) {
+  const seen = new Set<string>();
+  const visit = (draft: DraftWorkItem) => {
+    const key = String(draft.draft_id || draft.title || '').trim().toLowerCase();
+    if (key && seen.has(key)) {
+      return;
+    }
+    if (key) {
+      seen.add(key);
+    }
     items.push(draft);
-    items.push(...flattenDrafts(draft.children || draft.child_drafts || []));
+    for (const child of mergeDraftChildren(draft)) {
+      visit(child);
+    }
+  };
+  for (const draft of drafts) {
+    visit(draft);
   }
   return items;
+}
+
+function mergeDraftChildren(draft: DraftWorkItem): DraftWorkItem[] {
+  const children: DraftWorkItem[] = [];
+  const seen = new Set<string>();
+  for (const child of [...(draft.children || []), ...(draft.child_drafts || [])]) {
+    const key = String(child.draft_id || child.title || '').trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    children.push(child);
+  }
+  return children;
 }
 
 function draftRiskSummary(drafts: DraftWorkItem[]) {

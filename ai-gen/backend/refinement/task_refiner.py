@@ -412,11 +412,6 @@ def _story_title_hints(title: str, features: list[Any]) -> list[str]:
 def _story_titles_for_feature(feature: str) -> list[str]:
     cleaned = feature.strip()
     lower = cleaned.lower()
-    if any(token in lower for token in ["shopping", "experience", "catalog", "user experience", "mobile"]):
-        return [
-            f"{cleaned}: Browse products and product details",
-            f"{cleaned}: Manage cart from mobile screens",
-        ]
     if any(token in lower for token in ["cart", "checkout", "payment", "workflow", "automation"]):
         return [
             f"{cleaned}: Complete checkout with delivery and payment details",
@@ -431,6 +426,11 @@ def _story_titles_for_feature(feature: str) -> list[str]:
         return [
             f"{cleaned}: Manage product availability and inventory status",
             f"{cleaned}: Configure operational rules for mobile commerce",
+        ]
+    if any(token in lower for token in ["shopping", "experience", "catalog", "user experience", "mobile"]):
+        return [
+            f"{cleaned}: Browse products and product details",
+            f"{cleaned}: Manage cart from mobile screens",
         ]
     return [
         f"{cleaned}: Define primary user journey",

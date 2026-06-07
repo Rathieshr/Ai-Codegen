@@ -1,5 +1,5 @@
 import React from 'react';
-import { PipelineStageState, PipelineState } from '../api';
+import { DraftWorkItem, PipelineStageState, PipelineState } from '../api';
 import EpicPlanningRenderer from './epicPlanningRenderer';
 import FeaturePlanningRenderer from './featurePlanningRenderer';
 import StoryDeliveryRenderer from './storyDeliveryRenderer';
@@ -32,6 +32,12 @@ export type WorkspaceRendererProps = {
   storyWorkflowPanel?: React.ReactNode;
   retryCommentSync?: () => void;
   loading: boolean;
+  planningDrafts?: DraftWorkItem[];
+  selectedDraftIds?: string[];
+  onToggleDraft?: (draftId: string) => void;
+  onSelectAllDrafts?: () => void;
+  onDeselectAllDrafts?: () => void;
+  onCreateSelectedDrafts?: () => void;
 };
 
 export type WorkspaceRendererComponent = (props: WorkspaceRendererProps) => React.ReactElement;

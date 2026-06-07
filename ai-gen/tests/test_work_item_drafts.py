@@ -31,6 +31,9 @@ class WorkItemDraftQualityTests(unittest.TestCase):
         self.assertTrue(all(draft["description"] for draft in story_drafts))
         self.assertTrue(all(len(draft["acceptance_criteria"]) >= 3 for draft in story_drafts))
         self.assertIn("product", " ".join(story_drafts[0]["acceptance_criteria"]).lower())
+        self.assertTrue(any("Complete checkout with delivery and payment details" in draft["title"] for draft in story_drafts))
+        self.assertTrue(any("View order history and order status" in draft["title"] for draft in story_drafts))
+        self.assertTrue(any("Manage product availability and inventory status" in draft["title"] for draft in story_drafts))
 
 
 if __name__ == "__main__":

@@ -498,11 +498,6 @@ def _planner_story_title(title: str, feature_title: str, index: int) -> str:
 
 def _planner_story_titles_for_feature(feature_title: str) -> list[str]:
     lower = feature_title.lower()
-    if any(token in lower for token in ["shopping", "experience", "catalog", "user experience", "mobile"]):
-        return [
-            f"{feature_title}: Browse products and product details",
-            f"{feature_title}: Manage cart from mobile screens",
-        ]
     if any(token in lower for token in ["cart", "checkout", "payment", "workflow", "automation"]):
         return [
             f"{feature_title}: Complete checkout with delivery and payment details",
@@ -517,6 +512,11 @@ def _planner_story_titles_for_feature(feature_title: str) -> list[str]:
         return [
             f"{feature_title}: Manage product availability and inventory status",
             f"{feature_title}: Configure operational rules for mobile commerce",
+        ]
+    if any(token in lower for token in ["shopping", "experience", "catalog", "user experience", "mobile"]):
+        return [
+            f"{feature_title}: Browse products and product details",
+            f"{feature_title}: Manage cart from mobile screens",
         ]
     return [
         f"{feature_title}: Define primary user journey",

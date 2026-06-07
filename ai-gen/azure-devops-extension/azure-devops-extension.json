@@ -47,8 +47,8 @@
         "ms.vss-work-web.work-item-form"
       ],
       "properties": {
-        "name": "AI Story Planner",
-        "uri": "storyPlannerTab.html"
+        "name": "AI Planner",
+        "uri": "workItemTab.html"
       }
     },
     {

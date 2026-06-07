@@ -603,20 +603,40 @@ function WorkItemTab() {
 
   async function approveCurrentStoryStep() {
     if (!pipeline || String(pipeline.workflow_template || '') !== 'story_delivery') {
+      setState((current) => ({ ...current, error: 'Story approval is only available for Story Delivery workflows.' }));
       return;
     }
     if (storyWorkflowModel.currentStep === 'refinement') {
       const baVersion = Number(pipeline.stages.ba?.version || 0);
-      setStorySession((current) => ({ ...current, refinementVersion: baVersion }));
+      if (!storyWorkflowModel.refinedStory || storyWorkflowModel.openQuestion !== 'Is this refined user story accurate and complete?') {
+        setState((current) => ({ ...current, error: 'Answer the open clarification and regenerate before approving the refined story.' }));
+        return;
+      }
+      const nextSession = { ...storySession, refinementVersion: baVersion || Date.now() };
+      if (storyPipelineId) {
+        saveStorySessionState(storyPipelineId, nextSession);
+      }
+      setState((current) => ({ ...current, loading: true, loadingMessage: 'Approving refined story...', error: '' }));
+      setStorySession(nextSession);
+      window.setTimeout(() => {
+        setState((current) => ({ ...current, loading: false, loadingMessage: '', error: '' }));
+      }, 0);
       return;
     }
     if (storyWorkflowModel.currentStep === 'acceptance') {
       if (!state.data?.pipeline) {
+        setState((current) => ({ ...current, error: 'Pipeline is not loaded yet. Refresh and try again.' }));
+        return;
+      }
+      if (!storyWorkflowModel.acceptanceCriteria.length) {
+        setState((current) => ({ ...current, error: 'Acceptance criteria are missing. Add clarification or regenerate before approval.' }));
         return;
       }
       setState((current) => ({ ...current, loadingMessage: 'Approving story...' }));
       await withPipelineUpdate(async () => {
-        let nextPipeline = await approvePipelineStage(state.data!.pipeline!.pipeline_id, 'ba');
+        let nextPipeline = state.data!.pipeline!.stages.ba?.approved
+          ? state.data!.pipeline!
+          : await approvePipelineStage(state.data!.pipeline!.pipeline_id, 'ba');
         const uiOptional = nextPipeline.stages.ui_optional;
         if (uiOptional && uiOptional.status === 'pending' && !Object.keys(uiOptional.output || {}).length) {
           nextPipeline = await skipPipelineStage(
@@ -626,11 +646,15 @@ function WorkItemTab() {
           );
         }
         const baVersion = Number(nextPipeline.stages.ba?.version || 0);
-        setStorySession((current) => ({
-          ...current,
+        const nextSession = {
+          ...storySession,
           refinementVersion: baVersion,
           acceptanceVersion: baVersion,
-        }));
+        };
+        if (storyPipelineId) {
+          saveStorySessionState(storyPipelineId, nextSession);
+        }
+        setStorySession(nextSession);
         return refreshPipelineState(
           state.data!.workItem,
           { ...state.data!, pipeline: nextPipeline },
@@ -641,8 +665,23 @@ function WorkItemTab() {
     }
     if (storyWorkflowModel.currentStep === 'task_breakdown') {
       const taskVersion = Number(pipeline.stages.task_planning?.version || 0);
-      setStorySession((current) => ({ ...current, taskBreakdownVersion: taskVersion }));
+      if (!storyWorkflowModel.proposedTasks.length) {
+        setState((current) => ({ ...current, error: 'Generate the task breakdown before approving it.' }));
+        return;
+      }
+      const nextSession = { ...storySession, taskBreakdownVersion: taskVersion || Date.now() };
+      if (storyPipelineId) {
+        saveStorySessionState(storyPipelineId, nextSession);
+      }
+      setState((current) => ({ ...current, loading: true, loadingMessage: 'Approving task breakdown...', error: '' }));
+      setSelectedDraftIds(storyWorkflowModel.proposedTasks.map((item) => item.draft_id));
+      setStorySession(nextSession);
+      window.setTimeout(() => {
+        setState((current) => ({ ...current, loading: false, loadingMessage: '', error: '' }));
+      }, 0);
+      return;
     }
+    setState((current) => ({ ...current, error: 'This story workflow step is already approved or not ready for approval.' }));
   }
 
   async function regenerateCurrentStoryStep() {

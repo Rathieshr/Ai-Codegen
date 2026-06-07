@@ -168,12 +168,18 @@ function StoryPlannerTab() {
 
   async function approve() {
     if (!view.session) return;
+    const previousStage = view.session.current_stage;
     const session = await withLoading('Approving stage...', () =>
       approvePlannerStage(view.session!.session_id, view.session!.current_stage)
     );
     if (session) {
       setActiveInput('');
       setView((current) => ({ ...current, session, preview: undefined }));
+      if (session.current_stage === previousStage) {
+        addActivity(`Approval saved for ${formatStageLabel(previousStage)}. Waiting for the next stage to become ready.`);
+      } else {
+        addActivity(`Approved ${formatStageLabel(previousStage)}. Next: ${formatStageLabel(session.current_stage)}.`);
+      }
     }
   }
 
@@ -585,6 +591,14 @@ function buildFallbackPrompt(session?: PlannerSession): string {
     ...session.tasks.map((task) => `- ${task.title}: ${task.description}`),
   ];
   return sections.join('\n').trim();
+}
+
+function formatStageLabel(stage: string): string {
+  return String(stage || '')
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || 'Stage';
 }
 
 async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

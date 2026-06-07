@@ -11,6 +11,7 @@ from backend.assistants import (
     run_dev_assistant,
     run_test_assistant,
 )
+from backend.refinement.task_refiner import refine_epic_stage
 from .child_task_planner import generate_child_task_preview
 from .work_item_drafts import (
     build_child_task_drafts_for_story,
@@ -93,18 +94,24 @@ def run_stage_output(
             "unknowns": [],
         }
     if stage == "epic_analysis":
-        goal = str(work_item.get("title") or "Epic goal").strip()
+        refined = refine_epic_stage(stage, work_item, None, effective_context)
+        parsed = refined.get("parsed") or {}
+        goal = str(parsed.get("goal") or work_item.get("title") or "Epic goal").strip()
         description = str(work_item.get("description") or "").strip()
         return {
             "assistant": stage,
             "summary": "Epic analysis completed.",
+            "source": refined.get("provider_used"),
+            "provider_used": refined.get("provider_used"),
+            "phi_status": refined.get("phi_status"),
+            "phi_raw_response_preview": refined.get("phi_raw_response_preview", ""),
             "goal": goal,
-            "scope": [item for item in [goal, description] if item][:3],
-            "business_outcomes": _business_outcomes(work_item, refinement, effective_context),
-            "assumptions": _epic_assumptions(work_item, refinement, effective_context),
+            "scope": parsed.get("scope") or [item for item in [goal, description] if item][:3],
+            "business_outcomes": parsed.get("business_outcomes") or _business_outcomes(work_item, refinement, effective_context),
+            "assumptions": parsed.get("assumptions") or _epic_assumptions(work_item, refinement, effective_context),
             "dependencies": _dependencies(work_item, refinement),
-            "risks": _risks(work_item, refinement),
-            "dependency_notes": _dependencies(work_item, refinement),
+            "risks": parsed.get("risks") or _risks(work_item, refinement),
+            "dependency_notes": parsed.get("dependency_notes") or _dependencies(work_item, refinement),
             "unknowns": [],
         }
     if stage == "feature_analysis":
@@ -115,10 +122,16 @@ def run_stage_output(
             "unknowns": [],
         }
     if stage == "feature_generation":
-        proposed_features = _feature_candidates(work_item, refinement)
+        refined = refine_epic_stage(stage, work_item, approved_stage_context("epic_analysis"), effective_context)
+        parsed = refined.get("parsed") or {}
+        proposed_features = [{"title": title} for title in parsed.get("features", [])] or _feature_candidates(work_item, refinement)
         return {
             "assistant": stage,
             "summary": "Generated proposed features from the approved epic scope.",
+            "source": refined.get("provider_used"),
+            "provider_used": refined.get("provider_used"),
+            "phi_status": refined.get("phi_status"),
+            "phi_raw_response_preview": refined.get("phi_raw_response_preview", ""),
             "proposed_features": proposed_features,
             "generated_features": proposed_features,
             "dependencies": _dependencies(work_item, refinement),
@@ -130,19 +143,68 @@ def run_stage_output(
         flows = list(refinement.get("base_flows", [])) or list(refinement.get("refined_base_flows", []))
         variants = list(refinement.get("variants", [])) or list(refinement.get("refined_variants", []))
         fields = list(refinement.get("fields", [])) or list(refinement.get("refined_fields", []))
-        proposed_work_items = build_story_drafts_from_epic_or_feature(
-            work_item,
-            source_stage=stage,
-            flows=flows,
-            variants=variants,
-            fields=fields,
-            include_ui=_needs_ui(refinement),
-            count=4 if approved_stage_context("epic_analysis") else 3,
-            feature_seeds=list(analysis.get("proposed_features", [])),
-        )
+        refined = refine_epic_stage(stage, work_item, analysis, effective_context)
+        feature_seeds = list(analysis.get("proposed_features", []))
+        if refined.get("provider_used") == "azure_phi" and refined.get("parsed", {}).get("stories"):
+            story_titles = list(refined.get("parsed", {}).get("stories", []))
+            story_drafts = []
+            current_feature = None
+            for index, title in enumerate(story_titles):
+                feature_seed = feature_seeds[min(index // 2, max(len(feature_seeds) - 1, 0))] if feature_seeds else None
+                feature_title = str(feature_seed.get("title") or feature_seed or work_item.get("title") or "Feature").strip() if feature_seed else str(work_item.get("title") or "Feature").strip()
+                if current_feature is None or current_feature.get("title") != feature_title:
+                    current_feature = {
+                        "draft_id": f"feature_{index}",
+                        "draft_type": "Feature",
+                        "type": "Feature",
+                        "title": feature_title,
+                        "description": f"Feature derived from {work_item.get('title') or 'epic planning'}",
+                        "acceptance_criteria": [],
+                        "tags": list(work_item.get("tags", [])),
+                        "parent_work_item_id": str(work_item.get("id") or ""),
+                        "parent_draft_id": None,
+                        "children": [],
+                        "child_drafts": [],
+                        "source_stage": stage,
+                        "status": "draft",
+                    }
+                    story_drafts.append(current_feature)
+                story = {
+                    "draft_id": f"story_{index}",
+                    "draft_type": "User Story",
+                    "type": "User Story",
+                    "title": str(title),
+                    "description": f"As a user, I need {title.lower()} so the epic goal is delivered.",
+                    "acceptance_criteria": [],
+                    "tags": list(work_item.get("tags", [])),
+                    "parent_work_item_id": None,
+                    "parent_draft_id": current_feature["draft_id"],
+                    "children": [],
+                    "child_drafts": [],
+                    "source_stage": stage,
+                    "status": "draft",
+                }
+                current_feature["children"].append(story)
+                current_feature["child_drafts"].append(story)
+            proposed_work_items = story_drafts
+        else:
+            proposed_work_items = build_story_drafts_from_epic_or_feature(
+                work_item,
+                source_stage=stage,
+                flows=flows,
+                variants=variants,
+                fields=fields,
+                include_ui=_needs_ui(refinement),
+                count=4 if approved_stage_context("epic_analysis") else 3,
+                feature_seeds=feature_seeds,
+            )
         return {
             "assistant": "story_generator",
             "summary": "Generated proposed work items from the approved planning scope.",
+            "source": refined.get("provider_used"),
+            "provider_used": refined.get("provider_used"),
+            "phi_status": refined.get("phi_status"),
+            "phi_raw_response_preview": refined.get("phi_raw_response_preview", ""),
             "proposed_work_items": proposed_work_items,
             "generated_work_items": proposed_work_items,
             "dependencies": analysis.get("dependencies", []),
@@ -153,17 +215,24 @@ def run_stage_output(
         analysis = approved_stage_context("story_generation") or approved_stage_context("feature_generation") or approved_stage_context("feature_analysis") or approved_stage_context("epic_analysis")
         drafts = list(analysis.get("generated_work_items") or analysis.get("proposed_work_items", []))
         review_findings = _review_proposed_work_items(drafts)
+        refined = refine_epic_stage(stage, work_item, {"drafts": drafts}, effective_context)
+        parsed = refined.get("parsed") or {}
         return {
             "assistant": stage,
             "summary": "Review the proposed work items before creating them in Azure DevOps.",
+            "source": refined.get("provider_used"),
+            "provider_used": refined.get("provider_used"),
+            "phi_status": refined.get("phi_status"),
+            "phi_raw_response_preview": refined.get("phi_raw_response_preview", ""),
             "proposed_work_items": drafts,
             "generated_work_items": drafts,
-            "missing_acceptance_criteria": review_findings["missing_acceptance_criteria"],
+            "missing_acceptance_criteria": review_findings["missing_acceptance_criteria"] + list(parsed.get("gaps", [])),
             "duplicate_titles": review_findings["duplicate_titles"],
             "ownership_gaps": review_findings["ownership_gaps"],
-            "dependency_issues": review_findings["dependency_issues"],
+            "dependency_issues": review_findings["dependency_issues"] + list(parsed.get("unknowns", [])),
             "approval_recommendation": "approve" if not any(review_findings.values()) else "revise",
-            "unknowns": [],
+            "unknowns": list(parsed.get("unknowns", [])),
+            "risks": list(parsed.get("risks", [])),
         }
     if stage == "task_analysis":
         return _analysis_like_output(work_item, refinement, "Task analysis is ready for implementation planning.", effective_context=effective_context)

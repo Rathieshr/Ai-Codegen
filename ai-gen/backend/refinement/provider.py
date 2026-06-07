@@ -23,8 +23,13 @@ class RefinementProvider(Protocol):
         timeout_seconds: int | None = None,
         response_format_enabled: bool | None = None,
         allow_retry_without_response_format: bool = True,
+        include_model_field: bool | None = None,
+        api_version_override: str | None = None,
     ) -> dict[str, Any]:
         """Return diagnostic metadata for a JSON probe call."""
+
+    def health_snapshot(self) -> dict[str, Any]:
+        """Return non-secret deployment health details."""
 
 
 def get_refinement_provider() -> RefinementProvider | None:
@@ -58,6 +63,7 @@ def get_refiner_status() -> dict[str, Any]:
         "enabled": enabled,
         "provider": provider_name or None,
         "model": _env("AI_GEN_REFINER_MODEL"),
+        "deployment": _env("AI_GEN_REFINER_DEPLOYMENT") or _env("AI_GEN_REFINER_MODEL"),
         "api_version": _env("AI_GEN_REFINER_API_VERSION") or "2024-05-01-preview",
         "endpoint_present": bool(_env("AI_GEN_REFINER_ENDPOINT")),
         "api_key_present": bool(_env("AI_GEN_REFINER_API_KEY")),

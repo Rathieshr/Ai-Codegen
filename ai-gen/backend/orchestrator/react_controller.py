@@ -250,6 +250,35 @@ class PipelineController:
         self.save_pipeline(state)
         return self._serialize_pipeline(state)
 
+    def approve_story_and_plan(self, pipeline_id: str, ai_gen_comments: list[dict] | None = None) -> dict:
+        """Advance Story Delivery from approved BA scope to generated task planning."""
+
+        state = self.load_pipeline(pipeline_id)
+        if state.workflow_template != "story_delivery":
+            raise ValueError("approve_story_and_plan is only supported for story_delivery workflows.")
+        if ai_gen_comments is not None:
+            state.ai_gen_comments = ai_gen_comments
+        ba_stage = state.stages.get("ba")
+        if ba_stage is None or not ba_stage.output:
+            raise ValueError("BA stage must be generated before approving the story.")
+        if not ba_stage.approved:
+            state = apply_approval(state, "ba", approved_by="azure_devops_story_planner")
+            state.activity.append({"type": "stage_approved", "timestamp": utc_now(), "stage": "ba", "approved_by": "azure_devops_story_planner"})
+            self._log_stage_transition(state, "ba", "story_planner_approval_completed", next_stage=self._active_stage_name(state))
+        ui_stage = state.stages.get("ui_optional")
+        if ui_stage and not ui_stage.approved and ui_stage.status != "locked" and not ui_stage.output:
+            state = apply_skip(state, "ui_optional", reason="Guided story workflow skipped the separate UI planning stage.")
+        state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
+        self._touch_pipeline(state)
+        self.save_pipeline(state)
+        task_stage = state.stages.get("task_planning")
+        return self.run_stage(
+            pipeline_id,
+            "task_planning",
+            regenerate=bool(task_stage and task_stage.output),
+            ai_gen_comments=ai_gen_comments,
+        )
+
     def approve_stage(self, pipeline_id: str, stage: str, approved_by: str | None = None) -> dict:
         state = self.load_pipeline(pipeline_id)
         state = apply_approval(state, stage, approved_by=approved_by)

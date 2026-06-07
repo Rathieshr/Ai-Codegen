@@ -1095,6 +1095,16 @@ def approve_pipeline_stage(pipeline_id: str, request: PipelineApproveRequest) ->
     return pipeline_controller.approve_stage(pipeline_id, request.stage, approved_by=request.approved_by)
 
 
+@app.post("/assist/pipeline/{pipeline_id}/approve-story-and-plan")
+def approve_pipeline_story_and_plan(pipeline_id: str, request: PipelineStageRequest) -> dict:
+    """Approve Story Delivery BA scope and generate task planning in one guided action."""
+
+    return pipeline_controller.approve_story_and_plan(
+        pipeline_id,
+        ai_gen_comments=request.ai_gen_comments,
+    )
+
+
 @app.post("/assist/pipeline/{pipeline_id}/skip-stage")
 def skip_pipeline_stage(pipeline_id: str, request: PipelineSkipRequest) -> dict:
     """Skip a stage with an explicit reason."""

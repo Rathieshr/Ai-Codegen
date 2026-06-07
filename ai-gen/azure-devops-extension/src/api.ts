@@ -458,6 +458,17 @@ export async function approvePipelineStage(pipelineId: string, stage: string, ap
   }
 }
 
+export async function approveStoryAndGenerateTasks(
+  pipelineId: string,
+  aiGenComments: AzureComment[] = [],
+): Promise<PipelineState> {
+  return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/approve-story-and-plan`, {
+    stage: 'ba',
+    regenerate: false,
+    ai_gen_comments: aiGenComments,
+  });
+}
+
 export async function skipPipelineStage(pipelineId: string, stage: string, reason: string): Promise<PipelineState> {
   return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/skip-stage`, {
     stage,

@@ -8,6 +8,7 @@ import {
   AiGenResponse,
   AiGenState,
   approvePipelineStage,
+  approveStoryAndGenerateTasks,
   addStageFeedback,
   buildVsCodeHandoffLink,
   createPipeline,
@@ -634,30 +635,23 @@ function WorkItemTab() {
       }
       setState((current) => ({ ...current, loadingMessage: 'Approving story...' }));
       await withPipelineUpdate(async () => {
-        let nextPipeline = state.data!.pipeline!.stages.ba?.approved
-          ? state.data!.pipeline!
-          : await approvePipelineStage(state.data!.pipeline!.pipeline_id, 'ba');
-        const uiOptional = nextPipeline.stages.ui_optional;
-        if (uiOptional && uiOptional.status === 'pending' && !Object.keys(uiOptional.output || {}).length) {
-          nextPipeline = await skipPipelineStage(
-            nextPipeline.pipeline_id,
-            'ui_optional',
-            'Guided story workflow skipped the separate UI planning stage.'
-          );
-        }
+        const commentLoad = await loadAiGenComments(state.data!.workItem.id);
+        const nextPipeline = await approveStoryAndGenerateTasks(state.data!.pipeline!.pipeline_id, commentLoad.comments);
         const baVersion = Number(nextPipeline.stages.ba?.version || 0);
         const nextSession = {
           ...storySession,
           refinementVersion: baVersion,
           acceptanceVersion: baVersion,
+          taskBreakdownVersion: undefined,
         };
         if (storyPipelineId) {
           saveStorySessionState(storyPipelineId, nextSession);
         }
         setStorySession(nextSession);
+        setSelectedDraftIds(flattenDrafts(nextPipeline.draft_work_items || []).filter((draft) => draft.source_stage === 'task_planning').map((item) => item.draft_id));
         return refreshPipelineState(
           state.data!.workItem,
-          { ...state.data!, pipeline: nextPipeline },
+          { ...state.data!, pipeline: nextPipeline, commentWarning: commentLoad.warning },
           nextPipeline
         );
       });
@@ -729,12 +723,21 @@ function WorkItemTab() {
     if (!pipeline || String(pipeline.workflow_template || '') !== 'story_delivery') {
       return;
     }
+    if (storyWorkflowModel.currentStep === 'refinement') {
+      setClarification(storyWorkflowModel.refinedStory);
+      setStorySession((current) => ({ ...current, refinementVersion: undefined, acceptanceVersion: undefined, taskBreakdownVersion: undefined }));
+      setState((current) => ({ ...current, error: 'Edit the story in the input field, then click Regenerate.' }));
+      return;
+    }
     if (storyWorkflowModel.currentStep === 'acceptance') {
+      setClarification(storyWorkflowModel.acceptanceCriteria.join('\n'));
       setStorySession((current) => ({ ...current, acceptanceVersion: undefined, taskBreakdownVersion: undefined }));
+      setState((current) => ({ ...current, error: 'Edit the acceptance criteria in the input field, then click Regenerate.' }));
       return;
     }
     if (storyWorkflowModel.currentStep === 'task_breakdown') {
       setStorySession((current) => ({ ...current, taskBreakdownVersion: undefined }));
+      setState((current) => ({ ...current, error: 'Task approval was cleared. Click Regenerate to update the task breakdown.' }));
       return;
     }
     if (storyWorkflowModel.currentStep === 'code_generation_prompt') {

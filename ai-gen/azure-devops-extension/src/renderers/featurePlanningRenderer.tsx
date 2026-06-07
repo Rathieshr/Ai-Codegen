@@ -29,23 +29,13 @@ export default function FeaturePlanningRenderer(props: WorkspaceRendererProps) {
         <div className="ai-gen-stage-panel">
           <OutputList title="Feature Summary" items={[String(output.summary || props.currentSummary)]} />
           {sourceLabel ? <OutputList title="Generation Source" items={[sourceLabel]} /> : null}
-          <StoryTaskTree
-            items={workItems}
-            selectedDraftIds={props.selectedDraftIds || []}
-            onToggleDraft={props.onToggleDraft}
-          />
+          <StoryTaskTree items={workItems} />
           <OutputList title="Acceptance Criteria" items={(output.acceptance_criteria as string[]) || []} />
           <OutputList title="Dependencies" items={(output.dependencies as string[]) || []} />
           {workItems.length ? (
             <div className="ai-gen-actions ai-gen-actions-compact">
-              <button className="ai-gen-button secondary" onClick={props.onSelectAllDrafts} disabled={props.loading}>
-                Select All
-              </button>
-              <button className="ai-gen-button secondary" onClick={props.onDeselectAllDrafts} disabled={props.loading || !(props.selectedDraftIds || []).length}>
-                Deselect All
-              </button>
-              <button className="ai-gen-button" onClick={props.onCreateSelectedDrafts} disabled={props.loading || !(props.selectedDraftIds || []).length}>
-                Create Selected Work Items
+              <button className="ai-gen-button" onClick={props.onCreateSelectedDrafts} disabled={props.loading}>
+                Create All Work Items
               </button>
             </div>
           ) : null}
@@ -55,15 +45,7 @@ export default function FeaturePlanningRenderer(props: WorkspaceRendererProps) {
   );
 }
 
-function StoryTaskTree({
-  items,
-  selectedDraftIds,
-  onToggleDraft,
-}: {
-  items: DraftItem[];
-  selectedDraftIds: string[];
-  onToggleDraft?: (draftId: string) => void;
-}) {
+function StoryTaskTree({ items }: { items: DraftItem[] }) {
   if (!items.length) {
     return null;
   }
@@ -73,17 +55,9 @@ function StoryTaskTree({
       <div className="ai-gen-planning-tree">
         {items.map((story, index) => {
           const tasks = mergeDraftChildren(story);
-          const storyId = String(story.draft_id || '');
           return (
             <div className="ai-gen-plan-card" key={`${story.title || 'story'}-${index}`}>
               <div className="ai-gen-plan-card-header">
-                {storyId ? (
-                  <input
-                    type="checkbox"
-                    checked={selectedDraftIds.includes(storyId)}
-                    onChange={() => onToggleDraft?.(storyId)}
-                  />
-                ) : null}
                 <span className="ai-gen-plan-type">Story</span>
                 <strong>{story.title || 'Untitled story'}</strong>
               </div>
@@ -94,13 +68,6 @@ function StoryTaskTree({
                   {tasks.map((task, taskIndex) => (
                     <div className="ai-gen-plan-child" key={`${task.title || 'task'}-${taskIndex}`}>
                       <div>
-                        {task.draft_id ? (
-                          <input
-                            type="checkbox"
-                            checked={selectedDraftIds.includes(task.draft_id)}
-                            onChange={() => onToggleDraft?.(task.draft_id || '')}
-                          />
-                        ) : null}
                         <span className="ai-gen-plan-type">Task</span>
                         <strong>{task.title || 'Untitled task'}</strong>
                       </div>

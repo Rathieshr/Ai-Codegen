@@ -563,18 +563,25 @@ function WorkItemTab() {
   }
 
   async function createSelectedDraftWorkItemsAction() {
-    if (!state.data?.pipeline || !selectedDraftIds.length) {
-      setState((current) => ({ ...current, error: 'Select at least one proposed work item before creating it.' }));
+    if (!state.data?.pipeline) {
       return;
     }
-    const count = selectedDraftIds.length;
+    const fallbackDrafts = isPlanningTemplate ? planningDrafts : currentStageDrafts;
+    const draftIds = selectedDraftIds.length
+      ? selectedDraftIds
+      : flattenDrafts(fallbackDrafts).filter((draft) => draft.status !== 'created').map((draft) => draft.draft_id);
+    if (!draftIds.length) {
+      setState((current) => ({ ...current, error: 'No generated work items are available to create yet.' }));
+      return;
+    }
+    const count = draftIds.length;
     const confirmed = window.confirm(`This will create ${count} Azure DevOps work items under ${state.data.workItem.type} #${state.data.workItem.id}. Continue?`);
     if (!confirmed) {
       return;
     }
     setState((current) => ({ ...current, loadingMessage: 'Creating Azure DevOps work items...' }));
     await withPipelineUpdate(async () => {
-      const payload = await loadDraftWorkItemCreatePayload(state.data!.pipeline!.pipeline_id, selectedDraftIds, true);
+      const payload = await loadDraftWorkItemCreatePayload(state.data!.pipeline!.pipeline_id, draftIds, true);
       const created = await createAzureDevOpsWorkItems(state.data!.workItem, payload.work_item_create_requests);
       await storeWorkItemCreationResult(
         state.data!.pipeline!.pipeline_id,
@@ -589,6 +596,7 @@ function WorkItemTab() {
         }))
       );
       setCreatedDraftsPreview(created);
+      setSelectedDraftIds(draftIds);
       return refreshPipelineState(state.data!.workItem, state.data!);
     });
   }
@@ -936,7 +944,10 @@ function WorkItemTab() {
               onToggleDraft: (draftId) => setSelectedDraftIds((current) => current.includes(draftId) ? current.filter((item) => item !== draftId) : [...current, draftId]),
               onSelectAllDrafts: () => setSelectedDraftIds(flattenDrafts(planningDrafts).filter((draft) => draft.status !== 'created').map((item) => item.draft_id)),
               onDeselectAllDrafts: () => setSelectedDraftIds([]),
-              onCreateSelectedDrafts: () => void createSelectedDraftWorkItemsAction(),
+              onCreateSelectedDrafts: () => {
+                setSelectedDraftIds(flattenDrafts(planningDrafts).filter((draft) => draft.status !== 'created').map((item) => item.draft_id));
+                void createSelectedDraftWorkItemsAction();
+              },
             })}
           </>
         )}
@@ -2440,7 +2451,13 @@ function workflowActionLabel(action: string, workflowTemplate: string): string {
     case 'deselect_all':
       return 'Deselect All';
     case 'create_selected_work_items':
-      return workflowTemplate === 'story_delivery' ? 'Create Selected Child Tasks' : 'Create Selected Work Items';
+      if (workflowTemplate === 'story_delivery') {
+        return 'Create Selected Child Tasks';
+      }
+      if (workflowTemplate === 'epic_planning' || workflowTemplate === 'feature_planning') {
+        return 'Create All Work Items';
+      }
+      return 'Create Selected Work Items';
     case 'view_created_work_items':
       return 'View Created Work Items';
     case 'regenerate_story':

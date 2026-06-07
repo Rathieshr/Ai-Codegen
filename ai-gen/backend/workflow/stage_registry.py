@@ -149,17 +149,19 @@ def run_stage_output(
             story_titles = list(refined.get("parsed", {}).get("stories", []))
             story_drafts = []
             current_feature = None
+            current_feature_index = -1
             for index, title in enumerate(story_titles):
                 feature_seed = feature_seeds[min(index // 2, max(len(feature_seeds) - 1, 0))] if feature_seeds else None
                 feature_title = str(feature_seed.get("title") or feature_seed or work_item.get("title") or "Feature").strip() if feature_seed else str(work_item.get("title") or "Feature").strip()
                 if current_feature is None or current_feature.get("title") != feature_title:
+                    current_feature_index += 1
                     current_feature = {
-                        "draft_id": f"feature_{index}",
+                        "draft_id": f"feature_{current_feature_index}",
                         "draft_type": "Feature",
                         "type": "Feature",
                         "title": feature_title,
-                        "description": f"Feature derived from {work_item.get('title') or 'epic planning'}",
-                        "acceptance_criteria": [],
+                        "description": _planner_feature_description(str(work_item.get("title") or "epic planning"), feature_title),
+                        "acceptance_criteria": _planner_feature_acceptance(feature_title),
                         "tags": list(work_item.get("tags", [])),
                         "parent_work_item_id": str(work_item.get("id") or ""),
                         "parent_draft_id": None,
@@ -169,13 +171,14 @@ def run_stage_output(
                         "status": "draft",
                     }
                     story_drafts.append(current_feature)
+                story_title = _planner_story_title(str(title), feature_title, (index % 2) + 1)
                 story = {
                     "draft_id": f"story_{index}",
                     "draft_type": "User Story",
                     "type": "User Story",
-                    "title": str(title),
-                    "description": f"As a user, I need {title.lower()} so the epic goal is delivered.",
-                    "acceptance_criteria": [],
+                    "title": story_title,
+                    "description": _planner_story_description(story_title, feature_title),
+                    "acceptance_criteria": _planner_story_acceptance(story_title, flows, fields),
                     "tags": list(work_item.get("tags", [])),
                     "parent_work_item_id": None,
                     "parent_draft_id": current_feature["draft_id"],
@@ -442,13 +445,149 @@ def _epic_assumptions(work_item: dict[str, Any], refinement: dict[str, Any], eff
 def _feature_candidates(work_item: dict[str, Any], refinement: dict[str, Any]) -> list[dict[str, Any]]:
     title = _title_or_default(work_item, "Feature").rstrip(".")
     flows = list(refinement.get("base_flows", [])) or list(refinement.get("refined_base_flows", [])) or ["core"]
+    feature_labels = _planner_feature_labels(title, flows)
     return [
         {
-            "title": f"{title}: Feature Slice {index}",
-            "description": f"Organize the {title.lower()} epic into a deliverable feature slice focused on {flow}.",
+            "title": f"{title}: {label}",
+            "description": _planner_feature_description(title, f"{title}: {label}"),
+            "acceptance_criteria": _planner_feature_acceptance(f"{title}: {label}"),
         }
-        for index, flow in enumerate(flows[:3] or ["core"], start=1)
+        for label in feature_labels[:4]
     ]
+
+
+def _planner_feature_labels(title: str, flows: list[str]) -> list[str]:
+    lower = title.lower()
+    if any(token in lower for token in ["e-commerce", "ecommerce", "commerce", "shopping", "cart", "checkout", "retail", "mobile app", "ios", "android"]):
+        return ["Mobile Shopping Experience", "Cart and Checkout Flow", "Order Visibility", "Commerce Operations"]
+    if any(token in lower for token in ["hotel", "booking", "reservation", "guest", "whatsapp"]):
+        return ["Search and Availability", "Booking Conversation Flow", "Payment and Confirmation", "Guest Notifications"]
+    if any(token in lower for token in ["auth", "identity", "login", "otp"]):
+        return ["Phone Number Sign-In", "OTP Verification", "Session and Device Trust", "Recovery and Account Security"]
+    if any(token in lower for token in ["meter", "analytics", "energy"]):
+        return ["Usage Dashboard", "Anomaly Detection", "Alerting and Notifications", "Reporting and Exports"]
+    if any(token in lower for token in ["community", "member", "society"]):
+        return ["Member Onboarding", "Announcements and Notices", "Maintenance Requests", "Billing and Dues"]
+    if any(token in lower for token in ["property", "airbnb", "host"]):
+        return ["Listing Management", "Reservation Operations", "Guest Messaging", "Payouts and Accounting"]
+    cleaned_flows = [str(flow).replace("_", " ").strip().title() for flow in flows if str(flow).strip() and str(flow).strip().lower() != "core"]
+    if cleaned_flows:
+        return [f"{flow} Experience" for flow in cleaned_flows[:4]]
+    return ["User Experience Foundation", "Core Workflow Automation", "Reporting and Visibility", "Operational Controls"]
+
+
+def _planner_feature_description(epic_title: str, feature_title: str) -> str:
+    return f"Deliver the {feature_title.lower()} capability for {epic_title.lower()}, including the user journeys, system behavior, and operational readiness needed for release."
+
+
+def _planner_feature_acceptance(feature_title: str) -> list[str]:
+    return [
+        f"{feature_title} has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts.",
+    ]
+
+
+def _planner_story_title(title: str, feature_title: str, index: int) -> str:
+    cleaned = str(title or "").strip()
+    if cleaned and not cleaned.lower().endswith((f"story {index}", "story 1", "story 2")):
+        return cleaned
+    options = _planner_story_titles_for_feature(feature_title)
+    return options[min(index - 1, len(options) - 1)]
+
+
+def _planner_story_titles_for_feature(feature_title: str) -> list[str]:
+    lower = feature_title.lower()
+    if any(token in lower for token in ["shopping", "experience", "catalog", "user experience", "mobile"]):
+        return [
+            f"{feature_title}: Browse products and product details",
+            f"{feature_title}: Manage cart from mobile screens",
+        ]
+    if any(token in lower for token in ["cart", "checkout", "payment", "workflow", "automation"]):
+        return [
+            f"{feature_title}: Complete checkout with delivery and payment details",
+            f"{feature_title}: Confirm order after successful payment",
+        ]
+    if any(token in lower for token in ["order", "visibility", "report", "status", "notification"]):
+        return [
+            f"{feature_title}: View order history and order status",
+            f"{feature_title}: Receive order confirmation and delivery updates",
+        ]
+    if any(token in lower for token in ["operation", "control", "inventory", "admin"]):
+        return [
+            f"{feature_title}: Manage product availability and inventory status",
+            f"{feature_title}: Configure operational rules for mobile commerce",
+        ]
+    return [
+        f"{feature_title}: Define primary user journey",
+        f"{feature_title}: Validate successful completion",
+    ]
+
+
+def _planner_story_description(title: str, feature_title: str) -> str:
+    capability = _planner_story_capability(title)
+    return f"As a customer, I want to {capability} so I can complete the {feature_title.lower()} journey confidently."
+
+
+def _planner_story_capability(title: str) -> str:
+    lower = title.lower()
+    if "browse" in lower or "product details" in lower:
+        return "browse products and review product details"
+    if "cart" in lower:
+        return "add, review, and update products in my cart"
+    if "checkout" in lower:
+        return "complete checkout with delivery and payment details"
+    if "confirm order" in lower or "successful payment" in lower:
+        return "receive confirmation after placing an order"
+    if "history" in lower or "status" in lower:
+        return "view my order history and current order status"
+    if "delivery updates" in lower or "confirmation" in lower:
+        return "receive order confirmation and delivery updates"
+    if "inventory" in lower or "availability" in lower:
+        return "see accurate product availability"
+    if "operational rules" in lower or "configure" in lower:
+        return "use commerce flows that follow configured business rules"
+    return title.split(":")[-1].strip().lower() or "complete the workflow"
+
+
+def _planner_story_acceptance(title: str, flows: list[str], fields: list[str]) -> list[str]:
+    lower = title.lower()
+    criteria = [f"{title} can be reviewed independently with clear user-visible behavior."]
+    if any(token in lower for token in ["browse", "product", "detail"]):
+        criteria.extend([
+            "Given products are available, when the customer opens the catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown.",
+        ])
+    elif "cart" in lower:
+        criteria.extend([
+            "Given a customer selects a product, when they add it to cart, then the cart updates with item, quantity, and price.",
+            "Given items are in the cart, when the customer edits quantity or removes an item, then totals update correctly.",
+        ])
+    elif any(token in lower for token in ["checkout", "payment"]):
+        criteria.extend([
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown.",
+        ])
+    elif any(token in lower for token in ["order", "status", "history", "delivery"]):
+        criteria.extend([
+            "Given the customer has orders, when they open order history, then recent orders and statuses are visible.",
+            "Given an order status changes, when the customer views the order, then the latest status and key dates are shown.",
+        ])
+    elif any(token in lower for token in ["inventory", "availability"]):
+        criteria.extend([
+            "Given inventory changes, when product availability is updated, then product screens reflect the latest status.",
+            "Given an item is unavailable, when a customer views it, then unavailable actions are blocked or clearly explained.",
+        ])
+    elif any(token in lower for token in ["operational", "rules", "configure"]):
+        criteria.extend([
+            "Given an authorized operator updates commerce rules, when changes are saved, then affected flows follow the new rules.",
+            "Given a rule blocks an action, when the customer attempts it, then the app shows a clear reason.",
+        ])
+    if flows:
+        criteria.append(f"Supports the primary flow: {flows[0]}.")
+    if fields:
+        criteria.append(f"Covers fields: {', '.join(fields[:3])}.")
+    return _dedupe(criteria)
 
 
 def _ba_like_output(work_item: dict[str, Any], refinement: dict[str, Any], source: dict[str, Any] | None) -> dict[str, Any]:

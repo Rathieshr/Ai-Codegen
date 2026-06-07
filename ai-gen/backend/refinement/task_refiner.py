@@ -362,6 +362,8 @@ def _deterministic_epic_stage(stage: str, work_item: dict[str, Any], upstream: d
 
 
 def _infer_domain(text: str) -> str:
+    if any(token in text for token in ["e-commerce", "ecommerce", "commerce", "shopping", "cart", "checkout", "retail", "mobile app", "ios", "android"]):
+        return "mobile_commerce"
     if any(token in text for token in ["hotel", "booking", "reservation", "guest"]):
         return "hospitality"
     if any(token in text for token in ["auth", "identity", "login", "otp"]):
@@ -382,6 +384,7 @@ def _feature_title_hints(domain: str, title: str) -> list[str]:
         "analytics": ["Usage Dashboard", "Anomaly Detection", "Alerting and Notifications", "Reporting and Exports"],
         "community_management": ["Member Onboarding", "Announcements and Notices", "Maintenance Requests", "Billing and Dues"],
         "property_management": ["Listing Management", "Reservation Operations", "Guest Messaging", "Payouts and Accounting"],
+        "mobile_commerce": ["Mobile Shopping Experience", "Cart and Checkout Flow", "Order Visibility", "Commerce Operations"],
         "platform": ["User Experience Foundation", "Core Workflow Automation", "Reporting and Visibility", "Operational Controls"],
     }
     base = seeds.get(domain, seeds["platform"])
@@ -399,12 +402,40 @@ def _story_title_hints(title: str, features: list[Any]) -> list[str]:
             normalized_features.append(str(feature).strip())
     normalized_features = [item for item in normalized_features if item]
     for feature in normalized_features[:4]:
-        story_titles.append(f"{feature}: Story 1")
-        story_titles.append(f"{feature}: Story 2")
+        story_titles.extend(_story_titles_for_feature(feature))
     if story_titles:
         return story_titles
     base = title.strip() or "Epic"
-    return [f"{base}: Story 1", f"{base}: Story 2"]
+    return [f"{base}: Define primary user journey", f"{base}: Validate successful completion"]
+
+
+def _story_titles_for_feature(feature: str) -> list[str]:
+    cleaned = feature.strip()
+    lower = cleaned.lower()
+    if any(token in lower for token in ["shopping", "experience", "catalog", "user experience", "mobile"]):
+        return [
+            f"{cleaned}: Browse products and product details",
+            f"{cleaned}: Manage cart from mobile screens",
+        ]
+    if any(token in lower for token in ["cart", "checkout", "payment", "workflow", "automation"]):
+        return [
+            f"{cleaned}: Complete checkout with delivery and payment details",
+            f"{cleaned}: Confirm order after successful payment",
+        ]
+    if any(token in lower for token in ["order", "visibility", "report", "status", "notification"]):
+        return [
+            f"{cleaned}: View order history and order status",
+            f"{cleaned}: Receive order confirmation and delivery updates",
+        ]
+    if any(token in lower for token in ["operation", "control", "inventory", "admin"]):
+        return [
+            f"{cleaned}: Manage product availability and inventory status",
+            f"{cleaned}: Configure operational rules for mobile commerce",
+        ]
+    return [
+        f"{cleaned}: Define primary user journey",
+        f"{cleaned}: Validate successful completion",
+    ]
 
 
 def _string_list(value: Any) -> list[str]:
@@ -489,6 +520,7 @@ def _business_outcome_hints(domain: str, title: str) -> list[str]:
         "analytics": ["Improve visibility into usage patterns.", "Reduce time to investigate anomalies."],
         "community_management": ["Reduce operational coordination overhead.", "Improve resident communication quality."],
         "property_management": ["Reduce host operational workload.", "Improve booking and guest coordination quality."],
+        "mobile_commerce": ["Improve mobile shopping conversion.", "Reduce friction from product discovery through checkout."],
         "platform": ["Improve delivery speed for the core platform.", "Reduce operational friction in the primary workflow."],
     }
     return mapping.get(domain, mapping["platform"])

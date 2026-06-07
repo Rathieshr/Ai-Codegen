@@ -138,16 +138,18 @@ def build_story_drafts_from_epic_or_feature(
     tags = _tags(work_item)
     subject = _title(work_item)
     outputs: list[dict[str, Any]] = []
-    for index in range(1, count + 1):
-        story_title = f"{subject}: Story Slice {index}"
+    story_titles = _story_titles_for_feature(subject)
+    while len(story_titles) < count:
+        story_titles.extend(_story_titles_for_feature(f"{subject}: Delivery Area {len(story_titles) + 1}"))
+    for index, story_title in enumerate(story_titles[:count], start=1):
         story_id = make_draft_id(source_stage, story_title, index)
         story = make_work_item_draft(
             draft_id=story_id,
             parent_work_item_id=work_item.get("id") or work_item.get("work_item_id"),
             draft_type="User Story",
             title=story_title,
-            description=f"As an end user, I want the {subject.lower()} story slice {index} so the feature can be delivered safely.",
-            acceptance_criteria=_story_acceptance(subject, flows, fields, index),
+            description=_story_description(story_title, subject),
+            acceptance_criteria=_story_acceptance(story_title, flows, fields, index),
             tags=tags,
             area_path=area_path,
             iteration_path=iteration_path,
@@ -276,7 +278,7 @@ def _build_feature_story_hierarchy(
         if isinstance(seed, dict) and str(seed.get("title", "")).strip()
     ]
     if not seed_titles:
-        seed_titles = [f"{subject}: Feature Slice {index}" for index in range(1, min(3, count) + 1)]
+        seed_titles = _feature_titles_for_subject(subject)[: max(1, min(4, count))]
     for feature_index, feature_title in enumerate(seed_titles, start=1):
         feature_id = make_draft_id(source_stage, feature_title, feature_index)
         feature = make_work_item_draft(
@@ -284,24 +286,23 @@ def _build_feature_story_hierarchy(
             parent_work_item_id=work_item.get("id") or work_item.get("work_item_id"),
             draft_type="Feature",
             title=feature_title,
-            description=f"Organize the {subject.lower()} epic into the feature slice {feature_index}.",
-            acceptance_criteria=[f"Feature slice {feature_index} has clear downstream stories and acceptance criteria."],
+            description=_feature_description(subject, feature_title),
+            acceptance_criteria=_feature_acceptance(feature_title),
             tags=tags,
             area_path=area_path,
             iteration_path=iteration_path,
             source_stage=source_stage,
         )
         stories: list[dict[str, Any]] = []
-        for story_index in range(1, 3):
-            title = f"{feature_title}: Story {story_index}"
+        for story_index, title in enumerate(_story_titles_for_feature(feature_title), start=1):
             story = make_work_item_draft(
                 draft_id=make_draft_id(source_stage, title, story_index, feature_id),
                 parent_work_item_id=work_item.get("id") or work_item.get("work_item_id"),
                 parent_draft_id=feature_id,
                 draft_type="User Story",
                 title=title,
-                description=f"As an end user, I want {title.lower()} so the {feature_title.lower()} slice can be delivered.",
-                acceptance_criteria=_story_acceptance(feature_title, flows, fields, story_index),
+                description=_story_description(title, feature_title),
+                acceptance_criteria=_story_acceptance(title, flows, fields, story_index),
                 tags=tags,
                 area_path=area_path,
                 iteration_path=iteration_path,
@@ -459,14 +460,127 @@ def _append_create_requests(requests: list[dict[str, Any]], draft: dict[str, Any
 
 
 def _story_acceptance(subject: str, flows: list[str], fields: list[str], index: int) -> list[str]:
-    criteria = [
-        f"{subject} story slice {index} is independently reviewable.",
-    ]
+    lower = subject.lower()
+    criteria = [f"{subject} can be reviewed independently with clear user-visible behavior."]
+    if any(token in lower for token in ["browse", "product", "detail"]):
+        criteria.append("Given products are available, when the customer opens the mobile catalog, then products and key details are visible.")
+        criteria.append("Given the customer selects a product, when details load, then price, availability, and primary actions are shown.")
+    elif any(token in lower for token in ["cart"]):
+        criteria.append("Given a customer selects a product, when they add it to cart, then the cart updates with item, quantity, and price.")
+        criteria.append("Given items are in the cart, when the customer edits quantity or removes an item, then totals update correctly.")
+    elif any(token in lower for token in ["checkout", "payment"]):
+        criteria.append("Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.")
+        criteria.append("Given payment succeeds, when checkout completes, then an order is created and confirmation is shown.")
+    elif any(token in lower for token in ["order", "status", "history", "delivery"]):
+        criteria.append("Given the customer has orders, when they open order history, then recent orders and statuses are visible.")
+        criteria.append("Given an order status changes, when the customer views the order, then the latest status and key dates are shown.")
+    elif any(token in lower for token in ["inventory", "availability"]):
+        criteria.append("Given inventory changes, when product availability is updated, then mobile product screens reflect the latest status.")
+        criteria.append("Given an item is unavailable, when a customer views it, then unavailable actions are blocked or clearly explained.")
+    elif any(token in lower for token in ["operational", "rules", "configure"]):
+        criteria.append("Given an authorized operator updates commerce rules, when changes are saved, then affected mobile flows follow the new rules.")
+        criteria.append("Given a rule blocks an action, when the customer attempts it, then the app shows a clear reason.")
     if flows:
         criteria.append(f"Supports the primary flow: {flows[min(index - 1, len(flows) - 1)]}.")
     if fields:
         criteria.append(f"Covers fields: {', '.join(fields[:3])}.")
-    return criteria
+    return _dedupe(criteria)
+
+
+def _feature_description(epic_title: str, feature_title: str) -> str:
+    return f"Deliver the {feature_title.lower()} capability for {epic_title.lower()}, including the user journeys, system behavior, and operational readiness needed for release."
+
+
+def _feature_acceptance(feature_title: str) -> list[str]:
+    return [
+        f"{feature_title} has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts.",
+    ]
+
+
+def _story_description(title: str, feature_title: str) -> str:
+    capability = _story_capability(title)
+    return f"As a customer, I want to {capability} so I can complete the {feature_title.lower()} journey confidently on mobile."
+
+
+def _story_capability(title: str) -> str:
+    lower = title.lower()
+    if "browse" in lower or "product details" in lower:
+        return "browse products and review product details"
+    if "cart" in lower:
+        return "add, review, and update products in my cart"
+    if "checkout" in lower:
+        return "complete checkout with delivery and payment details"
+    if "confirm order" in lower or "successful payment" in lower:
+        return "receive confirmation after placing an order"
+    if "history" in lower or "status" in lower:
+        return "view my order history and current order status"
+    if "delivery updates" in lower or "confirmation" in lower:
+        return "receive order confirmation and delivery updates"
+    if "inventory" in lower or "availability" in lower:
+        return "see accurate product availability"
+    if "operational rules" in lower or "configure" in lower:
+        return "use mobile commerce flows that follow configured business rules"
+    return title.split(":")[-1].strip().lower() or "complete the workflow"
+
+
+def _story_titles_for_feature(feature_title: str) -> list[str]:
+    lower = feature_title.lower()
+    if any(token in lower for token in ["shopping", "experience", "catalog", "user experience", "mobile"]):
+        return [
+            f"{feature_title}: Browse products and product details",
+            f"{feature_title}: Manage cart from mobile screens",
+        ]
+    if any(token in lower for token in ["cart", "checkout", "payment", "workflow", "automation"]):
+        return [
+            f"{feature_title}: Complete checkout with delivery and payment details",
+            f"{feature_title}: Confirm order after successful payment",
+        ]
+    if any(token in lower for token in ["order", "visibility", "report", "status", "notification"]):
+        return [
+            f"{feature_title}: View order history and order status",
+            f"{feature_title}: Receive order confirmation and delivery updates",
+        ]
+    if any(token in lower for token in ["operation", "control", "inventory", "admin"]):
+        return [
+            f"{feature_title}: Manage product availability and inventory status",
+            f"{feature_title}: Configure operational rules for mobile commerce",
+        ]
+    return [
+        f"{feature_title}: Define primary user journey",
+        f"{feature_title}: Validate successful completion",
+    ]
+
+
+def _feature_titles_for_subject(subject: str) -> list[str]:
+    lower = subject.lower()
+    if any(token in lower for token in ["e-commerce", "ecommerce", "commerce", "shopping", "cart", "checkout", "retail", "mobile app", "ios", "android"]):
+        seeds = ["Mobile Shopping Experience", "Cart and Checkout Flow", "Order Visibility", "Commerce Operations"]
+    elif any(token in lower for token in ["hotel", "booking", "reservation", "guest", "whatsapp"]):
+        seeds = ["Search and Availability", "Booking Conversation Flow", "Payment and Confirmation", "Guest Notifications"]
+    elif any(token in lower for token in ["auth", "identity", "login", "otp"]):
+        seeds = ["Phone Number Sign-In", "OTP Verification", "Session and Device Trust", "Recovery and Account Security"]
+    elif any(token in lower for token in ["meter", "analytics", "energy"]):
+        seeds = ["Usage Dashboard", "Anomaly Detection", "Alerting and Notifications", "Reporting and Exports"]
+    elif any(token in lower for token in ["community", "member", "society"]):
+        seeds = ["Member Onboarding", "Announcements and Notices", "Maintenance Requests", "Billing and Dues"]
+    elif any(token in lower for token in ["property", "airbnb", "host"]):
+        seeds = ["Listing Management", "Reservation Operations", "Guest Messaging", "Payouts and Accounting"]
+    else:
+        seeds = ["User Experience Foundation", "Core Workflow Automation", "Reporting and Visibility", "Operational Controls"]
+    return [f"{subject}: {seed}" for seed in seeds]
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = str(item).strip()
+        if normalized and normalized.lower() not in seen:
+            seen.add(normalized.lower())
+            output.append(normalized)
+    return output
 
 
 def _field(payload: dict[str, Any], *keys: str) -> str:

@@ -609,8 +609,8 @@ function WorkItemTab() {
     }
     if (storyWorkflowModel.currentStep === 'refinement') {
       const baVersion = Number(pipeline.stages.ba?.version || 0);
-      if (!storyWorkflowModel.refinedStory || storyWorkflowModel.openQuestion !== 'Is this refined user story accurate and complete?') {
-        setState((current) => ({ ...current, error: 'Answer the open clarification and regenerate before approving the refined story.' }));
+      if (!storyWorkflowModel.refinedStory) {
+        setState((current) => ({ ...current, error: 'Generate the refined story before approving it.' }));
         return;
       }
       const nextSession = { ...storySession, refinementVersion: baVersion || Date.now() };
@@ -636,7 +636,25 @@ function WorkItemTab() {
       setState((current) => ({ ...current, loadingMessage: 'Approving story...' }));
       await withPipelineUpdate(async () => {
         const commentLoad = await loadAiGenComments(state.data!.workItem.id);
-        const nextPipeline = await approveStoryAndGenerateTasks(state.data!.pipeline!.pipeline_id, commentLoad.comments);
+        let nextPipeline = state.data!.pipeline!;
+        try {
+          nextPipeline = await approveStoryAndGenerateTasks(state.data!.pipeline!.pipeline_id, commentLoad.comments);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const baVersion = Number(nextPipeline.stages.ba?.version || 0);
+          const localSession = {
+            ...storySession,
+            refinementVersion: baVersion || Date.now(),
+            acceptanceVersion: baVersion || Date.now(),
+            taskBreakdownVersion: undefined,
+          };
+          if (storyPipelineId) {
+            saveStorySessionState(storyPipelineId, localSession);
+          }
+          setStorySession(localSession);
+          setState((current) => ({ ...current, error: `Story approval saved locally. Backend task planning sync failed: ${message}` }));
+          return { ...state.data!, pipeline: nextPipeline, commentWarning: commentLoad.warning };
+        }
         const baVersion = Number(nextPipeline.stages.ba?.version || 0);
         const nextSession = {
           ...storySession,
@@ -2103,14 +2121,14 @@ function buildStoryWorkflowModel(
   const baVersion = Number(baStage?.version || 0);
   const taskVersion = Number(taskStage?.version || 0);
   const refinementApproved = Boolean(baVersion && storySession.refinementVersion === baVersion);
-  const acceptanceApproved = Boolean(baVersion && storySession.acceptanceVersion === baVersion && baStage?.approved);
+  const acceptanceApproved = Boolean(baVersion && storySession.acceptanceVersion === baVersion);
   const taskBreakdownApproved = Boolean(taskVersion && storySession.taskBreakdownVersion === taskVersion);
   const unknowns = asStringList(baOutput.unknowns);
   const acceptanceCriteria = asStringList(baOutput.acceptance_criteria);
   const refinedStory = String(baOutput.refined_requirement || baOutput.summary || '').trim();
 
   let currentStep: StoryWorkflowStepId = 'refinement';
-  if (baStage?.output && refinementApproved && !unknowns.length) {
+  if (baStage?.output && refinementApproved) {
     currentStep = 'acceptance';
   }
   if (acceptanceApproved) {
@@ -2119,7 +2137,7 @@ function buildStoryWorkflowModel(
   if (taskStage?.output && taskBreakdownApproved) {
     currentStep = 'code_generation_prompt';
   }
-  if (unknowns.length) {
+  if (unknowns.length && !refinementApproved) {
     currentStep = 'refinement';
   }
 
@@ -2145,7 +2163,7 @@ function buildStoryWorkflowModel(
     acceptanceApproved,
     taskBreakdownApproved,
     canApproveCurrentStep: (
-      (currentStep === 'refinement' && Boolean(refinedStory) && !unknowns.length)
+      (currentStep === 'refinement' && Boolean(refinedStory))
       || (currentStep === 'acceptance' && acceptanceCriteria.length > 0)
       || (currentStep === 'task_breakdown' && proposedTasks.length > 0)
       || (currentStep === 'code_generation_prompt' && Boolean(buildStoryDevImplementationPrompt(draftWorkItems, pipeline, response)))

@@ -300,7 +300,7 @@ export async function generateAiGenPrompt(workItem: NormalizedWorkItem): Promise
       },
       body: JSON.stringify({
         query,
-        work_item: workItem,
+        work_item: compactWorkItemForContext(workItem),
         source: 'azure_devops'
       })
     });
@@ -318,6 +318,19 @@ export async function generateAiGenPrompt(workItem: NormalizedWorkItem): Promise
     throw new Error('ai-gen backend returned an empty prompt.');
   }
   return data;
+}
+
+function compactWorkItemForContext(workItem: NormalizedWorkItem): Record<string, unknown> {
+  return {
+    id: workItem.id,
+    title: workItem.title,
+    description: workItem.description,
+    acceptanceCriteria: workItem.acceptanceCriteria,
+    tags: workItem.tags,
+    type: workItem.type,
+    areaPath: workItem.areaPath,
+    iterationPath: workItem.iterationPath,
+  };
 }
 
 export function saveGeneratedState(state: AiGenState): void {

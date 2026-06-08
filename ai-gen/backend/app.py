@@ -849,11 +849,12 @@ def build_context(request: ContextRequest) -> ContextResponse:
         "refinement": {},
     }
     if refinement_allowed:
+        compact_work_item = _compact_work_item_for_refinement(request.work_item)
         refinement_result = refine_task(
             effective_query,
             {
                 "source": request.source,
-                "work_item": request.work_item,
+                "work_item": compact_work_item,
                 "intent": intent,
                 "detected_flow": repo_state.get("detected_flow"),
                 "constraints": constraints,
@@ -1583,6 +1584,33 @@ def _merge_refinement(
     refinement["surface"] = _first_nonempty(refinement.get("surfaces", [])) or refinement.get("surface")
     repo_state["detected_flow"] = final_flow or repo_state.get("detected_flow")
     return refinement
+
+
+def _compact_work_item_for_refinement(work_item: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(work_item, dict):
+        return {}
+    allowed = {
+        "id",
+        "work_item_id",
+        "title",
+        "description",
+        "acceptanceCriteria",
+        "acceptance_criteria",
+        "tags",
+        "type",
+        "work_item_type",
+        "areaPath",
+        "area_path",
+        "iterationPath",
+        "iteration_path",
+    }
+    compact = {key: value for key, value in work_item.items() if key in allowed}
+    for key in ("description", "acceptanceCriteria", "acceptance_criteria"):
+        if key in compact and compact[key] is not None:
+            compact[key] = str(compact[key])[:2000]
+    if isinstance(compact.get("tags"), list):
+        compact["tags"] = [str(item)[:80] for item in compact["tags"][:12]]
+    return compact
 
 
 def _dedupe(values: list[str]) -> list[str]:

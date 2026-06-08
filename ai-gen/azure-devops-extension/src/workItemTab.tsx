@@ -712,7 +712,12 @@ function WorkItemTab() {
   const contextWarnings = [...(pipeline?.context_warnings || []), ...(pipeline?.pipeline_context?.warnings || [])];
   const workflowConfidence = String(pipeline?.work_item_classification?.confidence || inferWorkflowConfidence(workItem?.type || ''));
   const showPromptActions = ['task_execution', 'bug_fix', 'ui_task', 'qa_task', 'spike'].includes(String(pipeline?.workflow_template || ''));
-  const storyWorkflowPanel = isStoryWorkflow ? (
+  const hasGeneratedStoryPlan = Boolean(
+    isStoryWorkflow
+    && pipeline?.stages?.ba?.output
+    && Object.keys(pipeline.stages.ba.output || {}).length
+  );
+  const storyWorkflowPanel = hasGeneratedStoryPlan ? (
     <StoryWorkflowPanel
       model={storyWorkflowModel}
       clarification={clarification}
@@ -848,7 +853,7 @@ function WorkItemTab() {
               storyWorkflowPanel,
               retryCommentSync: pendingCommentSync ? () => void retryCommentSync() : undefined,
               actionBar: (
-                isStoryWorkflow ? null : (
+                isStoryWorkflow && hasGeneratedStoryPlan ? null : (
                 <WorkflowActionBar
                   workflowActions={workflowActions}
                   workflowTemplate={String(pipeline.workflow_template || '')}

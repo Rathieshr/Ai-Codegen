@@ -2,26 +2,26 @@
 Status: draft
 
 ## Summary
-Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.
+Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: yes retry policy 3 times max. second factor needed after primary input succeeds. yes otp is needed.
 
 ## Stage Output
 ```json
 {
   "assistant": "ba",
-  "refined_requirement": "Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+  "refined_requirement": "Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: yes retry policy 3 times max. second factor needed after primary input succeeds. yes otp is needed.",
   "actors": [
     "end_user"
   ],
   "flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
   "variant": "phone_otp",
   "variants": [
     "phone_otp"
   ],
   "business_rules": [
-    "Preserve validation rules for auth_required.",
+    "Preserve validation rules for auth_required, required.",
     "Reuse the existing session or token lifecycle."
   ],
   "acceptance_criteria": [
@@ -32,27 +32,29 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
     "reason": {
       "known": [
         "Ai Gen Extension Test",
-        "flow:login",
+        "flow:otp_verification",
         "variant:phone_otp"
       ],
       "missing": [],
       "goal": "Clarify the requirement, actors, flows, and business rules before UI or development work starts."
     },
     "act": {
-      "requirement": "Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+      "requirement": "Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: yes retry policy 3 times max. second factor needed after primary input succeeds. yes otp is needed.",
       "actors": [
         "end_user"
       ],
       "flows": [
-        "login",
-        "otp_verification"
+        "otp_verification",
+        "login"
       ],
       "acceptance_criteria_count": 1
     },
     "observe": {
       "used_refinement": true,
-      "tags": [],
-      "surface": null
+      "tags": [
+        "Android"
+      ],
+      "surface": "authentication"
     },
     "decision": "ready_for_approval"
   }
@@ -60,7 +62,7 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
 ```
 
 ## Constraints
-- Preserve validation rules for auth_required.
+- Preserve validation rules for auth_required, required.
 - Reuse the existing session or token lifecycle.
 
 ## Next Actions
@@ -71,24 +73,39 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
 ```json
 {
   "base_flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
   "fields": [
     "phone_number",
     "otp"
   ],
-  "refinement_unknowns": [
-    "Clarify OTP retry and expiry policy."
-  ],
   "surfaces": [
     "ui_screen"
   ],
   "validations": [
-    "auth_required"
+    "auth_required",
+    "required"
   ],
   "variants": [
     "phone_otp"
-  ]
+  ],
+  "first_pass_scope": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "states": [],
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
+  ],
+  "scope_hints": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "actors": [],
+  "base_flow": "otp_verification",
+  "variant": "phone_otp",
+  "surface": "authentication",
+  "confidence": "medium"
 }
 ```

@@ -2,28 +2,33 @@
 Status: draft
 
 ## Summary
-Phone OTP login.
+Phone OTP login. Focus first on phone number input, otp verification step Review clarifications: OTP is required after phone entry.
+Retry max is 3..
 
 ## Stage Output
 ```json
 {
   "assistant": "ba",
-  "refined_requirement": "Phone OTP login.",
+  "refined_requirement": "Phone OTP login. Focus first on phone number input, otp verification step Review clarifications: OTP is required after phone entry.\nRetry max is 3..",
   "actors": [
     "end_user"
   ],
   "flows": [
-    "login"
+    "login",
+    "otp_verification"
   ],
   "variant": "phone_otp",
   "variants": [
     "phone_otp"
   ],
   "business_rules": [
+    "Preserve validation rules for required, auth_required.",
     "Preserve the existing authentication order and failure safety rules.",
     "Reuse the existing session or token lifecycle."
   ],
   "acceptance_criteria": [
+    "Support the required fields: phone_number, otp.",
+    "Enforce the expected validations: required, auth_required.",
     "Authenticate the user with phone number entry followed by OTP verification."
   ],
   "unknowns": [],
@@ -38,19 +43,20 @@ Phone OTP login.
       "goal": "Clarify the requirement, actors, flows, and business rules before UI or development work starts."
     },
     "act": {
-      "requirement": "Phone OTP login.",
+      "requirement": "Phone OTP login. Focus first on phone number input, otp verification step Review clarifications: OTP is required after phone entry.\nRetry max is 3..",
       "actors": [
         "end_user"
       ],
       "flows": [
-        "login"
+        "login",
+        "otp_verification"
       ],
-      "acceptance_criteria_count": 1
+      "acceptance_criteria_count": 3
     },
     "observe": {
       "used_refinement": true,
       "tags": [],
-      "surface": null
+      "surface": "authentication"
     },
     "decision": "ready_for_approval"
   }
@@ -58,6 +64,7 @@ Phone OTP login.
 ```
 
 ## Constraints
+- Preserve validation rules for required, auth_required.
 - Preserve the existing authentication order and failure safety rules.
 - Reuse the existing session or token lifecycle.
 
@@ -69,10 +76,39 @@ Phone OTP login.
 ```json
 {
   "base_flows": [
-    "login"
+    "login",
+    "otp_verification"
   ],
   "variants": [
     "phone_otp"
-  ]
+  ],
+  "scope_hints": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "states": [],
+  "first_pass_scope": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "actors": [],
+  "surfaces": [
+    "authentication"
+  ],
+  "validations": [
+    "required",
+    "auth_required"
+  ],
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
+  ],
+  "fields": [
+    "phone_number",
+    "otp"
+  ],
+  "base_flow": "login",
+  "variant": "phone_otp",
+  "surface": "authentication",
+  "confidence": "medium"
 }
 ```

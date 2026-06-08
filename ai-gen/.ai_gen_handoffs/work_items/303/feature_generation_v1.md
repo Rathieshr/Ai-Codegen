@@ -9,16 +9,36 @@ Feature_Generation handoff
 {
   "assistant": "feature_generation",
   "summary": "Generated proposed features from the approved epic scope.",
+  "source": "deterministic_fallback",
+  "provider_used": "deterministic_fallback",
+  "phi_status": "not_configured",
+  "phi_raw_response_preview": "",
   "proposed_features": [
     {
-      "title": "Identity modernization: Feature Slice 1",
-      "description": "Organize the identity modernization epic into a deliverable feature slice focused on core."
+      "title": "Identity modernization: Phone Number Sign-In"
+    },
+    {
+      "title": "Identity modernization: OTP Verification"
+    },
+    {
+      "title": "Identity modernization: Session and Device Trust"
+    },
+    {
+      "title": "Identity modernization: Recovery and Account Security"
     }
   ],
   "generated_features": [
     {
-      "title": "Identity modernization: Feature Slice 1",
-      "description": "Organize the identity modernization epic into a deliverable feature slice focused on core."
+      "title": "Identity modernization: Phone Number Sign-In"
+    },
+    {
+      "title": "Identity modernization: OTP Verification"
+    },
+    {
+      "title": "Identity modernization: Session and Device Trust"
+    },
+    {
+      "title": "Identity modernization: Recovery and Account Security"
     }
   ],
   "dependencies": [],

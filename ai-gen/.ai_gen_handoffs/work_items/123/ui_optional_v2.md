@@ -2,7 +2,7 @@
 Status: approved
 
 ## Summary
-Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.
+Design Otp_Verification Form with phone number, otp, submit, update field state, loading, error, success, and validation and error handling.
 
 ## Stage Output
 ```json
@@ -13,8 +13,7 @@ Design login UI with phone number entry, OTP request, OTP verification state, va
   ],
   "actions": [
     "submit",
-    "update field state",
-    "show validation errors"
+    "update field state"
   ],
   "assistant": "ui_optional",
   "fields": [
@@ -22,28 +21,32 @@ Design login UI with phone number entry, OTP request, OTP verification state, va
       "name": "phone_number",
       "type": "text_input",
       "validation": [
-        "auth_required"
+        "auth_required",
+        "required"
       ]
     },
     {
       "name": "otp",
       "type": "text_input",
       "validation": [
-        "auth_required"
+        "auth_required",
+        "required"
       ]
     }
   ],
   "layout": [
-    "primary content",
-    "supporting actions"
+    "title and helper text",
+    "grouped input fields",
+    "primary action row",
+    "inline validation and error area"
   ],
   "platform": "unknown",
   "react": {
     "act": {
-      "action_count": 3,
+      "action_count": 2,
       "field_count": 2,
-      "screen_name": "Login Unknown",
-      "screen_type": "unknown"
+      "screen_name": "Otp_Verification Form",
+      "screen_type": "form"
     },
     "decision": "ready_for_approval",
     "observe": {
@@ -54,14 +57,14 @@ Design login UI with phone number entry, OTP request, OTP verification state, va
     "reason": {
       "goal": "Turn the approved requirement into screen structure, fields, actions, and states.",
       "known": [
-        "login",
-        "otp_verification"
+        "otp_verification",
+        "login"
       ],
       "missing": []
     }
   },
-  "screen_name": "Login Unknown",
-  "screen_type": "unknown",
+  "screen_name": "Otp_Verification Form",
+  "screen_type": "form",
   "skip_reason": "",
   "skippable": false,
   "states": [
@@ -70,9 +73,9 @@ Design login UI with phone number entry, OTP request, OTP verification state, va
     "error",
     "success"
   ],
-  "summary": "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.",
+  "summary": "Design Otp_Verification Form with phone number, otp, submit, update field state, loading, error, success, and validation and error handling.",
   "unknowns": [],
-  "user_goal": "Design login UI with phone number entry, OTP request, OTP verification state, validation and error handling.",
+  "user_goal": "Design Otp_Verification Form with phone number, otp, submit, update field state, loading, error, success, and validation and error handling.",
   "ux_notes": [
     "Keep the first interaction path short and obvious.",
     "Keep validation messages clear without exposing sensitive auth details.",
@@ -88,23 +91,41 @@ Design login UI with phone number entry, OTP request, OTP verification state, va
 ## Refinement
 ```json
 {
+  "actors": [],
+  "base_flow": "otp_verification",
   "base_flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
+  "confidence": "medium",
   "fields": [
     "phone_number",
     "otp"
   ],
+  "first_pass_scope": [
+    "phone number input",
+    "otp verification step"
+  ],
   "refinement_unknowns": [
     "Clarify OTP retry and expiry policy."
   ],
+  "scope_hints": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "states": [],
+  "surface": "ui_screen",
   "surfaces": [
     "ui_screen"
   ],
-  "validations": [
-    "auth_required"
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
   ],
+  "validations": [
+    "auth_required",
+    "required"
+  ],
+  "variant": "phone_otp",
   "variants": [
     "phone_otp"
   ]

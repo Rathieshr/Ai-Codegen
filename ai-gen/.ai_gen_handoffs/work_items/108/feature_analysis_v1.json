@@ -9,7 +9,7 @@
     "summary": "Checkout improvements.",
     "unknowns": []
   },
-  "created_at": "2026-06-01T05:28:29.416819+00:00",
+  "created_at": "2026-06-08T02:49:19.441756+00:00",
   "handoff_id": "handoff_108_feature_analysis_v1",
   "handoff_type": "requirement_handoff",
   "next_actions": [
@@ -17,7 +17,7 @@
     "Approve before moving to the next workflow stage."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_b60d22a7656c",
+  "pipeline_id": "pipeline_fc504c07941d",
   "refinement": {},
   "repo_context": {},
   "source_stage": "feature_analysis",

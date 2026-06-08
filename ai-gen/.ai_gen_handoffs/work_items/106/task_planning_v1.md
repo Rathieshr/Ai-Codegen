@@ -28,12 +28,12 @@ Generated proposed child work items from the approved story scope.
   ],
   "proposed_work_items": [
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_ui_story_delivery_phone_otp_login_1_e56e0e484d",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_ui_story_delivery_phone_otp_login_1_e56e0e484d",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_ui_phone_otp_login_1_4597e64155",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_ui_phone_otp_login_1_4597e64155",
       "type": "Task",
       "draft_type": "Task",
-      "title": "UI Task: Story Delivery: Phone OTP login.",
-      "description": "Design and implement the UI structure for story delivery: phone otp login., including fields and states.",
+      "title": "UI Task: Phone OTP login",
+      "description": "Design and implement the UI structure for phone otp login, including fields and states.",
       "acceptance_criteria": [
         "UI structure reflects the approved story scope.",
         "Fields are covered: phone_number, otp."
@@ -41,7 +41,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],
@@ -52,12 +52,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_dev_story_delivery_phone_otp_login_2_5b8c88fc78",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_dev_story_delivery_phone_otp_login_2_5b8c88fc78",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_dev_phone_otp_login_2_10fc857116",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_dev_phone_otp_login_2_10fc857116",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Dev Task: Story Delivery: Phone OTP login.",
-      "description": "Implement the approved behavior for story delivery: phone otp login. with minimal scope.",
+      "title": "Dev Task: Phone OTP login",
+      "description": "Implement the approved behavior for phone otp login with minimal scope.",
       "acceptance_criteria": [
         "Implementation follows the approved execution scope.",
         "Variant behavior is respected: phone_otp."
@@ -65,7 +65,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],
@@ -76,12 +76,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_qa_story_delivery_phone_otp_login_3_e1479da1a0",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_qa_story_delivery_phone_otp_login_3_e1479da1a0",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_qa_phone_otp_login_3_948f8c6ccd",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_qa_phone_otp_login_3_948f8c6ccd",
       "type": "Task",
       "draft_type": "Task",
-      "title": "QA Task: Story Delivery: Phone OTP login.",
-      "description": "Validate the delivered behavior for story delivery: phone otp login. and capture regression coverage.",
+      "title": "QA Task: Phone OTP login",
+      "description": "Validate the delivered behavior for phone otp login and capture regression coverage.",
       "acceptance_criteria": [
         "Positive, negative, and edge validation is documented.",
         "Regression risks are covered before closure."
@@ -89,7 +89,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],
@@ -100,19 +100,19 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_docs_story_delivery_phone_otp_login_4_81d882906a",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_docs_story_delivery_phone_otp_login_4_81d882906a",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_docs_phone_otp_login_4_e2f7c33090",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_docs_phone_otp_login_4_e2f7c33090",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Documentation Task: Story Delivery: Phone OTP login.",
-      "description": "Update supporting release or support documentation for story delivery: phone otp login..",
+      "title": "Documentation Task: Phone OTP login",
+      "description": "Update supporting release or support documentation for phone otp login.",
       "acceptance_criteria": [
         "Documentation reflects the delivered behavior and rollout notes."
       ],
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],
@@ -125,12 +125,12 @@ Generated proposed child work items from the approved story scope.
   ],
   "generated_work_items": [
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_ui_story_delivery_phone_otp_login_1_e56e0e484d",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_ui_story_delivery_phone_otp_login_1_e56e0e484d",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_ui_phone_otp_login_1_4597e64155",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_ui_phone_otp_login_1_4597e64155",
       "type": "Task",
       "draft_type": "Task",
-      "title": "UI Task: Story Delivery: Phone OTP login.",
-      "description": "Design and implement the UI structure for story delivery: phone otp login., including fields and states.",
+      "title": "UI Task: Phone OTP login",
+      "description": "Design and implement the UI structure for phone otp login, including fields and states.",
       "acceptance_criteria": [
         "UI structure reflects the approved story scope.",
         "Fields are covered: phone_number, otp."
@@ -138,7 +138,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],
@@ -149,12 +149,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_dev_story_delivery_phone_otp_login_2_5b8c88fc78",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_dev_story_delivery_phone_otp_login_2_5b8c88fc78",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_dev_phone_otp_login_2_10fc857116",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_dev_phone_otp_login_2_10fc857116",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Dev Task: Story Delivery: Phone OTP login.",
-      "description": "Implement the approved behavior for story delivery: phone otp login. with minimal scope.",
+      "title": "Dev Task: Phone OTP login",
+      "description": "Implement the approved behavior for phone otp login with minimal scope.",
       "acceptance_criteria": [
         "Implementation follows the approved execution scope.",
         "Variant behavior is respected: phone_otp."
@@ -162,7 +162,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],
@@ -173,12 +173,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_qa_story_delivery_phone_otp_login_3_e1479da1a0",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_qa_story_delivery_phone_otp_login_3_e1479da1a0",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_qa_phone_otp_login_3_948f8c6ccd",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_qa_phone_otp_login_3_948f8c6ccd",
       "type": "Task",
       "draft_type": "Task",
-      "title": "QA Task: Story Delivery: Phone OTP login.",
-      "description": "Validate the delivered behavior for story delivery: phone otp login. and capture regression coverage.",
+      "title": "QA Task: Phone OTP login",
+      "description": "Validate the delivered behavior for phone otp login and capture regression coverage.",
       "acceptance_criteria": [
         "Positive, negative, and edge validation is documented.",
         "Regression risks are covered before closure."
@@ -186,7 +186,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],
@@ -197,19 +197,19 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_docs_story_delivery_phone_otp_login_4_81d882906a",
-      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_0b97dcbd59_docs_story_delivery_phone_otp_login_4_81d882906a",
+      "id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_docs_phone_otp_login_4_e2f7c33090",
+      "draft_id": "draft_task_planning_draft_task_planning_phone_otp_login_1_cf37513cc4_docs_phone_otp_login_4_e2f7c33090",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Documentation Task: Story Delivery: Phone OTP login.",
-      "description": "Update supporting release or support documentation for story delivery: phone otp login..",
+      "title": "Documentation Task: Phone OTP login",
+      "description": "Update supporting release or support documentation for phone otp login.",
       "acceptance_criteria": [
         "Documentation reflects the delivered behavior and rollout notes."
       ],
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_phone_otp_login_1_0b97dcbd59",
+      "parent_draft_id": "draft_task_planning_phone_otp_login_1_cf37513cc4",
       "parent_work_item_id": "106",
       "children": [],
       "child_drafts": [],

@@ -1,104 +1,66 @@
 {
   "approved_at": null,
   "constraints": [
-    "Preserve validation rules for auth_required.",
-    "Reuse the existing session or token lifecycle."
+    "Preserve the existing authentication order and failure safety rules."
   ],
   "content": {
-    "acceptance_criteria": [
-      "Support the required fields: phone_number, otp.",
-      "Enforce the expected validations: auth_required.",
-      "Authenticate the user with phone number entry followed by OTP verification."
-    ],
+    "acceptance_criteria": [],
     "actors": [
       "end_user"
     ],
     "assistant": "ba",
     "business_rules": [
-      "Preserve validation rules for auth_required.",
-      "Reuse the existing session or token lifecycle."
+      "Preserve the existing authentication order and failure safety rules."
     ],
     "flows": [
-      "login",
-      "otp_verification"
+      "login"
     ],
     "react": {
       "act": {
-        "acceptance_criteria_count": 3,
+        "acceptance_criteria_count": 0,
         "actors": [
           "end_user"
         ],
         "flows": [
-          "login",
-          "otp_verification"
+          "login"
         ],
-        "requirement": "Ai Gen Extension Test."
+        "requirement": "Add login screen."
       },
       "decision": "ready_for_approval",
       "observe": {
         "surface": null,
         "tags": [],
-        "used_refinement": true
+        "used_refinement": false
       },
       "reason": {
         "goal": "Clarify the requirement, actors, flows, and business rules before UI or development work starts.",
         "known": [
-          "Ai Gen Extension Test",
-          "flow:login",
-          "variant:phone_otp"
+          "Add login screen",
+          "flow:login"
         ],
-        "missing": [
-          "Is OTP or a second-factor step required after the primary input succeeds?",
-          "Clarify OTP retry and expiry policy."
-        ]
+        "missing": []
       }
     },
-    "refined_requirement": "Ai Gen Extension Test.",
-    "unknowns": [
-      "Is OTP or a second-factor step required after the primary input succeeds?",
-      "Clarify OTP retry and expiry policy."
-    ],
-    "variant": "phone_otp",
-    "variants": [
-      "phone_otp"
-    ]
+    "refined_requirement": "Add login screen.",
+    "unknowns": [],
+    "variant": null,
+    "variants": []
   },
-  "created_at": "2026-06-01T05:28:29.098223+00:00",
+  "created_at": "2026-06-08T02:49:19.299710+00:00",
   "handoff_id": "handoff_123_ba_v1",
   "handoff_type": "requirement_handoff",
   "next_actions": [
     "Review the clarified requirement.",
     "Approve BA output before UI or dev work."
   ],
-  "open_questions": [
-    "Is OTP or a second-factor step required after the primary input succeeds?",
-    "Clarify OTP retry and expiry policy."
-  ],
-  "pipeline_id": "pipeline_5217e79381d2",
-  "refinement": {
-    "base_flows": [
-      "login",
-      "otp_verification"
-    ],
-    "fields": [
-      "phone_number",
-      "otp"
-    ],
-    "surfaces": [
-      "ui_screen"
-    ],
-    "validations": [
-      "auth_required"
-    ],
-    "variants": [
-      "phone_otp"
-    ]
-  },
+  "open_questions": [],
+  "pipeline_id": "pipeline_dd84ac40a724",
+  "refinement": {},
   "repo_context": {},
   "source_stage": "ba",
   "stage": "ba",
   "status": "draft",
-  "summary": "Ai Gen Extension Test.",
+  "summary": "Add login screen.",
   "target_stages": [
     "ui",
     "dev"

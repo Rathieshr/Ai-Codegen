@@ -9,16 +9,22 @@ Generated proposed work items from the approved planning scope.
 {
   "assistant": "story_generator",
   "summary": "Generated proposed work items from the approved planning scope.",
+  "source": "deterministic_fallback",
+  "provider_used": "deterministic_fallback",
+  "phi_status": "not_configured",
+  "phi_raw_response_preview": "",
   "proposed_work_items": [
     {
-      "id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
-      "draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+      "id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
+      "draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
       "type": "Feature",
       "draft_type": "Feature",
-      "title": "Checkout modernization: Feature Slice 1",
-      "description": "Organize the checkout modernization epic into the feature slice 1.",
+      "title": "Checkout modernization: Mobile Shopping Experience",
+      "description": "Deliver the checkout modernization: mobile shopping experience capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
       "acceptance_criteria": [
-        "Feature slice 1 has clear downstream stories and acceptance criteria."
+        "Checkout modernization: Mobile Shopping Experience has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
       ],
       "tags": [],
       "area_path": "",
@@ -27,28 +33,30 @@ Generated proposed work items from the approved planning scope.
       "parent_work_item_id": "301",
       "children": [
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 1",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 1 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 1 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -56,7 +64,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -67,12 +75,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -80,7 +88,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -91,19 +99,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -116,12 +124,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -129,7 +137,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -140,12 +148,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -153,7 +161,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -164,19 +172,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -194,28 +202,30 @@ Generated proposed work items from the approved planning scope.
           "creation_error": null
         },
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 2",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 2 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 2 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -223,7 +233,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -234,12 +244,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -247,7 +257,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -260,12 +270,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -273,7 +283,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -284,12 +294,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -297,7 +307,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -317,28 +327,30 @@ Generated proposed work items from the approved planning scope.
       ],
       "child_drafts": [
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 1",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 1 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 1 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -346,7 +358,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -357,12 +369,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -370,7 +382,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -381,19 +393,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -406,12 +418,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -419,7 +431,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -430,12 +442,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -443,7 +455,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -454,19 +466,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -484,28 +496,30 @@ Generated proposed work items from the approved planning scope.
           "creation_error": null
         },
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 2",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 2 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 2 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -513,7 +527,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -524,12 +538,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -537,7 +551,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -550,12 +564,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -563,7 +577,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -574,12 +588,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -587,7 +601,1840 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "source_stage": "story_generation",
+      "selected": true,
+      "status": "draft",
+      "azure_work_item_id": null,
+      "creation_error": null
+    },
+    {
+      "id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+      "draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+      "type": "Feature",
+      "draft_type": "Feature",
+      "title": "Checkout modernization: Cart and Checkout Flow",
+      "description": "Deliver the checkout modernization: cart and checkout flow capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
+      "acceptance_criteria": [
+        "Checkout modernization: Cart and Checkout Flow has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
+      ],
+      "tags": [],
+      "area_path": "",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "301",
+      "children": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given a customer selects a product, when they add it to cart, then the cart updates with item, quantity, and price.",
+            "Given items are in the cart, when the customer edits quantity or removes an item, then totals update correctly."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "child_drafts": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given a customer selects a product, when they add it to cart, then the cart updates with item, quantity, and price.",
+            "Given items are in the cart, when the customer edits quantity or removes an item, then totals update correctly."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "source_stage": "story_generation",
+      "selected": true,
+      "status": "draft",
+      "azure_work_item_id": null,
+      "creation_error": null
+    },
+    {
+      "id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+      "draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+      "type": "Feature",
+      "draft_type": "Feature",
+      "title": "Checkout modernization: Order Visibility",
+      "description": "Deliver the checkout modernization: order visibility capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
+      "acceptance_criteria": [
+        "Checkout modernization: Order Visibility has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
+      ],
+      "tags": [],
+      "area_path": "",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "301",
+      "children": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "child_drafts": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "source_stage": "story_generation",
+      "selected": true,
+      "status": "draft",
+      "azure_work_item_id": null,
+      "creation_error": null
+    },
+    {
+      "id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+      "draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+      "type": "Feature",
+      "draft_type": "Feature",
+      "title": "Checkout modernization: Commerce Operations",
+      "description": "Deliver the checkout modernization: commerce operations capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
+      "acceptance_criteria": [
+        "Checkout modernization: Commerce Operations has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
+      ],
+      "tags": [],
+      "area_path": "",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "301",
+      "children": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "child_drafts": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -614,14 +2461,16 @@ Generated proposed work items from the approved planning scope.
   ],
   "generated_work_items": [
     {
-      "id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
-      "draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+      "id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
+      "draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
       "type": "Feature",
       "draft_type": "Feature",
-      "title": "Checkout modernization: Feature Slice 1",
-      "description": "Organize the checkout modernization epic into the feature slice 1.",
+      "title": "Checkout modernization: Mobile Shopping Experience",
+      "description": "Deliver the checkout modernization: mobile shopping experience capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
       "acceptance_criteria": [
-        "Feature slice 1 has clear downstream stories and acceptance criteria."
+        "Checkout modernization: Mobile Shopping Experience has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
       ],
       "tags": [],
       "area_path": "",
@@ -630,28 +2479,30 @@ Generated proposed work items from the approved planning scope.
       "parent_work_item_id": "301",
       "children": [
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 1",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 1 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 1 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -659,7 +2510,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -670,12 +2521,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -683,7 +2534,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -694,19 +2545,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -719,12 +2570,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -732,7 +2583,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -743,12 +2594,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -756,7 +2607,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -767,19 +2618,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -797,28 +2648,30 @@ Generated proposed work items from the approved planning scope.
           "creation_error": null
         },
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 2",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 2 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 2 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -826,7 +2679,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -837,12 +2690,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -850,7 +2703,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -863,12 +2716,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -876,7 +2729,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -887,12 +2740,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -900,7 +2753,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -920,28 +2773,30 @@ Generated proposed work items from the approved planning scope.
       ],
       "child_drafts": [
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 1",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 1 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 1 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -949,7 +2804,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -960,12 +2815,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -973,7 +2828,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -984,19 +2839,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -1009,12 +2864,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_d639a73b97",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_efa4fadc5c",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 1 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -1022,7 +2877,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -1033,12 +2888,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_fd35c7cf58",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_e96bd0df97",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 1 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -1046,7 +2901,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -1057,19 +2912,19 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_feature_slice_1_stor_3_8eb1873e5e",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_mobile_shopping_expe_3_9c4ed58b01",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Documentation Task: Checkout modernization: Feature Slice 1: Story 1",
-              "description": "Update supporting release or support documentation for checkout modernization: feature slice 1: story 1.",
+              "title": "Documentation Task: Checkout modernization: Mobile Shopping Experience: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: mobile shopping experience: complete checkout with delivery and payment details.",
               "acceptance_criteria": [
                 "Documentation reflects the delivered behavior and rollout notes."
               ],
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_1_1_9e67108381",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_1_aa98594bc1",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -1087,28 +2942,30 @@ Generated proposed work items from the approved planning scope.
           "creation_error": null
         },
         {
-          "id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
-          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
           "type": "User Story",
           "draft_type": "User Story",
-          "title": "Checkout modernization: Feature Slice 1: Story 2",
-          "description": "As an end user, I want checkout modernization: feature slice 1: story 2 so the checkout modernization: feature slice 1 slice can be delivered.",
+          "title": "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: mobile shopping experience journey confidently on mobile.",
           "acceptance_criteria": [
-            "Checkout modernization: Feature Slice 1 story slice 2 is independently reviewable."
+            "Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
           ],
           "tags": [],
           "area_path": "",
           "iteration_path": "",
-          "parent_draft_id": "draft_story_generation_checkout_modernization_feature_slice_1_1_73079a6ec6",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_mobile_shopping_experienc_1_c06811f171",
           "parent_work_item_id": "301",
           "children": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -1116,7 +2973,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -1127,12 +2984,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -1140,7 +2997,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -1153,12 +3010,12 @@ Generated proposed work items from the approved planning scope.
           ],
           "child_drafts": [
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_feature_slice_1_story_1_74db37488d",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_mobile_shopping_exper_1_85139bb9ce",
               "type": "Task",
               "draft_type": "Task",
-              "title": "Dev Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Implement the approved behavior for checkout modernization: feature slice 1: story 2 with minimal scope.",
+              "title": "Dev Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: mobile shopping experience: confirm order after successful payment with minimal scope.",
               "acceptance_criteria": [
                 "Implementation follows the approved execution scope.",
                 "Variant behavior is respected: default flow."
@@ -1166,7 +3023,7 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],
@@ -1177,12 +3034,12 @@ Generated proposed work items from the approved planning scope.
               "creation_error": null
             },
             {
-              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
-              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_feature_slice_1_story__2_8a3d274c2a",
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_mobile_shopping_experi_2_77e5aa505f",
               "type": "Task",
               "draft_type": "Task",
-              "title": "QA Task: Checkout modernization: Feature Slice 1: Story 2",
-              "description": "Validate the delivered behavior for checkout modernization: feature slice 1: story 2 and capture regression coverage.",
+              "title": "QA Task: Checkout modernization: Mobile Shopping Experience: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: mobile shopping experience: confirm order after successful payment and capture regression coverage.",
               "acceptance_criteria": [
                 "Positive, negative, and edge validation is documented.",
                 "Regression risks are covered before closure."
@@ -1190,7 +3047,1840 @@ Generated proposed work items from the approved planning scope.
               "tags": [],
               "area_path": "",
               "iteration_path": "",
-              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_fe_checkout_modernization_feature_slice_1_story_2_2_1ab134050c",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_mo_checkout_modernization_mobile_shopping_experienc_2_547fcb9629",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "source_stage": "story_generation",
+      "selected": true,
+      "status": "draft",
+      "azure_work_item_id": null,
+      "creation_error": null
+    },
+    {
+      "id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+      "draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+      "type": "Feature",
+      "draft_type": "Feature",
+      "title": "Checkout modernization: Cart and Checkout Flow",
+      "description": "Deliver the checkout modernization: cart and checkout flow capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
+      "acceptance_criteria": [
+        "Checkout modernization: Cart and Checkout Flow has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
+      ],
+      "tags": [],
+      "area_path": "",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "301",
+      "children": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given a customer selects a product, when they add it to cart, then the cart updates with item, quantity, and price.",
+            "Given items are in the cart, when the customer edits quantity or removes an item, then totals update correctly."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "child_drafts": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_e3270b72c4",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_641b3b82d0",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_cart_and_checkout_fl_3_6aef171af1",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Cart and Checkout Flow: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: cart and checkout flow: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_1_240a0b46f2",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+          "description": "As a customer, I want to add, review, and update products in my cart so I can complete the checkout modernization: cart and checkout flow journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given a customer selects a product, when they add it to cart, then the cart updates with item, quantity, and price.",
+            "Given items are in the cart, when the customer edits quantity or removes an item, then totals update correctly."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_cart_and_checkout_flow_2_e57cb24264",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_cart_and_checkout_flo_1_6cf986d70d",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: cart and checkout flow: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_cart_and_checkout_flow_2_eb044e145c",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Cart and Checkout Flow: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: cart and checkout flow: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_ca_checkout_modernization_cart_and_checkout_flow_co_2_be65df490c",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "source_stage": "story_generation",
+      "selected": true,
+      "status": "draft",
+      "azure_work_item_id": null,
+      "creation_error": null
+    },
+    {
+      "id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+      "draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+      "type": "Feature",
+      "draft_type": "Feature",
+      "title": "Checkout modernization: Order Visibility",
+      "description": "Deliver the checkout modernization: order visibility capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
+      "acceptance_criteria": [
+        "Checkout modernization: Order Visibility has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
+      ],
+      "tags": [],
+      "area_path": "",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "301",
+      "children": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "child_drafts": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_comp_1_2917ba5832",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_compl_2_764f80e941",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_order_visibility_com_3_63778d47ab",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Order Visibility: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: order visibility: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_complete_1_1106c32f68",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Order Visibility: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: order visibility journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Order Visibility: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_order_visibility_3_a71b0ce47d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_order_visibility_conf_1_5d8bd1d26b",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: order visibility: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_order_visibility_confi_2_f1947e64a8",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Order Visibility: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: order visibility: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_or_checkout_modernization_order_visibility_confirm__2_6fb60447ad",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "source_stage": "story_generation",
+      "selected": true,
+      "status": "draft",
+      "azure_work_item_id": null,
+      "creation_error": null
+    },
+    {
+      "id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+      "draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+      "type": "Feature",
+      "draft_type": "Feature",
+      "title": "Checkout modernization: Commerce Operations",
+      "description": "Deliver the checkout modernization: commerce operations capability for checkout modernization, including the user journeys, system behavior, and operational readiness needed for release.",
+      "acceptance_criteria": [
+        "Checkout modernization: Commerce Operations has independently reviewable user stories.",
+        "Each story includes clear acceptance criteria and ownership.",
+        "Dependencies and rollout risks are visible before implementation starts."
+      ],
+      "tags": [],
+      "area_path": "",
+      "iteration_path": "",
+      "parent_draft_id": null,
+      "parent_work_item_id": "301",
+      "children": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        }
+      ],
+      "child_drafts": [
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details can be reviewed independently with clear user-visible behavior.",
+            "Given products are available, when the customer opens the mobile catalog, then products and key details are visible.",
+            "Given the customer selects a product, when details load, then price, availability, and primary actions are shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_d2023a7139",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_5e71206f4a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: complete checkout with delivery and payment details and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_docs_checkout_modernization_commerce_operations__3_446e314116",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Documentation Task: Checkout modernization: Commerce Operations: Complete checkout with delivery and payment details",
+              "description": "Update supporting release or support documentation for checkout modernization: commerce operations: complete checkout with delivery and payment details.",
+              "acceptance_criteria": [
+                "Documentation reflects the delivered behavior and rollout notes."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_compl_1_153042f3c4",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "source_stage": "story_generation",
+          "selected": true,
+          "status": "draft",
+          "azure_work_item_id": null,
+          "creation_error": null
+        },
+        {
+          "id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+          "type": "User Story",
+          "draft_type": "User Story",
+          "title": "Checkout modernization: Commerce Operations: Confirm order after successful payment",
+          "description": "As a customer, I want to complete checkout with delivery and payment details so I can complete the checkout modernization: commerce operations journey confidently on mobile.",
+          "acceptance_criteria": [
+            "Checkout modernization: Commerce Operations: Confirm order after successful payment can be reviewed independently with clear user-visible behavior.",
+            "Given the cart is valid, when the customer enters delivery and payment details, then checkout can be submitted.",
+            "Given payment succeeds, when checkout completes, then an order is created and confirmation is shown."
+          ],
+          "tags": [],
+          "area_path": "",
+          "iteration_path": "",
+          "parent_draft_id": "draft_story_generation_checkout_modernization_commerce_operations_4_5aeb688f7d",
+          "parent_work_item_id": "301",
+          "children": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            }
+          ],
+          "child_drafts": [
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_dev_checkout_modernization_commerce_operations_c_1_891732971a",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "Dev Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Implement the approved behavior for checkout modernization: commerce operations: confirm order after successful payment with minimal scope.",
+              "acceptance_criteria": [
+                "Implementation follows the approved execution scope.",
+                "Variant behavior is respected: default flow."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
+              "parent_work_item_id": null,
+              "children": [],
+              "child_drafts": [],
+              "source_stage": "story_generation",
+              "selected": true,
+              "status": "draft",
+              "azure_work_item_id": null,
+              "creation_error": null
+            },
+            {
+              "id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "draft_id": "draft_story_generation_draft_story_generation_draft_story_generation_ch_qa_checkout_modernization_commerce_operations_co_2_bd6d193bdb",
+              "type": "Task",
+              "draft_type": "Task",
+              "title": "QA Task: Checkout modernization: Commerce Operations: Confirm order after successful payment",
+              "description": "Validate the delivered behavior for checkout modernization: commerce operations: confirm order after successful payment and capture regression coverage.",
+              "acceptance_criteria": [
+                "Positive, negative, and edge validation is documented.",
+                "Regression risks are covered before closure."
+              ],
+              "tags": [],
+              "area_path": "",
+              "iteration_path": "",
+              "parent_draft_id": "draft_story_generation_draft_story_generation_checkout_modernization_co_checkout_modernization_commerce_operations_confi_2_13f49bb5fa",
               "parent_work_item_id": null,
               "children": [],
               "child_drafts": [],

@@ -9,20 +9,31 @@ Epic analysis completed.
 {
   "assistant": "epic_analysis",
   "assumptions": [
-    "Generated features and stories should stay within the current epic scope."
+    "Assume the authentication workflow will integrate with existing backend services.",
+    "Assume the first release should prioritize the primary happy path before edge-case expansion."
   ],
   "business_outcomes": [
-    "Break down identity modernization into implementation-ready features and stories."
+    "Reduce login friction without weakening security.",
+    "Improve verification completion rate."
   ],
   "dependencies": [],
-  "dependency_notes": [],
+  "dependency_notes": [
+    "Authentication workflow dependencies should be confirmed with backend and UX owners.",
+    "External integrations and notification paths should be validated before downstream task creation."
+  ],
   "goal": "Identity modernization",
+  "phi_raw_response_preview": "",
+  "phi_status": "not_configured",
+  "provider_used": "deterministic_fallback",
   "risks": [
-    "Scope and dependency assumptions should be reviewed before execution."
+    "Cross-team dependencies may slow authentication delivery.",
+    "Scope growth across related stories may reduce planning clarity.",
+    "Integration assumptions may need confirmation before implementation begins."
   ],
   "scope": [
     "Identity modernization"
   ],
+  "source": "deterministic_fallback",
   "summary": "Epic analysis completed.",
   "unknowns": []
 }

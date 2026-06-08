@@ -11,19 +11,39 @@ Feature_Generation handoff
   "dependencies": [],
   "generated_features": [
     {
-      "description": "Organize the checkout modernization epic into a deliverable feature slice focused on core.",
-      "title": "Checkout modernization: Feature Slice 1"
+      "title": "Checkout modernization: Mobile Shopping Experience"
+    },
+    {
+      "title": "Checkout modernization: Cart and Checkout Flow"
+    },
+    {
+      "title": "Checkout modernization: Order Visibility"
+    },
+    {
+      "title": "Checkout modernization: Commerce Operations"
     }
   ],
+  "phi_raw_response_preview": "",
+  "phi_status": "not_configured",
   "proposed_features": [
     {
-      "description": "Organize the checkout modernization epic into a deliverable feature slice focused on core.",
-      "title": "Checkout modernization: Feature Slice 1"
+      "title": "Checkout modernization: Mobile Shopping Experience"
+    },
+    {
+      "title": "Checkout modernization: Cart and Checkout Flow"
+    },
+    {
+      "title": "Checkout modernization: Order Visibility"
+    },
+    {
+      "title": "Checkout modernization: Commerce Operations"
     }
   ],
+  "provider_used": "deterministic_fallback",
   "risks": [
     "Scope and dependency assumptions should be reviewed before execution."
   ],
+  "source": "deterministic_fallback",
   "summary": "Generated proposed features from the approved epic scope.",
   "unknowns": []
 }

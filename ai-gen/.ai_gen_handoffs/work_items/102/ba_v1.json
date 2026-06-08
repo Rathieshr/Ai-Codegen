@@ -1,11 +1,14 @@
 {
   "approved_at": null,
   "constraints": [
+    "Preserve validation rules for required, auth_required.",
     "Preserve the existing authentication order and failure safety rules.",
     "Reuse the existing session or token lifecycle."
   ],
   "content": {
     "acceptance_criteria": [
+      "Support the required fields: phone_number, otp.",
+      "Enforce the expected validations: required, auth_required.",
       "Authenticate the user with phone number entry followed by OTP verification."
     ],
     "actors": [
@@ -13,26 +16,29 @@
     ],
     "assistant": "ba",
     "business_rules": [
+      "Preserve validation rules for required, auth_required.",
       "Preserve the existing authentication order and failure safety rules.",
       "Reuse the existing session or token lifecycle."
     ],
     "flows": [
-      "login"
+      "login",
+      "otp_verification"
     ],
     "react": {
       "act": {
-        "acceptance_criteria_count": 1,
+        "acceptance_criteria_count": 3,
         "actors": [
           "end_user"
         ],
         "flows": [
-          "login"
+          "login",
+          "otp_verification"
         ],
-        "requirement": "Phone OTP login."
+        "requirement": "Phone OTP login. Focus first on phone number input, otp verification step Review clarifications: OTP is required after phone entry.\nRetry max is 3.."
       },
       "decision": "ready_for_approval",
       "observe": {
-        "surface": null,
+        "surface": "authentication",
         "tags": [],
         "used_refinement": true
       },
@@ -46,14 +52,14 @@
         "missing": []
       }
     },
-    "refined_requirement": "Phone OTP login.",
+    "refined_requirement": "Phone OTP login. Focus first on phone number input, otp verification step Review clarifications: OTP is required after phone entry.\nRetry max is 3..",
     "unknowns": [],
     "variant": "phone_otp",
     "variants": [
       "phone_otp"
     ]
   },
-  "created_at": "2026-06-01T05:28:28.875799+00:00",
+  "created_at": "2026-06-07T16:46:35.007312+00:00",
   "handoff_id": "handoff_102_ba_v1",
   "handoff_type": "requirement_handoff",
   "next_actions": [
@@ -61,11 +67,40 @@
     "Approve BA output before UI or dev work."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_cf865d0c0d33",
+  "pipeline_id": "pipeline_e5911f9babe7",
   "refinement": {
+    "actors": [],
+    "base_flow": "login",
     "base_flows": [
-      "login"
+      "login",
+      "otp_verification"
     ],
+    "confidence": "medium",
+    "fields": [
+      "phone_number",
+      "otp"
+    ],
+    "first_pass_scope": [
+      "phone number input",
+      "otp verification step"
+    ],
+    "scope_hints": [
+      "phone number input",
+      "otp verification step"
+    ],
+    "states": [],
+    "surface": "authentication",
+    "surfaces": [
+      "authentication"
+    ],
+    "unknowns": [
+      "Clarify OTP retry and expiry policy."
+    ],
+    "validations": [
+      "required",
+      "auth_required"
+    ],
+    "variant": "phone_otp",
     "variants": [
       "phone_otp"
     ]
@@ -74,7 +109,7 @@
   "source_stage": "ba",
   "stage": "ba",
   "status": "draft",
-  "summary": "Phone OTP login.",
+  "summary": "Phone OTP login. Focus first on phone number input, otp verification step Review clarifications: OTP is required after phone entry.\nRetry max is 3..",
   "target_stages": [
     "ui_optional",
     "task_planning"

@@ -2,63 +2,47 @@
 Status: draft
 
 ## Summary
-Ai Gen Extension Test.
+Add login screen.
 
 ## Stage Output
 ```json
 {
   "assistant": "ba",
-  "refined_requirement": "Ai Gen Extension Test.",
+  "refined_requirement": "Add login screen.",
   "actors": [
     "end_user"
   ],
   "flows": [
-    "login",
-    "otp_verification"
+    "login"
   ],
-  "variant": "phone_otp",
-  "variants": [
-    "phone_otp"
-  ],
+  "variant": null,
+  "variants": [],
   "business_rules": [
-    "Preserve validation rules for auth_required.",
-    "Reuse the existing session or token lifecycle."
+    "Preserve the existing authentication order and failure safety rules."
   ],
-  "acceptance_criteria": [
-    "Support the required fields: phone_number, otp.",
-    "Enforce the expected validations: auth_required.",
-    "Authenticate the user with phone number entry followed by OTP verification."
-  ],
-  "unknowns": [
-    "Is OTP or a second-factor step required after the primary input succeeds?",
-    "Clarify OTP retry and expiry policy."
-  ],
+  "acceptance_criteria": [],
+  "unknowns": [],
   "react": {
     "reason": {
       "known": [
-        "Ai Gen Extension Test",
-        "flow:login",
-        "variant:phone_otp"
+        "Add login screen",
+        "flow:login"
       ],
-      "missing": [
-        "Is OTP or a second-factor step required after the primary input succeeds?",
-        "Clarify OTP retry and expiry policy."
-      ],
+      "missing": [],
       "goal": "Clarify the requirement, actors, flows, and business rules before UI or development work starts."
     },
     "act": {
-      "requirement": "Ai Gen Extension Test.",
+      "requirement": "Add login screen.",
       "actors": [
         "end_user"
       ],
       "flows": [
-        "login",
-        "otp_verification"
+        "login"
       ],
-      "acceptance_criteria_count": 3
+      "acceptance_criteria_count": 0
     },
     "observe": {
-      "used_refinement": true,
+      "used_refinement": false,
       "tags": [],
       "surface": null
     },
@@ -68,36 +52,8 @@ Ai Gen Extension Test.
 ```
 
 ## Constraints
-- Preserve validation rules for auth_required.
-- Reuse the existing session or token lifecycle.
-
-## Open Questions
-- Is OTP or a second-factor step required after the primary input succeeds?
-- Clarify OTP retry and expiry policy.
+- Preserve the existing authentication order and failure safety rules.
 
 ## Next Actions
 - Review the clarified requirement.
 - Approve BA output before UI or dev work.
-
-## Refinement
-```json
-{
-  "base_flows": [
-    "login",
-    "otp_verification"
-  ],
-  "fields": [
-    "phone_number",
-    "otp"
-  ],
-  "surfaces": [
-    "ui_screen"
-  ],
-  "validations": [
-    "auth_required"
-  ],
-  "variants": [
-    "phone_otp"
-  ]
-}
-```

@@ -22,7 +22,7 @@
     "unknowns": [],
     "variants": []
   },
-  "created_at": "2026-06-01T05:28:29.358454+00:00",
+  "created_at": "2026-06-07T16:46:36.047766+00:00",
   "handoff_id": "handoff_302_task_analysis_v1",
   "handoff_type": "dev_handoff",
   "next_actions": [
@@ -30,7 +30,7 @@
     "Approve before moving to the next workflow stage."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_d481879f54cf",
+  "pipeline_id": "pipeline_750ffb8915be",
   "refinement": {},
   "repo_context": {},
   "source_stage": "task_analysis",

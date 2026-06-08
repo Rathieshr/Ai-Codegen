@@ -608,12 +608,12 @@ function WorkItemTab() {
       return;
     }
     if (storyWorkflowModel.currentStep === 'refinement') {
-      const baVersion = Number(pipeline.stages.ba?.version || 0);
+      const baVersion = storyStageVersion(pipeline.stages.ba);
       if (!storyWorkflowModel.refinedStory) {
         setState((current) => ({ ...current, error: 'Generate the refined story before approving it.' }));
         return;
       }
-      const nextSession = { ...storySession, refinementVersion: baVersion || Date.now() };
+      const nextSession = { ...storySession, refinementVersion: baVersion };
       if (storyPipelineId) {
         saveStorySessionState(storyPipelineId, nextSession);
       }
@@ -641,11 +641,11 @@ function WorkItemTab() {
           nextPipeline = await approveStoryAndGenerateTasks(state.data!.pipeline!.pipeline_id, commentLoad.comments);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const baVersion = Number(nextPipeline.stages.ba?.version || 0);
+          const baVersion = storyStageVersion(nextPipeline.stages.ba);
           const localSession = {
             ...storySession,
-            refinementVersion: baVersion || Date.now(),
-            acceptanceVersion: baVersion || Date.now(),
+            refinementVersion: baVersion,
+            acceptanceVersion: baVersion,
             taskBreakdownVersion: undefined,
           };
           if (storyPipelineId) {
@@ -655,7 +655,7 @@ function WorkItemTab() {
           setState((current) => ({ ...current, error: `Story approval saved locally. Backend task planning sync failed: ${message}` }));
           return { ...state.data!, pipeline: nextPipeline, commentWarning: commentLoad.warning };
         }
-        const baVersion = Number(nextPipeline.stages.ba?.version || 0);
+        const baVersion = storyStageVersion(nextPipeline.stages.ba);
         const nextSession = {
           ...storySession,
           refinementVersion: baVersion,
@@ -676,12 +676,12 @@ function WorkItemTab() {
       return;
     }
     if (storyWorkflowModel.currentStep === 'task_breakdown') {
-      const taskVersion = Number(pipeline.stages.task_planning?.version || 0);
+      const taskVersion = storyStageVersion(pipeline.stages.task_planning);
       if (!storyWorkflowModel.proposedTasks.length) {
         setState((current) => ({ ...current, error: 'Generate the task breakdown before approving it.' }));
         return;
       }
-      const nextSession = { ...storySession, taskBreakdownVersion: taskVersion || Date.now() };
+      const nextSession = { ...storySession, taskBreakdownVersion: taskVersion };
       if (storyPipelineId) {
         saveStorySessionState(storyPipelineId, nextSession);
       }
@@ -1017,8 +1017,8 @@ function WorkItemTab() {
         <details>
           <summary>Developer Diagnostics</summary>
           {response?.phi_status === 'unusable_response' ? (
-            <div className="ai-gen-warning">
-              <div>Phi configured but returned unusable structured output. Fallback was used.</div>
+            <div className="ai-gen-subtle">
+              <div>{phiDiagnosticMessage(response)}</div>
               {response?.phi_raw_response_preview ? (
                 <details className="ai-gen-detail-block">
                   <summary>Raw Phi Preview</summary>
@@ -2118,8 +2118,8 @@ function buildStoryWorkflowModel(
   const taskStage = pipeline?.stages?.task_planning;
   const taskOutput = (taskStage?.output || {}) as Record<string, unknown>;
   const proposedTasks = draftWorkItems.filter((draft) => draft.source_stage === 'task_planning');
-  const baVersion = Number(baStage?.version || 0);
-  const taskVersion = Number(taskStage?.version || 0);
+  const baVersion = storyStageVersion(baStage);
+  const taskVersion = storyStageVersion(taskStage);
   const refinementApproved = Boolean(baVersion && storySession.refinementVersion === baVersion);
   const acceptanceApproved = Boolean(baVersion && storySession.acceptanceVersion === baVersion);
   const taskBreakdownApproved = Boolean(taskVersion && storySession.taskBreakdownVersion === taskVersion);
@@ -2172,6 +2172,26 @@ function buildStoryWorkflowModel(
     canCreateSelectedTasks: proposedTasks.some((draft) => !draft.azure_work_item_id),
     createdItems: pipeline?.created_work_items || [],
   };
+}
+
+function storyStageVersion(stage: PipelineStageState | undefined): number {
+  const explicit = Number(stage?.version || 0);
+  if (explicit > 0) {
+    return explicit;
+  }
+  const output = stage?.output || {};
+  if (Object.keys(output).length) {
+    return 1;
+  }
+  return 0;
+}
+
+function phiDiagnosticMessage(response: AiGenResponse): string {
+  const preview = String(response.phi_raw_response_preview || '').toLowerCase();
+  if (preview.includes('timed out') || preview.includes('timeout')) {
+    return 'Startup Phi refinement timed out, so deterministic fallback was used. This does not block story approval.';
+  }
+  return 'Phi configured but returned unusable structured output. Fallback was used.';
 }
 
 function loadStorySessionState(pipelineId: string): StorySessionState {

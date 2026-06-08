@@ -19,16 +19,20 @@ class TaskRefinerTests(unittest.TestCase):
     def test_mocked_phi_response_returns_validated_refinement(self) -> None:
         provider = unittest.mock.Mock()
         provider.is_enabled.return_value = True
-        provider.refine_json.return_value = {
-            "base_flows": ["Sign In", "verification"],
-            "variants": ["mobile otp"],
-            "surfaces": ["screen"],
-            "fields": ["mobile no", "verification code"],
-            "validations": ["required", "phone_format", "length_limit"],
-            "scope_hints": ["login screen input", "phone validation", "submit action"],
-            "unknowns": ["Is OTP required after phone submission?"],
-            "confidence": "medium",
-            "bad_key": "ignore me",
+        provider.probe_json.return_value = {
+            "parsed_json": {
+                "base_flows": ["Sign In", "verification"],
+                "variants": ["mobile otp"],
+                "surfaces": ["screen"],
+                "fields": ["mobile no", "verification code"],
+                "validations": ["required", "phone_format", "length_limit"],
+                "scope_hints": ["login screen input", "phone validation", "submit action"],
+                "unknowns": ["Is OTP required after phone submission?"],
+                "confidence": "medium",
+                "bad_key": "ignore me",
+            },
+            "raw_content": "",
+            "raw_response_preview": "",
         }
         with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=provider):
             result = refine_task("Add a login screen with phone number", {"source": "azure_devops"})
@@ -38,6 +42,37 @@ class TaskRefinerTests(unittest.TestCase):
         self.assertEqual(result["refinement"]["base_flows"], ["login", "otp_verification"])
         self.assertEqual(result["refinement"]["fields"], ["phone_number", "otp"])
         self.assertNotIn("bad_key", result["refinement"])
+
+    def test_refine_task_uses_stable_phi_probe_settings(self) -> None:
+        provider = unittest.mock.Mock()
+        provider.is_enabled.return_value = True
+        provider.probe_json.return_value = {
+            "parsed_json": {
+            "base_flows": ["Sign In", "verification"],
+            "variants": ["mobile otp"],
+            "surfaces": ["screen"],
+            "fields": ["mobile no", "verification code"],
+            "validations": ["required", "phone_format", "length_limit"],
+            "scope_hints": ["login screen input", "phone validation", "submit action"],
+            "unknowns": ["Is OTP required after phone submission?"],
+            "confidence": "medium",
+            },
+            "raw_content": "",
+            "raw_response_preview": "",
+        }
+        with patch("backend.refinement.task_refiner.get_refinement_provider", return_value=provider), patch.dict(
+            "os.environ",
+            {"AI_GEN_REFINER_MAX_TOKENS": "300"},
+            clear=False,
+        ):
+            result = refine_task("Add a login screen with phone number", {"source": "azure_devops"})
+
+        self.assertEqual(result["refinement_used"], True)
+        provider.probe_json.assert_called_once()
+        kwargs = provider.probe_json.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 300)
+        self.assertFalse(kwargs["response_format_enabled"])
+        self.assertFalse(kwargs["allow_retry_without_response_format"])
 
     def test_malformed_phi_response_falls_back_safely(self) -> None:
         provider = unittest.mock.Mock()

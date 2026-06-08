@@ -259,6 +259,53 @@ class PhiProviderTests(unittest.TestCase):
         self.assertEqual(response["status"], "success")
         self.assertEqual(response["parsed_json"]["normalized_query"], "Implement login form validation")
 
+    def test_parse_success_response_accepts_nested_chat_completion_content(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            nested_completion = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "```json\n{\"base_flows\":[\"login\"],\"fields\":[\"otp\"]}\n```"
+                        }
+                    }
+                ]
+            }
+            response = provider._parse_success_response(
+                attempt_number=1,
+                url=provider.final_url(),
+                include_response_format=False,
+                timeout_seconds=60,
+                max_tokens=300,
+                http_status=200,
+                response_body=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(nested_completion)
+                                }
+                            }
+                        ]
+                    }
+                ),
+                elapsed_ms=100,
+            )
+
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["parsed_json"]["base_flows"], ["login"])
+        self.assertEqual(response["parsed_json"]["fields"], ["otp"])
+
     def test_debug_curl_hides_key(self) -> None:
         with patch.dict(
             os.environ,

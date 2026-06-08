@@ -450,7 +450,7 @@ class AzurePhiProvider:
         try:
             raw = json.loads(response_body)
             content = raw["choices"][0]["message"]["content"]
-            parsed_json = json.loads(_normalize_json_content(content))
+            parsed_json = _extract_model_json(content)
             if not isinstance(parsed_json, dict):
                 return self._structured_attempt(
                     attempt_number=attempt_number,
@@ -797,6 +797,34 @@ def _normalize_json_content(content: Any) -> str:
             lines = lines[:-1]
         normalized = "\n".join(lines).strip()
     return normalized
+
+
+def _extract_model_json(content: Any) -> dict[str, Any]:
+    parsed = json.loads(_normalize_json_content(content))
+    if not isinstance(parsed, dict):
+        return {}
+    nested_content = _nested_chat_content(parsed)
+    if nested_content:
+        nested = json.loads(_normalize_json_content(nested_content))
+        return nested if isinstance(nested, dict) else {}
+    return parsed
+
+
+def _nested_chat_content(parsed: dict[str, Any]) -> str:
+    try:
+        choices = parsed.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            return ""
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            return ""
+        content = message.get("content")
+        return content if isinstance(content, str) else ""
+    except (AttributeError, IndexError, KeyError, TypeError):
+        return ""
 
 
 def _int_env(name: str, default: int) -> int:

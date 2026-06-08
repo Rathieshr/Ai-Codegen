@@ -106,7 +106,7 @@ class AssistantTests(unittest.TestCase):
     def test_ba_assistant_can_use_phi_to_resolve_large_clarification_text(self) -> None:
         provider = Mock()
         provider.is_enabled.return_value = True
-        provider.refine_json.return_value = {"answered": True, "confidence": "high"}
+        provider.probe_json.return_value = {"parsed_json": {"answered": True, "confidence": "high"}}
         with patch("backend.assistants.ba_assistant.get_refinement_provider", return_value=provider):
             output = run_ba_assistant(
                 {
@@ -144,7 +144,10 @@ class AssistantTests(unittest.TestCase):
             )
 
         self.assertEqual(output["unknowns"], [])
-        self.assertTrue(provider.refine_json.called)
+        provider.probe_json.assert_called()
+        self.assertFalse(provider.probe_json.call_args.kwargs["response_format_enabled"])
+        self.assertFalse(provider.probe_json.call_args.kwargs["allow_retry_without_response_format"])
+        self.assertEqual(provider.probe_json.call_args.kwargs["timeout_seconds"], 8)
 
     def test_ba_assistant_promotes_plain_clarification_to_acceptance_criteria_when_missing(self) -> None:
         output = run_ba_assistant(

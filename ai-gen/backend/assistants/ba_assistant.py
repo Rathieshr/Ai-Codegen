@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from backend.refinement.provider import get_refinement_provider
@@ -213,11 +214,23 @@ def _provider_answers_unknown(unknown: str, feedback_comments: list[str], provid
         },
     }
     try:
-        raw = provider.refine_json(
-            QUESTION_VALIDATION_SYSTEM_PROMPT,
-            json.dumps(payload, ensure_ascii=True),
-            max_tokens=120,
-        )
+        probe = getattr(provider, "probe_json", None)
+        if callable(probe):
+            result = probe(
+                QUESTION_VALIDATION_SYSTEM_PROMPT,
+                json.dumps(payload, ensure_ascii=True),
+                max_tokens=80,
+                timeout_seconds=_question_validation_timeout_seconds(),
+                response_format_enabled=False,
+                allow_retry_without_response_format=False,
+            )
+            raw = result.get("parsed_json") if isinstance(result, dict) else {}
+        else:
+            raw = provider.refine_json(
+                QUESTION_VALIDATION_SYSTEM_PROMPT,
+                json.dumps(payload, ensure_ascii=True),
+                max_tokens=80,
+            )
     except Exception:
         return False
     if not isinstance(raw, dict):
@@ -228,6 +241,13 @@ def _provider_answers_unknown(unknown: str, feedback_comments: list[str], provid
     if isinstance(answered, str):
         return answered.strip().lower() == "true"
     return False
+
+
+def _question_validation_timeout_seconds() -> int:
+    try:
+        return max(1, int(os.getenv("AI_GEN_REFINER_QUESTION_TIMEOUT_SECONDS", "8")))
+    except (TypeError, ValueError):
+        return 8
 
 
 def _refined_requirement(title: str, description: str, refinement: dict[str, Any]) -> str:

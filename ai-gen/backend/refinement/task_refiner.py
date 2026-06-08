@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from backend.refinement.canonical_vocabulary import (
@@ -105,7 +106,9 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
         candidate = probe(
             SYSTEM_PROMPT,
             json.dumps(payload, ensure_ascii=True),
-            max_tokens=800,
+            max_tokens=_refiner_max_tokens(),
+            response_format_enabled=False,
+            allow_retry_without_response_format=False,
         )
         if isinstance(candidate, dict):
             probe_result = candidate
@@ -114,13 +117,13 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
             raw = provider.refine_json(
                 SYSTEM_PROMPT,
                 json.dumps(payload, ensure_ascii=True),
-                max_tokens=800,
+                max_tokens=_refiner_max_tokens(),
             )
     else:
         raw = provider.refine_json(
             SYSTEM_PROMPT,
             json.dumps(payload, ensure_ascii=True),
-            max_tokens=800,
+            max_tokens=_refiner_max_tokens(),
         )
     raw_preview = _preview_probe_result(probe_result, raw)
     validated = validate_task_refinement(raw)
@@ -233,6 +236,13 @@ def _preview_probe_result(probe_result: dict[str, Any] | None, raw: dict[str, An
         if isinstance(value, str) and value.strip():
             return value[:1500]
     return ""
+
+
+def _refiner_max_tokens() -> int:
+    try:
+        return max(80, int(os.getenv("AI_GEN_REFINER_MAX_TOKENS", "300")))
+    except (TypeError, ValueError):
+        return 300
 
 
 def _probe_epic_stage(provider: Any, stage: str, work_item: dict[str, Any], upstream: dict[str, Any] | None, effective_context: dict[str, Any] | None) -> dict[str, Any]:

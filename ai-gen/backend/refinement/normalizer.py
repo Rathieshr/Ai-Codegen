@@ -56,6 +56,9 @@ def normalize_refinement(raw: dict) -> dict[str, Any]:
     actors = _clean_text_list(_collect(raw, "actors", "actor"), limit=6, canonicalize=True)
     states = _clean_text_list(_collect(raw, "states", "state"), limit=8, canonicalize=True)
     unknowns = _clean_text_list(_collect(raw, "unknowns", "open_questions"), limit=8)
+    # ac_gaps: acceptance criteria items Phi flagged as not covered by any detected flow/field.
+    # Passed through as plain text (not canonicalized) so the BA assistant sees the original wording.
+    ac_gaps = _clean_text_list(_collect(raw, "ac_gaps", "acceptance_criteria_gaps"), limit=8)
     confidence = _confidence(raw.get("confidence"))
 
     _augment_from_combinations(base_flows, variants, surfaces, fields, validations)
@@ -70,6 +73,7 @@ def normalize_refinement(raw: dict) -> dict[str, Any]:
         "actors": actors,
         "states": states,
         "unknowns": unknowns,
+        "ac_gaps": ac_gaps,
         "confidence": confidence,
         # Compatibility aliases for existing backend/extension flow.
         "base_flow": base_flows[0] if base_flows else None,

@@ -21,6 +21,11 @@ from backend.refinement.schema_validator import validate_task_refinement
 #   1. State the output schema immediately (model reads left-to-right)
 #   2. Keep instructions < 120 tokens to avoid truncation pressure
 #   3. Terminate with "Return JSON only." as a hard stop signal
+#
+# AC note: acceptance_criteria is passed as a SEPARATE field in the user
+# prompt so it is never cut off by title/description length. Phi uses it
+# to validate that the detected flow matches the stated criteria and to
+# flag gaps in the unknowns list.
 # ─────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = (
@@ -28,12 +33,14 @@ SYSTEM_PROMPT = (
     "Schema:\n"
     '{"base_flows":[str],"variants":[str],"surfaces":[str],'
     '"fields":[str],"validations":[str],"scope_hints":[str],'
-    '"actors":[str],"states":[str],"unknowns":[str],"confidence":"low|medium|high"}\n\n'
+    '"actors":[str],"states":[str],"unknowns":[str],'
+    '"ac_gaps":[str],"confidence":"low|medium|high"}\n\n'
     "Rules:\n"
     "- Map informal terms to canonical names: \'mobile number\' -> \'phone_number\', \'sign in\' -> \'login\'\n"
     "- Use only the fields in the schema above\n"
     "- All list values must be strings\n"
     "- confidence must be exactly one of: low, medium, high\n"
+    "- ac_gaps: list acceptance criteria items that have no matching field or flow (empty list if all covered)\n"
     "- If unsure about a field, omit it (empty list is fine)\n"
     "Return JSON only."
 )
@@ -48,6 +55,7 @@ EXPECTED_SCHEMA = {
     "actors": ["string"],
     "states": ["string"],
     "unknowns": ["string"],
+    "ac_gaps": ["string"],  # acceptance criteria items not covered by detected flow
     "confidence": "low|medium|high",
 }
 
@@ -117,13 +125,24 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
             "refinement": fallback,
         }
 
-    # Build a compact payload — only send fields that Phi needs
-    payload = {
-        "query": query[:400],  # cap to keep prompt short
+    # Build a compact payload — AC is a SEPARATE field so it's never
+    # truncated by a long title/description.
+    work_item_ctx = (context or {}).get("work_item") or {}
+    acceptance_criteria = (
+        str(work_item_ctx.get("acceptance_criteria") or work_item_ctx.get("acceptanceCriteria") or "").strip()
+        or str((context or {}).get("acceptance_criteria") or "").strip()
+    )
+
+    # Keep title+description short; AC travels separately
+    payload: dict[str, Any] = {
+        "query": query[:300],
         "detected_flow": (context or {}).get("detected_flow"),
         "intent": (context or {}).get("intent"),
         "constraints": (context or {}).get("constraints", [])[:3],
     }
+    if acceptance_criteria:
+        # Cap AC at 500 chars — enough for Phi to detect gaps without overloading prompt
+        payload["acceptance_criteria"] = acceptance_criteria[:500]
     # Include repo hints only if they add signal
     repo_hints = (context or {}).get("repo_hints") or {}
     if repo_hints:
@@ -134,7 +153,7 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
         candidate = probe(
             SYSTEM_PROMPT,
             json.dumps(payload, ensure_ascii=True),
-            max_tokens=800,
+            max_tokens=500,  # raised slightly: schema now includes ac_gaps list
         )
         if isinstance(candidate, dict):
             probe_result = candidate
@@ -143,13 +162,13 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
             raw = provider.refine_json(
                 SYSTEM_PROMPT,
                 json.dumps(payload, ensure_ascii=True),
-                max_tokens=800,
+                max_tokens=500,
             )
     else:
         raw = provider.refine_json(
             SYSTEM_PROMPT,
             json.dumps(payload, ensure_ascii=True),
-            max_tokens=800,
+            max_tokens=500,
         )
     raw_preview = _preview_probe_result(probe_result, raw)
     validated = validate_task_refinement(raw)

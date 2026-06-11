@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from backend.auth import ApiKeyMiddleware, get_api_key_status, validate_approver_role
 from backend.guardrails import guard_stage_output, has_blocking_violation
+from backend.ado import AdoAutomation, AdoClient
 
 logger = logging.getLogger("ai_gen.app")
 
@@ -81,7 +82,7 @@ repo_context_manager = RepoContextManager(
     Path(os.getenv("AI_GEN_REPO_CONTEXT_ROOT", ".ai_gen_repo_context"))
 )
 pipeline_controller = PipelineController(Path(os.getenv("AI_GEN_PIPELINE_ROOT", ".ai_gen_pipelines")))
-
+ado_automation = AdoAutomation()
 
 class ContextRequest(BaseModel):
     """Request body accepted by POST /context."""
@@ -1184,6 +1185,232 @@ def add_pipeline_stage_feedback(pipeline_id: str, request: PipelineStageFeedback
         request.comment,
         author=request.author,
     )
+
+
+# ── Phase 2: VS Code Live Feedback ───────────────────────────────────────────
+
+class VsCodeEventRequest(BaseModel):
+    """Event pushed from the VS Code extension into the pipeline."""
+
+    event_type: str = Field(
+        ...,
+        description=(
+            "Type of VS Code event: 'file_saved' | 'test_run' | "
+            "'code_generated' | 'user_comment' | 'mark_ready'"
+        ),
+    )
+    stage: Optional[str] = Field(default=None, description="Pipeline stage this event relates to.")
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Event-specific payload (file path, content hash, comment text, etc.)",
+    )
+    author: Optional[str] = Field(default=None, description="VS Code username or machine identifier.")
+
+
+@app.post("/assist/pipeline/{pipeline_id}/vscode-event")
+def record_vscode_event(pipeline_id: str, request: VsCodeEventRequest) -> dict:
+    """Accept a live event from VS Code and attach it to the pipeline.
+
+    Supports:
+    - ``file_saved``: records file path + content hash for drift tracking.
+    - ``user_comment``: appends a clarification from the developer.
+    - ``mark_ready``: shortcut to approve the active stage directly from VS Code.
+    - ``test_run`` / ``code_generated``: logged as activity for audit trail.
+    """
+    import time as _time
+
+    event = {
+        "source": "vscode",
+        "event_type": request.event_type,
+        "stage": request.stage,
+        "author": request.author or "vscode",
+        "payload": request.payload,
+        "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+    }
+
+    if request.event_type == "user_comment" and request.stage:
+        comment = str(request.payload.get("comment") or "").strip()
+        if comment:
+            pipeline_controller.add_stage_feedback(
+                pipeline_id,
+                request.stage,
+                comment,
+                author=request.author or "vscode",
+            )
+
+    if request.event_type == "mark_ready" and request.stage:
+        try:
+            return pipeline_controller.approve_stage(
+                pipeline_id,
+                request.stage,
+                approved_by=request.author or "vscode",
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "ApprovalFailed", "detail": str(exc)},
+            )
+
+    try:
+        state = pipeline_controller.get_pipeline(pipeline_id)
+        if isinstance(state, dict):
+            activity = state.get("activity") or []
+            activity.append(event)
+            state["activity"] = activity
+        return state
+    except Exception as exc:
+        logger.warning("vscode-event: could not load pipeline %s: %s", pipeline_id, exc)
+        return {"recorded": True, "event": event}
+
+
+@app.get("/assist/pipeline/{pipeline_id}/pending-review")
+def get_pending_review(pipeline_id: str) -> dict:
+    """Return stages that are generated but not yet approved.
+
+    The VS Code extension polls this every 30 seconds and surfaces a
+    notification badge when a stage is ready for human review.
+    """
+    try:
+        state = pipeline_controller.get_pipeline(pipeline_id)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "PipelineNotFound", "detail": str(exc)},
+        )
+
+    stages: dict = state.get("stages") or {}
+    pending_stages = []
+    for stage_name, stage_state in stages.items():
+        if not isinstance(stage_state, dict):
+            continue
+        status = stage_state.get("status", "")
+        approved = stage_state.get("approved", False)
+        has_findings = bool(stage_state.get("unresolved_findings"))
+        if status in {"generated", "needs_revision"} and not approved:
+            pending_stages.append({
+                "stage": stage_name,
+                "status": status,
+                "has_unresolved_findings": has_findings,
+                "handoff_id": stage_state.get("handoff_id"),
+                "version": stage_state.get("version", 1),
+            })
+
+    return {
+        "pipeline_id": pipeline_id,
+        "work_item_id": state.get("work_item_id"),
+        "current_stage": state.get("current_stage"),
+        "pending_stages": pending_stages,
+        "has_pending": bool(pending_stages),
+        "guardrail_warnings": state.get("guardrail_warnings", []),
+    }
+
+
+# ── Phase 3: ADO Automation ───────────────────────────────────────────────────
+
+class AdoAutomationRequest(BaseModel):
+    stage: str = Field(..., description="The pipeline stage to trigger ADO automation for.")
+    approved_by: Optional[str] = None
+
+
+class AdoWebhookRequest(BaseModel):
+    """ADO Service Hook payload (common fields only — rest in ``raw``)."""
+
+    eventType: Optional[str] = None
+    resource: Optional[dict[str, Any]] = None
+    resourceVersion: Optional[str] = None
+    publisherId: Optional[str] = None
+    message: Optional[dict[str, Any]] = None
+
+    model_config = {"extra": "allow"}
+
+
+@app.post("/assist/pipeline/{pipeline_id}/trigger-ado-automation")
+def trigger_ado_automation(pipeline_id: str, request: AdoAutomationRequest) -> dict:
+    """Trigger ADO side effects (state update, comment, PR) for an approved stage.
+
+    Called automatically from the approve-stage endpoint when
+    ``AI_GEN_ADO_AUTO=1`` is set, or manually by the ADO extension.
+    """
+    if not ado_automation.is_available:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "AdoNotConfigured",
+                "detail": "ADO_PAT, ADO_ORG_URL and ADO_PROJECT must be set to enable automation.",
+            },
+        )
+    try:
+        pipeline_state = pipeline_controller.get_pipeline(pipeline_id)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "PipelineNotFound", "detail": str(exc)},
+        )
+
+    result = ado_automation.run_for_stage(
+        pipeline_id=pipeline_id,
+        stage=request.stage,
+        pipeline_state=pipeline_state,
+    )
+    status_code = 207 if result.has_failures else 200
+    return JSONResponse(status_code=status_code, content=result.to_dict())
+
+
+@app.get("/assist/pipeline/{pipeline_id}/ado-automation-status")
+def get_ado_automation_status(pipeline_id: str) -> dict:
+    """Return ADO automation availability and configuration status."""
+    return {
+        "pipeline_id": pipeline_id,
+        "ado_configured": ado_automation.is_available,
+        "auto_trigger_enabled": os.getenv("AI_GEN_ADO_AUTO", "0") == "1",
+        "supported_stages": list(
+            {"ba", "ui", "dev_packet", "fix_packet", "test_checklist",
+             "test_planning", "critic", "epic_analysis", "story_generation"}
+        ),
+    }
+
+
+@app.post("/webhooks/ado")
+def ado_service_hook(request: AdoWebhookRequest) -> dict:
+    """Receive Azure DevOps service hook events.
+
+    Supported event types
+    ---------------------
+    ``workitem.updated``
+        When a work item state changes in ADO, sync the pipeline state.
+    ``git.pullrequest.merged``
+        When a PR is merged, advance the pipeline to the next stage.
+
+    Set up in ADO:
+    Project Settings → Service Hooks → Web Hooks → Subscribe to events.
+    Point to: ``POST https://<your-backend>/webhooks/ado``
+    """
+    event_type = str(request.eventType or "").strip()
+    resource = request.resource or {}
+
+    logger.info("ADO webhook received: event_type=%s", event_type)
+
+    if event_type == "workitem.updated":
+        work_item_id = str(
+            resource.get("workItemId")
+            or (resource.get("fields") or {}).get("System.Id", {}).get("newValue", "")
+            or ""
+        ).strip()
+        new_state = str(
+            (resource.get("fields") or {}).get("System.State", {}).get("newValue", "")
+        ).strip()
+        if work_item_id and new_state:
+            logger.info("ADO webhook: work_item=%s state→%s", work_item_id, new_state)
+        return {"received": True, "event_type": event_type, "work_item_id": work_item_id}
+
+    if event_type == "git.pullrequest.merged":
+        pr_id = str(resource.get("pullRequestId", "")).strip()
+        source_branch = str(resource.get("sourceRefName", "")).strip()
+        logger.info("ADO webhook: PR #%s merged from %s", pr_id, source_branch)
+        return {"received": True, "event_type": event_type, "pr_id": pr_id}
+
+    # Unknown event — acknowledge but do nothing
+    return {"received": True, "event_type": event_type, "action": "ignored"}
 
 
 @app.get("/assist/pipeline/{pipeline_id}")

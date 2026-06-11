@@ -16,21 +16,26 @@ from backend.refinement.provider import get_refinement_provider
 from backend.refinement.schema_validator import validate_task_refinement
 
 
+# ── Prompt engineering note ─────────────────────────────────────────────────
+# Phi-4-mini performs best with schema-first prompts:
+#   1. State the output schema immediately (model reads left-to-right)
+#   2. Keep instructions < 120 tokens to avoid truncation pressure
+#   3. Terminate with "Return JSON only." as a hard stop signal
+# ─────────────────────────────────────────────────────────────────────────────
+
 SYSTEM_PROMPT = (
-    "You are ai-gen semantic refinement engine.\n\n"
-    "Your job is to convert vague software work items into canonical engineering metadata.\n\n"
-    "Map informal language into normalized concepts.\n\n"
-    "Examples:\n"
-    "- mobile number, phone no, contact number => phone_number\n"
-    "- otp, sms code, one-time password, verification code => otp\n"
-    "- sign in => login\n"
-    "- register => signup\n\n"
-    "You must return strict JSON only.\n\n"
-    "Do not generate code.\n"
-    "Do not invent file paths.\n"
-    "Do not generate final prompts.\n"
-    "Do not generate implementation steps.\n\n"
-    "You only return normalized engineering metadata."
+    "Output JSON only. No prose, no markdown, no explanation.\n\n"
+    "Schema:\n"
+    '{"base_flows":[str],"variants":[str],"surfaces":[str],'
+    '"fields":[str],"validations":[str],"scope_hints":[str],'
+    '"actors":[str],"states":[str],"unknowns":[str],"confidence":"low|medium|high"}\n\n'
+    "Rules:\n"
+    "- Map informal terms to canonical names: \'mobile number\' -> \'phone_number\', \'sign in\' -> \'login\'\n"
+    "- Use only the fields in the schema above\n"
+    "- All list values must be strings\n"
+    "- confidence must be exactly one of: low, medium, high\n"
+    "- If unsure about a field, omit it (empty list is fine)\n"
+    "Return JSON only."
 )
 
 EXPECTED_SCHEMA = {
@@ -69,6 +74,29 @@ EPIC_STAGE_SCHEMAS = {
     },
 }
 
+# Compact system prompt templates per epic stage
+# Phi-4-mini does not need verbose instructions — schema + imperative verb is enough
+_EPIC_STAGE_SYSTEM_PROMPTS: dict[str, str] = {
+    "epic_analysis": (
+        "Output JSON only. Schema: "
+        '{"goal":str,"scope":[str],"business_outcomes":[str],'
+        '"assumptions":[str],"risks":[str],"dependency_notes":[str]}. '
+        "Analyze the epic. Return JSON only."
+    ),
+    "feature_generation": (
+        "Output JSON only. Schema: {\"domain\":str,\"features\":[str]}. "
+        "Generate feature titles for this epic. Return JSON only."
+    ),
+    "story_generation": (
+        "Output JSON only. Schema: {\"stories\":[str]}. "
+        "Generate user story titles for the features provided. Return JSON only."
+    ),
+    "review": (
+        "Output JSON only. Schema: {\"gaps\":[str],\"unknowns\":[str],\"risks\":[str]}. "
+        "Review the proposed work items and flag gaps. Return JSON only."
+    ),
+}
+
 
 def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
     """Return structured refinement metadata or a safe disabled fallback."""
@@ -89,16 +117,17 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
             "refinement": fallback,
         }
 
+    # Build a compact payload — only send fields that Phi needs
     payload = {
-        "query": query,
-        "source": (context or {}).get("source"),
-        "work_item": (context or {}).get("work_item"),
-        "detected_intent": (context or {}).get("intent"),
+        "query": query[:400],  # cap to keep prompt short
         "detected_flow": (context or {}).get("detected_flow"),
-        "constraints": (context or {}).get("constraints", []),
-        "repo_hints": (context or {}).get("repo_hints", {}),
-        "expected_json_schema": EXPECTED_SCHEMA,
+        "intent": (context or {}).get("intent"),
+        "constraints": (context or {}).get("constraints", [])[:3],
     }
+    # Include repo hints only if they add signal
+    repo_hints = (context or {}).get("repo_hints") or {}
+    if repo_hints:
+        payload["repo_hints"] = {k: v for k, v in list(repo_hints.items())[:4]}
     probe = getattr(provider, "probe_json", None)
     probe_result: dict[str, Any] | None = None
     if callable(probe):
@@ -235,32 +264,65 @@ def _preview_probe_result(probe_result: dict[str, Any] | None, raw: dict[str, An
     return ""
 
 
-def _probe_epic_stage(provider: Any, stage: str, work_item: dict[str, Any], upstream: dict[str, Any] | None, effective_context: dict[str, Any] | None) -> dict[str, Any]:
-    prompt = {
-        "stage": stage,
-        "work_item": {
-            "id": work_item.get("id"),
-            "type": work_item.get("type"),
-            "title": work_item.get("title"),
-            "description": work_item.get("description"),
-            "acceptance_criteria": work_item.get("acceptanceCriteria") or work_item.get("acceptance_criteria"),
-            "tags": work_item.get("tags", []),
-        },
-        "upstream": upstream or {},
-        "effective_text": (effective_context or {}).get("effective_text", "")[:4000],
-        "expected_json_schema": EPIC_STAGE_SCHEMAS.get(stage, {}),
-    }
-    system_prompt = (
-        "You are ai-gen epic planning refiner. Return strict JSON only. "
-        f"Generate only the JSON schema for stage {stage}."
+def _probe_epic_stage(
+    provider: Any,
+    stage: str,
+    work_item: dict[str, Any],
+    upstream: dict[str, Any] | None,
+    effective_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Call Phi for a single epic stage using a compact, schema-first prompt."""
+    title = (work_item.get("title") or "")[:200]
+    description = (work_item.get("description") or "")[:300]
+    acceptance = (work_item.get("acceptanceCriteria") or work_item.get("acceptance_criteria") or "")[:200]
+    # Keep upstream summary short to stay under prompt char limit
+    upstream_summary = _compact_upstream(stage, upstream)
+    effective_text = (effective_context or {}).get("effective_text", "")[:800]
+
+    user_prompt_parts = [
+        f"Title: {title}",
+        f"Description: {description}" if description else "",
+        f"Acceptance: {acceptance}" if acceptance else "",
+    ]
+    if upstream_summary:
+        user_prompt_parts.append(f"Upstream: {upstream_summary}")
+    if effective_text:
+        user_prompt_parts.append(f"Context: {effective_text}")
+    user_prompt = "\n".join(p for p in user_prompt_parts if p)
+
+    system_prompt = _EPIC_STAGE_SYSTEM_PROMPTS.get(
+        stage,
+        "Output JSON only. Return JSON only.",
     )
+    # max_tokens per stage — tight budgets reduce timeout risk
+    max_tokens_map = {
+        "epic_analysis": 180,
+        "feature_generation": 150,
+        "story_generation": 160,
+        "review": 140,
+    }
     return provider.probe_json(
         system_prompt,
-        json.dumps(prompt, ensure_ascii=True),
-        max_tokens=220 if stage == "epic_analysis" else 260,
-        response_format_enabled=False,
+        user_prompt,
+        max_tokens=max_tokens_map.get(stage, 160),
+        response_format_enabled=False,  # Phi-4-mini is more reliable without json_object mode
         allow_retry_without_response_format=False,
     )
+
+
+def _compact_upstream(stage: str, upstream: dict[str, Any] | None) -> str:
+    """Extract a short string summary from upstream stage output."""
+    if not upstream:
+        return ""
+    if stage == "story_generation":
+        features = upstream.get("features") or upstream.get("generated_features") or []
+        titles = [str(f.get("title") if isinstance(f, dict) else f).strip() for f in features[:4]]
+        return ", ".join(t for t in titles if t)
+    if stage == "review":
+        items = upstream.get("proposed_work_items") or upstream.get("generated_work_items") or []
+        titles = [str(i.get("title") if isinstance(i, dict) else i).strip() for i in items[:5]]
+        return ", ".join(t for t in titles if t)
+    return ""
 
 
 def _epic_stage_payload_is_usable(stage: str, payload: dict[str, Any]) -> bool:

@@ -219,7 +219,8 @@ class PhiProviderTests(unittest.TestCase):
             result = provider.probe_json("Return JSON", "{}", max_tokens=50, timeout_seconds=2)
 
         self.assertEqual(result["failure_reason"], "provider_timeout")
-        self.assertEqual(len(result["attempts"]), 2)
+        # On timeout we do NOT retry (retrying doubles wait). Expect exactly 1 attempt.
+        self.assertEqual(len(result["attempts"]), 1)
         self.assertEqual(result["attempts"][0]["status"], "timeout")
 
     def test_parse_success_response_accepts_fenced_json_content(self) -> None:

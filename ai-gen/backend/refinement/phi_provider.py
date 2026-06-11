@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import time
@@ -11,8 +12,19 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+logger = logging.getLogger("ai_gen.phi")
 
+# Module-level deployment metrics and circuit breaker state
 _DEPLOYMENT_METRICS: dict[str, dict[str, Any]] = {}
+
+# Circuit breaker: open after N consecutive failures, reset after RESET_SECONDS
+_CIRCUIT_OPEN_AFTER_FAILURES = 5
+_CIRCUIT_RESET_SECONDS = 300  # 5 minutes
+_CIRCUIT_STATE: dict[str, Any] = {"open": False, "opened_at": 0.0}
+
+# Max estimated prompt characters before we skip Phi to avoid timeout
+# ~4 chars per token; 1200 tokens ≈ 4800 chars
+_MAX_PROMPT_CHARS = 4800
 
 
 class AzurePhiProvider:
@@ -25,9 +37,11 @@ class AzurePhiProvider:
         self.model = (os.getenv("AI_GEN_REFINER_MODEL") or "Phi-4-mini-instruct").strip()
         self.deployment = (os.getenv("AI_GEN_REFINER_DEPLOYMENT") or self.model).strip()
         self.api_version = (os.getenv("AI_GEN_REFINER_API_VERSION") or "2024-05-01-preview").strip()
-        self.timeout = _int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 60)
-        self.ping_timeout = _int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 60)
-        self.diagnostic_timeout = _int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 180)
+        # Default reduced to 20s – Phi-4-mini rarely needs more for JSON tasks
+        self.timeout = _int_env("AI_GEN_REFINER_TIMEOUT_SECONDS", 20)
+        self.connect_timeout = _int_env("AI_GEN_REFINER_CONNECT_TIMEOUT_SECONDS", 5)
+        self.ping_timeout = _int_env("AI_GEN_REFINER_PING_TIMEOUT_SECONDS", 10)
+        self.diagnostic_timeout = _int_env("AI_GEN_REFINER_DIAGNOSTIC_TIMEOUT_SECONDS", 60)
         self.default_max_tokens = _int_env("AI_GEN_REFINER_MAX_TOKENS", 300)
         include_model_env = os.getenv("AI_GEN_REFINER_INCLUDE_MODEL_FIELD")
         if include_model_env is None or not include_model_env.strip():
@@ -70,11 +84,24 @@ class AzurePhiProvider:
         if not self.is_enabled():
             return self._empty_result("missing_config", "Provider is not fully configured.")
 
+        # --- Circuit breaker: skip Phi if deployment is in open state ---
+        if _is_circuit_open(self.deployment):
+            logger.warning("ai-gen phi circuit_breaker=open deployment=%s — skipping", self.deployment)
+            return self._empty_result("circuit_open", "Phi circuit breaker is open after repeated failures. Will retry after cool-down.")
+
+        # --- Prompt length guard: skip if combined prompt is too long ---
+        combined_len = len(system_prompt) + len(user_prompt)
+        if combined_len > _MAX_PROMPT_CHARS:
+            logger.warning("ai-gen phi prompt_too_long chars=%d max=%d — skipping", combined_len, _MAX_PROMPT_CHARS)
+            return self._empty_result("prompt_too_long", f"Combined prompt ({combined_len} chars) exceeds limit to avoid timeout.")
+
         request_timeout = max(1, int(timeout_seconds)) if timeout_seconds is not None else self.timeout
         effective_max_tokens = max(1, int(max_tokens or self.default_max_tokens))
         use_response_format = self.response_format_enabled if response_format_enabled is None else bool(response_format_enabled)
 
         attempts: list[dict[str, Any]] = []
+
+        # Attempt 1: with requested response_format
         first_attempt = self._attempt_request(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -86,11 +113,13 @@ class AzurePhiProvider:
             api_version_override=api_version_override,
         )
         attempts.append(first_attempt)
-
         final_attempt = first_attempt
         retried = False
+
+        # Attempt 2: retry without response_format on eligible failures
         if use_response_format and allow_retry_without_response_format and self._should_retry_without_response_format(first_attempt):
             retried = True
+            time.sleep(0.5)  # brief back-off before retry
             retry_attempt = self._attempt_request(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -103,6 +132,24 @@ class AzurePhiProvider:
             )
             attempts.append(retry_attempt)
             final_attempt = retry_attempt
+
+        # Attempt 3: on parse_error only — try partial JSON recovery without new HTTP call
+        if final_attempt.get("failure_reason") == "parse_error" and final_attempt.get("raw_content"):
+            recovered = _extract_partial_json(final_attempt["raw_content"])
+            if recovered:
+                logger.info("ai-gen phi partial_json_recovery=success deployment=%s", self.deployment)
+                final_attempt = dict(final_attempt)
+                final_attempt["parsed_json"] = recovered
+                final_attempt["status"] = "success_partial"
+                final_attempt["failure_reason"] = ""
+                final_attempt["failure_message"] = ""
+                self._record_success(int(final_attempt.get("elapsed_ms") or 0))
+
+        # Update circuit breaker based on final outcome
+        if final_attempt.get("status") in {"success", "success_partial"}:
+            _reset_circuit(self.deployment)
+        elif final_attempt.get("failure_reason") in {"provider_timeout", "connection_error"}:
+            _trip_circuit(self.deployment)
 
         summary = {
             **self.status_snapshot(),
@@ -658,9 +705,10 @@ class AzurePhiProvider:
         if "/models/chat/completions" not in url:
             return "wrong_endpoint_path"
         normalized_error = (error_type or "").lower()
-        if normalized_error in {"timeouterror", "timeout", "sockettimeout"}:
+        # Cover all timeout spellings incl. socket.timeout.__name__ = 'timeout'
+        if any(token in normalized_error for token in ("timeout", "timed out")):
             return "provider_timeout"
-        if normalized_error in {"urlerror", "oserror"}:
+        if normalized_error in {"urlerror", "oserror", "connectionreseterror", "connectionrefusederror", "connectionerror"}:
             return "connection_error"
         if http_status == 401:
             return "http_401_invalid_key"
@@ -690,8 +738,10 @@ class AzurePhiProvider:
         return messages.get(failure_reason, "Azure Phi request failed.")
 
     def _should_retry_without_response_format(self, result: dict[str, Any]) -> bool:
-        return str(result.get("failure_reason") or "") in {
-            "provider_timeout",
+        # Retry without response_format on parse/format errors but NOT on timeout
+        # (timeout retry would just double the wait time)
+        reason = str(result.get("failure_reason") or "")
+        return reason in {
             "http_404_wrong_endpoint_or_model",
             "http_405_wrong_method_or_path",
             "parse_error",
@@ -789,6 +839,7 @@ def _normalize_json_content(content: Any) -> str:
     if not isinstance(content, str):
         return json.dumps(content)
     normalized = content.strip()
+    # Strip markdown code fences
     if normalized.startswith("```"):
         lines = normalized.splitlines()
         if lines:
@@ -796,7 +847,80 @@ def _normalize_json_content(content: Any) -> str:
         while lines and lines[-1].strip().startswith("```"):
             lines = lines[:-1]
         normalized = "\n".join(lines).strip()
+    # Strip leading prose before first '{'
+    brace_pos = normalized.find("{")
+    if brace_pos > 0:
+        normalized = normalized[brace_pos:]
     return normalized
+
+
+def _extract_partial_json(raw: str) -> dict[str, Any] | None:
+    """Best-effort recovery for truncated JSON responses from Phi.
+
+    Phi-4-mini sometimes returns a valid object that is cut off mid-value.
+    We attempt to find the largest balanced prefix and parse it.
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    brace = text.find("{")
+    if brace < 0:
+        return None
+    text = text[brace:]
+    # Try the full string first (may already be valid)
+    try:
+        result = json.loads(text)
+        return result if isinstance(result, dict) else None
+    except json.JSONDecodeError:
+        pass
+    # Walk backwards removing chars until we can close the object
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[: i + 1]
+                try:
+                    result = json.loads(candidate)
+                    return result if isinstance(result, dict) else None
+                except json.JSONDecodeError:
+                    break
+    # Last resort: try closing the object manually
+    truncated = text.rstrip(",").rstrip() + "}"
+    try:
+        result = json.loads(truncated)
+        return result if isinstance(result, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _is_circuit_open(deployment: str) -> bool:
+    """Return True if the circuit breaker is open (Phi should be skipped)."""
+    if not _CIRCUIT_STATE.get("open"):
+        return False
+    elapsed = time.time() - float(_CIRCUIT_STATE.get("opened_at") or 0)
+    if elapsed >= _CIRCUIT_RESET_SECONDS:
+        _CIRCUIT_STATE["open"] = False
+        logger.info("ai-gen phi circuit_breaker=reset deployment=%s after_seconds=%d", deployment, int(elapsed))
+        return False
+    return True
+
+
+def _trip_circuit(deployment: str) -> None:
+    """Open the circuit breaker when consecutive failures cross the threshold."""
+    metrics = _DEPLOYMENT_METRICS.get(deployment, {})
+    failures = int(metrics.get("consecutive_failures") or 0)
+    if failures >= _CIRCUIT_OPEN_AFTER_FAILURES and not _CIRCUIT_STATE.get("open"):
+        _CIRCUIT_STATE["open"] = True
+        _CIRCUIT_STATE["opened_at"] = time.time()
+        logger.warning("ai-gen phi circuit_breaker=tripped deployment=%s after %d failures", deployment, failures)
+
+
+def _reset_circuit(deployment: str) -> None:
+    """Close the circuit breaker on a successful response."""
+    _CIRCUIT_STATE["open"] = False
 
 
 def _int_env(name: str, default: int) -> int:

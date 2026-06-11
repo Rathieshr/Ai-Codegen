@@ -8,10 +8,17 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
+
+from backend.auth import ApiKeyMiddleware, get_api_key_status, validate_approver_role
+from backend.guardrails import guard_stage_output, has_blocking_violation
+
+logger = logging.getLogger("ai_gen.app")
 
 from backend.execution_corrector import build_corrected_execution_prompt, generate_retry_plan
 from backend.handoff.storage import list_handoffs, load_handoff_markdown
@@ -49,13 +56,23 @@ app = FastAPI(
     description="Builds compact business logic-aware prompts before Codex runs.",
     version="0.1.0",
 )
+# CORS — restrict origins via env var in production
+# Example: AI_GEN_CORS_ORIGINS=https://dev.azure.com,https://app.example.com
+_cors_origins_raw = os.getenv("AI_GEN_CORS_ORIGINS", "*")
+_cors_origins: list[str] = (
+    [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+    if _cors_origins_raw.strip() != "*"
+    else ["*"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-Api-Key"],
 )
+# API key auth — add AFTER CORS so OPTIONS pre-flights pass through
+app.add_middleware(ApiKeyMiddleware)
 print(f"ai-gen backend starting in {os.getenv('AI_GEN_BACKEND_MODE', 'local')} mode")
 
 logic_store = LogicStore()
@@ -196,6 +213,11 @@ class PipelineStageRequest(BaseModel):
 class PipelineApproveRequest(BaseModel):
     stage: str
     approved_by: Optional[str] = None
+    approver_role: Optional[str] = Field(
+        default=None,
+        description="Role of the approver (product/developer/qa/lead/admin). "
+                    "Used for role-based gate enforcement when AI_GEN_ROLE_ENFORCEMENT=1.",
+    )
 
 
 class PipelineSkipRequest(BaseModel):
@@ -277,9 +299,11 @@ def health() -> dict[str, str]:
 
 @app.get("/capabilities")
 def capabilities() -> dict:
-    """Return lightweight routing capabilities."""
+    """Return lightweight routing capabilities including auth status."""
 
-    return get_status()
+    status = get_status()
+    status["auth"] = get_api_key_status()
+    return status
 
 
 @app.post("/story-planner/sessions")
@@ -1092,7 +1116,55 @@ def run_pipeline_epic_plan(pipeline_id: str, request: PipelineStageRequest) -> d
 def approve_pipeline_stage(pipeline_id: str, request: PipelineApproveRequest) -> dict:
     """Approve a generated stage and unlock the next one."""
 
-    return pipeline_controller.approve_stage(pipeline_id, request.stage, approved_by=request.approved_by)
+    # --- Role-based gate check ---
+    role_result = validate_approver_role(request.stage, request.approver_role)
+    if not role_result["allowed"]:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Forbidden",
+                "detail": role_result["reason"],
+                "required_roles": role_result["required_roles"],
+                "stage": request.stage,
+            },
+        )
+
+    # --- Guardrail: screen current stage output before approving ---
+    try:
+        pipeline_state = pipeline_controller.get_pipeline(pipeline_id)
+        stage_output = (pipeline_state.get("stages") or {}).get(request.stage, {}).get("output") or {}
+        constraints = (
+            pipeline_state.get("repo_context") or {}
+        ).get("constraints") or []
+        violations = guard_stage_output(request.stage, stage_output, constraints)
+        if has_blocking_violation(violations):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": "GuardrailBlock",
+                    "detail": "Stage output failed safety guardrails and cannot be approved.",
+                    "violations": [v.to_dict() for v in violations if v.severity == "block"],
+                },
+            )
+    except Exception as guard_err:
+        logger.warning("ai-gen guardrail check failed (non-blocking): %s", guard_err)
+
+    result = pipeline_controller.approve_stage(
+        pipeline_id,
+        request.stage,
+        approved_by=request.approved_by,
+    )
+
+    # Attach advisory guardrail warnings to response (non-blocking)
+    try:
+        warn_violations = [v.to_dict() for v in violations if v.severity == "warn"]  # type: ignore[possibly-undefined]
+        if warn_violations:
+            if isinstance(result, dict):
+                result.setdefault("guardrail_warnings", warn_violations)
+    except Exception:
+        pass
+
+    return result
 
 
 @app.post("/assist/pipeline/{pipeline_id}/skip-stage")

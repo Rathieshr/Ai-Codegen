@@ -75,6 +75,8 @@ class PipelineState:
     repo_context: dict[str, Any] = field(default_factory=dict)
     refinement: dict[str, Any] = field(default_factory=dict)
     ai_gen_comments: list[dict[str, Any]] = field(default_factory=list)
+    team_comments: list[dict[str, Any]] = field(default_factory=list)
+    epic_context: dict[str, Any] = field(default_factory=dict)
     pipeline_context: dict[str, Any] = field(default_factory=dict)
     activity: list[dict[str, Any]] = field(default_factory=list)
     draft_work_items: list[dict[str, Any]] = field(default_factory=list)
@@ -104,6 +106,8 @@ class PipelineState:
             repo_context=data.get("repo_context", {}),
             refinement=data.get("refinement", {}),
             ai_gen_comments=data.get("ai_gen_comments", []),
+            team_comments=data.get("team_comments", []),
+            epic_context=data.get("epic_context", {}),
             pipeline_context=data.get("pipeline_context", {}),
             activity=data.get("activity", []),
             draft_work_items=data.get("draft_work_items", []),
@@ -118,6 +122,8 @@ def create_initial_pipeline_state(
     repo_context: dict[str, Any] | None = None,
     refinement: dict[str, Any] | None = None,
     ai_gen_comments: list[dict[str, Any]] | None = None,
+    team_comments: list[dict[str, Any]] | None = None,
+    epic_context: dict[str, Any] | None = None,
     pipeline_context: dict[str, Any] | None = None,
     activity: list[dict[str, Any]] | None = None,
     workflow_template: str = DEFAULT_TEMPLATE_NAME,
@@ -147,6 +153,8 @@ def create_initial_pipeline_state(
         repo_context=repo_context or {},
         refinement=refinement or {},
         ai_gen_comments=ai_gen_comments or [],
+        team_comments=team_comments or [],
+        epic_context=epic_context or {},
         pipeline_context=pipeline_context or {},
         activity=activity or [],
         draft_work_items=[],

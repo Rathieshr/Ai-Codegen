@@ -7,6 +7,7 @@ from typing import Any, Callable
 from backend.assistants import (
     run_app_ui_assistant,
     run_ba_assistant,
+    run_bug_assistant,
     run_critic_assistant,
     run_dev_assistant,
     run_test_assistant,
@@ -34,6 +35,22 @@ def run_stage_output(
     repo_context = state.repo_context
 
     if stage == "ba":
+        # Route Bug work items directly to the bug assistant (C)
+        work_item_type = str(work_item.get("type") or "").strip().lower()
+        if work_item_type == "bug":
+            critic_findings = [
+                finding
+                for stage_name in (state.stages or {})
+                for finding in ((state.stages[stage_name].critic or {}).get("findings") or [])
+                if finding.get("severity") in {"blocking", "high"}
+            ] if hasattr(state, "stages") else []
+            return run_bug_assistant(
+                work_item=work_item,
+                critic_findings=critic_findings,
+                review_context=review_context,
+                effective_context=effective_context,
+                question_answers=_question_answers_from_context(effective_context),
+            )
         return run_ba_assistant(work_item, refinement, review_context=review_context, effective_context=effective_context)
     if stage in {"ui", "ui_optional", "ui_plan"}:
         ba_output = _ba_like_output(work_item, refinement, approved_stage_context("ba"))
@@ -467,7 +484,17 @@ def _contextual_work_item(work_item: dict[str, Any], effective_context: dict[str
     contextual["effective_context_text"] = effective_context.get("effective_text", "")
     contextual["clarifications"] = effective_context.get("clarifications", [])
     contextual["handoff_summaries"] = effective_context.get("handoff_summaries", [])
+    # D: Pass epic_context and team_comments to assistants
+    contextual["epic_context"] = effective_context.get("epic_context") or {}
+    contextual["team_comments"] = effective_context.get("team_comments") or []
+    contextual["question_answers"] = effective_context.get("question_answers") or []
     return contextual
+
+
+def _question_answers_from_context(effective_context: dict[str, Any] | None) -> dict[str, str]:
+    """Convert list of {question, answer} dicts to a {question: answer} mapping for bug_assistant."""
+    qa_list = (effective_context or {}).get("question_answers") or []
+    return {str(item.get("question", "")): str(item.get("answer", "")) for item in qa_list if item.get("question") and item.get("answer")}
 
 
 def _finding(finding_type: str, severity: str, message: str, target_stage: str) -> dict[str, Any]:

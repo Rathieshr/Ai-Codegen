@@ -360,11 +360,13 @@ export async function createPipeline(
   workItem: NormalizedWorkItem,
   response: AiGenResponse,
   aiGenComments: AzureComment[] = [],
+  teamComments: Array<{ body: string; author?: string; created_at?: string }> = [],
 ): Promise<PipelineState> {
   return postJson<PipelineState>(PIPELINE_CREATE_URL, {
     source: 'azure_devops',
     work_item: workItem,
     ai_gen_comments: aiGenComments,
+    team_comments: teamComments,
     repo_context: {
       resolved_repo_id: stringValue(response.resolved_repo_id),
       resolved_branch_name: stringValue(response.resolved_branch_name),
@@ -397,6 +399,7 @@ export async function runPipelineStage(
   feedbackComment?: string,
   feedbackAuthor = 'azure_devops',
   aiGenComments: AzureComment[] = [],
+  teamComments: Array<{ body: string; author?: string; created_at?: string }> = [],
 ): Promise<PipelineState> {
   return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/run-stage`, {
     stage,
@@ -404,17 +407,20 @@ export async function runPipelineStage(
     feedback_comment: feedbackComment,
     feedback_author: feedbackComment ? feedbackAuthor : undefined,
     ai_gen_comments: aiGenComments,
+    team_comments: teamComments,
   });
 }
 
 export async function runEpicPlan(
   pipelineId: string,
   aiGenComments: AzureComment[] = [],
+  teamComments: Array<{ body: string; author?: string; created_at?: string }> = [],
 ): Promise<PipelineState> {
   return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/run-epic-plan`, {
     stage: 'epic_analysis',
     regenerate: false,
     ai_gen_comments: aiGenComments,
+    team_comments: teamComments,
   });
 }
 
@@ -658,6 +664,51 @@ export async function loadAiGenComments(workItemId: number | string): Promise<{ 
       comments: [],
       warning: 'Could not load Azure DevOps comments. Pipeline used work item fields only.',
     };
+  }
+}
+
+/**
+ * Load ALL Azure DevOps comments for a work item (not just [ai-gen] prefixed).
+ * Used to build team_comments context for the backend (F).
+ */
+export async function loadAllComments(workItemId: number | string): Promise<Array<{ body: string; author?: string; created_at?: string }>> {
+  const pageContext = SDK.getPageContext() as unknown as {
+    webContext: {
+      collection?: { uri?: string };
+      project?: { name?: string };
+    };
+  };
+  const collectionUri = pageContext.webContext.collection?.uri || `${window.location.origin}/`;
+  const projectName = pageContext.webContext.project?.name;
+  if (!projectName || !workItemId) {
+    return [];
+  }
+  try {
+    const accessToken = await SDK.getAccessToken();
+    const response = await fetch(
+      `${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workItems/${workItemId}/comments?api-version=7.1-preview.4`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    if (!response.ok) {
+      return [];
+    }
+    const payload = await response.json() as { comments?: Array<Record<string, unknown>> };
+    const comments = Array.isArray(payload.comments) ? payload.comments : [];
+    return comments.map((comment) => ({
+      body: String(comment.text || ''),
+      author: typeof comment.createdBy === 'object' && comment.createdBy
+        ? String((comment.createdBy as Record<string, unknown>).displayName || (comment.createdBy as Record<string, unknown>).uniqueName || '')
+        : undefined,
+      created_at: String(comment.createdDate || comment.publishedDate || ''),
+    })).filter((c) => c.body.trim());
+  } catch {
+    return [];
   }
 }
 

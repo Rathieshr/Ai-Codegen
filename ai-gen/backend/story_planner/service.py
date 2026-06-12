@@ -7,6 +7,8 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -19,6 +21,11 @@ from .models import PlannerSession, TaskDraft, utc_now
 class StoryPlannerService:
     def __init__(self) -> None:
         self._sessions: dict[str, PlannerSession] = {}
+        _data_dir = os.environ.get("AI_GEN_DATA_DIR", str(Path(__file__).parent.parent.parent / "data"))
+        self._sessions_dir = Path(_data_dir) / "story_planner_sessions"
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_expired_sessions()
+        self._load_all_sessions()
 
     def start_session(
         self,
@@ -47,6 +54,7 @@ class StoryPlannerService:
             user_input_hint="Add missing details or corrections here before regenerating.",
         )
         self._sessions[session_id] = session
+        self._save_session(session)
         return session.to_dict()
 
     def get_session(self, session_id: str) -> dict[str, Any]:
@@ -102,6 +110,7 @@ class StoryPlannerService:
             session.current_stage = "azure_devops_creation"
         session.error_message = ""
         self._refresh_stage_prompts(session)
+        self._save_session(session)
         return session.to_dict()
 
     def edit_stage(self, session_id: str, stage: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +139,7 @@ class StoryPlannerService:
             raise ValueError(f"Unsupported stage for edit: {stage}")
         session.error_message = ""
         self._refresh_stage_prompts(session)
+        self._save_session(session)
         return session.to_dict()
 
     def regenerate_stage(self, session_id: str, stage: str, user_input: str = "") -> dict[str, Any]:
@@ -163,6 +173,7 @@ class StoryPlannerService:
             raise ValueError(f"Unsupported stage for regeneration: {stage}")
         session.error_message = ""
         self._refresh_stage_prompts(session)
+        self._save_session(session)
         return session.to_dict()
 
     def approve_stage(self, session_id: str, stage: str) -> dict[str, Any]:
@@ -187,6 +198,7 @@ class StoryPlannerService:
             raise ValueError(f"Unsupported stage for approval: {stage}")
         session.error_message = ""
         self._refresh_stage_prompts(session)
+        self._save_session(session)
         return session.to_dict()
 
     def create_work_items(self, session_id: str) -> dict[str, Any]:
@@ -222,6 +234,7 @@ class StoryPlannerService:
                 session.error_message = str(error)
                 session.current_stage = "azure_devops_creation"
                 self._refresh_stage_prompts(session)
+                self._save_session(session)
                 return session.to_dict()
 
         for task in session.tasks:
@@ -253,14 +266,85 @@ class StoryPlannerService:
         session.current_stage = "success"
         session.error_message = ""
         self._refresh_stage_prompts(session)
+        self._save_session(session)
         return session.to_dict()
 
     def _session(self, session_id: str) -> PlannerSession:
+        if session_id not in self._sessions:
+            # Try to load from disk (handles server restarts)
+            self._load_session_from_disk(session_id)
         session = self._sessions.get(session_id)
         if session is None:
             raise ValueError(f"Unknown planning session: {session_id}")
         session.updated_at = utc_now()
         return session
+
+    def list_sessions(self, work_item_id: str | int | None = None) -> list[dict[str, Any]]:
+        """Return a summary of all known sessions, newest-first. Optionally filter by source work item."""
+        self._load_all_sessions()
+        results = []
+        for session in self._sessions.values():
+            if work_item_id is not None and str(session.source_work_item_id or "") != str(work_item_id):
+                continue
+            results.append({
+                "session_id": session.session_id,
+                "title": session.title,
+                "requirement": session.requirement[:120],
+                "current_stage": session.current_stage,
+                "planner_kind": session.planner_kind,
+                "source_work_item_id": session.source_work_item_id,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
+                "story_approved": session.story_approved,
+                "acceptance_approved": session.acceptance_approved,
+                "tasks_approved": session.tasks_approved,
+            })
+        results.sort(key=lambda s: s.get("updated_at") or "", reverse=True)
+        return results
+
+    def _save_session(self, session: PlannerSession) -> None:
+        """Persist a session to disk as JSON."""
+        try:
+            path = self._sessions_dir / f"{session.session_id}.json"
+            path.write_text(json.dumps(session.to_dict(), ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _load_session_from_disk(self, session_id: str) -> None:
+        """Load a single session from disk into the in-memory cache."""
+        try:
+            path = self._sessions_dir / f"{session_id}.json"
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                session = PlannerSession(**{k: v for k, v in data.items() if k in PlannerSession.__dataclass_fields__})
+                self._sessions[session_id] = session
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _load_all_sessions(self) -> None:
+        """Load all session files from disk that aren't already in memory."""
+        try:
+            for path in self._sessions_dir.glob("storyplan_*.json"):
+                session_id = path.stem
+                if session_id not in self._sessions:
+                    self._load_session_from_disk(session_id)
+        except OSError:
+            pass
+
+    def _cleanup_expired_sessions(self, ttl_days: int = 7) -> None:
+        """Delete session files older than ttl_days days (B: 7-day TTL)."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
+        try:
+            for path in self._sessions_dir.glob("storyplan_*.json"):
+                try:
+                    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                    if mtime < cutoff:
+                        path.unlink(missing_ok=True)
+                        self._sessions.pop(path.stem, None)
+                except OSError:
+                    pass
+        except OSError:
+            pass
 
     def _refresh_stage_prompts(self, session: PlannerSession) -> None:
         if session.current_stage == "refined_story":

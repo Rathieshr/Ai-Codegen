@@ -21,6 +21,7 @@ import {
   generateFromCurrentWorkItem,
   getPipelinePrompts,
   HandoffRecord,
+  loadAllComments,
   loadDraftWorkItemCreatePayload,
   loadAiGenComments,
   loadGeneratedState,
@@ -426,10 +427,12 @@ function WorkItemTab() {
     setState((current) => ({ ...current, loadingMessage: 'Creating pipeline...' }));
     await withPipelineUpdate(async () => {
       const commentLoad = await loadAiGenComments(state.data!.workItem.id);
-      let pipeline = await createPipeline(state.data!.workItem, state.data!.response, commentLoad.comments);
+      // F: load all comments for team_comments context
+      const allComments = await loadAllComments(state.data!.workItem.id).catch(() => []);
+      let pipeline = await createPipeline(state.data!.workItem, state.data!.response, commentLoad.comments, allComments);
       if (String(pipeline.workflow_template || '') === 'epic_planning') {
         setState((current) => ({ ...current, loadingMessage: 'Generating Epic Plan...' }));
-        pipeline = await runEpicPlan(pipeline.pipeline_id, commentLoad.comments);
+        pipeline = await runEpicPlan(pipeline.pipeline_id, commentLoad.comments, allComments);
       }
       return refreshPipelineState(
         state.data!.workItem,
@@ -446,8 +449,10 @@ function WorkItemTab() {
     setState((current) => ({ ...current, loadingMessage: regenerate ? 'Regenerating...' : 'Generating...' }));
     await withPipelineUpdate(async () => {
       const commentLoad = await loadAiGenComments(state.data!.workItem.id);
+      // F: load all comments for team_comments context
+      const allComments = await loadAllComments(state.data!.workItem.id).catch(() => []);
       const pipeline = String(state.data!.pipeline!.workflow_template || '') === 'epic_planning' && !regenerate
-        ? await runEpicPlan(state.data!.pipeline!.pipeline_id, commentLoad.comments)
+        ? await runEpicPlan(state.data!.pipeline!.pipeline_id, commentLoad.comments, allComments)
         : await runPipelineStage(
           state.data!.pipeline!.pipeline_id,
           currentStageName,
@@ -455,6 +460,7 @@ function WorkItemTab() {
           undefined,
           'azure_devops',
           commentLoad.comments,
+          allComments,
         );
       return refreshPipelineState(
         state.data!.workItem,

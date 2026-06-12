@@ -30,6 +30,7 @@ from backend.workflow.state_machines import WorkflowSnapshot, get_state_machine
 from backend.workflow.stage_registry import run_stage_critic, run_stage_output
 from backend.workflow.work_item_drafts import approve_drafts, build_create_requests, flatten_drafts, mark_drafts_created, normalize_drafts
 from backend.workflow.workflow_router import route_work_item_to_template
+from backend.audit.trail import record_event as _audit
 
 
 class PipelineController:
@@ -46,6 +47,8 @@ class PipelineController:
         repo_context: dict | None = None,
         refinement: dict | None = None,
         ai_gen_comments: list[dict] | None = None,
+        team_comments: list[dict] | None = None,
+        epic_context: dict | None = None,
     ) -> dict:
         pipeline_id = f"pipeline_{uuid4().hex[:12]}"
         work_item_id = str(work_item.get("id") or work_item.get("work_item_id") or uuid4().hex[:8])
@@ -54,6 +57,8 @@ class PipelineController:
             pipeline_state=None,
             ai_gen_comments=ai_gen_comments or [],
             approved_handoffs=[],
+            team_comments=team_comments or [],
+            epic_context=epic_context or {},
         )
         classification, template = route_work_item_to_template(
             work_item,
@@ -68,6 +73,8 @@ class PipelineController:
             repo_context=repo_context,
             refinement=refinement,
             ai_gen_comments=ai_gen_comments or [],
+            team_comments=team_comments or [],
+            epic_context=epic_context or {},
             pipeline_context=self._pipeline_context_summary(effective_context, comment_count=len(ai_gen_comments or [])),
             workflow_template=template["name"],
             stage_order=list_stage_names(template),
@@ -77,7 +84,12 @@ class PipelineController:
         state.activity.append({"type": "pipeline_created", "timestamp": utc_now(), "workflow_template": template["name"]})
         if ai_gen_comments:
             state.activity.append({"type": "comments_loaded", "timestamp": utc_now(), "count": len(ai_gen_comments)})
+        if team_comments:
+            state.activity.append({"type": "team_comments_loaded", "timestamp": utc_now(), "count": len(team_comments)})
         self.save_pipeline(state)
+        _audit("pipeline_created", pipeline_id=state.pipeline_id,
+               details={"workflow_template": template["name"], "work_item_id": work_item_id,
+                        "work_item_type": str(state.work_item.get("type") or "")})
         return self._serialize_pipeline(state)
 
     def get_pipeline(self, pipeline_id: str) -> dict:
@@ -88,7 +100,7 @@ class PipelineController:
         state = self.load_latest_pipeline_for_work_item(work_item_id)
         return self._serialize_pipeline(state) if state else None
 
-    def run_stage(self, pipeline_id: str, stage: str, regenerate: bool = False, ai_gen_comments: list[dict] | None = None) -> dict:
+    def run_stage(self, pipeline_id: str, stage: str, regenerate: bool = False, ai_gen_comments: list[dict] | None = None, team_comments: list[dict] | None = None) -> dict:
         state = self.load_pipeline(pipeline_id)
         self._log_stage_transition(state, stage, "run_requested", regenerate=regenerate)
         allowed, reason = can_run_stage(state, stage, regenerate=regenerate)
@@ -97,6 +109,8 @@ class PipelineController:
             raise ValueError(reason)
         if ai_gen_comments is not None:
             state.ai_gen_comments = ai_gen_comments
+        if team_comments is not None:
+            state.team_comments = team_comments
         stage_state = state.stages[stage]
         stage_state.version = stage_state.version + 1 if regenerate or stage_state.version else 1
         effective_context = self._rebuild_effective_context(state)
@@ -147,15 +161,19 @@ class PipelineController:
         state.current_stage = stage
         self._touch_pipeline(state)
         self.save_pipeline(state)
+        _audit("stage_generated", pipeline_id=pipeline_id, stage=stage,
+               details={"regenerate": regenerate, "status": stage_state.status, "version": stage_state.version})
         return self._serialize_pipeline(state)
 
-    def run_epic_plan(self, pipeline_id: str, ai_gen_comments: list[dict] | None = None) -> dict:
+    def run_epic_plan(self, pipeline_id: str, ai_gen_comments: list[dict] | None = None, team_comments: list[dict] | None = None) -> dict:
         state = self.load_pipeline(pipeline_id)
         if state.workflow_template != "epic_planning":
             raise ValueError("run_epic_plan is only supported for epic_planning workflows.")
         self._log_stage_transition(state, "epic_plan", "workflow_requested", workflow_template=state.workflow_template)
         if ai_gen_comments is not None:
             state.ai_gen_comments = ai_gen_comments
+        if team_comments is not None:
+            state.team_comments = team_comments
         errors: list[str] = []
         for stage in ["epic_analysis", "feature_generation", "story_generation", "review"]:
             try:
@@ -270,6 +288,9 @@ class PipelineController:
         state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
+        _audit("stage_approved", pipeline_id=pipeline_id, stage=stage,
+               actor=approved_by or "azure_devops",
+               details={"version": stage_state.version, "handoff_id": handoff["handoff_id"]})
         return self._serialize_pipeline(state)
 
     def skip_stage(self, pipeline_id: str, stage: str, reason: str) -> dict:
@@ -278,6 +299,8 @@ class PipelineController:
         state.pipeline_context = self._pipeline_context_summary(self._rebuild_effective_context(state), comment_count=len(state.ai_gen_comments))
         self._touch_pipeline(state)
         self.save_pipeline(state)
+        _audit("stage_skipped", pipeline_id=pipeline_id, stage=stage,
+               details={"reason": reason})
         return self._serialize_pipeline(state)
 
     def add_stage_feedback(self, pipeline_id: str, stage: str, comment: str, author: str | None = None) -> dict:
@@ -715,7 +738,24 @@ class PipelineController:
             pipeline_state=state.to_dict(),
             ai_gen_comments=state.ai_gen_comments,
             approved_handoffs=self._approved_handoffs(state),
+            team_comments=state.team_comments or [],
+            epic_context=state.epic_context or {},
+            question_answers=self._question_answers_from_state(state),
         )
+
+    def _question_answers_from_state(self, state: PipelineState) -> list[dict]:
+        """Extract Q&A pairs from stage review_feedback (stored by answer-questions endpoint)."""
+        qa: list[dict] = []
+        for stage_state in state.stages.values():
+            for feedback in stage_state.review_feedback:
+                body = str(feedback.comment or "").strip()
+                if body.startswith("Q:") and "\nA:" in body:
+                    lines = body.split("\nA:", 1)
+                    q = lines[0].replace("Q:", "", 1).strip()
+                    a = lines[1].strip() if len(lines) > 1 else ""
+                    if q and a:
+                        qa.append({"question": q, "answer": a})
+        return qa
 
     def _refresh_refinement_from_effective_context(self, state: PipelineState, effective_context: dict) -> dict:
         query = str(effective_context.get("effective_text") or state.work_item.get("title") or "").strip()

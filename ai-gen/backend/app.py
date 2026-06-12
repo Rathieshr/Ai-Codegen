@@ -42,6 +42,7 @@ from backend.repo_context.retrieval_bias import collect_session_bias_signals, ra
 from backend.status import get_status
 from backend.story_planner import story_planner_service
 from backend.work_item_optimizer import optimize_work_item_request
+from backend.audit import get_events as audit_get_events, get_summary as audit_get_summary
 from context_builder.builder import ContextBuilder
 from context_builder.execution_packets import (
     build_execution_packet,
@@ -201,6 +202,8 @@ class PipelineCreateRequest(BaseModel):
     repo_context: Optional[dict[str, Any]] = None
     refinement: Optional[dict[str, Any]] = None
     ai_gen_comments: list[dict[str, Any]] = Field(default_factory=list)
+    team_comments: list[dict[str, Any]] = Field(default_factory=list)
+    epic_context: Optional[dict[str, Any]] = None
 
 
 class PipelineStageRequest(BaseModel):
@@ -209,6 +212,7 @@ class PipelineStageRequest(BaseModel):
     feedback_comment: Optional[str] = None
     feedback_author: Optional[str] = None
     ai_gen_comments: list[dict[str, Any]] = Field(default_factory=list)
+    team_comments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PipelineApproveRequest(BaseModel):
@@ -1081,6 +1085,8 @@ def create_assistant_pipeline(request: PipelineCreateRequest) -> dict:
         repo_context=request.repo_context,
         refinement=request.refinement,
         ai_gen_comments=request.ai_gen_comments,
+        team_comments=request.team_comments,
+        epic_context=request.epic_context,
     )
 
 
@@ -1100,6 +1106,7 @@ def run_pipeline_stage(pipeline_id: str, request: PipelineStageRequest) -> dict:
         request.stage,
         regenerate=request.regenerate,
         ai_gen_comments=request.ai_gen_comments,
+        team_comments=request.team_comments if request.team_comments else None,
     )
 
 
@@ -1110,6 +1117,7 @@ def run_pipeline_epic_plan(pipeline_id: str, request: PipelineStageRequest) -> d
     return pipeline_controller.run_epic_plan(
         pipeline_id,
         ai_gen_comments=request.ai_gen_comments,
+        team_comments=request.team_comments if request.team_comments else None,
     )
 
 
@@ -2119,6 +2127,72 @@ def get_repo_branch_context(repo_id: str, branch_name: str, session_id: Optional
     branch = repo_context_manager.load_branch_overlay(repo_id, branch_name)
     session = repo_context_manager.load_session(repo_id, session_id) if session_id else None
     return merge_effective_context(base, branch, session)
+
+
+
+# ── Audit Trail (A) ────────────────────────────────────────────────────────────
+
+@app.get("/audit/events")
+def get_audit_events(pipeline_id: Optional[str] = None, event_type: Optional[str] = None, limit: int = 200) -> dict:
+    """Return recent audit events, newest-first. Optionally filter by pipeline_id or event_type."""
+    events = audit_get_events(pipeline_id=pipeline_id, event_type=event_type, limit=limit)
+    return {"events": events, "count": len(events)}
+
+
+@app.get("/audit/summary")
+def get_audit_summary(pipeline_id: Optional[str] = None) -> dict:
+    """Return aggregate counts per event_type across all audit events."""
+    return audit_get_summary(pipeline_id=pipeline_id)
+
+
+# ── Pipeline Metrics (A) ───────────────────────────────────────────────────────
+
+@app.get("/metrics/pipelines")
+def get_pipeline_metrics() -> dict:
+    """Return aggregate health metrics across all pipelines saved on disk."""
+    import glob
+    data_dir = pipeline_controller.root
+    pipeline_files = sorted(data_dir.glob("pipeline_*.json"))
+    total = len(pipeline_files)
+    by_template: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    approved_count = 0
+    recent_errors: list[dict] = []
+    for path in pipeline_files:
+        raw = read_json(path, default=None)
+        if not raw:
+            continue
+        tpl = str(raw.get("workflow_template") or "unknown")
+        by_template[tpl] = by_template.get(tpl, 0) + 1
+        for stage_name, stage in (raw.get("stages") or {}).items():
+            status = str(stage.get("status") or "unknown")
+            by_status[status] = by_status.get(status, 0) + 1
+            if stage.get("approved"):
+                approved_count += 1
+            for finding in (stage.get("unresolved_findings") or []):
+                if finding.get("severity") == "blocking":
+                    recent_errors.append({
+                        "pipeline_id": raw.get("pipeline_id"),
+                        "stage": stage_name,
+                        "message": finding.get("message"),
+                    })
+    return {
+        "total_pipelines": total,
+        "by_workflow_template": by_template,
+        "stage_status_counts": by_status,
+        "total_approved_stages": approved_count,
+        "blocking_findings_count": len(recent_errors),
+        "blocking_findings_sample": recent_errors[:10],
+    }
+
+
+# ── Story Planner Session List (B) ─────────────────────────────────────────────
+
+@app.get("/story-planner/sessions")
+def list_story_planner_sessions(work_item_id: Optional[str] = None) -> dict:
+    """List all story planner sessions, optionally filtered by work_item_id."""
+    sessions = story_planner_service.list_sessions(work_item_id=work_item_id)
+    return {"sessions": sessions, "count": len(sessions)}
 
 
 if __name__ == "__main__":

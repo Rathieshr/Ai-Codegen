@@ -1413,6 +1413,219 @@ def ado_service_hook(request: AdoWebhookRequest) -> dict:
     return {"received": True, "event_type": event_type, "action": "ignored"}
 
 
+# ── Phase 5: Open Questions Loop ──────────────────────────────────────────────
+
+class QuestionAnswer(BaseModel):
+    question: str
+    answer: str
+
+
+class AnswerQuestionsRequest(BaseModel):
+    stage: str = Field(..., description="Stage the questions belong to (e.g. 'ba', 'bug_analysis').")
+    answers: list[QuestionAnswer] = Field(default_factory=list)
+
+
+@app.post("/assist/pipeline/{pipeline_id}/answer-questions")
+def answer_open_questions(pipeline_id: str, request: AnswerQuestionsRequest) -> dict:
+    """Submit user answers to open questions and trigger stage re-run.
+
+    The sidebar shows each ``open_question`` item as a text input.
+    When the user submits, this endpoint:
+      1. Stores the answers in pipeline stage feedback
+      2. Sets stage status back to 'pending' so it can be re-run
+      3. Returns the updated pipeline state
+
+    The next ``run_stage`` call will pick up the answers via
+    ``effective_context.question_answers`` and pass them to the assistant.
+    """
+    if not request.answers:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "NoAnswers", "detail": "At least one answer is required."},
+        )
+
+    # Store each answer as stage feedback so the assistant picks it up
+    for qa in request.answers:
+        combined = f"Q: {qa.question}\nA: {qa.answer}"
+        pipeline_controller.add_stage_feedback(
+            pipeline_id,
+            request.stage,
+            combined,
+            author="user_answer",
+        )
+
+    # Re-run the stage with the answers injected
+    try:
+        updated = pipeline_controller.run_stage(
+            pipeline_id,
+            request.stage,
+            regenerate=True,
+        )
+        return updated
+    except Exception as exc:
+        # Return the pipeline as-is if re-run fails; answers are already stored
+        logger.warning("answer-questions re-run failed: %s", exc)
+        try:
+            return pipeline_controller.get_pipeline(pipeline_id)
+        except Exception:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "ReRunFailed", "detail": str(exc)},
+            )
+
+
+# ── Phase 5: SDLC Prompt Builder ──────────────────────────────────────────────
+
+@app.get("/assist/pipeline/{pipeline_id}/prompts")
+def get_pipeline_prompts(pipeline_id: str) -> dict:
+    """Return the UI prompt and coding dev prompt for the current pipeline.
+
+    SDLC order:
+      - ``ui_prompt``  is available after BA stage is approved
+      - ``dev_prompt`` is available after UI stage is approved
+
+    The ADO extension shows:
+      - 'Copy UI Prompt' button (available after BA approval)
+      - 'Copy Dev Prompt' button (available after UI approval)
+    """
+    from backend.prompt_builder import build_ui_prompt, build_dev_prompt
+
+    try:
+        state = pipeline_controller.get_pipeline(pipeline_id)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "PipelineNotFound", "detail": str(exc)},
+        )
+
+    stages = state.get("stages") or {}
+    work_item = state.get("work_item") or {}
+
+    # Collect approved stage outputs
+    ba_out = (stages.get("ba") or {}).get("output") or {}
+    ui_out = (stages.get("ui") or stages.get("ui_optional") or {}).get("output") or {}
+    dev_out = (stages.get("dev_packet") or stages.get("task_analysis") or {}).get("output") or {}
+    test_out = (stages.get("test_planning") or stages.get("test_checklist") or {}).get("output") or {}
+    repo_ctx = state.get("repo_context") or {}
+    epic_ctx = _extract_epic_context(state)
+
+    ba_approved = bool((stages.get("ba") or {}).get("approved"))
+    ui_approved = bool(
+        (stages.get("ui") or {}).get("approved")
+        or (stages.get("ui_optional") or {}).get("approved")
+    )
+
+    ui_prompt = ""
+    dev_prompt = ""
+
+    if ba_approved and ba_out:
+        ui_prompt = build_ui_prompt(
+            ba_output=ba_out,
+            ui_output=ui_out or None,
+            work_item=work_item,
+            epic_context=epic_ctx,
+        )
+
+    if ui_approved and ba_out:
+        dev_prompt = build_dev_prompt(
+            ba_output=ba_out,
+            dev_output=dev_out or None,
+            ui_output=ui_out or None,
+            repo_context=repo_ctx,
+            work_item=work_item,
+            epic_context=epic_ctx,
+            test_output=test_out or None,
+        )
+
+    return {
+        "pipeline_id": pipeline_id,
+        "ba_approved": ba_approved,
+        "ui_approved": ui_approved,
+        "ui_prompt": ui_prompt,
+        "dev_prompt": dev_prompt,
+        "ui_prompt_available": ba_approved and bool(ba_out),
+        "dev_prompt_available": ui_approved and bool(ba_out),
+    }
+
+
+# ── Phase 5: Bug Suggestion (critic-triggered) ────────────────────────────────
+
+class SuggestBugRequest(BaseModel):
+    stage: str = Field(default="critic", description="Stage that produced the blocking findings.")
+    work_item_id: Optional[str] = None
+
+
+@app.post("/assist/pipeline/{pipeline_id}/suggest-bug")
+def suggest_bug_from_findings(pipeline_id: str, request: SuggestBugRequest) -> dict:
+    """Generate a structured bug draft from critic blocking findings.
+
+    Called when the critic stage produces blocking findings. Returns a
+    ``bug_draft`` dict that the ADO extension renders as a preview before
+    the user chooses to create it in ADO.
+
+    This is Option C: critic blocking findings → suggest bug creation.
+    The user still manually decides whether to create the ADO Bug work item.
+    """
+    from backend.assistants.bug_assistant import run_bug_assistant
+
+    try:
+        state = pipeline_controller.get_pipeline(pipeline_id)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "PipelineNotFound", "detail": str(exc)},
+        )
+
+    stages = state.get("stages") or {}
+    critic_stage = stages.get(request.stage) or stages.get("critic") or {}
+    critic_output = critic_stage.get("output") or {}
+    critic_findings = critic_output.get("findings") or []
+
+    blocking = [f for f in critic_findings if f.get("severity") in {"blocking", "high"}]
+    if not blocking:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "NoBlockingFindings",
+                "detail": "No blocking findings found. Bug suggestion requires at least one blocking critic finding.",
+            },
+        )
+
+    work_item = state.get("work_item") or {}
+    epic_ctx = _extract_epic_context(state)
+    effective_context = {"epic_context": epic_ctx}
+
+    bug_draft = run_bug_assistant(
+        work_item=work_item,
+        critic_findings=blocking,
+        effective_context=effective_context,
+    )
+    return {
+        "pipeline_id": pipeline_id,
+        "source_stage": request.stage,
+        "finding_count": len(blocking),
+        "bug_draft": bug_draft,
+        "create_instructions": (
+            "Review the bug draft above, then use the 'Create Bug' button "
+            "to create it as an ADO Bug work item under this Epic/Story."
+        ),
+    }
+
+
+def _extract_epic_context(state: dict) -> dict:
+    """Pull epic_context from pipeline state if available."""
+    ctx = state.get("epic_context") or {}
+    if ctx:
+        return ctx
+    # Fall back to pipeline context epic fields
+    pc = state.get("pipeline_context") or {}
+    epic_title = str(pc.get("epic_title") or "").strip()
+    epic_ac = str(pc.get("epic_acceptance_criteria") or "").strip()
+    if epic_title or epic_ac:
+        return {"title": epic_title, "acceptance_criteria": epic_ac}
+    return {}
+
+
 @app.get("/assist/pipeline/{pipeline_id}")
 def get_assistant_pipeline(pipeline_id: str) -> dict:
     """Return the current structured pipeline state."""

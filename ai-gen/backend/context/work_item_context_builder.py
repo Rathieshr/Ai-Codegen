@@ -13,6 +13,9 @@ def build_effective_work_item_context(
     ai_gen_comments: list[dict] | None = None,
     approved_handoffs: list[dict] | None = None,
     max_chars: int = 16000,
+    team_comments: list[dict] | None = None,
+    epic_context: dict | None = None,
+    question_answers: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Build effective context without mutating the original work item."""
 
@@ -47,6 +50,21 @@ def build_effective_work_item_context(
     if revision_notes:
         context_sources.append("revision_notes")
 
+    # Team comments: all ADO comments (not just [ai-gen] prefixed)
+    clean_team_comments = _clean_team_comments(team_comments or [])
+    if clean_team_comments:
+        context_sources.append("team_comments")
+
+    # Epic context: parent Epic title + AC for child work items
+    epic_ctx = epic_context or {}
+    if epic_ctx.get("title") or epic_ctx.get("acceptance_criteria"):
+        context_sources.append("epic_context")
+
+    # User answers to open questions (feeds back into next refinement)
+    qa_records = _parse_question_answers(question_answers or [])
+    if qa_records:
+        context_sources.append("question_answers")
+
     core_sections = _core_sections(item)
     supplemental = {
         "handoff_summaries": [_record_line("Approved handoff", record, key="summary") for record in approved_summaries],
@@ -54,7 +72,17 @@ def build_effective_work_item_context(
         "approvals": [_record_line("Approval", record) for record in approvals],
         "clarifications": [_record_line("Clarification", record) for record in clarifications],
         "revision_notes": [_record_line("Revision", record) for record in revision_notes],
+        "team_comments": [_record_line("Team comment", record) for record in clean_team_comments],
+        "question_answers": [f"Q: {r['question']} → A: {r['answer']}" for r in qa_records],
     }
+    if epic_ctx.get("title") or epic_ctx.get("acceptance_criteria"):
+        epic_lines = []
+        if epic_ctx.get("title"):
+            epic_lines.append(f"Epic: {epic_ctx['title']}")
+        if epic_ctx.get("acceptance_criteria"):
+            epic_lines.append(f"Epic AC: {str(epic_ctx['acceptance_criteria'])[:300]}")
+        supplemental["epic_context"] = epic_lines
+
     effective_text, warnings = _build_effective_text(core_sections, supplemental, max_chars=max_chars)
 
     return {
@@ -64,6 +92,9 @@ def build_effective_work_item_context(
         "handoff_summaries": approved_summaries,
         "revision_notes": revision_notes,
         "pipeline_feedback": pipeline_feedback,
+        "team_comments": clean_team_comments,
+        "epic_context": epic_ctx,
+        "question_answers": qa_records,
         "effective_text": effective_text,
         "context_sources": context_sources,
         "warnings": warnings,
@@ -200,6 +231,9 @@ def _build_effective_text(core_sections: list[str], supplemental: dict[str, list
     current = list(core_sections)
     optional_order = [
         ("handoff_summaries", "Approved Handoffs"),
+        ("epic_context", "Epic Context"),
+        ("question_answers", "Question Answers"),
+        ("team_comments", "Team Comments"),
         ("pipeline_feedback", "Pipeline Feedback"),
         ("approvals", "Approvals"),
         ("clarifications", "Clarifications"),
@@ -234,4 +268,39 @@ def _dedupe_list(values: list[str]) -> list[str]:
         normalized = str(value).strip()
         if normalized and normalized not in output:
             output.append(normalized)
+    return output
+
+
+def _clean_team_comments(raw_comments: list[dict]) -> list[dict]:
+    """Return all team comments, stripping [ai-gen] metadata but preserving human text."""
+    output: list[dict] = []
+    seen: set[str] = set()
+    for comment in raw_comments:
+        body = str(comment.get("body") or comment.get("text") or "").strip()
+        # Remove [ai-gen] lines from mixed comments
+        clean_lines = [
+            line for line in body.splitlines()
+            if not line.strip().lower().startswith("[ai-gen]")
+            and not line.strip().lower().startswith("handoff:")
+        ]
+        clean = "\n".join(clean_lines).strip()
+        if not clean or clean.lower() in seen:
+            continue
+        seen.add(clean.lower())
+        output.append({
+            "body": clean,
+            "author": comment.get("author") or comment.get("created_by"),
+            "created_at": comment.get("created_at") or comment.get("timestamp"),
+        })
+    return output
+
+
+def _parse_question_answers(qa_list: list[dict]) -> list[dict]:
+    """Normalise question/answer pairs from pipeline state."""
+    output: list[dict] = []
+    for item in qa_list:
+        question = str(item.get("question") or item.get("q") or "").strip()
+        answer = str(item.get("answer") or item.get("a") or "").strip()
+        if question and answer:
+            output.append({"question": question, "answer": answer})
     return output

@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   addAiGenComment,
+  answerOpenQuestions,
   clearGeneratedState,
   approveDraftWorkItems,
   AiGenResponse,
@@ -10,11 +11,15 @@ import {
   approvePipelineStage,
   addStageFeedback,
   buildVsCodeHandoffLink,
+  BugDraft,
+  BugSuggestionResult,
+  createBugWorkItem,
   createPipeline,
   createAzureDevOpsWorkItems,
   DraftWorkItem,
   getCurrentWorkItem,
   generateFromCurrentWorkItem,
+  getPipelinePrompts,
   HandoffRecord,
   loadDraftWorkItemCreatePayload,
   loadAiGenComments,
@@ -22,13 +27,16 @@ import {
   loadHandoff,
   loadHandoffMarkdown,
   loadPipelineForWorkItem,
+  PipelinePrompts,
   PipelineState,
   PipelineStageState,
+  QuestionAnswerPair,
   refreshPipelineState,
   runEpicPlan,
   saveGeneratedState,
   skipPipelineStage,
   storeWorkItemCreationResult,
+  suggestBugFromFindings,
   runPipelineStage
 } from './api';
 import { selectWorkspaceRenderer } from './renderers/workspaceRenderer';
@@ -113,6 +121,13 @@ function WorkItemTab() {
   const [createdDraftsPreview, setCreatedDraftsPreview] = useState<Array<{ draft_id: string; azure_work_item_id: number | null; title: string; type: string; status: 'created' | 'failed' | 'skipped'; creation_error?: string | null }>>([]);
   const [pendingCommentSync, setPendingCommentSync] = useState<{ kind: 'Clarification' | 'Approval' | 'Handoff' | 'Revision'; lines: string[] } | undefined>(undefined);
   const [storySession, setStorySession] = useState<StorySessionState>({});
+  // Phase 5 state
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+  const [bugSuggestion, setBugSuggestion] = useState<BugSuggestionResult | undefined>(undefined);
+  const [pipelinePrompts, setPipelinePrompts] = useState<PipelinePrompts | undefined>(undefined);
+  const [bugCreateStatus, setBugCreateStatus] = useState<'idle' | 'loading' | 'created' | 'error'>('idle');
+  const [bugCreatedId, setBugCreatedId] = useState<number | undefined>(undefined);
+  const [promptsLoading, setPromptsLoading] = useState(false);
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
@@ -283,6 +298,97 @@ function WorkItemTab() {
       return;
     }
     await copyText(packet);
+  }
+
+  // ── Phase 5 handlers ────────────────────────────────────────────────────
+
+  async function submitQuestionAnswers() {
+    if (!state.data?.pipeline || !currentStageName) return;
+    const answers: QuestionAnswerPair[] = Object.entries(questionAnswers)
+      .filter(([, v]) => v.trim())
+      .map(([question, answer]) => ({ question, answer }));
+    if (!answers.length) return;
+    setState((current) => ({ ...current, loading: true, loadingMessage: 'Submitting answers...' }));
+    try {
+      const updated = await answerOpenQuestions(state.data!.pipeline!.pipeline_id, currentStageName, answers);
+      setQuestionAnswers({});
+      const refreshed = await refreshPipelineState(state.data!.workItem, { ...state.data!, pipeline: updated }, updated);
+      saveGeneratedState(refreshed);
+      setState({ loading: false, loadingMessage: '', error: '', data: refreshed });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to submit answers.';
+      setState((current) => ({ ...current, loading: false, loadingMessage: '', error: message }));
+    }
+  }
+
+  async function loadPipelinePrompts() {
+    if (!state.data?.pipeline) return;
+    setPromptsLoading(true);
+    try {
+      const prompts = await getPipelinePrompts(state.data.pipeline.pipeline_id);
+      setPipelinePrompts(prompts);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load prompts.';
+      setState((current) => ({ ...current, error: message }));
+    } finally {
+      setPromptsLoading(false);
+    }
+  }
+
+  async function copyUiPrompt() {
+    if (pipelinePrompts?.ui_prompt) {
+      await copyText(pipelinePrompts.ui_prompt);
+    } else {
+      await loadPipelinePrompts();
+      if (pipelinePrompts?.ui_prompt) await copyText(pipelinePrompts.ui_prompt);
+    }
+  }
+
+  async function copyDevPrompt() {
+    if (pipelinePrompts?.dev_prompt) {
+      await copyText(pipelinePrompts.dev_prompt);
+    } else {
+      await loadPipelinePrompts();
+      if (pipelinePrompts?.dev_prompt) await copyText(pipelinePrompts.dev_prompt);
+    }
+  }
+
+  async function requestBugSuggestion() {
+    if (!state.data?.pipeline) return;
+    setState((current) => ({ ...current, loading: true, loadingMessage: 'Generating bug draft...' }));
+    try {
+      const result = await suggestBugFromFindings(state.data.pipeline.pipeline_id, currentStageName || 'critic');
+      setBugSuggestion(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to generate bug suggestion.';
+      setState((current) => ({ ...current, error: message }));
+    } finally {
+      setState((current) => ({ ...current, loading: false, loadingMessage: '' }));
+    }
+  }
+
+  async function createBugFromDraft() {
+    if (!bugSuggestion || !state.data?.workItem) return;
+    setBugCreateStatus('loading');
+    try {
+      const workItemService = await SDK.getService<IWorkItemFormService>(WorkItemTrackingServiceIds.WorkItemFormService);
+      const context = SDK.getWebContext();
+      const token = await SDK.getAccessToken();
+      const id = await createBugWorkItem(
+        context.collection.uri,
+        context.project.name,
+        token,
+        bugSuggestion.bug_draft,
+        typeof state.data.workItem.id === 'number' ? state.data.workItem.id : undefined
+      );
+      setBugCreatedId(id);
+      setBugCreateStatus('created');
+      setBugSuggestion(undefined);
+    } catch (error) {
+      setBugCreateStatus('error');
+      const message = error instanceof Error ? error.message : 'Failed to create Bug in ADO.';
+      setState((current) => ({ ...current, error: message }));
+    }
   }
 
   async function withPipelineUpdate(action: () => Promise<AiGenState>) {
@@ -1019,6 +1125,185 @@ function WorkItemTab() {
           </p>
         </section>
       ) : null}
+
+      {/* ── Phase 5: Open Questions Panel ─────────────────────────────────── */}
+      {pipeline && !isStoryWorkflow && (() => {
+        const openQs: string[] = Array.isArray(currentStage?.output?.open_questions)
+          ? (currentStage!.output!.open_questions as string[])
+          : Array.isArray(currentStage?.output?.unknowns)
+            ? (currentStage!.output!.unknowns as string[])
+            : [];
+        if (!openQs.length) return null;
+        return (
+          <section className="ai-gen-section">
+            <h2>🙋 Open Questions</h2>
+            <p className="ai-gen-muted">
+              The model needs clarification before refining this stage. Answer each question below and submit — the stage will re-generate automatically.
+            </p>
+            {openQs.map((question, idx) => (
+              <div key={idx} style={{ marginBottom: '12px' }}>
+                <label className="ai-gen-key" style={{ display: 'block', marginBottom: '4px' }}>
+                  {idx + 1}. {question}
+                </label>
+                <textarea
+                  id={`open-question-${idx}`}
+                  className="ai-gen-textarea"
+                  rows={2}
+                  placeholder="Your answer..."
+                  value={questionAnswers[question] ?? ''}
+                  onChange={(e) => setQuestionAnswers((prev) => ({ ...prev, [question]: e.target.value }))}
+                  disabled={state.loading}
+                  style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '13px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--ai-gen-border, #444)', background: 'var(--ai-gen-input-bg, #1e1e1e)', color: 'inherit' }}
+                />
+              </div>
+            ))}
+            <button
+              id="submit-open-questions"
+              className="ai-gen-button"
+              onClick={() => void submitQuestionAnswers()}
+              disabled={state.loading || !openQs.some((q) => (questionAnswers[q] ?? '').trim())}
+            >
+              {state.loading ? 'Submitting...' : 'Submit Answers & Re-generate'}
+            </button>
+          </section>
+        );
+      })()}
+
+      {/* ── Phase 5: SDLC Prompt Buttons (BA approved → UI Prompt; UI approved → Dev Prompt) ── */}
+      {pipeline && !isStoryWorkflow && (() => {
+        const baApproved = Boolean(pipeline.stages?.ba?.approved);
+        const uiApproved = Boolean(pipeline.stages?.ui?.approved || pipeline.stages?.ui_optional?.approved);
+        if (!baApproved) return null;
+        return (
+          <section className="ai-gen-section">
+            <h2>📋 SDLC Prompts</h2>
+            <p className="ai-gen-muted">
+              Prompts are generated in SDLC order: UI Spec first (after BA approval), then Coding Prompt (after UI approval).
+            </p>
+            <div className="ai-gen-actions">
+              <button
+                id="copy-ui-prompt"
+                className="ai-gen-button"
+                onClick={() => void copyUiPrompt()}
+                disabled={promptsLoading || state.loading}
+                title="Copy the UI specification prompt for the designer / PO to review"
+              >
+                {promptsLoading ? 'Loading...' : '📐 Copy UI Spec Prompt'}
+              </button>
+              <button
+                id="copy-dev-prompt"
+                className="ai-gen-button"
+                onClick={() => void copyDevPrompt()}
+                disabled={!uiApproved || promptsLoading || state.loading}
+                title={uiApproved ? 'Copy the coding prompt for Copilot / developer' : 'UI stage must be approved first'}
+              >
+                {promptsLoading ? 'Loading...' : '💻 Copy Coding Prompt'}
+              </button>
+            </div>
+            {!uiApproved && (
+              <p className="ai-gen-muted" style={{ marginTop: '6px', color: '#f0a500' }}>
+                ⚠️ Coding Prompt will be unlocked after the UI stage is approved.
+              </p>
+            )}
+            {pipelinePrompts?.dev_prompt_available && (
+              <p className="ai-gen-muted" style={{ marginTop: '6px', color: '#4caf50' }}>
+                ✅ Both prompts are available. Copy and paste into Copilot Chat or Cursor.
+              </p>
+            )}
+            {bugCreatedId && (
+              <p className="ai-gen-muted" style={{ color: '#4caf50', marginTop: '8px' }}>
+                ✅ Bug #{bugCreatedId} created in Azure DevOps.
+              </p>
+            )}
+          </section>
+        );
+      })()}
+
+      {/* ── Phase 5: Bug Suggest Panel (critic blocking findings → Bug draft) ── */}
+      {pipeline && !isStoryWorkflow && blockingFindings.length > 0 && (() => {
+        return (
+          <section className="ai-gen-section">
+            <h2>🐛 Bug Suggestion</h2>
+            <p className="ai-gen-muted">
+              The critic found <strong>{blockingFindings.length} blocking issue(s)</strong>. You can generate a structured Bug work item draft and optionally create it in Azure DevOps.
+            </p>
+            {!bugSuggestion ? (
+              <button
+                id="suggest-bug-btn"
+                className="ai-gen-button"
+                onClick={() => void requestBugSuggestion()}
+                disabled={state.loading}
+              >
+                {state.loading ? 'Generating...' : '🔍 Generate Bug Draft'}
+              </button>
+            ) : (
+              <div>
+                <div className="ai-gen-stage-panel" style={{ marginBottom: '12px' }}>
+                  <div className="ai-gen-grid">
+                    <span className="ai-gen-key">Title</span>
+                    <span>{bugSuggestion.bug_draft.title}</span>
+                    <span className="ai-gen-key">Severity</span>
+                    <span style={{ textTransform: 'capitalize', fontWeight: 600, color: bugSuggestion.bug_draft.severity === 'critical' ? '#f44336' : bugSuggestion.bug_draft.severity === 'high' ? '#ff9800' : '#ffeb3b' }}>
+                      {bugSuggestion.bug_draft.severity}
+                    </span>
+                    <span className="ai-gen-key">Area</span>
+                    <span>{bugSuggestion.bug_draft.affected_area}</span>
+                    <span className="ai-gen-key">Expected</span>
+                    <span>{bugSuggestion.bug_draft.expected_behaviour}</span>
+                    <span className="ai-gen-key">Actual</span>
+                    <span>{bugSuggestion.bug_draft.actual_behaviour}</span>
+                  </div>
+                  {bugSuggestion.bug_draft.reproduction_steps.length > 0 && (
+                    <details style={{ marginTop: '8px' }}>
+                      <summary className="ai-gen-key">Reproduction Steps</summary>
+                      <ol style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                        {bugSuggestion.bug_draft.reproduction_steps.map((step, i) => (
+                          <li key={i} style={{ marginBottom: '4px', fontSize: '13px' }}>{step}</li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
+                  {bugSuggestion.bug_draft.acceptance_criteria.length > 0 && (
+                    <details style={{ marginTop: '8px' }}>
+                      <summary className="ai-gen-key">Acceptance Criteria (Fix Definition)</summary>
+                      <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                        {bugSuggestion.bug_draft.acceptance_criteria.map((ac, i) => (
+                          <li key={i} style={{ marginBottom: '4px', fontSize: '13px' }}>{ac}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                  {bugSuggestion.bug_draft.open_questions.length > 0 && (
+                    <div style={{ marginTop: '8px', background: 'rgba(240,165,0,0.1)', borderLeft: '3px solid #f0a500', padding: '6px 10px', borderRadius: '4px' }}>
+                      <div className="ai-gen-key" style={{ marginBottom: '4px' }}>⚠️ Open Questions (root cause unclear):</div>
+                      {bugSuggestion.bug_draft.open_questions.map((q, i) => (
+                        <div key={i} style={{ fontSize: '12px', marginBottom: '2px' }}>• {q}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="ai-gen-actions">
+                  <button
+                    id="create-bug-btn"
+                    className="ai-gen-button"
+                    onClick={() => void createBugFromDraft()}
+                    disabled={bugCreateStatus === 'loading' || bugCreateStatus === 'created'}
+                  >
+                    {bugCreateStatus === 'loading' ? 'Creating...' : bugCreateStatus === 'created' ? '✅ Bug Created' : '➕ Create Bug in ADO'}
+                  </button>
+                  <button
+                    className="ai-gen-button secondary"
+                    onClick={() => { setBugSuggestion(undefined); setBugCreateStatus('idle'); }}
+                    disabled={bugCreateStatus === 'loading'}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        );
+      })()}
     </main>
   );
 }

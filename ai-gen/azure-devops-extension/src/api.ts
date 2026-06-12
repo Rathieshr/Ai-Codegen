@@ -919,3 +919,144 @@ function numberOrUndefined(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
+
+// ── Phase 5: Open Questions, Prompts, Bug Suggestion ─────────────────────────
+
+export type QuestionAnswerPair = {
+  question: string;
+  answer: string;
+};
+
+export type PipelinePrompts = {
+  pipeline_id: string;
+  ba_approved: boolean;
+  ui_approved: boolean;
+  ui_prompt: string;
+  dev_prompt: string;
+  ui_prompt_available: boolean;
+  dev_prompt_available: boolean;
+};
+
+export type BugDraft = {
+  assistant: 'bug';
+  title: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  affected_area: string;
+  reproduction_steps: string[];
+  expected_behaviour: string;
+  actual_behaviour: string;
+  root_cause_hypothesis: string;
+  acceptance_criteria: string[];
+  open_questions: string[];
+  description: string;
+  suggested_labels: string[];
+  from_critic: boolean;
+};
+
+export type BugSuggestionResult = {
+  pipeline_id: string;
+  source_stage: string;
+  finding_count: number;
+  bug_draft: BugDraft;
+  create_instructions: string;
+};
+
+/**
+ * Submit user answers to open questions for a stage.
+ * Triggers an automatic stage re-run with the answers injected.
+ */
+export async function answerOpenQuestions(
+  pipelineId: string,
+  stage: string,
+  answers: QuestionAnswerPair[]
+): Promise<PipelineState> {
+  const response = await fetch(
+    `${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/answer-questions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage, answers }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`answer-questions returned HTTP ${response.status}`);
+  }
+  return (await response.json()) as PipelineState;
+}
+
+/**
+ * Fetch the UI prompt (after BA approval) and coding dev prompt (after UI approval).
+ * SDLC order enforced server-side.
+ */
+export async function getPipelinePrompts(pipelineId: string): Promise<PipelinePrompts> {
+  const response = await fetch(
+    `${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/prompts`,
+    { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+  );
+  if (!response.ok) {
+    throw new Error(`get-prompts returned HTTP ${response.status}`);
+  }
+  return (await response.json()) as PipelinePrompts;
+}
+
+/**
+ * Request a structured bug draft from critic blocking findings.
+ * Returns a preview — the user must confirm before the ADO Bug is created.
+ */
+export async function suggestBugFromFindings(
+  pipelineId: string,
+  stage = 'critic'
+): Promise<BugSuggestionResult> {
+  const response = await fetch(
+    `${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/suggest-bug`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage }),
+    }
+  );
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error(String(errorBody.detail || `suggest-bug returned HTTP ${response.status}`));
+  }
+  return (await response.json()) as BugSuggestionResult;
+}
+
+/**
+ * Create an ADO Bug work item from an approved bug draft.
+ * Uses the same createWorkItem helper, sets all Bug-specific fields.
+ */
+export async function createBugWorkItem(
+  collectionUri: string,
+  projectName: string,
+  accessToken: string,
+  bugDraft: BugDraft,
+  parentWorkItemId?: number
+): Promise<number> {
+  const htmlDescription = bugDraft.description || [
+    `<h3>Reproduction Steps</h3>`,
+    `<ol>${bugDraft.reproduction_steps.map((s) => `<li>${s}</li>`).join('')}</ol>`,
+    `<h3>Expected</h3><p>${bugDraft.expected_behaviour}</p>`,
+    `<h3>Actual</h3><p>${bugDraft.actual_behaviour}</p>`,
+  ].join('');
+
+  const acText = bugDraft.acceptance_criteria.join('\n');
+
+  return createWorkItem(
+    collectionUri,
+    projectName,
+    accessToken,
+    'Bug',
+    {
+      'System.Title': bugDraft.title,
+      'System.Description': htmlDescription,
+      'Microsoft.VSTS.Common.AcceptanceCriteria': acText,
+      'Microsoft.VSTS.Common.Priority':
+        bugDraft.severity === 'critical' ? '1' :
+        bugDraft.severity === 'high'     ? '2' :
+        bugDraft.severity === 'medium'   ? '3' : '4',
+      'System.Tags': bugDraft.suggested_labels.join('; '),
+    },
+    parentWorkItemId
+  );
+}

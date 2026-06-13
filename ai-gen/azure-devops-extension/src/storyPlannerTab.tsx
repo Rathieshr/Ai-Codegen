@@ -273,11 +273,11 @@ function StoryPlannerTab() {
         <div className="planner-status-grid">
           {session.tasks.map((task, index) => (
             <div key={task.id} className="planner-task">
-              <div className="planner-label">Task Title</div>
+              <div className="planner-label">{plannerLabels.workItemTitleLabel}</div>
               <input className="planner-input" value={task.title} onChange={(event) => updateTask(index, 'title', event.target.value)} />
-              <div className="planner-label">Task Description</div>
+              <div className="planner-label">{plannerLabels.workItemDescriptionLabel}</div>
               <textarea className="planner-textarea" value={task.description} onChange={(event) => updateTask(index, 'description', event.target.value)} />
-              <div className="planner-label">Estimated Effort</div>
+              <div className="planner-label">{plannerLabels.workItemEffortLabel}</div>
               <input className="planner-input" value={task.estimated_effort || ''} onChange={(event) => updateTask(index, 'estimated_effort', event.target.value)} />
             </div>
           ))}
@@ -516,12 +516,11 @@ function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {
     : typeof (workItem as Record<string, unknown>).tags === 'string'
       ? String((workItem as Record<string, unknown>).tags).split(/[;,]/).map(cleanText).filter(Boolean)
       : [];
-  if (type) parts.push(`Work Item Type: ${type}`);
-  if (title) parts.push(`Title: ${title}`);
-  if (tags.length) parts.push(`Tags / Platforms: ${tags.join(', ')}`);
-  if (description) parts.push(`Description: ${description}`);
-  if (acceptance) parts.push(`Acceptance Criteria: ${acceptance}`);
-  if (comments.length) parts.push(`Discussion Notes: ${comments.join(' ')}`);
+  if (title) parts.push(title);
+  if (description) parts.push(description);
+  if (acceptance) parts.push(`Acceptance criteria include: ${acceptance}`);
+  if (tags.length) parts.push(`Relevant platforms or tags: ${tags.join(', ')}.`);
+  if (comments.length) parts.push(`Recent discussion notes: ${comments.join(' ')}`);
   return parts.join('\n\n');
 }
 
@@ -575,6 +574,7 @@ type PlannerLabels = {
   step1: string; step2: string; step3: string;
   titleLabel: string; descLabel: string; valueLabel: string;
   criteriaLabel: string; criteriaHint: string;
+  workItemTitleLabel: string; workItemDescriptionLabel: string; workItemEffortLabel: string;
 };
 
 function getPlannerLabels(plannerKind: string): PlannerLabels {
@@ -588,6 +588,9 @@ function getPlannerLabels(plannerKind: string): PlannerLabels {
       valueLabel: 'Business Value',
       criteriaLabel: 'Key Features (one per line)',
       criteriaHint: 'Each line is a key product feature that the Epic must deliver.',
+      workItemTitleLabel: 'User Story Title',
+      workItemDescriptionLabel: 'User Story Description',
+      workItemEffortLabel: 'Estimated Story Size',
     };
   }
   if (plannerKind === 'feature') {
@@ -600,6 +603,9 @@ function getPlannerLabels(plannerKind: string): PlannerLabels {
       valueLabel: 'Business Value',
       criteriaLabel: 'User Stories (one per line)',
       criteriaHint: 'Each line is a user story that this Feature must deliver.',
+      workItemTitleLabel: 'Task Title',
+      workItemDescriptionLabel: 'Task Description',
+      workItemEffortLabel: 'Estimated Effort',
     };
   }
   // default: story / user_story
@@ -612,6 +618,9 @@ function getPlannerLabels(plannerKind: string): PlannerLabels {
     valueLabel: 'Business Value',
     criteriaLabel: 'Acceptance Criteria',
     criteriaHint: 'Use Given / When / Then format for each criterion.',
+    workItemTitleLabel: 'Task Title',
+    workItemDescriptionLabel: 'Task Description',
+    workItemEffortLabel: 'Estimated Effort',
   };
 }
 

@@ -153,7 +153,10 @@ class StoryPlannerService:
             session.acceptance_criteria = []
             session.tasks = []
             session.code_generation_prompt = ""
-            story = _refine_story_with_phi(_merge_requirement_with_feedback(session.requirement, note))
+            story = _refine_story_with_phi(
+                _merge_requirement_with_feedback(session.requirement, note),
+                planner_kind=session.planner_kind,
+            )
             session.title = story["title"]
             session.description = story["description"]
             session.business_value = story["business_value"]
@@ -168,7 +171,7 @@ class StoryPlannerService:
         elif stage == "tasks":
             session.tasks_approved = False
             session.code_generation_prompt = ""
-            session.tasks = _generate_tasks_with_phi(session, note)
+            session.tasks = _generate_story_breakdown_with_phi(session, note) if session.planner_kind == "epic" else _generate_tasks_with_phi(session, note)
             session.current_stage = "tasks"
         else:
             raise ValueError(f"Unsupported stage for regeneration: {stage}")
@@ -193,8 +196,8 @@ class StoryPlannerService:
             if not session.acceptance_criteria:
                 raise ValueError("Acceptance criteria must exist before approval.")
             session.acceptance_approved = True
-            # Type-specific: Epic generates story breakdowns; Feature generates tasks; Story generates tasks
-            session.tasks = _generate_tasks_with_phi(session)
+            # Type-specific: Epic generates user stories from approved Features; Feature/Story generate delivery tasks.
+            session.tasks = _generate_story_breakdown_with_phi(session) if session.planner_kind == "epic" else _generate_tasks_with_phi(session)
             session.current_stage = "tasks"
         elif stage == "tasks":
             if not session.tasks:
@@ -409,6 +412,7 @@ def _planner_prompts(planner_kind: str) -> dict[str, str]:
 
 
 def _refine_story_with_phi(requirement: str, planner_kind: str = "story") -> dict[str, str]:
+    human_requirement = _human_requirement_text(requirement)
     if planner_kind == "epic":
         system = "You refine requirements into Azure DevOps-ready Epic goals. Return strict JSON only."
         task_text = "Refine this requirement into an Epic goal with a clear strategic objective."
@@ -438,6 +442,9 @@ def _refine_story_with_phi(requirement: str, planner_kind: str = "story") -> dic
         {
             "task": task_text,
             "requirement": requirement,
+            "primary_title": _structured_field(requirement, "Title") or human_requirement,
+            "description": _structured_field(requirement, "Description"),
+            "acceptance_criteria": _structured_field(requirement, "Acceptance Criteria"),
             "expected_json_schema": schema,
         },
         max_tokens=350,
@@ -449,7 +456,7 @@ def _refine_story_with_phi(requirement: str, planner_kind: str = "story") -> dic
     }
     if story["title"] and story["description"] and story["business_value"]:
         return story
-    return _refine_story(requirement)
+    return _refine_story(human_requirement, planner_kind=planner_kind)
 
 
 def _planner_kind(work_item_type: str) -> str:
@@ -463,7 +470,7 @@ def _planner_kind(work_item_type: str) -> str:
     return "story"
 
 
-def _refine_story(requirement: str) -> dict[str, str]:
+def _refine_story(requirement: str, planner_kind: str = "story") -> dict[str, str]:
     normalized = " ".join(requirement.split()).strip()
     actor_match = re.search(r"as\s+a[n]?\s+(?P<actor>.*?),(?:\s*i\s+want|\s*i'd like|\s*i\s+need)", normalized, flags=re.IGNORECASE)
     intent_match = re.search(r"i\s+(?:want|need|would like)\s+(?P<intent>.*?)(?:\s+so\s+i\s+can\s+(?P<value>.*))?$", normalized, flags=re.IGNORECASE)
@@ -471,9 +478,18 @@ def _refine_story(requirement: str) -> dict[str, str]:
     intent = intent_match.group("intent").strip(" .") if intent_match else normalized.strip(" .")
     value = (intent_match.group("value") or "").strip(" .") if intent_match else ""
     subject = _subject_from_intent(intent)
-    title = f"{subject} for {actor.title()}"
-    description = f"As a {actor}, I want {intent} so I can {value or 'complete the workflow successfully'}."
-    business_value = value or f"Improve the {subject.lower()} experience for {actor}."
+    if planner_kind == "epic":
+        title = subject
+        description = f"Deliver {subject.lower()} with clear product capabilities, release scope, and measurable business outcomes."
+        business_value = value or f"Enable the business to launch and scale {subject.lower()} with visible delivery readiness."
+    elif planner_kind == "feature":
+        title = subject
+        description = f"As a {actor}, I need {intent} so I can {value or 'complete the target workflow with confidence'}."
+        business_value = value or f"Improve the {subject.lower()} capability for {actor}."
+    else:
+        title = f"{subject} for {actor.title()}"
+        description = f"As a {actor}, I want {intent} so I can {value or 'complete the workflow successfully'}."
+        business_value = value or f"Improve the {subject.lower()} experience for {actor}."
     return {"title": title, "description": description, "business_value": business_value}
 
 
@@ -550,6 +566,120 @@ def _generate_feature_stories_with_phi(session: PlannerSession, note: str = "") 
         f"Submit and confirm {title} action",
         f"Handle errors and edge cases for {title}",
     ]
+
+
+def _generate_story_breakdown_with_phi(session: PlannerSession, note: str = "") -> list[TaskDraft]:
+    """Generate Azure DevOps User Story drafts from the approved Epic Feature list."""
+    features = _normalize_acceptance(session.acceptance_criteria)
+    parsed = _probe_phi_json(
+        "You decompose approved Epic Features into Azure DevOps User Stories. Return strict JSON only.",
+        {
+            "task": "Generate user stories for each approved Feature in this Epic.",
+            "epic": {
+                "title": session.title,
+                "description": session.description,
+                "business_value": session.business_value,
+            },
+            "approved_features": features,
+            "requirement": session.requirement,
+            "clarification": note,
+            "rules": [
+                "Generate stories from the approved_features list only.",
+                "Each story must be independently deliverable and testable.",
+                "Each story description must follow: As a <user>, I want <capability> so I can <outcome>.",
+                "Generate 2-3 user stories per approved Feature when scope is broad.",
+                "Do not generate implementation tasks.",
+            ],
+            "expected_json_schema": {
+                "stories": [
+                    {
+                        "feature": "approved feature name",
+                        "title": "short user story title",
+                        "description": "As a <user>, I want <capability> so I can <outcome>.",
+                        "estimated_effort": "S|M|L",
+                    }
+                ]
+            },
+        },
+        max_tokens=700,
+    )
+    stories = _normalize_story_breakdown(parsed.get("stories"))
+    if len(stories) >= max(2, min(len(features), 2)):
+        return [_with_new_task_id(story) for story in stories]
+    return _generate_story_breakdown(session, note)
+
+
+def _normalize_story_breakdown(value: Any) -> list[TaskDraft]:
+    if not isinstance(value, list):
+        return []
+    stories: list[TaskDraft] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        feature = _clean_text(item.get("feature"))
+        title = _clean_text(item.get("title"))
+        description = _clean_text(item.get("description"))
+        if not title or not description:
+            continue
+        if feature and feature.lower() not in title.lower():
+            title = f"{feature}: {title}"
+        stories.append(
+            TaskDraft(
+                id=f"story_{uuid4().hex[:8]}",
+                title=title,
+                description=description,
+                estimated_effort=_clean_text(item.get("estimated_effort")),
+            )
+        )
+    return stories
+
+
+def _generate_story_breakdown(session: PlannerSession, note: str = "") -> list[TaskDraft]:
+    features = _normalize_acceptance(session.acceptance_criteria) or [session.title or "Epic Capability"]
+    stories: list[TaskDraft] = []
+    for feature in features:
+        actor = _actor_for_feature(feature)
+        stories.extend(
+            [
+                TaskDraft(
+                    id=f"story_{uuid4().hex[:8]}",
+                    title=f"{feature}: discover and start the journey",
+                    description=(
+                        f"As a {actor}, I want to discover and start {feature.lower()} from the product experience "
+                        f"so I can understand the available capability and begin the right workflow."
+                    ),
+                    estimated_effort="M",
+                ),
+                TaskDraft(
+                    id=f"story_{uuid4().hex[:8]}",
+                    title=f"{feature}: complete and validate the outcome",
+                    description=(
+                        f"As a {actor}, I want to complete {feature.lower()} with validation, confirmation, and error handling "
+                        f"so I can trust the outcome before release."
+                    ),
+                    estimated_effort="M",
+                ),
+            ]
+        )
+    if note:
+        stories.append(
+            TaskDraft(
+                id=f"story_{uuid4().hex[:8]}",
+                title=f"{session.title}: clarified delivery coverage",
+                description=f"As a product team, we want the Epic plan to include this clarification so delivery covers it: {note.strip()}",
+                estimated_effort="S",
+            )
+        )
+    return stories
+
+
+def _actor_for_feature(feature: str) -> str:
+    lowered = feature.lower()
+    if any(word in lowered for word in ["admin", "operation", "report", "visibility"]):
+        return "operations user"
+    if any(word in lowered for word in ["seller", "merchant", "property", "hotel"]):
+        return "business user"
+    return "customer"
 
 
 def _generate_acceptance_criteria_with_phi(session: PlannerSession, note: str = "") -> list[str]:
@@ -772,6 +902,25 @@ def _with_new_task_id(task: TaskDraft) -> TaskDraft:
     task.azure_work_item_id = None
     task.error = None
     return task
+
+
+def _structured_field(requirement: str, label: str) -> str:
+    pattern = rf"(?:^|\n)\s*{re.escape(label)}\s*:\s*(?P<value>.*?)(?=\n\s*[A-Z][A-Za-z /]*\s*:|\Z)"
+    match = re.search(pattern, str(requirement or ""), flags=re.IGNORECASE | re.DOTALL)
+    return _clean_text(match.group("value")) if match else ""
+
+
+def _human_requirement_text(requirement: str) -> str:
+    title = _structured_field(requirement, "Title")
+    description = _structured_field(requirement, "Description")
+    acceptance = _structured_field(requirement, "Acceptance Criteria")
+    comments = _structured_field(requirement, "Discussion Notes")
+    parts = [item for item in [title, description, acceptance, comments] if item]
+    if parts:
+        return _clean_text(" ".join(parts))
+    cleaned = re.sub(r"\bWork Item Type\s*:\s*\w+\b", " ", str(requirement or ""), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bTitle\s*:\s*", " ", cleaned, flags=re.IGNORECASE)
+    return _clean_text(cleaned)
 
 
 def _clean_text(value: Any) -> str:

@@ -115,6 +115,10 @@ def run_stage_output(
         return {
             "assistant": stage,
             "summary": "Epic analysis completed.",
+            "source": "deterministic_fallback",
+            "provider_used": "deterministic_fallback",
+            "phi_status": "not_configured",
+            "phi_raw_response_preview": "",
             "goal": goal,
             "scope": [item for item in [goal, description] if item][:3],
             "business_outcomes": _business_outcomes(work_item, refinement, effective_context),
@@ -136,6 +140,10 @@ def run_stage_output(
         return {
             "assistant": stage,
             "summary": "Generated proposed features from the approved epic scope.",
+            "source": "deterministic_fallback",
+            "provider_used": "deterministic_fallback",
+            "phi_status": "not_configured",
+            "phi_raw_response_preview": "",
             "proposed_features": proposed_features,
             "generated_features": proposed_features,
             "dependencies": _dependencies(work_item, refinement),
@@ -160,6 +168,10 @@ def run_stage_output(
         return {
             "assistant": "story_generator",
             "summary": "Generated proposed work items from the approved planning scope.",
+            "source": "deterministic_fallback",
+            "provider_used": "deterministic_fallback",
+            "phi_status": "not_configured",
+            "phi_raw_response_preview": "",
             "proposed_work_items": proposed_work_items,
             "generated_work_items": proposed_work_items,
             "dependencies": analysis.get("dependencies", []),
@@ -173,6 +185,10 @@ def run_stage_output(
         return {
             "assistant": stage,
             "summary": "Review the proposed work items before creating them in Azure DevOps.",
+            "source": "deterministic_fallback",
+            "provider_used": "deterministic_fallback",
+            "phi_status": "not_configured",
+            "phi_raw_response_preview": "",
             "proposed_work_items": drafts,
             "generated_work_items": drafts,
             "missing_acceptance_criteria": review_findings["missing_acceptance_criteria"],

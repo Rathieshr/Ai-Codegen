@@ -121,6 +121,42 @@ class StoryPlannerServiceTests(unittest.TestCase):
         self.assertEqual(preview["preview"]["parent_work_item_id"], 12)
         self.assertGreater(len(preview["preview"]["tasks"]), 0)
 
+    def test_epic_fallback_does_not_leak_structured_seed_labels(self) -> None:
+        session = self.service.start_session(
+            "Work Item Type: Epic\n\nTitle: Launch for User\n\nDescription: Release customer-facing launch capabilities.",
+            work_item_id=25,
+            work_item_type="Epic",
+        )
+
+        self.assertEqual(session["planner_kind"], "epic")
+        self.assertNotIn("Work Item Type", session["story"]["title"])
+        self.assertNotIn("Title:", session["story"]["title"])
+        self.assertIn("Launch", session["story"]["title"])
+
+    def test_epic_generates_user_stories_from_approved_features(self) -> None:
+        session = self.service.start_session(
+            "Launch iOS and Android mobile e-commerce applications",
+            work_item_id=25,
+            work_item_type="Epic",
+        )
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        features = session["acceptance_criteria"]
+        self.assertGreaterEqual(len(features), 4)
+
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+
+        self.assertGreaterEqual(len(session["tasks"]), len(features) * 2)
+        self.assertIn(features[0], session["tasks"][0]["title"])
+        self.assertIn("As a", session["tasks"][0]["description"])
+        self.assertNotIn("Backend / API integration", session["tasks"][0]["title"])
+
+    def test_epic_regeneration_preserves_epic_prompting(self) -> None:
+        session = self.service.start_session("Launch mobile apps", work_item_type="Epic")
+        session = self.service.regenerate_stage(session["session_id"], "refined_story", "Include iOS and Android launch readiness.")
+
+        self.assertEqual(session["planner_kind"], "epic")
+        self.assertNotIn("for User", session["story"]["title"])
+
     def test_creation_result_marks_real_created_statuses(self) -> None:
         session = self.service.start_session("As a customer, I want OTP login so I can securely access my account.")
         session = self.service.approve_stage(session["session_id"], "refined_story")

@@ -37,9 +37,10 @@ class StoryPlannerService:
         if not normalized:
             raise ValueError("Requirement is required.")
         session_id = f"storyplan_{uuid4().hex[:12]}"
-        story = _refine_story_with_phi(normalized)
         normalized_type = _clean_text(work_item_type)
         planner_kind = _planner_kind(normalized_type)
+        story = _refine_story_with_phi(normalized, planner_kind=planner_kind)
+        prompts = _planner_prompts(planner_kind)
         session = PlannerSession(
             session_id=session_id,
             requirement=normalized,
@@ -50,8 +51,8 @@ class StoryPlannerService:
             title=story["title"],
             description=story["description"],
             business_value=story["business_value"],
-            question="Does this refined user story match your intent?",
-            user_input_hint="Add missing details or corrections here before regenerating.",
+            question=prompts["refined_question"],
+            user_input_hint=prompts["refined_hint"],
         )
         self._sessions[session_id] = session
         self._save_session(session)
@@ -180,12 +181,19 @@ class StoryPlannerService:
         session = self._session(session_id)
         if stage == "refined_story":
             session.story_approved = True
-            session.acceptance_criteria = _generate_acceptance_criteria_with_phi(session)
+            # Type-specific: Epic generates feature list; Feature generates user stories; Story generates AC
+            if session.planner_kind == "epic":
+                session.acceptance_criteria = _generate_epic_features_with_phi(session)
+            elif session.planner_kind == "feature":
+                session.acceptance_criteria = _generate_feature_stories_with_phi(session)
+            else:
+                session.acceptance_criteria = _generate_acceptance_criteria_with_phi(session)
             session.current_stage = "acceptance_criteria"
         elif stage == "acceptance_criteria":
             if not session.acceptance_criteria:
                 raise ValueError("Acceptance criteria must exist before approval.")
             session.acceptance_approved = True
+            # Type-specific: Epic generates story breakdowns; Feature generates tasks; Story generates tasks
             session.tasks = _generate_tasks_with_phi(session)
             session.current_stage = "tasks"
         elif stage == "tasks":
@@ -347,15 +355,16 @@ class StoryPlannerService:
             pass
 
     def _refresh_stage_prompts(self, session: PlannerSession) -> None:
+        prompts = _planner_prompts(session.planner_kind)
         if session.current_stage == "refined_story":
-            session.question = "Does this refined user story match your intent?"
-            session.user_input_hint = "Add missing details or corrections here before regenerating."
+            session.question = prompts["refined_question"]
+            session.user_input_hint = prompts["refined_hint"]
         elif session.current_stage == "acceptance_criteria":
-            session.question = "Are these acceptance criteria clear and testable?"
-            session.user_input_hint = "Add the missing rule or expected outcome here."
+            session.question = prompts["criteria_question"]
+            session.user_input_hint = prompts["criteria_hint"]
         elif session.current_stage == "tasks":
-            session.question = "Do these proposed tasks cover the work needed to deliver the story?"
-            session.user_input_hint = "Call out a missing task or scope correction here."
+            session.question = prompts["tasks_question"]
+            session.user_input_hint = prompts["tasks_hint"]
         elif session.current_stage == "azure_devops_creation":
             session.question = "Create the approved Azure DevOps work items when you are ready."
             session.user_input_hint = ""
@@ -364,17 +373,72 @@ class StoryPlannerService:
             session.user_input_hint = ""
 
 
-def _refine_story_with_phi(requirement: str) -> dict[str, str]:
+# ── Planner type helpers ──────────────────────────────────────────────────────
+
+_PLANNER_PROMPTS: dict[str, dict[str, str]] = {
+    "epic": {
+        "refined_question": "Does this Epic goal capture the business objective and delivery scope?",
+        "refined_hint": "Clarify the target users, strategic impact, or scope boundaries.",
+        "criteria_question": "Do these key features cover the full scope of the Epic?",
+        "criteria_hint": "Add a missing feature or clarify a scope boundary.",
+        "tasks_question": "Do these user stories represent a complete delivery breakdown for each feature?",
+        "tasks_hint": "Add a missing story or identify a gap in coverage.",
+    },
+    "feature": {
+        "refined_question": "Does this Feature refinement capture the user need and delivery scope?",
+        "refined_hint": "Clarify the target user segment, integration points, or scope boundaries.",
+        "criteria_question": "Do these user stories cover the full scope of the Feature?",
+        "criteria_hint": "Add a missing user story or clarify a scope item.",
+        "tasks_question": "Do these implementation tasks cover the delivery of all user stories?",
+        "tasks_hint": "Add a missing task or scope correction here.",
+    },
+}
+_PLANNER_PROMPTS["user_story"] = {
+    "refined_question": "Does this refined user story match your intent?",
+    "refined_hint": "Add missing details or corrections here before regenerating.",
+    "criteria_question": "Are these acceptance criteria clear and testable?",
+    "criteria_hint": "Add the missing rule or expected outcome here.",
+    "tasks_question": "Do these proposed tasks cover the work needed to deliver the story?",
+    "tasks_hint": "Call out a missing task or scope correction here.",
+}
+_PLANNER_PROMPTS["story"] = _PLANNER_PROMPTS["user_story"]
+
+
+def _planner_prompts(planner_kind: str) -> dict[str, str]:
+    return _PLANNER_PROMPTS.get(planner_kind, _PLANNER_PROMPTS["user_story"])
+
+
+def _refine_story_with_phi(requirement: str, planner_kind: str = "story") -> dict[str, str]:
+    if planner_kind == "epic":
+        system = "You refine requirements into Azure DevOps-ready Epic goals. Return strict JSON only."
+        task_text = "Refine this requirement into an Epic goal with a clear strategic objective."
+        schema = {
+            "title": "short Epic title",
+            "description": "As a business, we want <epic goal> so we can <strategic outcome>.",
+            "business_value": "strategic business value",
+        }
+    elif planner_kind == "feature":
+        system = "You refine requirements into Azure DevOps-ready Feature definitions. Return strict JSON only."
+        task_text = "Refine this requirement into a Feature with clear user need and delivery scope."
+        schema = {
+            "title": "short Feature title",
+            "description": "As a <user segment>, I need <feature capability> so I can <user outcome>.",
+            "business_value": "clear feature business value",
+        }
+    else:
+        system = "You refine requirements into Azure DevOps-ready user stories. Return strict JSON only."
+        task_text = "Refine this requirement into a user story."
+        schema = {
+            "title": "short user story title",
+            "description": "As a <actor>, I want <capability> so I can <value>.",
+            "business_value": "clear business value",
+        }
     parsed = _probe_phi_json(
-        "You refine requirements into Azure DevOps-ready user stories. Return strict JSON only.",
+        system,
         {
-            "task": "Refine this requirement into a user story.",
+            "task": task_text,
             "requirement": requirement,
-            "expected_json_schema": {
-                "title": "short user story title",
-                "description": "As a <actor>, I want <capability> so I can <value>.",
-                "business_value": "clear business value",
-            },
+            "expected_json_schema": schema,
         },
         max_tokens=350,
     )
@@ -411,6 +475,81 @@ def _refine_story(requirement: str) -> dict[str, str]:
     description = f"As a {actor}, I want {intent} so I can {value or 'complete the workflow successfully'}."
     business_value = value or f"Improve the {subject.lower()} experience for {actor}."
     return {"title": title, "description": description, "business_value": business_value}
+
+
+def _generate_epic_features_with_phi(session: PlannerSession, note: str = "") -> list[str]:
+    """Generate a list of key Feature names for an Epic (stored in acceptance_criteria field)."""
+    parsed = _probe_phi_json(
+        "You decompose business Epics into high-level product Features for Azure DevOps. Return strict JSON only.",
+        {
+            "task": "Generate the key Features needed to deliver this Epic.",
+            "epic": {
+                "title": session.title,
+                "description": session.description,
+                "business_value": session.business_value,
+            },
+            "requirement": session.requirement,
+            "clarification": note,
+            "rules": [
+                "Each feature must be a deliverable product capability, not a task.",
+                "Feature names should be concise (5-10 words) and user-facing.",
+                "Generate 3-6 features that together cover the full Epic scope.",
+            ],
+            "expected_json_schema": {
+                "features": ["Feature 1 name", "Feature 2 name"]
+            },
+        },
+        max_tokens=400,
+    )
+    features = parsed.get("features")
+    if isinstance(features, list) and len(features) >= 2:
+        return [_clean_text(str(f)) for f in features if f]
+    # deterministic fallback
+    title = session.title or "the Epic"
+    return [
+        f"Core {title} — Foundation & Setup",
+        f"Core {title} — User Flows & Interactions",
+        f"Core {title} — Backend & Data Integration",
+        f"Core {title} — Notifications & Reporting",
+        f"Core {title} — QA, Testing & Release",
+    ]
+
+
+def _generate_feature_stories_with_phi(session: PlannerSession, note: str = "") -> list[str]:
+    """Generate a list of User Story names for a Feature (stored in acceptance_criteria field)."""
+    parsed = _probe_phi_json(
+        "You decompose product Features into Azure DevOps User Stories. Return strict JSON only.",
+        {
+            "task": "Generate the User Stories needed to deliver this Feature.",
+            "feature": {
+                "title": session.title,
+                "description": session.description,
+                "business_value": session.business_value,
+            },
+            "requirement": session.requirement,
+            "clarification": note,
+            "rules": [
+                "Each story must follow: As a <user>, I want <action> so I can <outcome>.",
+                "Stories should be independently deliverable and testable.",
+                "Generate 3-6 stories that together cover the Feature scope.",
+            ],
+            "expected_json_schema": {
+                "stories": ["Story 1 title", "Story 2 title"]
+            },
+        },
+        max_tokens=400,
+    )
+    stories = parsed.get("stories")
+    if isinstance(stories, list) and len(stories) >= 2:
+        return [_clean_text(str(s)) for s in stories if s]
+    # deterministic fallback
+    title = session.title or "the Feature"
+    return [
+        f"View and navigate {title}",
+        f"Input and validate data for {title}",
+        f"Submit and confirm {title} action",
+        f"Handle errors and edge cases for {title}",
+    ]
 
 
 def _generate_acceptance_criteria_with_phi(session: PlannerSession, note: str = "") -> list[str]:

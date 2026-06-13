@@ -81,9 +81,8 @@ function StoryPlannerTab() {
   }, []);
 
   const currentStage = view.session?.current_stage;
-  const workItemTypeLower = String(view.workItem?.type || '').trim().toLowerCase();
-  // Epics and Bugs must use the Work Item Pipeline tab (epic_planning / bug_fix templates)
-  const isUnsupportedType = ['epic', 'bug'].some((t) => workItemTypeLower.includes(t));
+  const planner_kind = view.session?.planner_kind || 'story';
+  const plannerLabels = getPlannerLabels(planner_kind);
   const seedWarning = useMemo(() => {
     if (!view.workItem || view.session) {
       return '';
@@ -98,13 +97,13 @@ function StoryPlannerTab() {
   const steps = useMemo(
     () => [
       { id: 'requirement', label: 'Requirement', done: Boolean(view.session) },
-      { id: 'refined_story', label: 'Refined Story', done: Boolean(view.session?.story_approved) },
-      { id: 'acceptance_criteria', label: 'Acceptance Criteria', done: Boolean(view.session?.acceptance_approved) },
-      { id: 'tasks', label: 'Tasks', done: Boolean(view.session?.tasks_approved) },
+      { id: 'refined_story', label: plannerLabels.step1, done: Boolean(view.session?.story_approved) },
+      { id: 'acceptance_criteria', label: plannerLabels.step2, done: Boolean(view.session?.acceptance_approved) },
+      { id: 'tasks', label: plannerLabels.step3, done: Boolean(view.session?.tasks_approved) },
       { id: 'azure_devops_creation', label: 'Azure DevOps', done: currentStage === 'success' || currentStage === 'azure_devops_creation' },
       { id: 'success', label: 'Success', done: currentStage === 'success' },
     ],
-    [view.session, currentStage]
+    [view.session, currentStage, plannerLabels]
   );
 
   async function withLoading<T>(message: string, action: () => Promise<T>) {
@@ -249,11 +248,11 @@ function StoryPlannerTab() {
     if (session.current_stage === 'refined_story') {
       return (
         <>
-          <div className="planner-label">Title</div>
+          <div className="planner-label">{plannerLabels.titleLabel}</div>
           <input className="planner-input" value={session.story.title} onChange={(event) => updateStory('title', event.target.value)} />
-          <div className="planner-label">Description</div>
+          <div className="planner-label">{plannerLabels.descLabel}</div>
           <textarea className="planner-textarea" value={session.story.description} onChange={(event) => updateStory('description', event.target.value)} />
-          <div className="planner-label">Business Value</div>
+          <div className="planner-label">{plannerLabels.valueLabel}</div>
           <textarea className="planner-textarea" value={session.story.business_value} onChange={(event) => updateStory('business_value', event.target.value)} />
         </>
       );
@@ -261,8 +260,11 @@ function StoryPlannerTab() {
     if (session.current_stage === 'acceptance_criteria') {
       return (
         <>
-          <div className="planner-label">Acceptance Criteria</div>
+          <div className="planner-label">{plannerLabels.criteriaLabel}</div>
           <textarea className="planner-textarea" value={session.acceptance_criteria.join('\n')} onChange={(event) => updateAcceptance(event.target.value)} />
+          <div className="planner-subtle" style={{ fontSize: '0.8em' }}>
+            {plannerLabels.criteriaHint}
+          </div>
         </>
       );
     }
@@ -398,24 +400,8 @@ function StoryPlannerTab() {
       {view.loading ? <div className="planner-subtle">{view.loadingMessage}</div> : null}
       {copyMessage ? <div className="planner-subtle">{copyMessage}</div> : null}
 
-      {isUnsupportedType && !view.loading ? (
+      {!view.session ? (
         <section className="planner-card">
-          <div className="planner-label" style={{ color: '#c0392b' }}>
-            ⚠ {String(view.workItem?.type || 'This work item type')} is not supported in AI Story Planner
-          </div>
-          <p>
-            <strong>{String(view.workItem?.type || 'This work item type')}s</strong> use a dedicated AI pipeline with
-            specialised stages. Please use the <strong>AI Pipeline</strong> tab (or the main Work Item tab) to generate
-            and review the {workItemTypeLower === 'epic' ? 'Epic Analysis → Feature Generation → Story Generation → Review' : 'Bug Analysis → Impact Analysis → Fix Packet → Regression Tests'} workflow.
-          </p>
-          <p style={{ fontSize: '0.85em', color: '#666' }}>
-            The AI Story Planner is designed for User Stories and Features only.
-          </p>
-        </section>
-      ) : null}
-
-      {!isUnsupportedType && !view.session ? (
-      <section className="planner-card">
           {seedWarning ? <div className="planner-subtle">{seedWarning}</div> : null}
           <div className="planner-label">Requirement</div>
           <textarea
@@ -583,6 +569,50 @@ function htmlToText(value: string): string {
 
 function cleanText(value: string): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+type PlannerLabels = {
+  step1: string; step2: string; step3: string;
+  titleLabel: string; descLabel: string; valueLabel: string;
+  criteriaLabel: string; criteriaHint: string;
+};
+
+function getPlannerLabels(plannerKind: string): PlannerLabels {
+  if (plannerKind === 'epic') {
+    return {
+      step1: 'Epic Goal',
+      step2: 'Key Features',
+      step3: 'User Stories',
+      titleLabel: 'Epic Title',
+      descLabel: 'Strategic Goal',
+      valueLabel: 'Business Value',
+      criteriaLabel: 'Key Features (one per line)',
+      criteriaHint: 'Each line is a key product feature that the Epic must deliver.',
+    };
+  }
+  if (plannerKind === 'feature') {
+    return {
+      step1: 'Feature Definition',
+      step2: 'User Stories',
+      step3: 'Implementation Tasks',
+      titleLabel: 'Feature Title',
+      descLabel: 'Feature Description',
+      valueLabel: 'Business Value',
+      criteriaLabel: 'User Stories (one per line)',
+      criteriaHint: 'Each line is a user story that this Feature must deliver.',
+    };
+  }
+  // default: story / user_story
+  return {
+    step1: 'Refined Story',
+    step2: 'Acceptance Criteria',
+    step3: 'Tasks',
+    titleLabel: 'Title',
+    descLabel: 'Description',
+    valueLabel: 'Business Value',
+    criteriaLabel: 'Acceptance Criteria',
+    criteriaHint: 'Use Given / When / Then format for each criterion.',
+  };
 }
 
 function buildFallbackPrompt(session?: PlannerSession): string {

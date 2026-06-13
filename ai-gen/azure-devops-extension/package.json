@@ -1,6 +1,6 @@
 {
   "name": "ai-gen-azure-devops-extension",
-  "version": "1.0.19",
+  "version": "1.0.36",
   "private": true,
   "description": "Azure DevOps work item integration for ai-gen execution packets.",
   "scripts": {

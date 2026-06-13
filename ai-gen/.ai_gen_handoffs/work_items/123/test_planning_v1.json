@@ -26,7 +26,7 @@
       "reason": {
         "goal": "Cover the approved scope with positive, negative, edge, and acceptance tests.",
         "known": [
-          "login",
+          "otp_verification",
           "Phone number input is required.",
           "phone_number",
           "otp"
@@ -41,11 +41,11 @@
           "Phone number input is required."
         ],
         "steps": [
-          "Prepare the login entry point with valid data.",
+          "Prepare the otp_verification entry point with valid data.",
           "Submit the primary action.",
           "Verify the expected success outcome."
         ],
-        "title": "Login happy path works",
+        "title": "Otp_Verification happy path works",
         "type": "positive"
       },
       {
@@ -58,7 +58,7 @@
           "Submit the primary action.",
           "Verify the validation or failure message."
         ],
-        "title": "Login rejects invalid input",
+        "title": "Otp_Verification rejects invalid input",
         "type": "negative"
       },
       {
@@ -71,7 +71,7 @@
           "Submit the action.",
           "Verify the boundary behavior stays within the expected rules."
         ],
-        "title": "Login handles boundary values for otp",
+        "title": "Otp_Verification handles boundary values for otp",
         "type": "edge"
       },
       {
@@ -83,13 +83,13 @@
           "Walk through the approved user path.",
           "Check each acceptance criterion against the observed behavior."
         ],
-        "title": "Login meets approved acceptance criteria",
+        "title": "Otp_Verification meets approved acceptance criteria",
         "type": "acceptance"
       }
     ],
     "unknowns": []
   },
-  "created_at": "2026-06-01T05:28:29.069464+00:00",
+  "created_at": "2026-06-13T06:45:04.000662+00:00",
   "handoff_id": "handoff_123_test_planning_v1",
   "handoff_type": "test_handoff",
   "next_actions": [
@@ -97,25 +97,43 @@
     "Approve before downstream QA or validation work."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_73970ca6ce04",
+  "pipeline_id": "pipeline_427d125a8db7",
   "refinement": {
+    "actors": [],
+    "base_flow": "otp_verification",
     "base_flows": [
-      "login",
-      "otp_verification"
+      "otp_verification",
+      "login"
     ],
+    "confidence": "medium",
     "fields": [
       "phone_number",
       "otp"
     ],
+    "first_pass_scope": [
+      "phone number input",
+      "otp verification step"
+    ],
     "refinement_unknowns": [
       "Clarify OTP retry and expiry policy."
     ],
+    "scope_hints": [
+      "phone number input",
+      "otp verification step"
+    ],
+    "states": [],
+    "surface": "ui_screen",
     "surfaces": [
       "ui_screen"
     ],
-    "validations": [
-      "auth_required"
+    "unknowns": [
+      "Clarify OTP retry and expiry policy."
     ],
+    "validations": [
+      "auth_required",
+      "required"
+    ],
+    "variant": "phone_otp",
     "variants": [
       "phone_otp"
     ]

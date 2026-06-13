@@ -1,0 +1,110 @@
+{
+  "approved_at": null,
+  "constraints": [
+    "Preserve validation rules for auth_required.",
+    "Preserve the existing authentication order and failure safety rules.",
+    "Reuse the existing session or token lifecycle."
+  ],
+  "content": {
+    "acceptance_criteria": [
+      "Support the required fields: phone_number, otp.",
+      "Enforce the expected validations: auth_required.",
+      "Authenticate the user with phone number entry followed by OTP verification."
+    ],
+    "actors": [
+      "end_user"
+    ],
+    "assistant": "ba",
+    "business_rules": [
+      "Preserve validation rules for auth_required.",
+      "Preserve the existing authentication order and failure safety rules.",
+      "Reuse the existing session or token lifecycle."
+    ],
+    "flows": [
+      "login",
+      "otp_verification"
+    ],
+    "react": {
+      "act": {
+        "acceptance_criteria_count": 3,
+        "actors": [
+          "end_user"
+        ],
+        "flows": [
+          "login",
+          "otp_verification"
+        ],
+        "requirement": "Phone OTP login."
+      },
+      "decision": "ready_for_approval",
+      "observe": {
+        "surface": null,
+        "tags": [],
+        "used_refinement": true
+      },
+      "reason": {
+        "goal": "Clarify the requirement, actors, flows, and business rules before UI or development work starts.",
+        "known": [
+          "Phone OTP login",
+          "flow:login",
+          "variant:phone_otp"
+        ],
+        "missing": [
+          "Is OTP or a second-factor step required after the primary input succeeds?",
+          "Clarify OTP retry and expiry policy."
+        ]
+      }
+    },
+    "refined_requirement": "Phone OTP login.",
+    "unknowns": [
+      "Is OTP or a second-factor step required after the primary input succeeds?",
+      "Clarify OTP retry and expiry policy."
+    ],
+    "variant": "phone_otp",
+    "variants": [
+      "phone_otp"
+    ]
+  },
+  "created_at": "2026-06-13T06:45:04.045060+00:00",
+  "handoff_id": "handoff_124_ba_v1",
+  "handoff_type": "requirement_handoff",
+  "next_actions": [
+    "Review the clarified requirement.",
+    "Approve BA output before UI or dev work."
+  ],
+  "open_questions": [
+    "Is OTP or a second-factor step required after the primary input succeeds?",
+    "Clarify OTP retry and expiry policy."
+  ],
+  "pipeline_id": "pipeline_667cd071da52",
+  "refinement": {
+    "base_flows": [
+      "login",
+      "otp_verification"
+    ],
+    "fields": [
+      "phone_number",
+      "otp"
+    ],
+    "surfaces": [
+      "ui_screen"
+    ],
+    "validations": [
+      "auth_required"
+    ],
+    "variants": [
+      "phone_otp"
+    ]
+  },
+  "repo_context": {},
+  "source_stage": "ba",
+  "stage": "ba",
+  "status": "draft",
+  "summary": "Phone OTP login.",
+  "target_stages": [
+    "ui_optional",
+    "task_planning"
+  ],
+  "version": 1,
+  "work_item_id": "124"
+}

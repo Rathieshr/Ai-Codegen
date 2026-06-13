@@ -2,7 +2,7 @@
 Status: approved
 
 ## Summary
-Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.
+Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.
 
 ## Stage Output
 ```json
@@ -15,12 +15,12 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
   ],
   "assistant": "ba",
   "business_rules": [
-    "Preserve validation rules for auth_required.",
+    "Preserve validation rules for auth_required, required.",
     "Reuse the existing session or token lifecycle."
   ],
   "flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
   "react": {
     "act": {
@@ -29,14 +29,14 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
         "end_user"
       ],
       "flows": [
-        "login",
-        "otp_verification"
+        "otp_verification",
+        "login"
       ],
-      "requirement": "Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required."
+      "requirement": "Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required."
     },
     "decision": "ready_for_approval",
     "observe": {
-      "surface": null,
+      "surface": "ui_screen",
       "tags": [],
       "used_refinement": true
     },
@@ -44,13 +44,13 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
       "goal": "Clarify the requirement, actors, flows, and business rules before UI or development work starts.",
       "known": [
         "Ai Gen Extension Test",
-        "flow:login",
+        "flow:otp_verification",
         "variant:phone_otp"
       ],
       "missing": []
     }
   },
-  "refined_requirement": "Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
+  "refined_requirement": "Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
   "unknowns": [],
   "variant": "phone_otp",
   "variants": [
@@ -60,7 +60,7 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
 ```
 
 ## Constraints
-- Preserve validation rules for auth_required.
+- Preserve validation rules for auth_required, required.
 - Reuse the existing session or token lifecycle.
 
 ## Next Actions
@@ -70,23 +70,41 @@ Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry 
 ## Refinement
 ```json
 {
+  "actors": [],
+  "base_flow": "otp_verification",
   "base_flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
+  "confidence": "medium",
   "fields": [
     "phone_number",
     "otp"
   ],
+  "first_pass_scope": [
+    "phone number input",
+    "otp verification step"
+  ],
   "refinement_unknowns": [
     "Clarify OTP retry and expiry policy."
   ],
+  "scope_hints": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "states": [],
+  "surface": "ui_screen",
   "surfaces": [
     "ui_screen"
   ],
-  "validations": [
-    "auth_required"
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
   ],
+  "validations": [
+    "auth_required",
+    "required"
+  ],
+  "variant": "phone_otp",
   "variants": [
     "phone_otp"
   ]

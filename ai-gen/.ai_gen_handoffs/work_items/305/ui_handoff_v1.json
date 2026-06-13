@@ -1,0 +1,42 @@
+{
+  "approved_at": null,
+  "constraints": [],
+  "content": {
+    "accessibility_notes": [
+      "Provide clear labels and error text for every interactive element."
+    ],
+    "assistant": "ui_handoff",
+    "fields": [],
+    "layout": [
+      "title and helper text",
+      "primary action row",
+      "inline validation and error area"
+    ],
+    "states": [
+      "default",
+      "loading",
+      "error",
+      "success"
+    ],
+    "summary": "Design Workflow Screen with primary components, submit, loading, error, success, and validation and error handling.",
+    "unknowns": [],
+    "ux_notes": [
+      "Keep the first interaction path short and obvious."
+    ]
+  },
+  "created_at": "2026-06-13T06:45:04.399466+00:00",
+  "handoff_id": "handoff_305_ui_handoff_v1",
+  "handoff_type": "ui_handoff",
+  "next_actions": [],
+  "open_questions": [],
+  "pipeline_id": "pipeline_105fe039a3ea",
+  "refinement": {},
+  "repo_context": {},
+  "source_stage": "ui_handoff",
+  "stage": "ui_handoff",
+  "status": "draft",
+  "summary": "Design Workflow Screen with primary components, submit, loading, error, success, and validation and error handling.",
+  "target_stages": [],
+  "version": 1,
+  "work_item_id": "305"
+}

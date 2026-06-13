@@ -10,10 +10,10 @@ Status: draft
   "assistant": "test_planning",
   "test_cases": [
     {
-      "title": "Login happy path works",
+      "title": "Otp_Verification happy path works",
       "type": "positive",
       "steps": [
-        "Prepare the login entry point with valid data.",
+        "Prepare the otp_verification entry point with valid data.",
         "Submit the primary action.",
         "Verify the expected success outcome."
       ],
@@ -23,7 +23,7 @@ Status: draft
       ]
     },
     {
-      "title": "Login rejects invalid input",
+      "title": "Otp_Verification rejects invalid input",
       "type": "negative",
       "steps": [
         "Use invalid or incomplete input.",
@@ -36,7 +36,7 @@ Status: draft
       ]
     },
     {
-      "title": "Login handles boundary values for otp",
+      "title": "Otp_Verification handles boundary values for otp",
       "type": "edge",
       "steps": [
         "Prepare otp with a boundary value or maximum allowed length.",
@@ -49,7 +49,7 @@ Status: draft
       ]
     },
     {
-      "title": "Login meets approved acceptance criteria",
+      "title": "Otp_Verification meets approved acceptance criteria",
       "type": "acceptance",
       "steps": [
         "Walk through the approved user path.",
@@ -70,7 +70,7 @@ Status: draft
   "react": {
     "reason": {
       "known": [
-        "login",
+        "otp_verification",
         "Phone number input is required.",
         "phone_number",
         "otp"
@@ -103,23 +103,41 @@ Status: draft
 ## Refinement
 ```json
 {
+  "actors": [],
+  "base_flow": "otp_verification",
   "base_flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
+  "confidence": "medium",
   "fields": [
     "phone_number",
     "otp"
   ],
+  "first_pass_scope": [
+    "phone number input",
+    "otp verification step"
+  ],
   "refinement_unknowns": [
     "Clarify OTP retry and expiry policy."
   ],
+  "scope_hints": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "states": [],
+  "surface": "ui_screen",
   "surfaces": [
     "ui_screen"
   ],
-  "validations": [
-    "auth_required"
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
   ],
+  "validations": [
+    "auth_required",
+    "required"
+  ],
+  "variant": "phone_otp",
   "variants": [
     "phone_otp"
   ]

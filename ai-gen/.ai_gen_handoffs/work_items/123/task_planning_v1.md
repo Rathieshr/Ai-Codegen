@@ -13,7 +13,7 @@ Generated proposed child work items from the approved story scope.
     {
       "type": "task",
       "title": "Implement Ai Gen Extension Test",
-      "description": "Build the approved behavior for flows: login, otp_verification."
+      "description": "Build the approved behavior for flows: otp_verification, login."
     },
     {
       "type": "ui_task",
@@ -28,12 +28,12 @@ Generated proposed child work items from the approved story scope.
   ],
   "proposed_work_items": [
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__ui_ai_gen_extension_test_focus_first_on_phone_nu_1_11ca7431db",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__ui_ai_gen_extension_test_focus_first_on_phone_nu_1_11ca7431db",
       "type": "Task",
       "draft_type": "Task",
-      "title": "UI Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Design and implement the UI structure for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required., including fields and states.",
+      "title": "UI Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Design and implement the UI structure for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required, including fields and states.",
       "acceptance_criteria": [
         "UI structure reflects the approved story scope.",
         "Fields are covered: phone_number, otp."
@@ -41,7 +41,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -52,12 +52,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__dev_ai_gen_extension_test_focus_first_on_phone_n_2_88583ec61c",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__dev_ai_gen_extension_test_focus_first_on_phone_n_2_88583ec61c",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Dev Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Implement the approved behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. with minimal scope.",
+      "title": "Dev Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Implement the approved behavior for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required with minimal scope.",
       "acceptance_criteria": [
         "Implementation follows the approved execution scope.",
         "Variant behavior is respected: phone_otp."
@@ -65,7 +65,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -76,12 +76,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__qa_ai_gen_extension_test_focus_first_on_phone_nu_3_9d3edc89f9",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__qa_ai_gen_extension_test_focus_first_on_phone_nu_3_9d3edc89f9",
       "type": "Task",
       "draft_type": "Task",
-      "title": "QA Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Validate the delivered behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. and capture regression coverage.",
+      "title": "QA Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Validate the delivered behavior for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required and capture regression coverage.",
       "acceptance_criteria": [
         "Positive, negative, and edge validation is documented.",
         "Regression risks are covered before closure."
@@ -89,7 +89,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -100,19 +100,19 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__docs_ai_gen_extension_test_focus_first_on_phone__4_1c9201c074",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__docs_ai_gen_extension_test_focus_first_on_phone__4_1c9201c074",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Documentation Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Update supporting release or support documentation for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required..",
+      "title": "Documentation Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Update supporting release or support documentation for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
       "acceptance_criteria": [
         "Documentation reflects the delivered behavior and rollout notes."
       ],
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -125,12 +125,12 @@ Generated proposed child work items from the approved story scope.
   ],
   "generated_work_items": [
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_ui_story_delivery_ai_gen_extension_test_review_c_1_2840048b0a",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__ui_ai_gen_extension_test_focus_first_on_phone_nu_1_11ca7431db",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__ui_ai_gen_extension_test_focus_first_on_phone_nu_1_11ca7431db",
       "type": "Task",
       "draft_type": "Task",
-      "title": "UI Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Design and implement the UI structure for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required., including fields and states.",
+      "title": "UI Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Design and implement the UI structure for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required, including fields and states.",
       "acceptance_criteria": [
         "UI structure reflects the approved story scope.",
         "Fields are covered: phone_number, otp."
@@ -138,7 +138,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -149,12 +149,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_dev_story_delivery_ai_gen_extension_test_review__2_fe760207be",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__dev_ai_gen_extension_test_focus_first_on_phone_n_2_88583ec61c",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__dev_ai_gen_extension_test_focus_first_on_phone_n_2_88583ec61c",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Dev Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Implement the approved behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. with minimal scope.",
+      "title": "Dev Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Implement the approved behavior for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required with minimal scope.",
       "acceptance_criteria": [
         "Implementation follows the approved execution scope.",
         "Variant behavior is respected: phone_otp."
@@ -162,7 +162,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -173,12 +173,12 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_qa_story_delivery_ai_gen_extension_test_review_c_3_e0cfdea2fd",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__qa_ai_gen_extension_test_focus_first_on_phone_nu_3_9d3edc89f9",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__qa_ai_gen_extension_test_focus_first_on_phone_nu_3_9d3edc89f9",
       "type": "Task",
       "draft_type": "Task",
-      "title": "QA Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Validate the delivered behavior for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required. and capture regression coverage.",
+      "title": "QA Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Validate the delivered behavior for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required and capture regression coverage.",
       "acceptance_criteria": [
         "Positive, negative, and edge validation is documented.",
         "Regression risks are covered before closure."
@@ -186,7 +186,7 @@ Generated proposed child work items from the approved story scope.
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -197,19 +197,19 @@ Generated proposed child work items from the approved story scope.
       "creation_error": null
     },
     {
-      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
-      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_review_docs_story_delivery_ai_gen_extension_test_review_4_4be17272d4",
+      "id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__docs_ai_gen_extension_test_focus_first_on_phone__4_1c9201c074",
+      "draft_id": "draft_task_planning_draft_task_planning_ai_gen_extension_test_focus__docs_ai_gen_extension_test_focus_first_on_phone__4_1c9201c074",
       "type": "Task",
       "draft_type": "Task",
-      "title": "Documentation Task: Story Delivery: Ai Gen Extension Test Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
-      "description": "Update supporting release or support documentation for story delivery: ai gen extension test review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required..",
+      "title": "Documentation Task: Ai Gen Extension Test. Focus first on phone number input, otp verification step Review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required",
+      "description": "Update supporting release or support documentation for ai gen extension test. focus first on phone number input, otp verification step review clarifications: retry policy of 3 times and expiry policy of 60 seconds; second factor screen required.",
       "acceptance_criteria": [
         "Documentation reflects the delivered behavior and rollout notes."
       ],
       "tags": [],
       "area_path": "",
       "iteration_path": "",
-      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_review_clarifications_retr_1_ff9bd1f13c",
+      "parent_draft_id": "draft_task_planning_ai_gen_extension_test_focus_first_on_phone_numbe_1_87c3e33c66",
       "parent_work_item_id": "123",
       "children": [],
       "child_drafts": [],
@@ -224,8 +224,8 @@ Generated proposed child work items from the approved story scope.
     "Phone number input is required."
   ],
   "flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
   "unknowns": []
 }
@@ -238,23 +238,41 @@ Generated proposed child work items from the approved story scope.
 ## Refinement
 ```json
 {
+  "actors": [],
+  "base_flow": "otp_verification",
   "base_flows": [
-    "login",
-    "otp_verification"
+    "otp_verification",
+    "login"
   ],
+  "confidence": "medium",
   "fields": [
     "phone_number",
     "otp"
   ],
+  "first_pass_scope": [
+    "phone number input",
+    "otp verification step"
+  ],
   "refinement_unknowns": [
     "Clarify OTP retry and expiry policy."
   ],
+  "scope_hints": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "states": [],
+  "surface": "ui_screen",
   "surfaces": [
     "ui_screen"
   ],
-  "validations": [
-    "auth_required"
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
   ],
+  "validations": [
+    "auth_required",
+    "required"
+  ],
+  "variant": "phone_otp",
   "variants": [
     "phone_otp"
   ]

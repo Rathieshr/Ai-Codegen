@@ -459,7 +459,9 @@ def _generate_tasks_with_phi(session: PlannerSession, note: str = "") -> list[Ta
     parsed = _probe_phi_json(
         "You break approved user stories into focused Azure DevOps child tasks. Return strict JSON only.",
         {
-            "task": "Generate implementation, QA, and supporting tasks for this approved story.",
+            "task": "Generate specific, detailed implementation, QA, and supporting tasks for this approved story.",
+            "work_item_type": session.source_work_item_type or "User Story",
+            "requirement": session.requirement,
             "story": {
                 "title": session.title,
                 "description": session.description,
@@ -467,17 +469,23 @@ def _generate_tasks_with_phi(session: PlannerSession, note: str = "") -> list[Ta
             },
             "acceptance_criteria": session.acceptance_criteria,
             "clarification": note,
+            "rules": [
+                "Each task title must reference the specific feature or screen from the story title.",
+                "Each task description must mention concrete implementation details (e.g. API endpoint, screen name, validation rule).",
+                "Do not use generic titles like 'Build UI flow' or 'Implement validation'.",
+                "Generate at least 3 tasks: one for UI/frontend, one for backend/API, one for testing.",
+            ],
             "expected_json_schema": {
                 "tasks": [
                     {
-                        "title": "specific task title",
-                        "description": "specific task description",
+                        "title": "specific task title referencing the feature",
+                        "description": "concrete implementation detail",
                         "estimated_effort": "S|M|L",
                     }
                 ]
             },
         },
-        max_tokens=450,
+        max_tokens=600,
     )
     tasks = _normalize_tasks(parsed.get("tasks"))
     if len(tasks) >= 2:
@@ -486,24 +494,38 @@ def _generate_tasks_with_phi(session: PlannerSession, note: str = "") -> list[Ta
 
 
 def _generate_tasks(session: PlannerSession, note: str = "") -> list[TaskDraft]:
-    subject = _subject_from_intent(session.title)
+    """Deterministic fallback task generator — uses actual story title and description for specificity."""
+    title = session.title or "the feature"
+    description = session.description or session.requirement or title
+    # Pull first acceptance criterion for test task context
+    first_ac = session.acceptance_criteria[0] if session.acceptance_criteria else f"the {title} flow works correctly"
     tasks = [
         TaskDraft(
             id=f"task_{uuid4().hex[:8]}",
-            title=f"Build {subject} UI flow",
-            description=f"Implement the user-facing screen and navigation for {subject.lower()}, including the required inputs and state transitions.",
+            title=f"Implement UI for: {title}",
+            description=(
+                f"Build the user-facing screens and navigation for '{title}'. "
+                f"Cover: {description[:200]}. "
+                f"Include required inputs, state transitions, loading and error states."
+            ),
             estimated_effort="M",
         ),
         TaskDraft(
             id=f"task_{uuid4().hex[:8]}",
-            title=f"Implement {subject} validation and server handling",
-            description=f"Implement the backend or API behavior needed for {subject.lower()}, including validation, expiry, retry rules, and success/failure responses.",
+            title=f"Backend / API integration for: {title}",
+            description=(
+                f"Implement the backend or API layer required for '{title}'. "
+                f"Cover validation, business rules, error responses and data persistence as described: {description[:200]}."
+            ),
             estimated_effort="M",
         ),
         TaskDraft(
             id=f"task_{uuid4().hex[:8]}",
-            title=f"Test {subject} end-to-end",
-            description=f"Verify happy path, validation failures, expiry behavior, retry limits, and regression coverage for {subject.lower()}.",
+            title=f"Test end-to-end: {title}",
+            description=(
+                f"Write and run tests covering happy path, edge cases, and failure scenarios for '{title}'. "
+                f"Verify: {first_ac}"
+            ),
             estimated_effort="S",
         ),
     ]
@@ -511,8 +533,8 @@ def _generate_tasks(session: PlannerSession, note: str = "") -> list[TaskDraft]:
         tasks.append(
             TaskDraft(
                 id=f"task_{uuid4().hex[:8]}",
-                title=f"Apply clarified {subject} behavior",
-                description=f"Ensure the implementation covers this clarified detail: {note.strip()}",
+                title=f"Clarification task: {title}",
+                description=f"Ensure the implementation covers this clarified requirement: {note.strip()}",
                 estimated_effort="S",
             )
         )

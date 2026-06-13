@@ -81,6 +81,9 @@ function StoryPlannerTab() {
   }, []);
 
   const currentStage = view.session?.current_stage;
+  const workItemTypeLower = String(view.workItem?.type || '').trim().toLowerCase();
+  // Epics and Bugs must use the Work Item Pipeline tab (epic_planning / bug_fix templates)
+  const isUnsupportedType = ['epic', 'bug'].some((t) => workItemTypeLower.includes(t));
   const seedWarning = useMemo(() => {
     if (!view.workItem || view.session) {
       return '';
@@ -395,7 +398,23 @@ function StoryPlannerTab() {
       {view.loading ? <div className="planner-subtle">{view.loadingMessage}</div> : null}
       {copyMessage ? <div className="planner-subtle">{copyMessage}</div> : null}
 
-      {!view.session ? (
+      {isUnsupportedType && !view.loading ? (
+        <section className="planner-card">
+          <div className="planner-label" style={{ color: '#c0392b' }}>
+            ⚠ {String(view.workItem?.type || 'This work item type')} is not supported in AI Story Planner
+          </div>
+          <p>
+            <strong>{String(view.workItem?.type || 'This work item type')}s</strong> use a dedicated AI pipeline with
+            specialised stages. Please use the <strong>AI Pipeline</strong> tab (or the main Work Item tab) to generate
+            and review the {workItemTypeLower === 'epic' ? 'Epic Analysis → Feature Generation → Story Generation → Review' : 'Bug Analysis → Impact Analysis → Fix Packet → Regression Tests'} workflow.
+          </p>
+          <p style={{ fontSize: '0.85em', color: '#666' }}>
+            The AI Story Planner is designed for User Stories and Features only.
+          </p>
+        </section>
+      ) : null}
+
+      {!isUnsupportedType && !view.session ? (
       <section className="planner-card">
           {seedWarning ? <div className="planner-subtle">{seedWarning}</div> : null}
           <div className="planner-label">Requirement</div>
@@ -409,7 +428,7 @@ function StoryPlannerTab() {
             <button className="planner-button" onClick={start} disabled={!requirement.trim() || view.loading}>Start Planning</button>
           </div>
         </section>
-      ) : (
+      ) : view.session ? (
         <section className="planner-card">
           <div className="planner-label">Current Question</div>
           <div>{view.session.question}</div>
@@ -441,7 +460,7 @@ function StoryPlannerTab() {
             </>
           ) : null}
         </section>
-      )}
+      ) : null}
     </main>
   );
 
@@ -501,23 +520,22 @@ function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {
     return '';
   }
   const parts: string[] = [];
+  const type = cleanText(workItem.type);
   const title = cleanText(workItem.title);
   const description = htmlToText(workItem.description);
   const acceptance = htmlToText(workItem.acceptanceCriteria);
   const comments = (workItem.comments || []).map(htmlToText).map(cleanText).filter(Boolean);
-
-  if (title) {
-    parts.push(`Title: ${title}`);
-  }
-  if (description) {
-    parts.push(`Description: ${description}`);
-  }
-  if (acceptance) {
-    parts.push(`Acceptance Criteria: ${acceptance}`);
-  }
-  if (comments.length) {
-    parts.push(`Discussion Notes: ${comments.join(' ')}`);
-  }
+  const tags: string[] = Array.isArray((workItem as Record<string, unknown>).tags)
+    ? ((workItem as Record<string, unknown>).tags as string[]).map(cleanText).filter(Boolean)
+    : typeof (workItem as Record<string, unknown>).tags === 'string'
+      ? String((workItem as Record<string, unknown>).tags).split(/[;,]/).map(cleanText).filter(Boolean)
+      : [];
+  if (type) parts.push(`Work Item Type: ${type}`);
+  if (title) parts.push(`Title: ${title}`);
+  if (tags.length) parts.push(`Tags / Platforms: ${tags.join(', ')}`);
+  if (description) parts.push(`Description: ${description}`);
+  if (acceptance) parts.push(`Acceptance Criteria: ${acceptance}`);
+  if (comments.length) parts.push(`Discussion Notes: ${comments.join(' ')}`);
   return parts.join('\n\n');
 }
 

@@ -296,6 +296,20 @@ function StoryPlannerTab() {
     }
     return (
       <div className="planner-status-grid">
+        {preview.preview.mode === 'epic' ? (
+          <div className="planner-task">
+            <div className="planner-label">Parent Epic</div>
+            <strong>{view.workItem?.title || `#${preview.preview.parent_work_item_id || view.workItem?.id}`}</strong>
+            <div className="planner-subtle">Features will be created under this Epic. User Stories will be linked under their Feature.</div>
+          </div>
+        ) : null}
+        {(preview.preview.features || []).map((feature) => (
+          <div key={feature.id} className="planner-task">
+            <div className="planner-label">Proposed Feature</div>
+            <strong>{feature.title}</strong>
+            <div>{feature.description}</div>
+          </div>
+        ))}
         {preview.preview.story ? (
           <div className="planner-task">
             <div className="planner-label">User Story</div>
@@ -305,16 +319,16 @@ function StoryPlannerTab() {
               {preview.preview.story.acceptance_criteria.map((item) => <li key={item}>{item}</li>)}
             </ul>
           </div>
-        ) : (
+        ) : preview.preview.mode !== 'epic' ? (
           <div className="planner-task">
             <div className="planner-label">Parent User Story</div>
             <strong>{view.workItem?.title || `#${preview.preview.parent_work_item_id || view.workItem?.id}`}</strong>
             <div className="planner-subtle">No duplicate User Story will be created. Tasks will be linked under this work item.</div>
           </div>
-        )}
+        ) : null}
         {preview.preview.tasks.map((task) => (
           <div key={task.id} className="planner-task">
-            <div className="planner-label">Proposed Task</div>
+            <div className="planner-label">{task.type === 'User Story' ? 'Proposed User Story' : 'Proposed Task'}</div>
             <strong>{task.title}</strong>
             <div>{task.description}</div>
             <div className="planner-subtle">Estimated effort: {task.estimated_effort || 'Not set'}</div>

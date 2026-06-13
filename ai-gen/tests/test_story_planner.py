@@ -142,6 +142,7 @@ class StoryPlannerServiceTests(unittest.TestCase):
         session = self.service.approve_stage(session["session_id"], "refined_story")
         features = session["acceptance_criteria"]
         self.assertGreaterEqual(len(features), 4)
+        self.assertFalse(any(feature.startswith("Core ") for feature in features))
 
         session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
 
@@ -149,6 +150,26 @@ class StoryPlannerServiceTests(unittest.TestCase):
         self.assertIn(features[0], session["tasks"][0]["title"])
         self.assertIn("As a", session["tasks"][0]["description"])
         self.assertNotIn("Backend / API integration", session["tasks"][0]["title"])
+
+    def test_epic_creation_preview_contains_features_and_user_stories(self) -> None:
+        session = self.service.start_session(
+            "Launch iOS and Android mobile e-commerce applications",
+            work_item_id=25,
+            work_item_type="Epic",
+        )
+        session = self.service.approve_stage(session["session_id"], "refined_story")
+        session = self.service.approve_stage(session["session_id"], "acceptance_criteria")
+        session = self.service.approve_stage(session["session_id"], "tasks")
+
+        preview = self.service.get_creation_preview(session["session_id"])["preview"]
+
+        self.assertEqual(preview["mode"], "epic")
+        self.assertIsNone(preview["story"])
+        self.assertGreaterEqual(len(preview["features"]), 4)
+        self.assertTrue(all(feature["type"] == "Feature" for feature in preview["features"]))
+        self.assertGreaterEqual(len(preview["tasks"]), 8)
+        self.assertTrue(all(story["type"] == "User Story" for story in preview["tasks"]))
+        self.assertTrue(all(story.get("parent_feature_id") for story in preview["tasks"]))
 
     def test_epic_regeneration_preserves_epic_prompting(self) -> None:
         session = self.service.start_session("Launch mobile apps", work_item_type="Epic")

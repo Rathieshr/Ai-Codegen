@@ -81,6 +81,13 @@ export type CreationPreview = {
     mode?: 'epic' | 'feature' | 'user_story' | 'story';
     parent_work_item_id?: number | null;
     parent_work_item_type?: string;
+    features?: Array<{
+      id: string;
+      type: string;
+      title: string;
+      description: string;
+      fields: Record<string, string | null>;
+    }>;
     story: {
       type: string;
       title: string;
@@ -95,6 +102,7 @@ export type CreationPreview = {
       title: string;
       description: string;
       estimated_effort?: string;
+      parent_feature_id?: string;
       fields: Record<string, string | null>;
     }>;
   };

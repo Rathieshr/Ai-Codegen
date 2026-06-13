@@ -520,15 +520,7 @@ def _generate_epic_features_with_phi(session: PlannerSession, note: str = "") ->
     features = parsed.get("features")
     if isinstance(features, list) and len(features) >= 2:
         return [_clean_text(str(f)) for f in features if f]
-    # deterministic fallback
-    title = session.title or "the Epic"
-    return [
-        f"Core {title} — Foundation & Setup",
-        f"Core {title} — User Flows & Interactions",
-        f"Core {title} — Backend & Data Integration",
-        f"Core {title} — Notifications & Reporting",
-        f"Core {title} — QA, Testing & Release",
-    ]
+    return _generate_epic_features(session)
 
 
 def _generate_feature_stories_with_phi(session: PlannerSession, note: str = "") -> list[str]:
@@ -639,23 +631,24 @@ def _generate_story_breakdown(session: PlannerSession, note: str = "") -> list[T
     stories: list[TaskDraft] = []
     for feature in features:
         actor = _actor_for_feature(feature)
+        capability = feature[0].lower() + feature[1:] if feature else "this capability"
         stories.extend(
             [
                 TaskDraft(
                     id=f"story_{uuid4().hex[:8]}",
-                    title=f"{feature}: discover and start the journey",
+                    title=f"{feature}: start the primary journey",
                     description=(
-                        f"As a {actor}, I want to discover and start {feature.lower()} from the product experience "
-                        f"so I can understand the available capability and begin the right workflow."
+                        f"As a {actor}, I want a clear way to start {capability} "
+                        f"so I can complete the first meaningful step without support or rework."
                     ),
                     estimated_effort="M",
                 ),
                 TaskDraft(
                     id=f"story_{uuid4().hex[:8]}",
-                    title=f"{feature}: complete and validate the outcome",
+                    title=f"{feature}: complete and confirm the outcome",
                     description=(
-                        f"As a {actor}, I want to complete {feature.lower()} with validation, confirmation, and error handling "
-                        f"so I can trust the outcome before release."
+                        f"As a {actor}, I want validation, confirmation, and recovery paths for {capability} "
+                        f"so I can trust that the outcome is complete and visible."
                     ),
                     estimated_effort="M",
                 ),
@@ -671,6 +664,43 @@ def _generate_story_breakdown(session: PlannerSession, note: str = "") -> list[T
             )
         )
     return stories
+
+
+def _generate_epic_features(session: PlannerSession) -> list[str]:
+    title = session.title or _human_requirement_text(session.requirement) or "Epic"
+    text = " ".join([title, session.description, session.business_value, session.requirement]).lower()
+    if any(word in text for word in ["mobile", "ios", "android", "app"]):
+        seeds = [
+            "Mobile onboarding and account access",
+            "Product discovery and browsing experience",
+            "Cart, checkout, and payment journey",
+            "Order tracking and customer notifications",
+            "Release readiness and operational visibility",
+        ]
+    elif any(word in text for word in ["hotel", "booking", "reservation", "whatsapp"]):
+        seeds = [
+            "Guest conversation and booking intake",
+            "Room availability and rate selection",
+            "Reservation confirmation and payment collection",
+            "Booking changes, cancellation, and support",
+            "Hotel operations dashboard and notifications",
+        ]
+    elif any(word in text for word in ["auth", "login", "identity", "otp", "security"]):
+        seeds = [
+            "Secure sign-in and identity verification",
+            "Account recovery and session management",
+            "Risk controls and access policy enforcement",
+            "Audit visibility and support operations",
+        ]
+    else:
+        subject = _subject_from_intent(title)
+        seeds = [
+            f"{subject} customer experience",
+            f"{subject} workflow orchestration",
+            f"{subject} data and integration readiness",
+            f"{subject} operational visibility",
+        ]
+    return _dedupe_text(seeds)
 
 
 def _actor_for_feature(feature: str) -> str:

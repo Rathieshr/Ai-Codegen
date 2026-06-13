@@ -116,6 +116,80 @@ export async function createAzureDevOpsItems(
 
   try {
     let storyId = Number(preview.preview.parent_work_item_id || 0);
+    if (preview.preview.mode === 'epic') {
+      const epicId = storyId || workItem.id;
+      if (!epicId) {
+        throw new Error('Current Azure DevOps Epic id is unavailable, so Features and User Stories cannot be linked.');
+      }
+      storyResult.azure_work_item_id = epicId;
+      storyResult.status = 'created';
+      const featureIdByDraft = new Map<string, number>();
+      for (const feature of preview.preview.features || []) {
+        try {
+          onProgress(`Creating Feature: ${feature.title}`);
+          const createdFeatureId = await createWorkItemViaRest(
+            collectionUri,
+            workItem.project,
+            accessToken,
+            feature.type,
+            feature.fields,
+            epicId,
+            `Timed out while creating Azure DevOps Feature: ${feature.title}`
+          );
+          featureIdByDraft.set(feature.id, createdFeatureId);
+          taskResults.push({
+            id: feature.id,
+            title: feature.title,
+            azure_work_item_id: createdFeatureId,
+            status: 'created',
+          });
+          onProgress(`Created Feature #${createdFeatureId}: ${feature.title}`);
+        } catch (error) {
+          onProgress(`Feature failed: ${feature.title} - ${error instanceof Error ? error.message : String(error)}`);
+          taskResults.push({
+            id: feature.id,
+            title: feature.title,
+            azure_work_item_id: null,
+            status: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      for (const story of preview.preview.tasks) {
+        try {
+          const parentFeatureId = story.parent_feature_id ? featureIdByDraft.get(story.parent_feature_id) : undefined;
+          const parentId = parentFeatureId || epicId;
+          onProgress(`Creating User Story: ${story.title}`);
+          const createdStoryId = await createWorkItemViaRest(
+            collectionUri,
+            workItem.project,
+            accessToken,
+            story.type,
+            story.fields,
+            parentId,
+            `Timed out while creating Azure DevOps User Story: ${story.title}`
+          );
+          taskResults.push({
+            id: story.id,
+            title: story.title,
+            azure_work_item_id: createdStoryId,
+            status: 'created',
+          });
+          onProgress(`Created User Story #${createdStoryId}: ${story.title}`);
+        } catch (error) {
+          onProgress(`User Story failed: ${story.title} - ${error instanceof Error ? error.message : String(error)}`);
+          taskResults.push({
+            id: story.id,
+            title: story.title,
+            azure_work_item_id: null,
+            status: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      return { story: storyResult, tasks: taskResults };
+    }
+
     if (preview.preview.story) {
       onProgress(`Creating User Story: ${preview.preview.story.title}`);
       storyId = await createWorkItemViaRest(

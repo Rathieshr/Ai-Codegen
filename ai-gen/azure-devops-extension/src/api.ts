@@ -424,6 +424,19 @@ export async function runEpicPlan(
   });
 }
 
+export async function runFeaturePlan(
+  pipelineId: string,
+  aiGenComments: AzureComment[] = [],
+  teamComments: Array<{ body: string; author?: string; created_at?: string }> = [],
+): Promise<PipelineState> {
+  return postJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}/run-feature-plan`, {
+    stage: 'feature_analysis',
+    regenerate: false,
+    ai_gen_comments: aiGenComments,
+    team_comments: teamComments,
+  });
+}
+
 export async function loadPipeline(pipelineId: string): Promise<PipelineState> {
   return getJson<PipelineState>(`${PIPELINE_BASE_URL}/${encodeURIComponent(pipelineId)}`);
 }

@@ -34,6 +34,7 @@ import {
   QuestionAnswerPair,
   refreshPipelineState,
   runEpicPlan,
+  runFeaturePlan,
   saveGeneratedState,
   skipPipelineStage,
   storeWorkItemCreationResult,
@@ -433,9 +434,13 @@ function WorkItemTab() {
       // F: load all comments for team_comments context
       const allComments = await loadAllComments(state.data!.workItem.id).catch(() => []);
       let pipeline = await createPipeline(state.data!.workItem, state.data!.response, commentLoad.comments, allComments);
-      if (String(pipeline.workflow_template || '') === 'epic_planning') {
+      const template = String(pipeline.workflow_template || '');
+      if (template === 'epic_planning') {
         setState((current) => ({ ...current, loadingMessage: 'Generating Epic Plan...' }));
         pipeline = await runEpicPlan(pipeline.pipeline_id, commentLoad.comments, allComments);
+      } else if (template === 'feature_planning') {
+        setState((current) => ({ ...current, loadingMessage: 'Generating Feature Plan...' }));
+        pipeline = await runFeaturePlan(pipeline.pipeline_id, commentLoad.comments, allComments);
       }
       return refreshPipelineState(
         state.data!.workItem,
@@ -454,17 +459,20 @@ function WorkItemTab() {
       const commentLoad = await loadAiGenComments(state.data!.workItem.id);
       // F: load all comments for team_comments context
       const allComments = await loadAllComments(state.data!.workItem.id).catch(() => []);
-      const pipeline = String(state.data!.pipeline!.workflow_template || '') === 'epic_planning' && !regenerate
+      const template = String(state.data!.pipeline!.workflow_template || '');
+      const pipeline = template === 'epic_planning' && !regenerate
         ? await runEpicPlan(state.data!.pipeline!.pipeline_id, commentLoad.comments, allComments)
-        : await runPipelineStage(
-          state.data!.pipeline!.pipeline_id,
-          currentStageName,
-          regenerate,
-          undefined,
-          'azure_devops',
-          commentLoad.comments,
-          allComments,
-        );
+        : template === 'feature_planning' && !regenerate
+          ? await runFeaturePlan(state.data!.pipeline!.pipeline_id, commentLoad.comments, allComments)
+          : await runPipelineStage(
+            state.data!.pipeline!.pipeline_id,
+            currentStageName,
+            regenerate,
+            undefined,
+            'azure_devops',
+            commentLoad.comments,
+            allComments,
+          );
       return refreshPipelineState(
         state.data!.workItem,
         { ...state.data!, pipeline, commentWarning: commentLoad.warning },

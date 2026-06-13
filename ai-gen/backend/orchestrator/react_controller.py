@@ -266,6 +266,78 @@ class PipelineController:
         )
         self._touch_pipeline(state)
         self.save_pipeline(state)
+        _audit("epic_plan_completed", pipeline_id=pipeline_id,
+               details={"errors": errors, "current_stage": state.current_stage,
+                        "draft_count": len(flatten_drafts(state.draft_work_items))})
+        return self._serialize_pipeline(state)
+
+    def run_feature_plan(self, pipeline_id: str, ai_gen_comments: list[dict] | None = None, team_comments: list[dict] | None = None) -> dict:
+        """Run all Feature Planning stages automatically (feature_analysis → story_generation → review)."""
+        state = self.load_pipeline(pipeline_id)
+        if state.workflow_template != "feature_planning":
+            raise ValueError("run_feature_plan is only supported for feature_planning workflows.")
+        self._log_stage_transition(state, "feature_plan", "workflow_requested", workflow_template=state.workflow_template)
+        if ai_gen_comments is not None:
+            state.ai_gen_comments = ai_gen_comments
+        if team_comments is not None:
+            state.team_comments = team_comments
+        errors: list[str] = []
+        for stage in ["feature_analysis", "story_generation", "review"]:
+            try:
+                stage_state = state.stages.get(stage)
+                if not stage_state:
+                    continue
+                self._log_stage_transition(state, stage, "workflow_stage_start",
+                                           status=stage_state.status, has_output=bool(stage_state.output), approved=stage_state.approved)
+                if not stage_state.output:
+                    output = self._run_stage_output(state, stage, effective_context=self._rebuild_effective_context(state))
+                    critic = self._run_critic_for_stage(stage, output, state)
+                    unresolved, resolved = self._split_findings(stage_state, critic)
+                    stage_state.output = output
+                    stage_state.critic = critic
+                    stage_state.status = self._stage_status_after_run(state, stage, output, critic)
+                    stage_state.version = stage_state.version + 1 if stage_state.version else 1
+                    stage_state.unresolved_findings = unresolved
+                    stage_state.resolved_findings = resolved
+                    handoff = build_handoff(
+                        pipeline_state=state, stage=stage, stage_output=output,
+                        refinement=state.refinement, repo_context=state.repo_context, status="draft",
+                    )
+                    save_handoff(handoff)
+                    stage_state.handoff_id = handoff["handoff_id"]
+                    self._sync_stage_drafts(state, stage, output)
+                    state.activity.append({"type": "stage_generated", "timestamp": utc_now(), "stage": stage, "version": stage_state.version})
+                if stage != "review":
+                    stage_state = state.stages[stage]
+                    stage_state.approved = True
+                    stage_state.approved_at = utc_now()
+                    stage_state.approved_by = "system_feature_orchestrator"
+                    stage_state.status = "approved"
+                    if stage_state.handoff_id:
+                        handoff = build_handoff(
+                            pipeline_state=state, stage=stage, stage_output=stage_state.output,
+                            refinement=state.refinement, repo_context=state.repo_context, status="approved",
+                        )
+                        save_handoff(handoff)
+                        stage_state.handoff_id = handoff["handoff_id"]
+                    state.activity.append({"type": "stage_approved", "timestamp": utc_now(), "stage": stage, "approved_by": "system_feature_orchestrator"})
+                    self._unlock_after_epic_internal_stage(state, stage)
+            except Exception as error:
+                errors.append(f"{stage}: {error}")
+                self._log_stage_transition(state, stage, "workflow_stage_failed", error=type(error).__name__, message=str(error))
+                break
+        if errors:
+            state.pipeline_context = {
+                **state.pipeline_context,
+                "warnings": list(dict.fromkeys([*list(state.pipeline_context.get("warnings", [])), *errors])),
+            }
+            state.activity.append({"type": "feature_plan_partial", "timestamp": utc_now(), "errors": errors})
+        state.current_stage = "review" if state.stages.get("review", StageState("review")).output else self._active_stage_name(state)
+        self._touch_pipeline(state)
+        self.save_pipeline(state)
+        _audit("feature_plan_completed", pipeline_id=pipeline_id,
+               details={"errors": errors, "current_stage": state.current_stage,
+                        "draft_count": len(flatten_drafts(state.draft_work_items))})
         return self._serialize_pipeline(state)
 
     def approve_stage(self, pipeline_id: str, stage: str, approved_by: str | None = None) -> dict:

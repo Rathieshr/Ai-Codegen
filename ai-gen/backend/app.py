@@ -1121,6 +1121,16 @@ def run_pipeline_epic_plan(pipeline_id: str, request: PipelineStageRequest) -> d
     )
 
 
+@app.post("/assist/pipeline/{pipeline_id}/run-feature-plan")
+def run_pipeline_feature_plan(pipeline_id: str, request: PipelineStageRequest) -> dict:
+    """Run the full Feature Planning flow in one user action (feature_analysis → story_generation → review)."""
+    return pipeline_controller.run_feature_plan(
+        pipeline_id,
+        ai_gen_comments=request.ai_gen_comments,
+        team_comments=request.team_comments if request.team_comments else None,
+    )
+
+
 @app.post("/assist/pipeline/{pipeline_id}/approve-stage")
 def approve_pipeline_stage(pipeline_id: str, request: PipelineApproveRequest) -> dict:
     """Approve a generated stage and unlock the next one."""

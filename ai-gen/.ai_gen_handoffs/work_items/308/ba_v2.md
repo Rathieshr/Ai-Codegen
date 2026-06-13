@@ -93,18 +93,18 @@ Phone OTP login. Focus first on phone number input, otp verification step Review
   "variants": [
     "phone_otp"
   ],
+  "first_pass_scope": [
+    "phone number input",
+    "otp verification step"
+  ],
+  "states": [],
   "unknowns": [
     "Clarify OTP retry and expiry policy."
   ],
-  "states": [],
   "actors": [
     "end_user"
   ],
   "scope_hints": [
-    "phone number input",
-    "otp verification step"
-  ],
-  "first_pass_scope": [
     "phone number input",
     "otp verification step"
   ],

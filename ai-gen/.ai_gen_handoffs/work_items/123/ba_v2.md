@@ -91,16 +91,16 @@ Ai Gen Extension Test. Focus first on phone number input, otp verification step 
   "variants": [
     "phone_otp"
   ],
-  "unknowns": [
-    "Clarify OTP retry and expiry policy."
-  ],
-  "states": [],
-  "actors": [],
-  "scope_hints": [
+  "first_pass_scope": [
     "phone number input",
     "otp verification step"
   ],
-  "first_pass_scope": [
+  "states": [],
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
+  ],
+  "actors": [],
+  "scope_hints": [
     "phone number input",
     "otp verification step"
   ],

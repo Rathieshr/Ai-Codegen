@@ -1217,7 +1217,7 @@
     "summary": "Review the proposed work items before creating them in Azure DevOps.",
     "unknowns": []
   },
-  "created_at": "2026-06-13T06:45:04.313898+00:00",
+  "created_at": "2026-06-13T07:05:43.170547+00:00",
   "handoff_id": "handoff_303_review_v1",
   "handoff_type": "requirement_handoff",
   "next_actions": [
@@ -1225,7 +1225,7 @@
     "Approve before moving to the next workflow stage."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_01c620940e9c",
+  "pipeline_id": "pipeline_ce22bdbd48a1",
   "refinement": {},
   "repo_context": {},
   "source_stage": "review",

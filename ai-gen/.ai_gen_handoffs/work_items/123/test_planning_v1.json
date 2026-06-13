@@ -89,7 +89,7 @@
     ],
     "unknowns": []
   },
-  "created_at": "2026-06-13T06:45:04.000662+00:00",
+  "created_at": "2026-06-13T07:05:42.845880+00:00",
   "handoff_id": "handoff_123_test_planning_v1",
   "handoff_type": "test_handoff",
   "next_actions": [
@@ -97,7 +97,7 @@
     "Approve before downstream QA or validation work."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_427d125a8db7",
+  "pipeline_id": "pipeline_5790c1ff556e",
   "refinement": {
     "actors": [],
     "base_flow": "otp_verification",

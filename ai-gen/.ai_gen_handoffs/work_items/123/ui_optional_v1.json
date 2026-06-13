@@ -77,7 +77,7 @@
       "Make the phone input and verification step easy to understand before submission."
     ]
   },
-  "created_at": "2026-06-13T06:45:03.969787+00:00",
+  "created_at": "2026-06-13T07:05:42.814717+00:00",
   "handoff_id": "handoff_123_ui_optional_v1",
   "handoff_type": "ui_handoff",
   "next_actions": [
@@ -85,7 +85,7 @@
     "Approve or skip the UI stage before task planning."
   ],
   "open_questions": [],
-  "pipeline_id": "pipeline_427d125a8db7",
+  "pipeline_id": "pipeline_5790c1ff556e",
   "refinement": {
     "actors": [],
     "base_flow": "otp_verification",

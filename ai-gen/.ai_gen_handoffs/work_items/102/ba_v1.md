@@ -82,29 +82,29 @@ Retry max is 3..
   "variants": [
     "phone_otp"
   ],
-  "unknowns": [
-    "Clarify OTP retry and expiry policy."
-  ],
   "surfaces": [
     "authentication"
-  ],
-  "states": [],
-  "actors": [],
-  "scope_hints": [
-    "phone number input",
-    "otp verification step"
   ],
   "first_pass_scope": [
     "phone number input",
     "otp verification step"
   ],
+  "states": [],
   "fields": [
     "phone_number",
     "otp"
   ],
+  "unknowns": [
+    "Clarify OTP retry and expiry policy."
+  ],
   "validations": [
     "required",
     "auth_required"
+  ],
+  "actors": [],
+  "scope_hints": [
+    "phone number input",
+    "otp verification step"
   ],
   "base_flow": "login",
   "variant": "phone_otp",

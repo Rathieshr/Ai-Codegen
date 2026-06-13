@@ -372,12 +372,15 @@ function WorkItemTab() {
     if (!bugSuggestion || !state.data?.workItem) return;
     setBugCreateStatus('loading');
     try {
-      const workItemService = await SDK.getService<IWorkItemFormService>(WorkItemTrackingServiceIds.WorkItemFormService);
-      const context = SDK.getWebContext();
+      const pageContext = SDK.getPageContext() as unknown as {
+        webContext: { collection?: { uri?: string }; project?: { name?: string } };
+      };
+      const collectionUri = pageContext.webContext.collection?.uri || `${window.location.origin}/`;
+      const projectName = pageContext.webContext.project?.name || '';
       const token = await SDK.getAccessToken();
       const id = await createBugWorkItem(
-        context.collection.uri,
-        context.project.name,
+        collectionUri,
+        projectName,
         token,
         bugSuggestion.bug_draft,
         typeof state.data.workItem.id === 'number' ? state.data.workItem.id : undefined

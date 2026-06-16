@@ -6,6 +6,7 @@ import './storyPlanner.css';
 const BASE_URL = 'https://ai-codegen-production.up.railway.app/project-intelligence';
 
 type ProjectProfile = {
+  onboarding_completed?: boolean;
   project_description: string;
   applications: string[];
   technology_stack: string[];
@@ -32,6 +33,7 @@ type PromptResult = {
 };
 
 const EMPTY_PROFILE: ProjectProfile = {
+  onboarding_completed: false,
   project_description: '',
   applications: [],
   technology_stack: [],
@@ -57,6 +59,7 @@ function ProjectIntelligenceTab() {
   const [storyDescription, setStoryDescription] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [prompts, setPrompts] = useState<PromptResult | undefined>();
+  const [editingProfile, setEditingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('Loading Project Intelligence...');
   const [error, setError] = useState('');
@@ -68,6 +71,7 @@ function ProjectIntelligenceTab() {
       try {
         const loaded = await getProfile();
         setProfile(loaded);
+        setEditingProfile(!isProfileComplete(loaded));
         setError('');
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load project profile.');
@@ -112,6 +116,7 @@ function ProjectIntelligenceTab() {
     const saved = await withLoading('Saving project profile...', () => postJson<ProjectProfile>('/profile', { profile }));
     if (saved) {
       setProfile(saved);
+      setEditingProfile(false);
     }
   }
 
@@ -134,24 +139,132 @@ function ProjectIntelligenceTab() {
       <header className="planner-header">
         <div>
           <div className="planner-title">Project Intelligence Preview</div>
-          <div className="planner-subtitle">Capture project context for project-aware planning and story execution prompts.</div>
+          <div className="planner-subtitle">
+            {editingProfile
+              ? 'Set up project context once, then use it quietly inside planning and execution prompts.'
+              : 'Project context is ready for project-aware planning and story execution prompts.'}
+          </div>
         </div>
-        <button className="planner-button secondary" onClick={() => void saveProfile()} disabled={loading}>Save Profile</button>
+        {editingProfile ? (
+          <button className="planner-button secondary" onClick={() => void saveProfile()} disabled={loading || !profile.project_description.trim()}>
+            Finish Setup
+          </button>
+        ) : (
+          <button className="planner-button secondary" onClick={() => setEditingProfile(true)} disabled={loading}>
+            Edit Project Profile
+          </button>
+        )}
       </header>
 
       {loading ? <div className="planner-banner">{message || 'Working...'}</div> : null}
       {error ? <div className="planner-error">{error}</div> : null}
+
+      {editingProfile ? (
+        <OnboardingForm
+          profile={profile}
+          loading={loading}
+          onProfileChange={setProfile}
+          onAnalyze={() => void analyzeDescription()}
+          onSave={() => void saveProfile()}
+          updateProfileList={updateProfileList}
+          updateUiGuideline={updateUiGuideline}
+          updateUiGuidelineList={updateUiGuidelineList}
+        />
+      ) : (
+        <section className="planner-card">
+          <div className="planner-label">Project Profile</div>
+          <div className="planner-status-grid">
+            <Row label="Description" value={profile.project_description || 'Not captured yet'} />
+            <Row label="Applications" value={profile.applications.join(', ') || 'Not captured yet'} />
+            <Row label="Technology Stack" value={profile.technology_stack.join(', ') || 'Not captured yet'} />
+            <Row label="UI Guidelines" value={summarizeUiGuidelines(profile)} />
+          </div>
+        </section>
+      )}
+
+      <section className="planner-card">
+        <div className="planner-label">Knowledge Profile Preview</div>
+        <div className="planner-status-grid">
+          <Row label="Domain" value={profile.knowledge_profile_preview.domain || 'Not analyzed yet'} />
+          <Row label="Systems" value={profile.knowledge_profile_preview.systems.join(', ') || 'Not captured yet'} />
+          <Row label="Standards" value={profile.knowledge_profile_preview.standards.join(', ') || 'Not captured yet'} />
+          <Row label="Repository" value={profile.knowledge_profile_preview.repository_status} />
+        </div>
+      </section>
+
+      <section className="planner-card">
+        <div className="planner-label">Story Prompt Generation</div>
+        <div className="planner-subtle">Uses the saved project profile. Edit the profile only when project context changes.</div>
+        <input className="planner-input" value={storyTitle} onChange={(event) => setStoryTitle(event.target.value)} placeholder="Story title" />
+        <textarea className="planner-textarea compact" value={storyDescription} onChange={(event) => setStoryDescription(event.target.value)} placeholder="Story description" />
+        <textarea className="planner-textarea compact" value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} placeholder="Acceptance criteria, one per line" />
+        <div className="planner-actions">
+          <button className="planner-button" onClick={() => void generatePrompts()} disabled={loading}>Generate Story Prompts</button>
+        </div>
+        {prompts ? (
+          <div className="planner-status-grid">
+            <PromptBlock title="UI Prompt" value={prompts.ui_prompt} />
+            <PromptBlock title="Dev Prompt" value={prompts.dev_prompt} />
+            <PromptBlock title="QA Prompt" value={prompts.qa_prompt} />
+          </div>
+        ) : null}
+      </section>
+    </main>
+  );
+
+  function updateProfileList(field: 'applications' | 'technology_stack' | 'repository_sources', value: string) {
+    setProfile({ ...profile, [field]: splitLines(value) });
+  }
+
+  function updateUiGuideline(field: 'primary_color' | 'secondary_color' | 'typography' | 'component_library', value: string) {
+    setProfile({ ...profile, ui_guidelines: { ...profile.ui_guidelines, [field]: value } });
+  }
+
+  function updateUiGuidelineList(field: 'accessibility_rules', value: string) {
+    setProfile({ ...profile, ui_guidelines: { ...profile.ui_guidelines, [field]: splitLines(value) } });
+  }
+}
+
+type OnboardingFormProps = {
+  profile: ProjectProfile;
+  loading: boolean;
+  onProfileChange: (profile: ProjectProfile) => void;
+  onAnalyze: () => void;
+  onSave: () => void;
+  updateProfileList: (field: 'applications' | 'technology_stack' | 'repository_sources', value: string) => void;
+  updateUiGuideline: (field: 'primary_color' | 'secondary_color' | 'typography' | 'component_library', value: string) => void;
+  updateUiGuidelineList: (field: 'accessibility_rules', value: string) => void;
+};
+
+function OnboardingForm({
+  profile,
+  loading,
+  onProfileChange,
+  onAnalyze,
+  onSave,
+  updateProfileList,
+  updateUiGuideline,
+  updateUiGuidelineList,
+}: OnboardingFormProps) {
+  return (
+    <>
+      <section className="planner-card">
+        <div>
+          <div className="planner-label">Project Intelligence Onboarding</div>
+          <div className="planner-subtle">This setup appears for a new project. After you finish, the tab opens directly into the normal Project Intelligence workspace.</div>
+        </div>
+      </section>
 
       <section className="planner-card">
         <div className="planner-label">Project Description</div>
         <textarea
           className="planner-textarea"
           value={profile.project_description}
-          onChange={(event) => setProfile({ ...profile, project_description: event.target.value })}
+          onChange={(event) => onProfileChange({ ...profile, project_description: event.target.value })}
           placeholder="Describe the product, domain, business goals, users, and delivery context."
         />
         <div className="planner-actions">
-          <button className="planner-button" onClick={() => void analyzeDescription()} disabled={loading || !profile.project_description.trim()}>
+          <button className="planner-button" onClick={onAnalyze} disabled={loading || !profile.project_description.trim()}>
             Analyze Description
           </button>
         </div>
@@ -205,45 +318,14 @@ function ProjectIntelligenceTab() {
       </section>
 
       <section className="planner-card">
-        <div className="planner-label">Knowledge Profile Preview</div>
-        <div className="planner-status-grid">
-          <Row label="Domain" value={profile.knowledge_profile_preview.domain || 'Not analyzed yet'} />
-          <Row label="Systems" value={profile.knowledge_profile_preview.systems.join(', ') || 'Not captured yet'} />
-          <Row label="Standards" value={profile.knowledge_profile_preview.standards.join(', ') || 'Not captured yet'} />
-          <Row label="Repository" value={profile.knowledge_profile_preview.repository_status} />
-        </div>
-      </section>
-
-      <section className="planner-card">
-        <div className="planner-label">Story Prompt Generation</div>
-        <input className="planner-input" value={storyTitle} onChange={(event) => setStoryTitle(event.target.value)} placeholder="Story title" />
-        <textarea className="planner-textarea compact" value={storyDescription} onChange={(event) => setStoryDescription(event.target.value)} placeholder="Story description" />
-        <textarea className="planner-textarea compact" value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} placeholder="Acceptance criteria, one per line" />
         <div className="planner-actions">
-          <button className="planner-button" onClick={() => void generatePrompts()} disabled={loading}>Generate Story Prompts</button>
+          <button className="planner-button" onClick={onSave} disabled={loading || !profile.project_description.trim()}>
+            Finish Setup
+          </button>
         </div>
-        {prompts ? (
-          <div className="planner-status-grid">
-            <PromptBlock title="UI Prompt" value={prompts.ui_prompt} />
-            <PromptBlock title="Dev Prompt" value={prompts.dev_prompt} />
-            <PromptBlock title="QA Prompt" value={prompts.qa_prompt} />
-          </div>
-        ) : null}
       </section>
-    </main>
+    </>
   );
-
-  function updateProfileList(field: 'applications' | 'technology_stack' | 'repository_sources', value: string) {
-    setProfile({ ...profile, [field]: splitLines(value) });
-  }
-
-  function updateUiGuideline(field: 'primary_color' | 'secondary_color' | 'typography' | 'component_library', value: string) {
-    setProfile({ ...profile, ui_guidelines: { ...profile.ui_guidelines, [field]: value } });
-  }
-
-  function updateUiGuidelineList(field: 'accessibility_rules', value: string) {
-    setProfile({ ...profile, ui_guidelines: { ...profile.ui_guidelines, [field]: splitLines(value) } });
-  }
 }
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -286,6 +368,21 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
 
 function splitLines(value: string): string[] {
   return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
+}
+
+function isProfileComplete(profile: ProjectProfile): boolean {
+  return Boolean(profile.onboarding_completed || profile.project_description.trim());
+}
+
+function summarizeUiGuidelines(profile: ProjectProfile): string {
+  const values = [
+    profile.ui_guidelines.primary_color ? `Primary ${profile.ui_guidelines.primary_color}` : '',
+    profile.ui_guidelines.secondary_color ? `Secondary ${profile.ui_guidelines.secondary_color}` : '',
+    profile.ui_guidelines.typography ? profile.ui_guidelines.typography : '',
+    profile.ui_guidelines.component_library ? profile.ui_guidelines.component_library : '',
+    ...profile.ui_guidelines.accessibility_rules,
+  ].filter(Boolean);
+  return values.join(', ') || 'Not captured yet';
 }
 
 const rootNode = document.getElementById('root');

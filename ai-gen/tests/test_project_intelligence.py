@@ -28,6 +28,7 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(loaded["applications"], ["Mobile App", "Backend"])
         self.assertEqual(loaded["ui_guidelines"]["primary_color"], "#0057D8")
         self.assertEqual(loaded["repository_sources"], ["README.md"])
+        self.assertTrue(loaded["onboarding_completed"])
 
     def test_analyze_description_infers_preview_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):

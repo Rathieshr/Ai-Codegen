@@ -9,6 +9,7 @@ from typing import Any
 
 
 DEFAULT_PROFILE: dict[str, Any] = {
+    "onboarding_completed": False,
     "project_description": "",
     "applications": [],
     "technology_stack": [],
@@ -45,6 +46,7 @@ class ProjectIntelligenceService:
 
     def save_profile(self, profile: dict[str, Any]) -> dict[str, Any]:
         normalized = _normalize_profile(profile)
+        normalized["onboarding_completed"] = True
         self._profile_path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
         return normalized
 
@@ -114,6 +116,7 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     ui = profile.get("ui_guidelines") if isinstance(profile.get("ui_guidelines"), dict) else {}
     preview = profile.get("knowledge_profile_preview") if isinstance(profile.get("knowledge_profile_preview"), dict) else {}
     return {
+        "onboarding_completed": bool(profile.get("onboarding_completed")),
         "project_description": _clean_text(profile.get("project_description")),
         "applications": _string_list(profile.get("applications")),
         "technology_stack": _string_list(profile.get("technology_stack")),

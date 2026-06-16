@@ -10,9 +10,24 @@ from typing import Any
 
 DEFAULT_PROFILE: dict[str, Any] = {
     "onboarding_completed": False,
+    "project_name": "",
+    "domain": "",
+    "project_type": "",
     "project_description": "",
     "applications": [],
-    "technology_stack": [],
+    "technology_stack": {
+        "mobile": [],
+        "backend": [],
+        "firmware": [],
+        "analytics": [],
+        "frontend": [],
+    },
+    "development_standards": {
+        "architecture_patterns": [],
+        "coding_guidelines": [],
+        "security_requirements": [],
+        "testing_requirements": [],
+    },
     "ui_guidelines": {
         "primary_color": "",
         "secondary_color": "",
@@ -58,11 +73,21 @@ class ProjectIntelligenceService:
             "project_description": text or base["project_description"],
             "applications": _infer_applications(text) or base["applications"],
             "technology_stack": _infer_stack(text) or base["technology_stack"],
+            "domain": base["domain"] or _infer_domain(text),
+            "project_type": base["project_type"] or _infer_project_type(text),
             "knowledge_profile_preview": {
-                "domain": _infer_domain(text),
-                "systems": _infer_applications(text),
+                "domain": base["domain"] or _infer_domain(text),
+                "systems": [app["name"] for app in (_infer_applications(text) or base["applications"])],
                 "standards": _infer_standards(text),
                 "repository_status": "Repository README scan coming next.",
+                "readiness": _readiness(
+                    {
+                        **base,
+                        "project_description": text or base["project_description"],
+                        "applications": _infer_applications(text) or base["applications"],
+                        "technology_stack": _infer_stack(text) or base["technology_stack"],
+                    }
+                ),
             },
         }
         return _normalize_profile(profile)
@@ -114,12 +139,22 @@ class ProjectIntelligenceService:
 
 def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     ui = profile.get("ui_guidelines") if isinstance(profile.get("ui_guidelines"), dict) else {}
+    standards = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
     preview = profile.get("knowledge_profile_preview") if isinstance(profile.get("knowledge_profile_preview"), dict) else {}
-    return {
+    normalized = {
         "onboarding_completed": bool(profile.get("onboarding_completed")),
+        "project_name": _clean_text(profile.get("project_name")),
+        "domain": _clean_text(profile.get("domain")),
+        "project_type": _clean_text(profile.get("project_type")),
         "project_description": _clean_text(profile.get("project_description")),
-        "applications": _string_list(profile.get("applications")),
-        "technology_stack": _string_list(profile.get("technology_stack")),
+        "applications": _normalize_applications(profile.get("applications")),
+        "technology_stack": _normalize_stack(profile.get("technology_stack")),
+        "development_standards": {
+            "architecture_patterns": _string_list(standards.get("architecture_patterns")),
+            "coding_guidelines": _string_list(standards.get("coding_guidelines")),
+            "security_requirements": _string_list(standards.get("security_requirements")),
+            "testing_requirements": _string_list(standards.get("testing_requirements")),
+        },
         "ui_guidelines": {
             "primary_color": _clean_text(ui.get("primary_color")),
             "secondary_color": _clean_text(ui.get("secondary_color")),
@@ -129,44 +164,89 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
         },
         "repository_sources": _string_list(profile.get("repository_sources")),
         "knowledge_profile_preview": {
-            "domain": _clean_text(preview.get("domain")),
+            "domain": _clean_text(preview.get("domain")) or _clean_text(profile.get("domain")),
             "systems": _string_list(preview.get("systems")),
             "standards": _string_list(preview.get("standards")),
             "repository_status": _clean_text(preview.get("repository_status")) or "Repository README scan coming next.",
+            "readiness": _clean_text(preview.get("readiness")),
         },
     }
+    if not normalized["knowledge_profile_preview"]["systems"]:
+        normalized["knowledge_profile_preview"]["systems"] = [app["name"] for app in normalized["applications"]]
+    if not normalized["knowledge_profile_preview"]["standards"]:
+        normalized["knowledge_profile_preview"]["standards"] = _flatten_standards(normalized["development_standards"])
+    normalized["knowledge_profile_preview"]["readiness"] = normalized["knowledge_profile_preview"]["readiness"] or _readiness(normalized)
+    return normalized
 
 
-def _infer_applications(text: str) -> list[str]:
+def _normalize_applications(value: Any) -> list[dict[str, str]]:
+    if isinstance(value, list):
+        apps: list[dict[str, str]] = []
+        for item in value:
+            if isinstance(item, dict):
+                name = _clean_text(item.get("name"))
+                app_type = _clean_text(item.get("type")) or _infer_application_type(name)
+            else:
+                name = _clean_text(item)
+                app_type = _infer_application_type(name)
+            if name:
+                apps.append({"name": name, "type": app_type or "API"})
+        return apps
+    return []
+
+
+def _normalize_stack(value: Any) -> dict[str, list[str]]:
+    categories = ["mobile", "backend", "firmware", "analytics", "frontend"]
+    if isinstance(value, dict):
+        return {category: _string_list(value.get(category)) for category in categories}
+    legacy = _string_list(value)
+    stack = {category: [] for category in categories}
+    for item in legacy:
+        category = _stack_category(item)
+        stack[category].append(item)
+    return stack
+
+
+def _infer_applications(text: str) -> list[dict[str, str]]:
     lowered = text.lower()
-    apps: list[str] = []
+    apps: list[dict[str, str]] = []
     if any(word in lowered for word in ["ios", "android", "mobile"]):
-        apps.append("Mobile App")
+        apps.append({"name": "Mobile App", "type": "Mobile"})
     if any(word in lowered for word in ["backend", "api", "service"]):
-        apps.append("Backend")
+        apps.append({"name": "Backend", "type": "Backend"})
     if "firmware" in lowered:
-        apps.append("Firmware")
+        apps.append({"name": "Firmware", "type": "Firmware"})
     if any(word in lowered for word in ["analytics", "report", "dashboard"]):
-        apps.append("Analytics")
-    return apps or ["Application"]
+        apps.append({"name": "Analytics", "type": "Analytics"})
+    return apps or [{"name": "Application", "type": "API"}]
 
 
-def _infer_stack(text: str) -> list[str]:
+def _infer_stack(text: str) -> dict[str, list[str]]:
     lowered = text.lower()
-    stack: list[str] = []
+    stack = {
+        "mobile": [],
+        "backend": [],
+        "firmware": [],
+        "analytics": [],
+        "frontend": [],
+    }
     for label, needles in {
         "React": ["react"],
         "TypeScript": ["typescript", "ts"],
         "Node.js": ["node"],
-        "Python": ["python", "fastapi"],
+        "Python": ["python"],
         "FastAPI": ["fastapi"],
         "Swift": ["swift", "ios"],
         "Kotlin": ["kotlin", "android"],
-        "Azure DevOps": ["azure devops", "ado"],
+        ".NET": [".net", "dotnet"],
+        "MAUI": ["maui"],
+        "Flutter": ["flutter"],
+        "C": [" firmware c "],
+        "C++": ["c++"],
     }.items():
         if any(needle in lowered for needle in needles):
-            stack.append(label)
-    return list(dict.fromkeys(stack))
+            stack[_stack_category(label)].append(label)
+    return {key: list(dict.fromkeys(values)) for key, values in stack.items()}
 
 
 def _infer_domain(text: str) -> str:
@@ -182,6 +262,25 @@ def _infer_domain(text: str) -> str:
     return "General product delivery"
 
 
+def _infer_project_type(text: str) -> str:
+    lowered = text.lower()
+    has_mobile = any(word in lowered for word in ["ios", "android", "mobile"])
+    has_other_system = any(word in lowered for word in ["backend", "api", "service", "analytics", "dashboard", "firmware"])
+    if "multi-system" in lowered or (has_mobile and has_other_system) or ("platform" in lowered and any(word in lowered for word in ["backend", "analytics", "firmware", "mobile"])):
+        return "Multi-System Platform"
+    if has_mobile:
+        return "Mobile Application"
+    if any(word in lowered for word in ["web", "portal"]):
+        return "Web Application"
+    if any(word in lowered for word in ["backend", "api", "service"]):
+        return "Backend Service"
+    if "firmware" in lowered:
+        return "Embedded Firmware"
+    if any(word in lowered for word in ["analytics", "dashboard", "report"]):
+        return "Analytics Platform"
+    return ""
+
+
 def _infer_standards(text: str) -> list[str]:
     standards = ["Human approval before creation", "Traceable Azure DevOps work item hierarchy"]
     lowered = text.lower()
@@ -194,13 +293,84 @@ def _infer_standards(text: str) -> list[str]:
 
 def _profile_context_lines(profile: dict[str, Any]) -> list[str]:
     lines = [
-        f"Project: {profile['project_description'] or 'No project description captured yet.'}",
-        f"Applications: {', '.join(profile['applications']) or 'Not specified'}",
-        f"Technology Stack: {', '.join(profile['technology_stack']) or 'Not specified'}",
+        f"Project Name: {profile['project_name'] or 'Not specified'}",
+        f"Domain: {profile['domain'] or profile['knowledge_profile_preview']['domain'] or 'Not specified'}",
+        f"Project Type: {profile['project_type'] or 'Not specified'}",
+        f"Project Description: {profile['project_description'] or 'No project description captured yet.'}",
+        f"Applications: {_format_applications(profile['applications']) or 'Not specified'}",
+        f"Technology Stack: {_format_stack(profile['technology_stack']) or 'Not specified'}",
         f"UI Guidelines: primary={profile['ui_guidelines']['primary_color'] or 'n/a'}, secondary={profile['ui_guidelines']['secondary_color'] or 'n/a'}, typography={profile['ui_guidelines']['typography'] or 'n/a'}, components={profile['ui_guidelines']['component_library'] or 'n/a'}",
+        f"Development Standards: {_format_standards(profile['development_standards']) or 'Not specified'}",
         f"Repository Sources: {', '.join(profile['repository_sources']) or 'Repository README scan coming next.'}",
     ]
     return lines
+
+
+def _readiness(profile: dict[str, Any]) -> str:
+    has_description = bool(_clean_text(profile.get("project_description")))
+    has_apps = bool(_normalize_applications(profile.get("applications")))
+    stack = _normalize_stack(profile.get("technology_stack"))
+    has_stack = any(stack.values())
+    standards = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
+    has_standards = bool(_flatten_standards(standards))
+    if has_description and has_apps and has_stack and has_standards:
+        return "Advanced"
+    if has_description and has_apps and has_stack:
+        return "Intermediate"
+    return "Basic"
+
+
+def _flatten_standards(standards: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ["architecture_patterns", "coding_guidelines", "security_requirements", "testing_requirements"]:
+        values.extend(_string_list(standards.get(key)))
+    return values
+
+
+def _format_applications(applications: list[dict[str, str]]) -> str:
+    return ", ".join(f"{app['name']} ({app['type']})" for app in applications)
+
+
+def _format_stack(stack: dict[str, list[str]]) -> str:
+    parts = []
+    for category, values in stack.items():
+        if values:
+            parts.append(f"{category}: {', '.join(values)}")
+    return "; ".join(parts)
+
+
+def _format_standards(standards: dict[str, list[str]]) -> str:
+    return "; ".join(_flatten_standards(standards))
+
+
+def _infer_application_type(name: str) -> str:
+    lowered = name.lower()
+    if "mobile" in lowered or "ios" in lowered or "android" in lowered:
+        return "Mobile"
+    if "backend" in lowered or "service" in lowered:
+        return "Backend"
+    if "firmware" in lowered:
+        return "Firmware"
+    if "portal" in lowered or "web" in lowered:
+        return "Web Portal"
+    if "analytics" in lowered or "report" in lowered:
+        return "Analytics"
+    if "desktop" in lowered:
+        return "Desktop"
+    return "API"
+
+
+def _stack_category(item: str) -> str:
+    lowered = item.lower()
+    if any(word in lowered for word in ["kotlin", "swift", "flutter", "maui"]):
+        return "mobile"
+    if any(word in lowered for word in ["fastapi", "python", "node", ".net", "dotnet"]):
+        return "backend"
+    if any(word in lowered for word in ["c++", "firmware"]):
+        return "firmware"
+    if any(word in lowered for word in ["analytics", "spark", "power bi", "dashboard"]):
+        return "analytics"
+    return "frontend"
 
 
 def _prompt(title: str, story_title: str, story_description: str, context_lines: list[str], instructions: list[str]) -> str:

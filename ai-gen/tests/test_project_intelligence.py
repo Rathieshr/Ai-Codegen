@@ -117,6 +117,55 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Detected Modules: Meter Inventory", prompts["dev_prompt"])
         self.assertIn("Detected Flows: Meter onboarding", prompts["dev_prompt"])
 
+    def test_project_aware_epic_refinement_avoids_generic_slices(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "Monitor line devices, telemetry, firmware upgrades and fault events.",
+            "applications": [{"name": "Operations Portal", "type": "Web Portal"}, {"name": "Device API", "type": "Backend"}],
+            "technology_stack": {"backend": ["FastAPI"], "frontend": ["React"]},
+            "knowledge_registry": {
+                "modules": ["Telemetry", "Firmware Update", "Fault Event"],
+                "flows": ["Device monitoring", "Fault triage", "Firmware rollout"],
+            },
+            "readme_analysis": {"architecture_notes": ["Backend APIs use repository pattern."]},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            refined = service.refine_epic({"title": "Improve Device Monitoring", "description": "Improve telemetry, fault and firmware visibility."}, profile)
+
+        feature_titles = [feature["title"] for feature in refined["recommended_features"]]
+        self.assertIn("Fault Event Monitoring", feature_titles)
+        self.assertIn("Telemetry Health Dashboard", feature_titles)
+        self.assertIn("Firmware Upgrade Visibility", feature_titles)
+        self.assertFalse(any("Slice" in title or title in {"Story 1", "Story 2"} for title in feature_titles))
+
+    def test_story_refinement_uses_modules_flows_and_considerations(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_description": "Device monitoring platform.",
+            "applications": [{"name": "Operations Portal", "type": "Web Portal"}],
+            "technology_stack": {"backend": ["FastAPI"], "frontend": ["React"]},
+            "development_standards": {"testing_requirements": ["Unit tests required"]},
+            "ui_guidelines": {"component_library": "LineDefender UI", "accessibility_rules": ["WCAG AA"]},
+            "knowledge_registry": {
+                "modules": ["Telemetry", "Firmware Update", "Fault Event"],
+                "flows": ["Device monitoring", "Fault triage"],
+            },
+            "readme_analysis": {"architecture_notes": ["Events publish readings to analytics."]},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            refined = service.refine_story({"title": "View device telemetry health state"}, profile)
+
+        self.assertIn("Operations Portal", refined["affected_applications"])
+        self.assertIn("Telemetry", refined["affected_modules"])
+        self.assertIn("Device monitoring", refined["affected_flows"])
+        self.assertIn("LineDefender UI", " ".join(refined["ui_considerations"]))
+        self.assertIn("Unit tests required", refined["qa_considerations"])
+
 
 if __name__ == "__main__":
     unittest.main()

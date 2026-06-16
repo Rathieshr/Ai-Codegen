@@ -315,6 +315,14 @@ class ProjectIntelligenceReadmeRequest(BaseModel):
     profile: Optional[dict[str, Any]] = None
 
 
+class ProjectIntelligenceRefinementRequest(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+    knowledge_profile: dict[str, Any] = Field(default_factory=dict)
+    epic: dict[str, Any] = Field(default_factory=dict)
+    feature: dict[str, Any] = Field(default_factory=dict)
+    story: dict[str, Any] = Field(default_factory=dict)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -354,6 +362,21 @@ def generate_project_story_prompts(request: ProjectIntelligencePromptRequest) ->
 @app.post("/project-intelligence/analyze-readme")
 def analyze_project_readme(request: ProjectIntelligenceReadmeRequest) -> dict:
     return project_intelligence_service.analyze_readme(request.readme_content, request.repository, request.profile)
+
+
+@app.post("/project-intelligence/refine-epic")
+def refine_project_epic(request: ProjectIntelligenceRefinementRequest) -> dict:
+    return project_intelligence_service.refine_epic(request.epic, request.profile, request.knowledge_profile)
+
+
+@app.post("/project-intelligence/refine-feature")
+def refine_project_feature(request: ProjectIntelligenceRefinementRequest) -> dict:
+    return project_intelligence_service.refine_feature(request.feature, request.profile, request.knowledge_profile)
+
+
+@app.post("/project-intelligence/refine-story")
+def refine_project_story(request: ProjectIntelligenceRefinementRequest) -> dict:
+    return project_intelligence_service.refine_story(request.story, request.profile, request.knowledge_profile)
 
 
 @app.post("/story-planner/sessions")

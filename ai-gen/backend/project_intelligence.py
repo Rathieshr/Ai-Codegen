@@ -193,6 +193,74 @@ class ProjectIntelligenceService:
         self._profile_path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
         return saved
 
+    def refine_epic(
+        self,
+        epic: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _normalize_profile(profile or self.get_profile())
+        active_profile = _merge_external_knowledge(active_profile, knowledge_profile or {})
+        title = _clean_text(epic.get("title")) or "Untitled epic"
+        description = _clean_text(epic.get("description"))
+        keywords = _context_keywords(title, description, active_profile)
+        features = _recommended_features(keywords, active_profile)
+        return {
+            "business_goal": _sentence(f"Improve {title}", description or active_profile["project_description"]),
+            "business_outcomes": _business_outcomes(keywords, active_profile),
+            "users": _users_for_profile(active_profile),
+            "applications": _application_names(active_profile),
+            "constraints": _constraints_for_profile(active_profile),
+            "risks": _risks_for_profile(active_profile, keywords),
+            "dependencies": _dependencies_for_profile(active_profile),
+            "recommended_features": features,
+        }
+
+    def refine_feature(
+        self,
+        feature: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        title = _clean_text(feature.get("title")) or "Untitled feature"
+        description = _clean_text(feature.get("description"))
+        modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
+        flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
+        return {
+            "feature_summary": _sentence(title, description or f"Deliver {title} using project-aware modules and flows."),
+            "affected_modules": modules,
+            "affected_flows": flows,
+            "dependencies": _dependencies_for_profile(active_profile),
+            "risks": _risks_for_profile(active_profile, _context_keywords(title, description, active_profile)),
+            "recommended_stories": _recommended_stories(title, modules, flows, active_profile),
+        }
+
+    def refine_story(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        title = _clean_text(story.get("title")) or "Untitled story"
+        description = _clean_text(story.get("description"))
+        modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
+        flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
+        applications = _application_names(active_profile)
+        return {
+            "story_summary": _sentence(title, description or f"Implement {title} within the approved project context."),
+            "acceptance_criteria": _acceptance_criteria(title, flows, modules),
+            "affected_applications": applications,
+            "affected_modules": modules,
+            "affected_flows": flows,
+            "dependencies": _dependencies_for_profile(active_profile),
+            "risks": _risks_for_profile(active_profile, _context_keywords(title, description, active_profile)),
+            "ui_considerations": _ui_considerations(active_profile, flows),
+            "technical_considerations": _technical_considerations(active_profile, modules),
+            "qa_considerations": _qa_considerations(active_profile, flows),
+        }
+
 
 def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     ui = profile.get("ui_guidelines") if isinstance(profile.get("ui_guidelines"), dict) else {}
@@ -553,6 +621,280 @@ def _unique(values: list[str]) -> list[str]:
             seen.add(key)
             result.append(cleaned)
     return result
+
+
+def _merge_external_knowledge(profile: dict[str, Any], knowledge_profile: dict[str, Any]) -> dict[str, Any]:
+    if not knowledge_profile:
+        return profile
+    registry = _merge_knowledge_registry(profile["knowledge_registry"], knowledge_profile)
+    return {
+        **profile,
+        "knowledge_registry": registry,
+        "readme_analysis": {
+            **profile["readme_analysis"],
+            "architecture_notes": _unique([
+                *profile["readme_analysis"]["architecture_notes"],
+                *_string_list(knowledge_profile.get("architecture_notes")),
+            ]),
+        },
+    }
+
+
+def _context_keywords(title: str, description: str, profile: dict[str, Any]) -> list[str]:
+    text = " ".join(
+        [
+            title,
+            description,
+            profile.get("project_name", ""),
+            profile.get("domain", ""),
+            profile.get("project_type", ""),
+            profile.get("project_description", ""),
+            " ".join(profile["knowledge_registry"]["modules"]),
+            " ".join(profile["knowledge_registry"]["flows"]),
+        ]
+    ).lower()
+    keywords: list[str] = []
+    for keyword in [
+        "fault",
+        "event",
+        "telemetry",
+        "health",
+        "firmware",
+        "upgrade",
+        "device",
+        "monitoring",
+        "analytics",
+        "dashboard",
+        "authentication",
+        "booking",
+        "payment",
+        "order",
+        "meter",
+        "field",
+        "inspection",
+    ]:
+        if keyword in text:
+            keywords.append(keyword)
+    return _unique(keywords)
+
+
+def _recommended_features(keywords: list[str], profile: dict[str, Any]) -> list[dict[str, str]]:
+    names: list[str] = []
+    if {"fault", "event"} & set(keywords):
+        names.append("Fault Event Monitoring")
+    if {"telemetry", "health", "device", "monitoring"} & set(keywords):
+        names.append("Telemetry Health Dashboard")
+        names.append("Device Health Monitoring")
+    if {"firmware", "upgrade"} & set(keywords):
+        names.append("Firmware Upgrade Visibility")
+    if "analytics" in keywords:
+        names.append("Fault Event Analytics" if "fault" in keywords else "Operational Analytics")
+    for module in profile["knowledge_registry"]["modules"]:
+        if len(names) >= 6:
+            break
+        candidate = _feature_name_from_item(module)
+        if candidate:
+            names.append(candidate)
+    for flow in profile["knowledge_registry"]["flows"]:
+        if len(names) >= 6:
+            break
+        candidate = _feature_name_from_item(flow)
+        if candidate:
+            names.append(candidate)
+    if not names:
+        domain = profile.get("domain") or profile["knowledge_profile_preview"].get("domain") or "Project"
+        names = [f"{domain} Workflow Visibility", f"{domain} Operational Controls", f"{domain} Readiness Dashboard"]
+    return [{"title": name, "description": _feature_description(name, profile)} for name in _remove_generic_names(_unique(names))[:6]]
+
+
+def _feature_name_from_item(item: str) -> str:
+    cleaned = _clean_title(item)
+    if not cleaned:
+        return ""
+    lowered = cleaned.lower()
+    if "auth" in lowered:
+        return "Authentication Access Control"
+    if "telemetry" in lowered:
+        return "Telemetry Health Dashboard"
+    if "firmware" in lowered:
+        return "Firmware Upgrade Visibility"
+    if "fault" in lowered or "outage" in lowered:
+        return "Fault Event Monitoring"
+    if "analytics" in lowered:
+        return "Operational Analytics"
+    if any(word in lowered for word in ["monitor", "health"]):
+        return f"{cleaned} Visibility"
+    return cleaned if any(word in lowered for word in ["dashboard", "monitoring", "visibility", "analytics"]) else f"{cleaned} Management"
+
+
+def _feature_description(name: str, profile: dict[str, Any]) -> str:
+    apps = _format_applications(profile["applications"]) or "the affected applications"
+    return f"Deliver {name.lower()} across {apps} with traceable outcomes, dependencies, and validation coverage."
+
+
+def _recommended_stories(feature_title: str, modules: list[str], flows: list[str], profile: dict[str, Any]) -> list[dict[str, str]]:
+    stories: list[dict[str, str]] = []
+    for flow in flows[:3]:
+        title = f"{_clean_title(flow)} workflow for {feature_title}"
+        stories.append(
+            {
+                "title": title,
+                "description": f"As an operational user, I want {_clean_title(flow).lower()} support in {feature_title} so I can complete the workflow with confidence.",
+            }
+        )
+    for module in modules[:3]:
+        title = f"{feature_title} integration with {_clean_title(module)}"
+        stories.append(
+            {
+                "title": title,
+                "description": f"As a delivery team, I want {feature_title} connected to {_clean_title(module)} so the capability follows the project architecture.",
+            }
+        )
+    if not stories:
+        stories = [
+            {
+                "title": f"Configure {feature_title} operating rules",
+                "description": f"As an administrator, I want configurable rules for {feature_title} so rollout can be governed safely.",
+            },
+            {
+                "title": f"Validate {feature_title} user outcomes",
+                "description": f"As a product owner, I want measurable outcomes for {feature_title} so release readiness is clear.",
+            },
+        ]
+    return stories[:6]
+
+
+def _select_relevant_items(items: list[str], title: str, description: str, fallback_count: int = 3) -> list[str]:
+    if not items:
+        return []
+    text = f"{title} {description}".lower()
+    scored = []
+    for item in items:
+        tokens = [token for token in item.lower().replace("-", " ").split() if len(token) > 2]
+        score = sum(1 for token in tokens if token in text)
+        scored.append((score, item))
+    selected = [item for score, item in sorted(scored, key=lambda pair: pair[0], reverse=True) if score > 0]
+    return _unique(selected or items[:fallback_count])[:fallback_count]
+
+
+def _business_outcomes(keywords: list[str], profile: dict[str, Any]) -> list[str]:
+    outcomes = []
+    if "fault" in keywords:
+        outcomes.append("Faster detection and review of fault events")
+    if "telemetry" in keywords or "health" in keywords:
+        outcomes.append("Improved visibility into telemetry and device health")
+    if "firmware" in keywords:
+        outcomes.append("Safer firmware rollout tracking and upgrade transparency")
+    if not outcomes:
+        outcomes.append(f"Clearer delivery outcomes for {profile.get('project_name') or 'the project'}")
+    outcomes.append("Traceable planning artifacts aligned to project standards")
+    return _unique(outcomes)
+
+
+def _users_for_profile(profile: dict[str, Any]) -> list[str]:
+    domain = (profile.get("domain") or "").lower()
+    if any(word in domain for word in ["utility", "meter", "asset", "field"]):
+        return ["Operations user", "Field technician", "Support analyst", "Platform administrator"]
+    if any(word in domain for word in ["hospitality", "property"]):
+        return ["Guest", "Property manager", "Operations manager"]
+    if "retail" in domain:
+        return ["Customer", "Store operator", "Support analyst"]
+    return ["End user", "Operations user", "Administrator"]
+
+
+def _application_names(profile: dict[str, Any]) -> list[str]:
+    names = [app["name"] for app in profile["applications"]]
+    return names or [app["name"] for app in profile["knowledge_registry"]["applications"]]
+
+
+def _constraints_for_profile(profile: dict[str, Any]) -> list[str]:
+    constraints = _flatten_standards(profile["development_standards"])
+    if profile["ui_guidelines"]["accessibility_rules"]:
+        constraints.extend(profile["ui_guidelines"]["accessibility_rules"])
+    if profile["technology_stack"]:
+        constraints.append("Align implementation with configured technology stack")
+    return _unique(constraints) or ["Human approval required before work item creation"]
+
+
+def _risks_for_profile(profile: dict[str, Any], keywords: list[str]) -> list[str]:
+    risks = []
+    if "firmware" in keywords:
+        risks.append("Firmware rollout visibility may depend on device connectivity and version reporting")
+    if "telemetry" in keywords:
+        risks.append("Telemetry gaps can reduce confidence in health and monitoring views")
+    if "fault" in keywords:
+        risks.append("Fault classification rules must be validated against operational expectations")
+    if not profile["knowledge_registry"]["modules"]:
+        risks.append("Repository intelligence is limited; affected modules should be confirmed manually")
+    return _unique(risks) or ["Dependencies and rollout risks should be reviewed before delivery"]
+
+
+def _dependencies_for_profile(profile: dict[str, Any]) -> list[str]:
+    dependencies = []
+    modules = profile["knowledge_registry"]["modules"]
+    flows = profile["knowledge_registry"]["flows"]
+    if modules:
+        dependencies.append(f"Module alignment: {', '.join(modules[:4])}")
+    if flows:
+        dependencies.append(f"Flow coverage: {', '.join(flows[:4])}")
+    if profile["readme_analysis"]["architecture_notes"]:
+        dependencies.append("Architecture notes from README must be respected")
+    return dependencies or ["Project profile and owner review"]
+
+
+def _acceptance_criteria(title: str, flows: list[str], modules: list[str]) -> list[str]:
+    criteria = [
+        f"{title} behavior is visible and testable for the intended user.",
+        "Errors, empty states, and permission boundaries are handled clearly.",
+    ]
+    criteria.extend(f"{flow} flow is covered end to end." for flow in flows[:3])
+    criteria.extend(f"{module} integration is validated." for module in modules[:2])
+    return _unique(criteria)
+
+
+def _ui_considerations(profile: dict[str, Any], flows: list[str]) -> list[str]:
+    considerations = []
+    if profile["ui_guidelines"]["component_library"]:
+        considerations.append(f"Use {profile['ui_guidelines']['component_library']} components")
+    if profile["ui_guidelines"]["accessibility_rules"]:
+        considerations.extend(profile["ui_guidelines"]["accessibility_rules"])
+    considerations.extend(f"Show clear state transitions for {flow}" for flow in flows[:2])
+    return _unique(considerations) or ["Confirm whether UI changes are required"]
+
+
+def _technical_considerations(profile: dict[str, Any], modules: list[str]) -> list[str]:
+    considerations = []
+    if modules:
+        considerations.append(f"Coordinate changes across {', '.join(modules)}")
+    if profile["readme_analysis"]["architecture_notes"]:
+        considerations.extend(profile["readme_analysis"]["architecture_notes"][:3])
+    if any(profile["technology_stack"].values()):
+        considerations.append(f"Use stack: {_format_stack(profile['technology_stack'])}")
+    return _unique(considerations)
+
+
+def _qa_considerations(profile: dict[str, Any], flows: list[str]) -> list[str]:
+    considerations = []
+    testing = profile["development_standards"]["testing_requirements"]
+    considerations.extend(testing)
+    considerations.extend(f"Validate positive, negative, and regression paths for {flow}" for flow in flows[:3])
+    return _unique(considerations) or ["Create positive, negative, and regression coverage"]
+
+
+def _sentence(title: str, detail: str) -> str:
+    detail = _clean_text(detail)
+    if detail:
+        return detail if detail.endswith(".") else f"{detail}."
+    return f"{title}."
+
+
+def _clean_title(value: str) -> str:
+    return " ".join(word.capitalize() for word in _clean_text(value).replace("_", " ").replace("-", " ").split())
+
+
+def _remove_generic_names(values: list[str]) -> list[str]:
+    generic_tokens = ["feature slice", "story 1", "story 2", "slice 1", "slice 2"]
+    return [value for value in values if not any(token in value.lower() for token in generic_tokens)]
 
 
 def _prompt(title: str, story_title: str, story_description: str, context_lines: list[str], instructions: list[str]) -> str:

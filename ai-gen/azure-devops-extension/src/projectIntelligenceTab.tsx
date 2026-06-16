@@ -106,6 +106,39 @@ type PromptResult = {
   qa_prompt: string;
 };
 
+type EpicRefinement = {
+  business_goal: string;
+  business_outcomes: string[];
+  users: string[];
+  applications: string[];
+  constraints: string[];
+  risks: string[];
+  dependencies: string[];
+  recommended_features: Array<{ title: string; description: string }>;
+};
+
+type FeatureRefinement = {
+  feature_summary: string;
+  affected_modules: string[];
+  affected_flows: string[];
+  dependencies: string[];
+  risks: string[];
+  recommended_stories: Array<{ title: string; description: string }>;
+};
+
+type StoryRefinement = {
+  story_summary: string;
+  acceptance_criteria: string[];
+  affected_applications: string[];
+  affected_modules: string[];
+  affected_flows: string[];
+  dependencies: string[];
+  risks: string[];
+  ui_considerations: string[];
+  technical_considerations: string[];
+  qa_considerations: string[];
+};
+
 const EMPTY_STACK: TechnologyStack = {
   mobile: [],
   backend: [],
@@ -173,6 +206,12 @@ function ProjectIntelligenceTab() {
   const [storyDescription, setStoryDescription] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [prompts, setPrompts] = useState<PromptResult | undefined>();
+  const [epicInput, setEpicInput] = useState({ title: '', description: '' });
+  const [featureInput, setFeatureInput] = useState({ title: '', description: '' });
+  const [storyInput, setStoryInput] = useState({ title: '', description: '' });
+  const [epicResult, setEpicResult] = useState<EpicRefinement | undefined>();
+  const [featureResult, setFeatureResult] = useState<FeatureRefinement | undefined>();
+  const [storyResult, setStoryResult] = useState<StoryRefinement | undefined>();
   const [repositories, setRepositories] = useState<GitRepository[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [editingProfile, setEditingProfile] = useState(false);
@@ -248,6 +287,39 @@ function ProjectIntelligenceTab() {
     }));
     if (generated) {
       setPrompts(generated);
+    }
+  }
+
+  async function refineEpic() {
+    const result = await withLoading('Refining epic with Project Intelligence...', () => postJson<EpicRefinement>('/refine-epic', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      epic: epicInput,
+    }));
+    if (result) {
+      setEpicResult(result);
+    }
+  }
+
+  async function refineFeature() {
+    const result = await withLoading('Refining feature with Project Intelligence...', () => postJson<FeatureRefinement>('/refine-feature', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      feature: featureInput,
+    }));
+    if (result) {
+      setFeatureResult(result);
+    }
+  }
+
+  async function refineStory() {
+    const result = await withLoading('Refining story with Project Intelligence...', () => postJson<StoryRefinement>('/refine-story', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      story: storyInput,
+    }));
+    if (result) {
+      setStoryResult(result);
     }
   }
 
@@ -376,6 +448,7 @@ function ProjectIntelligenceTab() {
       )}
 
       <KnowledgeProfilePreview profile={profile} />
+      <RefinementReadinessDashboard profile={profile} epicResult={epicResult} featureResult={featureResult} storyResult={storyResult} />
       <RepositoryIntelligenceCard
         profile={profile}
         repositories={repositories}
@@ -384,6 +457,21 @@ function ProjectIntelligenceTab() {
         onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
         onProfileChange={setProfile}
         onAnalyzeReadme={() => void analyzeReadme()}
+      />
+      <ProjectRefinementCards
+        loading={loading}
+        epicInput={epicInput}
+        featureInput={featureInput}
+        storyInput={storyInput}
+        epicResult={epicResult}
+        featureResult={featureResult}
+        storyResult={storyResult}
+        setEpicInput={setEpicInput}
+        setFeatureInput={setFeatureInput}
+        setStoryInput={setStoryInput}
+        refineEpic={() => void refineEpic()}
+        refineFeature={() => void refineFeature()}
+        refineStory={() => void refineStory()}
       />
       <StoryPromptGeneration
         loading={loading}
@@ -711,6 +799,182 @@ function RepositoryIntelligenceCard({
       </div>
       <div className="planner-subtle">Only README ingestion is enabled in this preview. Full repository scans are intentionally not included.</div>
     </section>
+  );
+}
+
+function RefinementReadinessDashboard({
+  profile,
+  epicResult,
+  featureResult,
+  storyResult,
+}: {
+  profile: ProjectProfile;
+  epicResult?: EpicRefinement;
+  featureResult?: FeatureRefinement;
+  storyResult?: StoryRefinement;
+}) {
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Refinement Intelligence Status</div>
+      <div className="planner-status-grid">
+        <Row label="Project Profile" value={profile.project_description ? 'Ready' : 'Basic'} />
+        <Row label="Repository Intelligence" value={profile.repository_connection.status === 'README analyzed' ? 'Ready' : 'Pending README'} />
+        <Row label="Knowledge Registry" value={(profile.knowledge_registry.modules.length || profile.knowledge_registry.flows.length) ? 'Ready' : 'Pending'} />
+        <Row label="Epic Intelligence" value={epicResult ? 'Ready' : 'Not run'} />
+        <Row label="Feature Intelligence" value={featureResult ? 'Ready' : 'Not run'} />
+        <Row label="Story Intelligence" value={storyResult ? 'Ready' : 'Not run'} />
+      </div>
+    </section>
+  );
+}
+
+function ProjectRefinementCards({
+  loading,
+  epicInput,
+  featureInput,
+  storyInput,
+  epicResult,
+  featureResult,
+  storyResult,
+  setEpicInput,
+  setFeatureInput,
+  setStoryInput,
+  refineEpic,
+  refineFeature,
+  refineStory,
+}: {
+  loading: boolean;
+  epicInput: { title: string; description: string };
+  featureInput: { title: string; description: string };
+  storyInput: { title: string; description: string };
+  epicResult?: EpicRefinement;
+  featureResult?: FeatureRefinement;
+  storyResult?: StoryRefinement;
+  setEpicInput: (value: { title: string; description: string }) => void;
+  setFeatureInput: (value: { title: string; description: string }) => void;
+  setStoryInput: (value: { title: string; description: string }) => void;
+  refineEpic: () => void;
+  refineFeature: () => void;
+  refineStory: () => void;
+}) {
+  return (
+    <>
+      <section className="planner-card">
+        <div className="planner-label">Epic Intelligence</div>
+        <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Improve Device Monitoring" descriptionPlaceholder="Describe the epic goal and business context." />
+        <div className="planner-actions">
+          <button className="planner-button" onClick={refineEpic} disabled={loading || !epicInput.title.trim()}>Refine Epic</button>
+        </div>
+        {epicResult ? <EpicRefinementResult result={epicResult} /> : null}
+      </section>
+
+      <section className="planner-card">
+        <div className="planner-label">Feature Intelligence</div>
+        <RefinementInput input={featureInput} setInput={setFeatureInput} titlePlaceholder="Telemetry Health Dashboard" descriptionPlaceholder="Describe the feature scope." />
+        <div className="planner-actions">
+          <button className="planner-button" onClick={refineFeature} disabled={loading || !featureInput.title.trim()}>Refine Feature</button>
+        </div>
+        {featureResult ? <FeatureRefinementResult result={featureResult} /> : null}
+      </section>
+
+      <section className="planner-card">
+        <div className="planner-label">Story Intelligence</div>
+        <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="View device telemetry health state" descriptionPlaceholder="Describe the user story or delivery need." />
+        <div className="planner-actions">
+          <button className="planner-button" onClick={refineStory} disabled={loading || !storyInput.title.trim()}>Refine Story</button>
+        </div>
+        {storyResult ? <StoryRefinementResult result={storyResult} /> : null}
+      </section>
+    </>
+  );
+}
+
+function RefinementInput({
+  input,
+  setInput,
+  titlePlaceholder,
+  descriptionPlaceholder,
+}: {
+  input: { title: string; description: string };
+  setInput: (value: { title: string; description: string }) => void;
+  titlePlaceholder: string;
+  descriptionPlaceholder: string;
+}) {
+  return (
+    <>
+      <input className="planner-input" value={input.title} onChange={(event) => setInput({ ...input, title: event.target.value })} placeholder={titlePlaceholder} />
+      <textarea className="planner-textarea compact" value={input.description} onChange={(event) => setInput({ ...input, description: event.target.value })} placeholder={descriptionPlaceholder} />
+    </>
+  );
+}
+
+function EpicRefinementResult({ result }: { result: EpicRefinement }) {
+  return (
+    <div className="planner-status-grid">
+      <Row label="Business Goal" value={result.business_goal} />
+      <ListBlock title="Business Outcomes" items={result.business_outcomes} />
+      <ListBlock title="Users" items={result.users} />
+      <ListBlock title="Applications" items={result.applications} />
+      <ListBlock title="Constraints" items={result.constraints} />
+      <ListBlock title="Dependencies" items={result.dependencies} />
+      <ListBlock title="Risks" items={result.risks} />
+      <CardList title="Recommended Features" items={result.recommended_features} />
+    </div>
+  );
+}
+
+function FeatureRefinementResult({ result }: { result: FeatureRefinement }) {
+  return (
+    <div className="planner-status-grid">
+      <Row label="Feature Summary" value={result.feature_summary} />
+      <ListBlock title="Affected Modules" items={result.affected_modules} />
+      <ListBlock title="Affected Flows" items={result.affected_flows} />
+      <ListBlock title="Dependencies" items={result.dependencies} />
+      <ListBlock title="Risks" items={result.risks} />
+      <CardList title="Recommended Stories" items={result.recommended_stories} />
+    </div>
+  );
+}
+
+function StoryRefinementResult({ result }: { result: StoryRefinement }) {
+  return (
+    <div className="planner-status-grid">
+      <Row label="Story Summary" value={result.story_summary} />
+      <ListBlock title="Acceptance Criteria" items={result.acceptance_criteria} />
+      <ListBlock title="Affected Applications" items={result.affected_applications} />
+      <ListBlock title="Affected Modules" items={result.affected_modules} />
+      <ListBlock title="Affected Flows" items={result.affected_flows} />
+      <ListBlock title="Dependencies" items={result.dependencies} />
+      <ListBlock title="Risks" items={result.risks} />
+      <ListBlock title="UI Considerations" items={result.ui_considerations} />
+      <ListBlock title="Technical Considerations" items={result.technical_considerations} />
+      <ListBlock title="QA Considerations" items={result.qa_considerations} />
+    </div>
+  );
+}
+
+function ListBlock({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="planner-task">
+      <div className="planner-label">{title}</div>
+      <ul className="planner-list">
+        {(items.length ? items : ['Not identified yet']).map((item) => <li key={item}>{item}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function CardList({ title, items }: { title: string; items: Array<{ title: string; description: string }> }) {
+  return (
+    <div className="planner-task">
+      <div className="planner-label">{title}</div>
+      {(items.length ? items : [{ title: 'No recommendation', description: 'Add more project or repository context.' }]).map((item) => (
+        <div className="planner-task" key={item.title}>
+          <strong>{item.title}</strong>
+          <span>{item.description}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 

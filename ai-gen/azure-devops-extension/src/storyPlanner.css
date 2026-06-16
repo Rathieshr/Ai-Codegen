@@ -27,6 +27,26 @@ body {
   font-weight: 600;
 }
 
+.planner-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.planner-subtitle {
+  color: #53657d;
+  margin-top: 4px;
+}
+
+.planner-banner {
+  color: #1f4e79;
+  background: #eef6ff;
+  border: 1px solid #b8d9f5;
+  border-radius: 8px;
+  padding: 12px;
+}
+
 .planner-subtle {
   color: #53657d;
   font-size: 14px;
@@ -74,6 +94,26 @@ body {
 .planner-textarea {
   min-height: 96px;
   resize: vertical;
+}
+
+.planner-textarea.compact {
+  min-height: 72px;
+}
+
+.planner-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.planner-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f6f8fb;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0;
 }
 
 .planner-actions {

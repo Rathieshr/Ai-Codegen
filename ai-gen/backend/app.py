@@ -28,6 +28,7 @@ from backend.execution_validator import ExecutionContext, snapshot_selected_file
 from backend.intent_detector import detect_intent
 from backend.model_router import detect_execution_target, get_available_targets
 from backend.orchestrator.react_controller import PipelineController
+from backend.project_intelligence import project_intelligence_service
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 from backend.refinement.refinement_decider import should_use_refiner
 from backend.refinement.schema_validator import validate_task_refinement
@@ -295,6 +296,19 @@ class StoryPlannerCreationResultRequest(BaseModel):
     tasks: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ProjectIntelligenceProfileRequest(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceDescriptionRequest(BaseModel):
+    description: str = ""
+
+
+class ProjectIntelligencePromptRequest(BaseModel):
+    story: dict[str, Any] = Field(default_factory=dict)
+    profile: Optional[dict[str, Any]] = None
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -309,6 +323,26 @@ def capabilities() -> dict:
     status = get_status()
     status["auth"] = get_api_key_status()
     return status
+
+
+@app.get("/project-intelligence/profile")
+def get_project_intelligence_profile() -> dict:
+    return project_intelligence_service.get_profile()
+
+
+@app.post("/project-intelligence/profile")
+def save_project_intelligence_profile(request: ProjectIntelligenceProfileRequest) -> dict:
+    return project_intelligence_service.save_profile(request.profile)
+
+
+@app.post("/project-intelligence/analyze-description")
+def analyze_project_description(request: ProjectIntelligenceDescriptionRequest) -> dict:
+    return project_intelligence_service.analyze_description(request.description)
+
+
+@app.post("/project-intelligence/generate-story-prompts")
+def generate_project_story_prompts(request: ProjectIntelligencePromptRequest) -> dict:
+    return project_intelligence_service.generate_story_prompts(request.story, request.profile)
 
 
 @app.post("/story-planner/sessions")

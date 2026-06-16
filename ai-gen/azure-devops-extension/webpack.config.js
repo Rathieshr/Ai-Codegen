@@ -2,6 +2,7 @@ const path = require('path');
 
 module.exports = {
   entry: {
+    projectIntelligenceTab: './src/projectIntelligenceTab.tsx',
     storyPlannerTab: './src/storyPlannerTab.tsx',
     workItemTab: './src/workItemTab.tsx',
     workItemAction: './src/workItemAction.ts'

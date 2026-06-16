@@ -1,0 +1,50 @@
+{
+  "manifestVersion": 1,
+  "id": "ai-gen-project-intelligence-preview",
+  "publisher": "AiIntelliCodegen",
+  "version": "0.1.0",
+  "name": "AI Gen Project Intelligence Preview",
+  "description": "Project-aware planning and story execution context for Azure DevOps.",
+  "public": false,
+  "categories": [
+    "Azure Boards"
+  ],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "icons": {
+    "default": "static/icon.png"
+  },
+  "files": [
+    {
+      "path": "dist",
+      "addressable": true
+    },
+    {
+      "path": "static",
+      "addressable": true
+    },
+    {
+      "path": "projectIntelligenceTab.html",
+      "addressable": true
+    }
+  ],
+  "contributions": [
+    {
+      "id": "ai-gen.project-intelligence-tab",
+      "type": "ms.vss-work-web.work-item-form-page",
+      "targets": [
+        "ms.vss-work-web.work-item-form"
+      ],
+      "properties": {
+        "name": "Project Intelligence",
+        "uri": "projectIntelligenceTab.html"
+      }
+    }
+  ],
+  "scopes": [
+    "vso.work"
+  ]
+}

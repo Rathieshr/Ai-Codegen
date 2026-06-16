@@ -1,4 +1,8 @@
 import * as SDK from 'azure-devops-extension-sdk';
+import { CommonServiceIds, IProjectPageService } from 'azure-devops-extension-api/Common/CommonServices';
+import { getClient } from 'azure-devops-extension-api/Common/Client';
+import { GitRestClient } from 'azure-devops-extension-api/Git/GitClient';
+import { GitRepository, GitVersionOptions, GitVersionType } from 'azure-devops-extension-api/Git/Git';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './storyPlanner.css';
@@ -56,6 +60,26 @@ type ProjectProfile = {
   domain: string;
   project_type: string;
   project_description: string;
+  repository_connection: {
+    repository_id: string;
+    repository_name: string;
+    branch: string;
+    status: string;
+    readme_path: string;
+  };
+  readme_analysis: {
+    summary: string;
+    applications: ApplicationProfile[];
+    modules: string[];
+    flows: string[];
+    architecture_notes: string[];
+  };
+  knowledge_registry: {
+    applications: ApplicationProfile[];
+    modules: string[];
+    flows: string[];
+    components: string[];
+  };
   applications: ApplicationProfile[];
   technology_stack: TechnologyStack;
   development_standards: DevelopmentStandards;
@@ -103,6 +127,26 @@ const EMPTY_PROFILE: ProjectProfile = {
   domain: '',
   project_type: '',
   project_description: '',
+  repository_connection: {
+    repository_id: '',
+    repository_name: '',
+    branch: '',
+    status: 'Not connected',
+    readme_path: '/README.md',
+  },
+  readme_analysis: {
+    summary: '',
+    applications: [],
+    modules: [],
+    flows: [],
+    architecture_notes: [],
+  },
+  knowledge_registry: {
+    applications: [],
+    modules: [],
+    flows: [],
+    components: [],
+  },
   applications: [],
   technology_stack: EMPTY_STACK,
   development_standards: EMPTY_STANDARDS,
@@ -129,6 +173,8 @@ function ProjectIntelligenceTab() {
   const [storyDescription, setStoryDescription] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [prompts, setPrompts] = useState<PromptResult | undefined>();
+  const [repositories, setRepositories] = useState<GitRepository[]>([]);
+  const [branches, setBranches] = useState<string[]>([]);
   const [editingProfile, setEditingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('Loading Project Intelligence...');
@@ -142,6 +188,7 @@ function ProjectIntelligenceTab() {
         const loaded = await getProfile();
         setProfile(loaded);
         setEditingProfile(!isProfileComplete(loaded));
+        void loadRepositories();
         setError('');
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load project profile.');
@@ -204,6 +251,93 @@ function ProjectIntelligenceTab() {
     }
   }
 
+  async function loadRepositories() {
+    try {
+      const projectName = await getProjectName();
+      const client = getClient(GitRestClient);
+      const repos = await client.getRepositories(projectName);
+      setRepositories(repos || []);
+    } catch {
+      setError('Could not load Azure DevOps repositories. You can still use the saved Project Intelligence profile.');
+    }
+  }
+
+  async function selectRepository(repositoryId: string) {
+    const selected = repositories.find((repo) => repo.id === repositoryId);
+    const nextProfile = {
+      ...profile,
+      repository_connection: {
+        ...profile.repository_connection,
+        repository_id: selected?.id || repositoryId,
+        repository_name: selected?.name || '',
+        status: selected ? 'Repository selected' : profile.repository_connection.status,
+      },
+    };
+    setProfile(nextProfile);
+    setBranches([]);
+    if (!selected?.id) {
+      return;
+    }
+    try {
+      const projectName = await getProjectName();
+      const client = getClient(GitRestClient);
+      const stats = await client.getBranches(selected.id, projectName);
+      const branchNames = (stats || []).map((branch) => String(branch.name || '')).filter(Boolean);
+      setBranches(branchNames);
+      const defaultBranch = normalizeBranchName(selected.defaultBranch || '') || branchNames[0] || '';
+      setProfile({
+        ...nextProfile,
+        repository_connection: {
+          ...nextProfile.repository_connection,
+          branch: defaultBranch,
+          status: 'Repository connected',
+        },
+      });
+    } catch {
+      setError('Repository selected, but branches could not be loaded.');
+    }
+  }
+
+  async function analyzeReadme() {
+    const selectedRepo = profile.repository_connection.repository_id;
+    if (!selectedRepo) {
+      setError('Select a repository before analyzing README.');
+      return;
+    }
+    const analyzed = await withLoading('Loading and analyzing README...', async () => {
+      const projectName = await getProjectName();
+      const client = getClient(GitRestClient);
+      const readmePath = profile.repository_connection.readme_path || '/README.md';
+      const branch = profile.repository_connection.branch || 'main';
+      const buffer = await client.getItemContent(
+        selectedRepo,
+        readmePath,
+        projectName,
+        undefined,
+        undefined,
+        true,
+        undefined,
+        false,
+        { version: branch, versionOptions: GitVersionOptions.None, versionType: GitVersionType.Branch },
+        true,
+      );
+      const readmeContent = new TextDecoder('utf-8').decode(buffer);
+      return postJson<ProjectProfile>('/analyze-readme', {
+        profile,
+        readme_content: readmeContent,
+        repository: {
+          id: selectedRepo,
+          name: profile.repository_connection.repository_name,
+          branch,
+          readme_path: readmePath,
+        },
+      });
+    });
+    if (analyzed) {
+      setProfile(analyzed);
+    }
+  }
+
   return (
     <main className="planner-shell">
       <header className="planner-header">
@@ -242,7 +376,15 @@ function ProjectIntelligenceTab() {
       )}
 
       <KnowledgeProfilePreview profile={profile} />
-      <RepositoryIntelligenceCard />
+      <RepositoryIntelligenceCard
+        profile={profile}
+        repositories={repositories}
+        branches={branches}
+        loading={loading}
+        onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+        onProfileChange={setProfile}
+        onAnalyzeReadme={() => void analyzeReadme()}
+      />
       <StoryPromptGeneration
         loading={loading}
         storyTitle={storyTitle}
@@ -494,6 +636,9 @@ function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
         <Row label="Project Type" value={profile.project_type || 'Not captured yet'} />
         <Row label="Applications" value={formatApplications(profile.applications) || 'Not captured yet'} />
         <Row label="Technology Summary" value={formatStack(profile.technology_stack) || 'Not captured yet'} />
+        <Row label="Detected Modules" value={profile.knowledge_registry.modules.join(', ') || 'Pending README analysis'} />
+        <Row label="Detected Flows" value={profile.knowledge_registry.flows.join(', ') || 'Pending README analysis'} />
+        <Row label="Architecture Summary" value={profile.readme_analysis.architecture_notes.join(', ') || 'Pending README analysis'} />
         <Row label="Repository Status" value={profile.knowledge_profile_preview.repository_status} />
         <Row label="Project Intelligence Readiness" value={profile.knowledge_profile_preview.readiness || readiness(profile)} />
       </div>
@@ -501,17 +646,70 @@ function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
   );
 }
 
-function RepositoryIntelligenceCard() {
+function RepositoryIntelligenceCard({
+  profile,
+  repositories,
+  branches,
+  loading,
+  onSelectRepository,
+  onProfileChange,
+  onAnalyzeReadme,
+}: {
+  profile: ProjectProfile;
+  repositories: GitRepository[];
+  branches: string[];
+  loading: boolean;
+  onSelectRepository: (repositoryId: string) => void;
+  onProfileChange: (profile: ProjectProfile) => void;
+  onAnalyzeReadme: () => void;
+}) {
   return (
     <section className="planner-card">
       <div className="planner-label">Repository Intelligence</div>
-      <div className="planner-status-grid">
-        <Row label="README Analysis" value="Pending" />
-        <Row label="Architecture Discovery" value="Pending" />
-        <Row label="Flow Discovery" value="Pending" />
-        <Row label="Module Discovery" value="Pending" />
+      <div className="planner-grid">
+        <select className="planner-input" value={profile.repository_connection.repository_id} onChange={(event) => onSelectRepository(event.target.value)}>
+          <option value="">Select Azure DevOps repository</option>
+          {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
+        </select>
+        <select
+          className="planner-input"
+          value={profile.repository_connection.branch}
+          onChange={(event) => onProfileChange({
+            ...profile,
+            repository_connection: { ...profile.repository_connection, branch: event.target.value, status: 'Repository connected' },
+          })}
+        >
+          <option value="">Select branch</option>
+          {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+          {profile.repository_connection.branch && !branches.includes(profile.repository_connection.branch) ? (
+            <option value={profile.repository_connection.branch}>{profile.repository_connection.branch}</option>
+          ) : null}
+        </select>
       </div>
-      <div className="planner-subtle">Repository README scan coming next.</div>
+      <input
+        className="planner-input"
+        value={profile.repository_connection.readme_path}
+        onChange={(event) => onProfileChange({
+          ...profile,
+          repository_connection: { ...profile.repository_connection, readme_path: event.target.value || '/README.md' },
+        })}
+        placeholder="/README.md"
+      />
+      <div className="planner-actions">
+        <button className="planner-button" onClick={onAnalyzeReadme} disabled={loading || !profile.repository_connection.repository_id}>
+          Analyze README
+        </button>
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Repository" value={profile.repository_connection.repository_name || 'Not connected'} />
+        <Row label="Branch" value={profile.repository_connection.branch || 'Not selected'} />
+        <Row label="Status" value={profile.repository_connection.status || 'Not connected'} />
+        <Row label="README Analysis" value={profile.readme_analysis.summary || 'Pending'} />
+        <Row label="Architecture Discovery" value={profile.readme_analysis.architecture_notes.join(', ') || 'Pending'} />
+        <Row label="Flow Discovery" value={profile.knowledge_registry.flows.join(', ') || 'Pending'} />
+        <Row label="Module Discovery" value={profile.knowledge_registry.modules.join(', ') || 'Pending'} />
+      </div>
+      <div className="planner-subtle">Only README ingestion is enabled in this preview. Full repository scans are intentionally not included.</div>
     </section>
   );
 }
@@ -654,6 +852,16 @@ function formatStack(stack: TechnologyStack): string {
     .join('; ');
 }
 
+async function getProjectName(): Promise<string> {
+  const projectService = await SDK.getService<IProjectPageService>(CommonServiceIds.ProjectPageService);
+  const project = await projectService.getProject();
+  return String(project?.name || SDK.getWebContext().project?.name || '');
+}
+
+function normalizeBranchName(branch: string): string {
+  return branch.replace(/^refs\/heads\//, '');
+}
+
 function summarizeUiGuidelines(profile: ProjectProfile): string {
   const values = [
     profile.ui_guidelines.primary_color ? `Primary ${profile.ui_guidelines.primary_color}` : '',
@@ -670,7 +878,8 @@ function readiness(profile: ProjectProfile): string {
   const hasApplications = profile.applications.length > 0;
   const hasStack = STACK_FIELDS.some((field) => profile.technology_stack[field].length > 0);
   const hasStandards = Object.values(profile.development_standards).some((items) => items.length > 0);
-  if (hasDescription && hasApplications && hasStack && hasStandards) {
+  const hasRegistry = profile.knowledge_registry.modules.length > 0 || profile.knowledge_registry.flows.length > 0;
+  if (hasDescription && hasApplications && hasStack && (hasStandards || hasRegistry)) {
     return 'Advanced';
   }
   if (hasDescription && hasApplications && hasStack) {

@@ -309,6 +309,12 @@ class ProjectIntelligencePromptRequest(BaseModel):
     profile: Optional[dict[str, Any]] = None
 
 
+class ProjectIntelligenceReadmeRequest(BaseModel):
+    readme_content: str = ""
+    repository: dict[str, Any] = Field(default_factory=dict)
+    profile: Optional[dict[str, Any]] = None
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -343,6 +349,11 @@ def analyze_project_description(request: ProjectIntelligenceDescriptionRequest) 
 @app.post("/project-intelligence/generate-story-prompts")
 def generate_project_story_prompts(request: ProjectIntelligencePromptRequest) -> dict:
     return project_intelligence_service.generate_story_prompts(request.story, request.profile)
+
+
+@app.post("/project-intelligence/analyze-readme")
+def analyze_project_readme(request: ProjectIntelligenceReadmeRequest) -> dict:
+    return project_intelligence_service.analyze_readme(request.readme_content, request.repository, request.profile)
 
 
 @app.post("/story-planner/sessions")

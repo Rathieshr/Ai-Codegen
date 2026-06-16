@@ -82,6 +82,41 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertIn("Domain: Retail", prompts["dev_prompt"])
         self.assertIn("Development Standards: MVVM; OAuth2", prompts["dev_prompt"])
 
+    def test_analyze_readme_updates_knowledge_registry_and_prompts(self) -> None:
+        readme = """
+# Smart Meter Platform
+Smart meter operations platform for mobile field work, backend APIs, and analytics.
+
+## Modules
+- Meter Inventory
+- Outage Alerts
+- Billing Sync
+
+## Flows
+- Meter onboarding
+- Field inspection
+- Consumption analytics
+
+## Architecture
+- Mobile app uses MVVM.
+- Backend APIs use repository pattern.
+- Events publish meter readings to analytics.
+"""
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            profile = service.analyze_readme(
+                readme,
+                {"id": "repo-1", "name": "meter-platform", "branch": "main", "readme_path": "/README.md"},
+                {"project_description": "Smart meter project", "technology_stack": {"mobile": ["Kotlin"], "backend": ["FastAPI"]}},
+            )
+            prompts = service.generate_story_prompts({"title": "Meter onboarding"}, profile)
+
+        self.assertEqual(profile["repository_connection"]["status"], "README analyzed")
+        self.assertIn("Meter Inventory", profile["knowledge_registry"]["modules"])
+        self.assertIn("Meter onboarding", profile["knowledge_registry"]["flows"])
+        self.assertIn("Detected Modules: Meter Inventory", prompts["dev_prompt"])
+        self.assertIn("Detected Flows: Meter onboarding", prompts["dev_prompt"])
+
 
 if __name__ == "__main__":
     unittest.main()

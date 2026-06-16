@@ -14,6 +14,26 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "domain": "",
     "project_type": "",
     "project_description": "",
+    "repository_connection": {
+        "repository_id": "",
+        "repository_name": "",
+        "branch": "",
+        "status": "Not connected",
+        "readme_path": "/README.md",
+    },
+    "readme_analysis": {
+        "summary": "",
+        "applications": [],
+        "modules": [],
+        "flows": [],
+        "architecture_notes": [],
+    },
+    "knowledge_registry": {
+        "applications": [],
+        "modules": [],
+        "flows": [],
+        "components": [],
+    },
     "applications": [],
     "technology_stack": {
         "mobile": [],
@@ -41,6 +61,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
         "systems": [],
         "standards": [],
         "repository_status": "Repository README scan coming next.",
+        "readiness": "Basic",
     },
 }
 
@@ -136,6 +157,42 @@ class ProjectIntelligenceService:
             ),
         }
 
+    def analyze_readme(
+        self,
+        readme_content: str,
+        repository: dict[str, Any] | None = None,
+        profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _normalize_profile(profile or self.get_profile())
+        repository = repository or {}
+        analysis = _analyze_readme_content(readme_content)
+        registry = _merge_knowledge_registry(active_profile["knowledge_registry"], analysis)
+        repository_connection = {
+            **active_profile["repository_connection"],
+            "repository_id": _clean_text(repository.get("id")) or active_profile["repository_connection"]["repository_id"],
+            "repository_name": _clean_text(repository.get("name")) or active_profile["repository_connection"]["repository_name"],
+            "branch": _clean_text(repository.get("branch")) or active_profile["repository_connection"]["branch"],
+            "readme_path": _clean_text(repository.get("readme_path")) or active_profile["repository_connection"]["readme_path"] or "/README.md",
+            "status": "README analyzed",
+        }
+        next_profile = {
+            **active_profile,
+            "repository_connection": repository_connection,
+            "readme_analysis": analysis,
+            "knowledge_registry": registry,
+            "applications": _merge_applications(active_profile["applications"], registry["applications"]),
+            "knowledge_profile_preview": {
+                **active_profile["knowledge_profile_preview"],
+                "systems": [app["name"] for app in _merge_applications(active_profile["applications"], registry["applications"])],
+                "repository_status": "README analyzed",
+                "readiness": _readiness({**active_profile, "knowledge_registry": registry}),
+            },
+        }
+        saved = self.save_profile(next_profile)
+        saved["onboarding_completed"] = active_profile.get("onboarding_completed", False)
+        self._profile_path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+        return saved
+
 
 def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     ui = profile.get("ui_guidelines") if isinstance(profile.get("ui_guidelines"), dict) else {}
@@ -147,6 +204,9 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "domain": _clean_text(profile.get("domain")),
         "project_type": _clean_text(profile.get("project_type")),
         "project_description": _clean_text(profile.get("project_description")),
+        "repository_connection": _normalize_repository_connection(profile.get("repository_connection")),
+        "readme_analysis": _normalize_readme_analysis(profile.get("readme_analysis")),
+        "knowledge_registry": _normalize_knowledge_registry(profile.get("knowledge_registry")),
         "applications": _normalize_applications(profile.get("applications")),
         "technology_stack": _normalize_stack(profile.get("technology_stack")),
         "development_standards": {
@@ -193,6 +253,38 @@ def _normalize_applications(value: Any) -> list[dict[str, str]]:
                 apps.append({"name": name, "type": app_type or "API"})
         return apps
     return []
+
+
+def _normalize_repository_connection(value: Any) -> dict[str, str]:
+    connection = value if isinstance(value, dict) else {}
+    return {
+        "repository_id": _clean_text(connection.get("repository_id")),
+        "repository_name": _clean_text(connection.get("repository_name")),
+        "branch": _clean_text(connection.get("branch")),
+        "status": _clean_text(connection.get("status")) or "Not connected",
+        "readme_path": _clean_text(connection.get("readme_path")) or "/README.md",
+    }
+
+
+def _normalize_readme_analysis(value: Any) -> dict[str, Any]:
+    analysis = value if isinstance(value, dict) else {}
+    return {
+        "summary": _clean_text(analysis.get("summary")),
+        "applications": _normalize_applications(analysis.get("applications")),
+        "modules": _string_list(analysis.get("modules")),
+        "flows": _string_list(analysis.get("flows")),
+        "architecture_notes": _string_list(analysis.get("architecture_notes")),
+    }
+
+
+def _normalize_knowledge_registry(value: Any) -> dict[str, Any]:
+    registry = value if isinstance(value, dict) else {}
+    return {
+        "applications": _normalize_applications(registry.get("applications")),
+        "modules": _string_list(registry.get("modules")),
+        "flows": _string_list(registry.get("flows")),
+        "components": _string_list(registry.get("components")),
+    }
 
 
 def _normalize_stack(value: Any) -> dict[str, list[str]]:
@@ -301,6 +393,9 @@ def _profile_context_lines(profile: dict[str, Any]) -> list[str]:
         f"Technology Stack: {_format_stack(profile['technology_stack']) or 'Not specified'}",
         f"UI Guidelines: primary={profile['ui_guidelines']['primary_color'] or 'n/a'}, secondary={profile['ui_guidelines']['secondary_color'] or 'n/a'}, typography={profile['ui_guidelines']['typography'] or 'n/a'}, components={profile['ui_guidelines']['component_library'] or 'n/a'}",
         f"Development Standards: {_format_standards(profile['development_standards']) or 'Not specified'}",
+        f"Detected Modules: {', '.join(profile['knowledge_registry']['modules']) or 'Not detected yet'}",
+        f"Detected Flows: {', '.join(profile['knowledge_registry']['flows']) or 'Not detected yet'}",
+        f"Architecture Summary: {', '.join(profile['readme_analysis']['architecture_notes']) or 'Not detected yet'}",
         f"Repository Sources: {', '.join(profile['repository_sources']) or 'Repository README scan coming next.'}",
     ]
     return lines
@@ -311,9 +406,10 @@ def _readiness(profile: dict[str, Any]) -> str:
     has_apps = bool(_normalize_applications(profile.get("applications")))
     stack = _normalize_stack(profile.get("technology_stack"))
     has_stack = any(stack.values())
+    registry = _normalize_knowledge_registry(profile.get("knowledge_registry"))
     standards = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
     has_standards = bool(_flatten_standards(standards))
-    if has_description and has_apps and has_stack and has_standards:
+    if has_description and has_apps and has_stack and (has_standards or registry["modules"] or registry["flows"]):
         return "Advanced"
     if has_description and has_apps and has_stack:
         return "Intermediate"
@@ -371,6 +467,92 @@ def _stack_category(item: str) -> str:
     if any(word in lowered for word in ["analytics", "spark", "power bi", "dashboard"]):
         return "analytics"
     return "frontend"
+
+
+def _analyze_readme_content(readme_content: str) -> dict[str, Any]:
+    text = readme_content.strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    summary = _extract_summary(lines)
+    modules = _extract_section_items(lines, ["modules", "packages", "services", "components"])
+    flows = _extract_section_items(lines, ["flows", "features", "workflows", "user journeys"])
+    architecture_notes = _extract_architecture_notes(lines)
+    applications = _extract_applications_from_readme(text)
+    components = _extract_section_items(lines, ["components", "screens", "pages"])
+    return {
+        "summary": summary,
+        "applications": applications,
+        "modules": modules,
+        "flows": flows,
+        "architecture_notes": architecture_notes,
+        "components": components,
+    }
+
+
+def _extract_summary(lines: list[str]) -> str:
+    for line in lines:
+        if not line.startswith("#") and len(line) > 24:
+            return line[:500]
+    return lines[0].lstrip("# ").strip()[:500] if lines else ""
+
+
+def _extract_section_items(lines: list[str], section_names: list[str]) -> list[str]:
+    items: list[str] = []
+    in_section = False
+    for line in lines:
+        lowered = line.lower().strip("# ")
+        if line.startswith("#"):
+            in_section = any(name in lowered for name in section_names)
+            continue
+        if in_section:
+            if line.startswith(("-", "*")):
+                items.append(line.lstrip("-* ").split(":", 1)[0].strip())
+            elif len(line.split()) <= 5:
+                items.append(line.split(":", 1)[0].strip())
+    return _unique(items)
+
+
+def _extract_architecture_notes(lines: list[str]) -> list[str]:
+    notes = _extract_section_items(lines, ["architecture", "design", "technical overview"])
+    keyword_notes = [
+        line.lstrip("-* ").strip()
+        for line in lines
+        if any(word in line.lower() for word in ["architecture", "mvvm", "repository pattern", "microservice", "event", "api", "database"])
+    ]
+    return _unique(notes + keyword_notes)[:10]
+
+
+def _extract_applications_from_readme(text: str) -> list[dict[str, str]]:
+    inferred = _infer_applications(text)
+    return [] if inferred == [{"name": "Application", "type": "API"}] else inferred
+
+
+def _merge_knowledge_registry(existing: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_knowledge_registry(existing)
+    return {
+        "applications": _merge_applications(normalized["applications"], analysis.get("applications", [])),
+        "modules": _unique([*normalized["modules"], *_string_list(analysis.get("modules"))]),
+        "flows": _unique([*normalized["flows"], *_string_list(analysis.get("flows"))]),
+        "components": _unique([*normalized["components"], *_string_list(analysis.get("components"))]),
+    }
+
+
+def _merge_applications(existing: list[dict[str, str]], incoming: Any) -> list[dict[str, str]]:
+    merged: dict[str, dict[str, str]] = {app["name"].lower(): app for app in _normalize_applications(existing)}
+    for app in _normalize_applications(incoming):
+        merged.setdefault(app["name"].lower(), app)
+    return list(merged.values())
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        cleaned = _clean_text(value)
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            seen.add(key)
+            result.append(cleaned)
+    return result
 
 
 def _prompt(title: str, story_title: str, story_description: str, context_lines: list[str], instructions: list[str]) -> str:

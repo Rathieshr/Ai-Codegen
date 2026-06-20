@@ -22,6 +22,81 @@ body {
   gap: 14px;
 }
 
+.planner-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.planner-tab,
+.planner-pill {
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fff;
+  color: #172b4d;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.planner-tab {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  text-align: left;
+}
+
+.planner-tab small {
+  color: #53657d;
+  font-weight: 400;
+}
+
+.planner-tab.active,
+.planner-pill.active {
+  border-color: #0078d4;
+  background: #eef6ff;
+}
+
+.planner-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.planner-pill {
+  padding: 10px 16px;
+}
+
+.planner-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.planner-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.planner-file-status {
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  background: #e8eef5;
+  color: #53657d;
+}
+
+.planner-file-status.available {
+  background: #eefbf3;
+  color: #166534;
+}
+
+.planner-file-status.missing {
+  background: #fef3f2;
+  color: #b42318;
+}
+
 .planner-title {
   font-size: 28px;
   font-weight: 600;

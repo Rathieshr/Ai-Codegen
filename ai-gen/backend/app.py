@@ -321,6 +321,13 @@ class ProjectIntelligenceReadmeRequest(BaseModel):
     profile: Optional[dict[str, Any]] = None
 
 
+class ProjectIntelligenceRepositoryAnalyzeRequest(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+    repository: dict[str, Any] = Field(default_factory=dict)
+    selected_files: list[str] = Field(default_factory=list)
+    documents: dict[str, str] = Field(default_factory=dict)
+
+
 class ProjectIntelligenceRefinementRequest(BaseModel):
     profile: dict[str, Any] = Field(default_factory=dict)
     knowledge_profile: dict[str, Any] = Field(default_factory=dict)
@@ -388,6 +395,21 @@ def generate_project_story_prompts(request: ProjectIntelligencePromptRequest) ->
 @app.post("/project-intelligence/analyze-readme")
 def analyze_project_readme(request: ProjectIntelligenceReadmeRequest) -> dict:
     return project_intelligence_service.analyze_readme(request.readme_content, request.repository, request.profile)
+
+
+@app.get("/project-intelligence/repository/files")
+def get_project_repository_files() -> dict:
+    return project_intelligence_service.repository_files()
+
+
+@app.post("/project-intelligence/repository/analyze")
+def analyze_project_repository_documents(request: ProjectIntelligenceRepositoryAnalyzeRequest) -> dict:
+    return project_intelligence_service.analyze_repository_documents(
+        request.documents,
+        request.repository,
+        request.profile,
+        request.selected_files,
+    )
 
 
 @app.post("/project-intelligence/refine-epic")

@@ -180,6 +180,77 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Detected Modules: Meter Inventory", prompts["dev_prompt"])
         self.assertIn("Detected Flows: Meter onboarding", prompts["dev_prompt"])
 
+    def test_repository_document_analysis_populates_registry(self) -> None:
+        documents = {
+            "modules.md": """
+# Modules
+- Fault Monitoring
+- Telemetry
+- Event Repository
+""",
+            "flows.md": """
+# Flows
+- Fault Event Review
+- Fault Event Timeline
+- Device Telemetry Review
+""",
+            "architecture.md": """
+# Architecture
+- Events publish telemetry to the operations API.
+- Mobile app uses MVVM.
+
+# Components
+- Fault Detail Screen
+- Event Timeline
+""",
+            "coding-standards.md": """
+# Coding Standards
+- Repository Pattern
+- Unit tests required
+""",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            profile = service.analyze_repository_documents(
+                documents,
+                {"repository_id": "repo-1", "repository_name": "linedefender", "branch": "main"},
+                {"project_description": "LineDefender fault monitoring platform."},
+            )
+
+        self.assertEqual(profile["repository_status"], "analyzed")
+        self.assertIn("Fault Monitoring", profile["knowledge_registry"]["modules"])
+        self.assertIn("Fault Event Review", profile["knowledge_registry"]["flows"])
+        self.assertIn("Events publish telemetry to the operations API.", profile["knowledge_registry"]["architecture_notes"])
+        self.assertIn("Fault Detail Screen", profile["knowledge_registry"]["components"])
+        self.assertIn("Repository Pattern", profile["knowledge_registry"]["standards"])
+        self.assertIn("modules.md", profile["knowledge_registry"]["source_files"])
+        self.assertIn("flows.md", profile["source_files"])
+
+    def test_repository_document_analysis_extracts_linedefender_inline_lists(self) -> None:
+        documents = {
+            "README.md": "LineDefender repository for grid fault monitoring and asset health.",
+            "modules.md": "Modules: Authentication, Telemetry, Fault Monitoring, Firmware Management, Asset Health",
+            "flows.md": "Flows: Fault Event Review, Outage Investigation, Firmware Upgrade",
+            "architecture.md": "Architecture Notes: Backend telemetry APIs publish events to the operations portal.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            profile = service.analyze_repository_documents(documents, {"repository_id": "repo-ld", "branch": "main"})
+
+        for module in ["Authentication", "Telemetry", "Fault Monitoring", "Firmware Management", "Asset Health"]:
+            self.assertIn(module, profile["knowledge_registry"]["modules"])
+        for flow in ["Fault Event Review", "Outage Investigation", "Firmware Upgrade"]:
+            self.assertIn(flow, profile["knowledge_registry"]["flows"])
+        self.assertIn("Backend telemetry APIs publish events to the operations portal.", profile["knowledge_registry"]["architecture_notes"])
+
+    def test_repository_file_endpoint_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            files = service.repository_files()
+
+        self.assertIn("README.md", files["known_files"])
+        self.assertIn("docs/flows.md", files["known_files"])
+
     def test_project_aware_epic_refinement_avoids_generic_slices(self) -> None:
         profile = {
             "project_name": "LineDefender Smart Monitoring Platform",
@@ -203,6 +274,43 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Telemetry Health Dashboard", feature_titles)
         self.assertIn("Firmware Upgrade Visibility", feature_titles)
         self.assertFalse(any("Slice" in title or title in {"Story 1", "Story 2"} for title in feature_titles))
+
+    def test_linedefender_feature_generation_uses_detected_fault_modules(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_description": "Real-time fault event monitoring with telemetry health.",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Event Repository"],
+                "flows": ["Fault Event Review", "Fault Event Timeline", "Device Telemetry Review"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            refined = service.refine_epic({"title": "Real-Time Fault Event Monitoring"}, profile)
+
+        titles = [feature["title"] for feature in refined["recommended_features"]]
+        self.assertIn("Fault Event Monitoring", titles)
+        self.assertIn("Telemetry Health Dashboard", titles)
+        self.assertNotIn("Generic Feature", titles)
+
+    def test_feature_story_generation_avoids_generic_fallback_phrases(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review", "Fault Event Timeline"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            refined = service.refine_feature({"title": "Fault Event Monitoring"}, profile)
+
+        story_titles = [story["title"] for story in refined["recommended_stories"]]
+        self.assertFalse(any("Configure operating rules" in title for title in story_titles))
+        self.assertFalse(any("Validate user outcomes" in title for title in story_titles))
+        self.assertIn("provider_used", refined)
 
     def test_story_refinement_uses_modules_flows_and_considerations(self) -> None:
         profile = {
@@ -368,7 +476,17 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(context["technology_stack"]["mobile"], ["MAUI"])
         self.assertEqual(context["technology_stack"]["backend"], [".NET"])
         self.assertIn("MVVM", context["development_standards"]["architecture_patterns"])
-        self.assertIn("Execution Ready", context["execution_readiness"])
+        self.assertEqual(context["execution_readiness"], "Ready")
+        self.assertEqual(context["execution_readiness_result"], "Ready")
+        self.assertGreaterEqual(context["execution_readiness_score"], 85)
+        self.assertIn("FaultEventViewModel.cs", " ".join(context["recommended_files"]))
+        self.assertIn("FaultEventDetailsPage.xaml", " ".join(context["recommended_files"]))
+        self.assertIn("FaultEventController.cs", " ".join(context["recommended_files"]))
+        self.assertIn("FaultEventRepository.cs", " ".join(context["recommended_files"]))
+        self.assertTrue(context["acceptance_criteria_mapping"])
+        self.assertTrue(context["implementation_tasks"])
+        self.assertTrue(context["testing_tasks"])
+        self.assertTrue(context["documentation_tasks"])
 
     def test_prompt_builders_and_copilot_context_are_project_aware(self) -> None:
         profile = {

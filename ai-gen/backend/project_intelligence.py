@@ -10,6 +10,21 @@ from typing import Any
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 
 
+KNOWN_REPOSITORY_DOCUMENTS = [
+    "README.md",
+    "docs/README.md",
+    "architecture.md",
+    "docs/architecture.md",
+    "modules.md",
+    "docs/modules.md",
+    "flows.md",
+    "docs/flows.md",
+    "ui-guidelines.md",
+    "docs/ui-guidelines.md",
+    "coding-standards.md",
+    "docs/coding-standards.md",
+]
+
 DEFAULT_PROFILE: dict[str, Any] = {
     "onboarding_completed": False,
     "project_name": "",
@@ -35,6 +50,9 @@ DEFAULT_PROFILE: dict[str, Any] = {
         "modules": [],
         "flows": [],
         "components": [],
+        "architecture_notes": [],
+        "standards": [],
+        "source_files": [],
     },
     "applications": [],
     "technology_stack": {
@@ -221,6 +239,78 @@ class ProjectIntelligenceService:
         self._profile_path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
         return saved
 
+    def repository_files(self) -> dict[str, Any]:
+        return {"known_files": KNOWN_REPOSITORY_DOCUMENTS}
+
+    def analyze_repository_documents(
+        self,
+        documents: dict[str, str] | None = None,
+        repository: dict[str, Any] | None = None,
+        profile: dict[str, Any] | None = None,
+        selected_files: list[str] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _normalize_profile(profile or self.get_profile())
+        repository = repository or {}
+        documents = {
+            _clean_path(path): content
+            for path, content in (documents or {}).items()
+            if _clean_path(path) and _clean_text(content)
+        }
+        if selected_files:
+            documents = {path: content for path, content in documents.items() if path in set(selected_files)}
+        analysis = _analyze_repository_documents(documents)
+        registry = _merge_knowledge_registry(active_profile["knowledge_registry"], analysis)
+        repository_connection = {
+            **active_profile["repository_connection"],
+            "repository_id": _clean_text(repository.get("repository_id")) or _clean_text(repository.get("id")) or active_profile["repository_connection"]["repository_id"],
+            "repository_name": _clean_text(repository.get("repository_name")) or _clean_text(repository.get("name")) or active_profile["repository_connection"]["repository_name"],
+            "branch": _clean_text(repository.get("branch")) or active_profile["repository_connection"]["branch"],
+            "status": "Repository documents analyzed" if documents else active_profile["repository_connection"]["status"],
+            "readme_path": active_profile["repository_connection"]["readme_path"] or "/README.md",
+        }
+        next_profile = {
+            **active_profile,
+            "repository_connection": repository_connection,
+            "readme_analysis": {
+                **active_profile["readme_analysis"],
+                "summary": analysis["readme_summary"] or active_profile["readme_analysis"]["summary"],
+                "applications": _merge_applications(active_profile["readme_analysis"]["applications"], analysis["detected_applications"]),
+                "modules": _unique([*active_profile["readme_analysis"]["modules"], *analysis["detected_modules"]]),
+                "flows": _unique([*active_profile["readme_analysis"]["flows"], *analysis["detected_flows"]]),
+                "architecture_notes": _unique([*active_profile["readme_analysis"]["architecture_notes"], *analysis["architecture_notes"]]),
+            },
+            "knowledge_registry": registry,
+            "applications": _merge_applications(active_profile["applications"], analysis["detected_applications"]),
+            "development_standards": _merge_development_standards(active_profile["development_standards"], analysis["development_standards"]),
+            "ui_guidelines": {
+                **active_profile["ui_guidelines"],
+                "accessibility_rules": _unique([*active_profile["ui_guidelines"]["accessibility_rules"], *analysis["ui_standards"]]),
+            },
+            "repository_sources": _unique([*active_profile["repository_sources"], *analysis["source_files"]]),
+            "knowledge_profile_preview": {
+                **active_profile["knowledge_profile_preview"],
+                "systems": [app["name"] for app in _merge_applications(active_profile["applications"], analysis["detected_applications"])],
+                "standards": _unique([*active_profile["knowledge_profile_preview"]["standards"], *analysis["ui_standards"], *analysis["development_standards"]]),
+                "repository_status": "Repository documents analyzed" if documents else "Repository documents not found",
+                "readiness": _readiness({**active_profile, "knowledge_registry": registry}),
+            },
+        }
+        saved = self.save_profile(next_profile)
+        saved["onboarding_completed"] = active_profile.get("onboarding_completed", False)
+        saved["repository_status"] = "analyzed" if documents else "not_analyzed"
+        saved["readme_summary"] = analysis["readme_summary"]
+        saved["architecture_summary"] = analysis["architecture_summary"]
+        saved["detected_applications"] = analysis["detected_applications"]
+        saved["detected_modules"] = analysis["detected_modules"]
+        saved["detected_flows"] = analysis["detected_flows"]
+        saved["detected_components"] = analysis["detected_components"]
+        saved["ui_standards"] = analysis["ui_standards"]
+        saved["development_standards_detected"] = analysis["development_standards"]
+        saved["source_files"] = analysis["source_files"]
+        saved["warnings"] = analysis["warnings"]
+        self._profile_path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+        return saved
+
     def refine_epic(
         self,
         epic: dict[str, Any],
@@ -397,6 +487,10 @@ class ProjectIntelligenceService:
         acceptance = _string_list(story.get("acceptance_criteria")) or refined_story["acceptance_criteria"]
         has_impact = any(impact[key] for key in ["affected_applications", "affected_modules", "affected_flows", "dependencies", "risks"])
         readiness = _execution_readiness_score(active_profile, has_impact)
+        recommended_files = _recommended_files(active_profile, impact, title)
+        implementation_tasks = _implementation_tasks(title, acceptance, impact, recommended_files)
+        testing_tasks = _testing_tasks(title, acceptance, impact)
+        documentation_tasks = _documentation_tasks(title, active_profile, impact)
         return _with_provider_metadata({
             "story_summary": _sentence(title, description or refined_story["story_summary"]),
             "acceptance_criteria": acceptance,
@@ -408,9 +502,16 @@ class ProjectIntelligenceService:
             "technology_stack": active_profile["technology_stack"],
             "ui_guidelines": active_profile["ui_guidelines"],
             "development_standards": active_profile["development_standards"],
-            "recommended_files": _recommended_files(active_profile, impact),
+            "recommended_files": recommended_files,
+            "acceptance_criteria_mapping": _acceptance_criteria_mapping(acceptance, implementation_tasks),
+            "implementation_tasks": implementation_tasks,
+            "testing_tasks": testing_tasks,
+            "documentation_tasks": documentation_tasks,
             "implementation_notes": _implementation_notes(active_profile, impact),
             "execution_readiness": readiness["label"],
+            "execution_readiness_score": readiness["score"],
+            "execution_readiness_breakdown": readiness["breakdown"],
+            "execution_readiness_result": readiness["result"],
         }, _fallback_metadata("domain_fallback", "execution context combines deterministic impact and project profile context."))
 
     def build_dev_prompt(
@@ -434,6 +535,7 @@ class ProjectIntelligenceService:
                     f"Coding Standards: {_format_standards(context['development_standards']) or 'Follow existing project standards.'}",
                     f"Architecture Rules: {', '.join(active_profile['readme_analysis']['architecture_notes']) or 'Preserve current architecture boundaries.'}",
                     f"Recommended Files: {', '.join(context['recommended_files']) or 'Inspect the affected modules before editing.'}",
+                    f"Implementation Tasks: {', '.join(context['implementation_tasks']) or 'Break down implementation before coding.'}",
                 ],
             )
         }
@@ -490,6 +592,7 @@ class ProjectIntelligenceService:
                     f"Dependencies: {', '.join(context['dependencies']) or 'Confirm dependencies before testing.'}",
                     f"Integration Points: {', '.join(impact['integration_points']) or 'Confirm integration points.'}",
                     f"Regression Areas: {', '.join(_unique(context['affected_flows'] + context['affected_modules'])) or 'Confirm regression scope.'}",
+                    f"Testing Tasks: {', '.join(context['testing_tasks']) or 'Define test cases before validation.'}",
                 ],
             )
         }
@@ -644,6 +747,9 @@ def _normalize_knowledge_registry(value: Any) -> dict[str, Any]:
         "modules": _string_list(registry.get("modules")),
         "flows": _string_list(registry.get("flows")),
         "components": _string_list(registry.get("components")),
+        "architecture_notes": _string_list(registry.get("architecture_notes")),
+        "standards": _string_list(registry.get("standards")),
+        "source_files": _string_list(registry.get("source_files")),
     }
 
 
@@ -755,7 +861,7 @@ def _profile_context_lines(profile: dict[str, Any]) -> list[str]:
         f"Development Standards: {_format_standards(profile['development_standards']) or 'Not specified'}",
         f"Detected Modules: {', '.join(profile['knowledge_registry']['modules']) or 'Not detected yet'}",
         f"Detected Flows: {', '.join(profile['knowledge_registry']['flows']) or 'Not detected yet'}",
-        f"Architecture Summary: {', '.join(profile['readme_analysis']['architecture_notes']) or 'Not detected yet'}",
+        f"Architecture Summary: {', '.join(profile['knowledge_registry']['architecture_notes'] or profile['readme_analysis']['architecture_notes']) or 'Not detected yet'}",
         f"Repository Sources: {', '.join(profile['repository_sources']) or 'Repository README scan coming next.'}",
     ]
     return lines
@@ -845,7 +951,102 @@ def _analyze_readme_content(readme_content: str) -> dict[str, Any]:
         "flows": flows,
         "architecture_notes": architecture_notes,
         "components": components,
+        "standards": [],
+        "source_files": [],
     }
+
+
+def _analyze_repository_documents(documents: dict[str, str]) -> dict[str, Any]:
+    readme_summary = ""
+    architecture_notes: list[str] = []
+    detected_applications: list[dict[str, str]] = []
+    detected_modules: list[str] = []
+    detected_flows: list[str] = []
+    detected_components: list[str] = []
+    ui_standards: list[str] = []
+    development_standards: list[str] = []
+    warnings: list[str] = []
+    source_files: list[str] = []
+
+    for path, content in documents.items():
+        lowered_path = path.lower()
+        source_files.append(path)
+        parsed = _analyze_readme_content(content)
+        if "readme" in lowered_path and not readme_summary:
+            readme_summary = parsed["summary"]
+        if "architecture" in lowered_path:
+            architecture_notes.extend(_extract_document_items(content, ["architecture", "notes", "decisions", "patterns"]) or parsed["architecture_notes"])
+            detected_components.extend(_extract_document_items(content, ["components", "services", "systems"]))
+            detected_applications = _merge_applications(detected_applications, _extract_applications_from_readme(content))
+        elif "modules" in lowered_path:
+            detected_modules.extend(_extract_document_items(content, ["modules", "services", "packages", "domains"]) or parsed["modules"])
+            detected_components.extend(_extract_document_items(content, ["components", "classes", "screens"]))
+        elif "flows" in lowered_path:
+            detected_flows.extend(_extract_document_items(content, ["flows", "workflows", "journeys", "scenarios"]) or parsed["flows"])
+        elif "ui-guidelines" in lowered_path:
+            ui_standards.extend(_extract_document_items(content, ["ui guidelines", "accessibility", "components", "design rules"]) or _extract_bullets(content))
+        elif "coding-standards" in lowered_path:
+            development_standards.extend(_extract_document_items(content, ["coding standards", "security", "testing", "architecture"]) or _extract_bullets(content))
+        else:
+            detected_applications = _merge_applications(detected_applications, parsed["applications"])
+            detected_modules.extend(parsed["modules"])
+            detected_flows.extend(parsed["flows"])
+            detected_components.extend(parsed["components"])
+            architecture_notes.extend(parsed["architecture_notes"])
+
+    if not documents:
+        warnings.append("No repository documents were available for analysis.")
+
+    architecture_summary = ". ".join(_unique(architecture_notes)[:3])
+    return {
+        "readme_summary": readme_summary,
+        "architecture_summary": architecture_summary,
+        "architecture_notes": _unique(architecture_notes),
+        "detected_applications": detected_applications,
+        "detected_modules": _unique(detected_modules),
+        "detected_flows": _unique(detected_flows),
+        "detected_components": _unique(detected_components),
+        "ui_standards": _unique(ui_standards),
+        "development_standards": _unique(development_standards),
+        "source_files": _unique(source_files),
+        "warnings": warnings,
+        "applications": detected_applications,
+        "modules": _unique(detected_modules),
+        "flows": _unique(detected_flows),
+        "components": _unique(detected_components),
+        "standards": _unique([*ui_standards, *development_standards]),
+    }
+
+
+def _extract_document_items(content: str, sections: list[str]) -> list[str]:
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    section_items = _extract_section_items(lines, sections)
+    labelled_items = _extract_labelled_items(lines, sections)
+    return _unique([*section_items, *labelled_items]) or _extract_bullets(content)
+
+
+def _extract_labelled_items(lines: list[str], labels: list[str]) -> list[str]:
+    items: list[str] = []
+    normalized_labels = [label.lower().replace(" ", "") for label in labels]
+    for line in lines:
+        if ":" not in line:
+            continue
+        label, value = line.split(":", 1)
+        normalized_label = label.lower().strip("# -*").replace(" ", "")
+        if not any(normalized in normalized_label for normalized in normalized_labels):
+            continue
+        parts = [part.strip(" -*`") for part in value.replace(";", ",").split(",")]
+        items.extend(part for part in parts if part)
+    return _unique(items)
+
+
+def _extract_bullets(content: str) -> list[str]:
+    items: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("-", "*")):
+            items.append(stripped.lstrip("-* ").split(":", 1)[0].strip())
+    return _unique(items)
 
 
 def _extract_summary(lines: list[str]) -> str:
@@ -893,7 +1094,30 @@ def _merge_knowledge_registry(existing: dict[str, Any], analysis: dict[str, Any]
         "modules": _unique([*normalized["modules"], *_string_list(analysis.get("modules"))]),
         "flows": _unique([*normalized["flows"], *_string_list(analysis.get("flows"))]),
         "components": _unique([*normalized["components"], *_string_list(analysis.get("components"))]),
+        "architecture_notes": _unique([*normalized["architecture_notes"], *_string_list(analysis.get("architecture_notes"))]),
+        "standards": _unique([*normalized["standards"], *_string_list(analysis.get("standards"))]),
+        "source_files": _unique([*normalized["source_files"], *_string_list(analysis.get("source_files"))]),
     }
+
+
+def _merge_development_standards(existing: dict[str, Any], detected: list[str]) -> dict[str, list[str]]:
+    normalized = {
+        "architecture_patterns": _string_list(existing.get("architecture_patterns")),
+        "coding_guidelines": _string_list(existing.get("coding_guidelines")),
+        "security_requirements": _string_list(existing.get("security_requirements")),
+        "testing_requirements": _string_list(existing.get("testing_requirements")),
+    }
+    for item in detected:
+        lowered = item.lower()
+        if any(word in lowered for word in ["security", "oauth", "jwt", "secret", "permission"]):
+            normalized["security_requirements"].append(item)
+        elif any(word in lowered for word in ["test", "coverage", "qa"]):
+            normalized["testing_requirements"].append(item)
+        elif any(word in lowered for word in ["mvvm", "repository", "architecture", "pattern"]):
+            normalized["architecture_patterns"].append(item)
+        else:
+            normalized["coding_guidelines"].append(item)
+    return {key: _unique(values) for key, values in normalized.items()}
 
 
 def _merge_applications(existing: list[dict[str, str]], incoming: Any) -> list[dict[str, str]]:
@@ -930,6 +1154,10 @@ def _merge_external_knowledge(profile: dict[str, Any], knowledge_profile: dict[s
             ]),
         },
     }
+
+
+def _clean_path(path: Any) -> str:
+    return _clean_text(path).lstrip("/")
 
 
 def _context_keywords(title: str, description: str, profile: dict[str, Any]) -> list[str]:
@@ -1330,16 +1558,17 @@ def _execution_readiness_score(profile: dict[str, Any], has_impact: bool = False
     standards = 15 if _flatten_standards(profile["development_standards"]) else 0
     score = project_profile + repository + registry + impact + standards
     if score >= 85:
-        label = "Execution Ready"
+        label = "Ready"
     elif score >= 65:
-        label = "Advanced"
+        label = "Ready"
     elif score >= 40:
-        label = "Intermediate"
+        label = "Partially Ready"
     else:
-        label = "Basic"
+        label = "Not Ready"
     return {
         "score": score,
         "label": label,
+        "result": label,
         "breakdown": {
             "project_profile": project_profile,
             "repository_intelligence": repository,
@@ -1548,15 +1777,21 @@ def _normalize_story_impact(value: dict[str, Any]) -> dict[str, list[str]]:
     }
 
 
-def _recommended_files(profile: dict[str, Any], impact: dict[str, list[str]]) -> list[str]:
+def _recommended_files(profile: dict[str, Any], impact: dict[str, list[str]], story_title: str = "") -> list[str]:
     files: list[str] = []
     modules = impact["affected_modules"]
     flows = impact["affected_flows"]
     components = impact["affected_components"]
+    story_slug = _file_slug(story_title)
+    lowered_story = story_title.lower()
     if any(app["type"] == "Mobile" for app in profile["applications"]):
-        files.extend(_file_guess("mobile", components or flows or modules))
+        if "fault" in lowered_story and "detail" in lowered_story:
+            files.extend(["Mobile/FaultEventViewModel.cs", "Mobile/FaultEventDetailsPage.xaml"])
+        files.extend(_file_guess("mobile", components or flows or modules or [story_slug]))
     if any(app["type"] in ["Backend", "API"] for app in profile["applications"]):
-        files.extend(_file_guess("backend", modules or flows))
+        if "fault" in lowered_story:
+            files.extend(["Backend/FaultEventController.cs", "Backend/FaultEventRepository.cs"])
+        files.extend(_file_guess("backend", modules or flows or [story_slug]))
     if any(app["type"] == "Web Portal" for app in profile["applications"]):
         files.extend(_file_guess("web", components or flows))
     return _unique(files)[:8]
@@ -1565,16 +1800,69 @@ def _recommended_files(profile: dict[str, Any], impact: dict[str, list[str]]) ->
 def _file_guess(area: str, values: list[str]) -> list[str]:
     guesses: list[str] = []
     for value in values[:3]:
-        slug = _clean_text(value).replace(" ", "").replace("-", "")
+        slug = _file_slug(value)
         if not slug:
             continue
         if area == "mobile":
-            guesses.extend([f"mobile/**/{slug}*.xaml", f"mobile/**/{slug}*ViewModel.*"])
+            guesses.extend([f"Mobile/{slug}Page.xaml", f"Mobile/{slug}ViewModel.cs"])
         elif area == "backend":
-            guesses.extend([f"backend/**/{slug}*Controller.*", f"backend/**/{slug}*Service.*"])
+            guesses.extend([f"Backend/{slug}Controller.cs", f"Backend/{slug}Repository.cs"])
         else:
-            guesses.extend([f"web/**/{slug}*.tsx", f"web/**/{slug}*.css"])
+            guesses.extend([f"Web/{slug}.tsx", f"Web/{slug}.css"])
     return guesses
+
+
+def _file_slug(value: str) -> str:
+    words = [word for word in _clean_text(value).replace("-", " ").split() if word.lower() not in {"display", "view", "details", "detail", "the", "a", "an"}]
+    return "".join(word[:1].upper() + word[1:] for word in words)
+
+
+def _acceptance_criteria_mapping(acceptance: list[str], implementation_tasks: list[str]) -> list[dict[str, str]]:
+    if not acceptance:
+        return []
+    fallback_task = implementation_tasks[0] if implementation_tasks else "Implement approved behavior"
+    return [
+        {
+            "acceptance_criterion": criterion,
+            "implementation_task": implementation_tasks[index % len(implementation_tasks)] if implementation_tasks else fallback_task,
+        }
+        for index, criterion in enumerate(acceptance)
+    ]
+
+
+def _implementation_tasks(title: str, acceptance: list[str], impact: dict[str, list[str]], recommended_files: list[str]) -> list[str]:
+    tasks = [
+        f"Implement {title} behavior in affected modules",
+        "Wire data retrieval and error handling for the approved flow",
+    ]
+    if impact["affected_modules"]:
+        tasks.append(f"Update module integration: {', '.join(impact['affected_modules'][:3])}")
+    if recommended_files:
+        tasks.append(f"Update recommended files: {', '.join(recommended_files[:4])}")
+    tasks.extend(f"Implement acceptance criterion: {criterion}" for criterion in acceptance[:3])
+    return _unique(tasks)
+
+
+def _testing_tasks(title: str, acceptance: list[str], impact: dict[str, list[str]]) -> list[str]:
+    tasks = [
+        f"Validate {title} happy path",
+        "Validate empty, error, and permission states",
+    ]
+    tasks.extend(f"Test acceptance criterion: {criterion}" for criterion in acceptance[:3])
+    if impact["risks"]:
+        tasks.append(f"Regression check risks: {', '.join(impact['risks'][:3])}")
+    if impact["affected_flows"]:
+        tasks.append(f"Run flow regression: {', '.join(impact['affected_flows'][:3])}")
+    return _unique(tasks)
+
+
+def _documentation_tasks(title: str, profile: dict[str, Any], impact: dict[str, list[str]]) -> list[str]:
+    tasks = [f"Document implementation notes for {title}"]
+    if profile["knowledge_registry"]["source_files"]:
+        tasks.append(f"Update relevant project docs if behavior changes: {', '.join(profile['knowledge_registry']['source_files'][:3])}")
+    if impact["dependencies"]:
+        tasks.append("Record dependency assumptions and validation evidence")
+    return _unique(tasks)
 
 
 def _implementation_notes(profile: dict[str, Any], impact: dict[str, list[str]]) -> list[str]:

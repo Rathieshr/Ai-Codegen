@@ -3,6 +3,7 @@ import { CommonServiceIds, IProjectPageService } from 'azure-devops-extension-ap
 import { getClient } from 'azure-devops-extension-api/Common/Client';
 import { GitRestClient } from 'azure-devops-extension-api/Git/GitClient';
 import { GitRepository, GitVersionOptions, GitVersionType } from 'azure-devops-extension-api/Git/Git';
+import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './storyPlanner.css';
@@ -33,6 +34,20 @@ const PROJECT_TYPES = [
 
 const APPLICATION_TYPES = ['Mobile', 'Backend', 'Firmware', 'Web Portal', 'Analytics', 'Desktop', 'API'];
 const STACK_FIELDS: Array<keyof TechnologyStack> = ['mobile', 'backend', 'firmware', 'analytics', 'frontend'];
+const REPOSITORY_DOCUMENTS = [
+  'README.md',
+  'docs/README.md',
+  'architecture.md',
+  'docs/architecture.md',
+  'modules.md',
+  'docs/modules.md',
+  'flows.md',
+  'docs/flows.md',
+  'ui-guidelines.md',
+  'docs/ui-guidelines.md',
+  'coding-standards.md',
+  'docs/coding-standards.md',
+];
 
 type ApplicationProfile = {
   name: string;
@@ -95,6 +110,9 @@ type ProjectProfile = {
     modules: string[];
     flows: string[];
     components: string[];
+    architecture_notes: string[];
+    standards: string[];
+    source_files: string[];
   };
   applications: ApplicationProfile[];
   technology_stack: TechnologyStack;
@@ -120,6 +138,37 @@ type PromptResult = ProviderMetadata & {
   ui_prompt: string;
   dev_prompt: string;
   qa_prompt: string;
+};
+
+type ExecutionContextResult = ProviderMetadata & {
+  story_summary: string;
+  acceptance_criteria: string[];
+  affected_applications: string[];
+  affected_modules: string[];
+  affected_flows: string[];
+  dependencies: string[];
+  risks: string[];
+  technology_stack: TechnologyStack;
+  ui_guidelines: ProjectProfile['ui_guidelines'];
+  development_standards: DevelopmentStandards;
+  recommended_files: string[];
+  acceptance_criteria_mapping: Array<{ acceptance_criterion: string; implementation_task: string }>;
+  implementation_tasks: string[];
+  testing_tasks: string[];
+  documentation_tasks: string[];
+  implementation_notes: string[];
+  execution_readiness: string;
+  execution_readiness_score: number;
+  execution_readiness_breakdown: Record<string, number>;
+  execution_readiness_result: string;
+};
+
+type PromptBuilderResult = ProviderMetadata & {
+  prompt: string;
+};
+
+type CopilotContextResult = ProviderMetadata & {
+  context: string;
 };
 
 type EpicRefinement = ProviderMetadata & {
@@ -184,6 +233,43 @@ type EpicImpact = ProviderMetadata & {
   recommended_rollout_strategy: string[];
 };
 
+type AdoWorkItem = {
+  id: number;
+  type: string;
+  title: string;
+  description: string;
+  acceptanceCriteria: string;
+  state: string;
+  areaPath: string;
+  iterationPath: string;
+  tags: string[];
+  project: string;
+  collectionUri: string;
+  parentIds: number[];
+  childIds: number[];
+  parents: AdoWorkItemSummary[];
+  children: AdoWorkItemSummary[];
+};
+
+type AdoWorkItemSummary = {
+  id: number;
+  type: string;
+  title: string;
+  state: string;
+};
+
+type ChildDraft = {
+  id: string;
+  type: 'Feature' | 'User Story' | 'Task';
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  selected: boolean;
+  status: 'preview' | 'creating' | 'created' | 'failed' | 'skipped';
+  azureId?: number;
+  error?: string;
+};
+
 const EMPTY_STACK: TechnologyStack = {
   mobile: [],
   backend: [],
@@ -224,6 +310,9 @@ const EMPTY_PROFILE: ProjectProfile = {
     modules: [],
     flows: [],
     components: [],
+    architecture_notes: [],
+    standards: [],
+    source_files: [],
   },
   applications: [],
   technology_stack: EMPTY_STACK,
@@ -246,11 +335,18 @@ const EMPTY_PROFILE: ProjectProfile = {
 };
 
 function ProjectIntelligenceTab() {
+  const [activeTab, setActiveTab] = useState<'project' | 'planner' | 'developer'>('project');
+  const [selectedItemType, setSelectedItemType] = useState<'Epic' | 'Feature' | 'Story' | 'Task'>('Epic');
   const [profile, setProfile] = useState<ProjectProfile>(EMPTY_PROFILE);
   const [storyTitle, setStoryTitle] = useState('');
   const [storyDescription, setStoryDescription] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [prompts, setPrompts] = useState<PromptResult | undefined>();
+  const [executionContext, setExecutionContext] = useState<ExecutionContextResult | undefined>();
+  const [devPrompt, setDevPrompt] = useState<PromptBuilderResult | undefined>();
+  const [uiPrompt, setUiPrompt] = useState<PromptBuilderResult | undefined>();
+  const [qaPrompt, setQaPrompt] = useState<PromptBuilderResult | undefined>();
+  const [copilotContext, setCopilotContext] = useState<CopilotContextResult | undefined>();
   const [epicInput, setEpicInput] = useState({ title: '', description: '' });
   const [featureInput, setFeatureInput] = useState({ title: '', description: '' });
   const [storyInput, setStoryInput] = useState({ title: '', description: '' });
@@ -263,13 +359,19 @@ function ProjectIntelligenceTab() {
   const [epicImpact, setEpicImpact] = useState<EpicImpact | undefined>();
   const [featureImpact, setFeatureImpact] = useState<FeatureImpact | undefined>();
   const [storyImpact, setStoryImpact] = useState<StoryImpact | undefined>();
+  const [currentWorkItem, setCurrentWorkItem] = useState<AdoWorkItem | undefined>();
+  const [childDrafts, setChildDrafts] = useState<ChildDraft[]>([]);
+  const [creationLog, setCreationLog] = useState<string[]>([]);
   const [repositories, setRepositories] = useState<GitRepository[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
+  const [repositoryDocuments, setRepositoryDocuments] = useState<Record<string, string>>({});
+  const [selectedRepositoryFiles, setSelectedRepositoryFiles] = useState<string[]>(['README.md', 'architecture.md', 'modules.md', 'flows.md']);
+  const [repositoryFileStatus, setRepositoryFileStatus] = useState<Record<string, 'available' | 'missing' | 'unknown'>>({});
   const [editingProfile, setEditingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('Loading Project Intelligence...');
   const [error, setError] = useState('');
-  const latestProvider = latestProviderMetadata([storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
+  const latestProvider = latestProviderMetadata([copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
@@ -279,6 +381,11 @@ function ProjectIntelligenceTab() {
         const loaded = await getProfile();
         setProfile(loaded);
         setEditingProfile(!isProfileComplete(loaded));
+        const workItem = await loadCurrentWorkItem();
+        if (workItem) {
+          setCurrentWorkItem(workItem);
+          seedPlannerFromWorkItem(workItem);
+        }
         void loadRepositories();
         setError('');
       } catch (loadError) {
@@ -372,6 +479,147 @@ function ProjectIntelligenceTab() {
     }));
     if (result) {
       setStoryResult(result);
+    }
+  }
+
+  async function buildExecutionPackage() {
+    const story = currentStoryPayload();
+    const packageResult = await withLoading('Generating execution package...', async () => {
+      const basePayload = {
+        profile,
+        knowledge_profile: profile.knowledge_registry,
+        story,
+        impact_analysis: storyImpact || {},
+      };
+      const context = await postJson<ExecutionContextResult>('/build-execution-context', basePayload);
+      const dev = await postJson<PromptBuilderResult>('/build-dev-prompt', basePayload);
+      const ui = await postJson<PromptBuilderResult>('/build-ui-prompt', basePayload);
+      const qa = await postJson<PromptBuilderResult>('/build-qa-prompt', basePayload);
+      const copilot = await postJson<CopilotContextResult>('/build-copilot-context', basePayload);
+      return { context, dev, ui, qa, copilot };
+    });
+    if (packageResult) {
+      setExecutionContext(packageResult.context);
+      setDevPrompt(packageResult.dev);
+      setUiPrompt(packageResult.ui);
+      setQaPrompt(packageResult.qa);
+      setCopilotContext(packageResult.copilot);
+      setActiveTab('developer');
+    }
+  }
+
+  function currentStoryPayload(): { title: string; description: string; acceptance_criteria: string[] } {
+    return {
+      title: storyInput.title || storyTitle || storyResult?.story_summary || 'Approved story',
+      description: storyInput.description || storyDescription || storyResult?.story_summary || 'Implement the approved story.',
+      acceptance_criteria: splitLines(acceptanceCriteria).length ? splitLines(acceptanceCriteria) : (storyResult?.acceptance_criteria || []),
+    };
+  }
+
+  function seedPlannerFromWorkItem(workItem: AdoWorkItem) {
+    const type = normalizePlannerItemType(workItem.type);
+    setSelectedItemType(type);
+    if (type === 'Epic') {
+      setEpicInput({ title: workItem.title, description: htmlToText(workItem.description) });
+    } else if (type === 'Feature') {
+      setFeatureInput({ title: workItem.title, description: htmlToText(workItem.description) });
+    } else {
+      setStoryInput({ title: workItem.title, description: htmlToText(workItem.description) });
+      setAcceptanceCriteria(htmlToText(workItem.acceptanceCriteria));
+    }
+  }
+
+  function updateDraftSelection(draftId: string, selected: boolean) {
+    setChildDrafts((current) => current.map((draft) => draft.id === draftId ? { ...draft, selected } : draft));
+  }
+
+  async function generateChildrenForCurrentType() {
+    if (currentWorkItem?.state.toLowerCase() === 'closed') {
+      setError('This work item is Closed. AI Planner is read-only for closed items.');
+      return;
+    }
+    if (currentWorkItem?.state.toLowerCase() === 'active') {
+      const confirmed = window.confirm('This work item is Active. Regenerating planning output may affect in-progress work. Continue?');
+      if (!confirmed) {
+        return;
+      }
+    }
+    if (selectedItemType === 'Epic') {
+      const generated = await withLoading('Generating Features from Epic...', () => postJson<EpicRefinement>('/refine-epic', {
+        profile,
+        knowledge_profile: profile.knowledge_registry,
+        epic: epicInput,
+      }));
+      if (!generated) return;
+      setEpicResult(generated);
+      setChildDrafts(featureDraftsFromEpic(generated));
+    } else if (selectedItemType === 'Feature') {
+      const generated = await withLoading('Generating Stories from Feature...', () => postJson<FeatureRefinement>('/refine-feature', {
+        profile,
+        knowledge_profile: profile.knowledge_registry,
+        feature: featureInput,
+      }));
+      if (!generated) return;
+      setFeatureResult(generated);
+      setChildDrafts(storyDraftsFromFeature(generated));
+    } else if (selectedItemType === 'Story') {
+      const generated = await withLoading('Generating Tasks from Story...', () => postJson<StoryRefinement>('/refine-story', {
+        profile,
+        knowledge_profile: profile.knowledge_registry,
+        story: { ...storyInput, acceptance_criteria: splitLines(acceptanceCriteria) },
+      }));
+      if (!generated) return;
+      setStoryResult(generated);
+      setChildDrafts(taskDraftsFromStory(generated));
+    }
+  }
+
+  async function createSelectedChildWorkItems() {
+    if (!currentWorkItem) {
+      setError('Current Azure DevOps work item is not loaded.');
+      return;
+    }
+    if (currentWorkItem.state.toLowerCase() === 'closed') {
+      setError('This work item is Closed. Child work item creation is disabled.');
+      return;
+    }
+    const selected = childDrafts.filter((draft) => draft.selected && draft.status !== 'created');
+    if (!selected.length) {
+      setError('Select at least one generated child work item to create.');
+      return;
+    }
+    const confirmed = window.confirm(`Create ${selected.length} Azure DevOps work item(s) under ${currentWorkItem.type} #${currentWorkItem.id}?`);
+    if (!confirmed) {
+      return;
+    }
+    setCreationLog([]);
+    const created = await withLoading('Creating Azure DevOps child work items...', async () => {
+      const accessToken = await SDK.getAccessToken();
+      const results: ChildDraft[] = [];
+      for (const draft of selected) {
+        setCreationLog((log) => [`Creating ${draft.type}: ${draft.title}`, ...log]);
+        setChildDrafts((items) => items.map((item) => item.id === draft.id ? { ...item, status: 'creating' } : item));
+        try {
+          const id = await createAdoWorkItem(currentWorkItem, accessToken, draft);
+          const next = { ...draft, status: 'created' as const, azureId: id };
+          results.push(next);
+          setCreationLog((log) => [`Created ${draft.type} #${id}: ${draft.title}`, ...log]);
+          setChildDrafts((items) => items.map((item) => item.id === draft.id ? next : item));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const next = { ...draft, status: 'failed' as const, error: message };
+          results.push(next);
+          setCreationLog((log) => [`Failed ${draft.type}: ${draft.title} - ${message}`, ...log]);
+          setChildDrafts((items) => items.map((item) => item.id === draft.id ? next : item));
+        }
+      }
+      return results;
+    });
+    if (created?.some((draft) => draft.status === 'created')) {
+      await addAdoComment(
+        currentWorkItem,
+        `[AI Planner Created Work Items]\n${created.filter((draft) => draft.status === 'created').map((draft) => `- ${draft.type} #${draft.azureId}: ${draft.title}`).join('\n')}`
+      ).catch(() => undefined);
     }
   }
 
@@ -495,6 +743,109 @@ function ProjectIntelligenceTab() {
     }
   }
 
+  async function discoverRepositoryDocuments() {
+    const selectedRepo = profile.repository_connection.repository_id;
+    if (!selectedRepo) {
+      setError('Select a repository before discovering documentation.');
+      return;
+    }
+    const discovered = await withLoading('Discovering repository documentation...', async () => {
+      const projectName = await getProjectName();
+      const client = getClient(GitRestClient);
+      const branch = profile.repository_connection.branch || 'main';
+      const nextStatus: Record<string, 'available' | 'missing' | 'unknown'> = {};
+      const nextDocuments: Record<string, string> = {};
+      for (const path of REPOSITORY_DOCUMENTS) {
+        try {
+          const buffer = await client.getItemContent(
+            selectedRepo,
+            path.startsWith('/') ? path : `/${path}`,
+            projectName,
+            undefined,
+            undefined,
+            true,
+            undefined,
+            false,
+            { version: branch, versionOptions: GitVersionOptions.None, versionType: GitVersionType.Branch },
+            true,
+          );
+          nextStatus[path] = 'available';
+          nextDocuments[path] = new TextDecoder('utf-8').decode(buffer);
+        } catch {
+          nextStatus[path] = 'missing';
+        }
+      }
+      return { status: nextStatus, documents: nextDocuments };
+    });
+    if (discovered) {
+      setRepositoryFileStatus(discovered.status);
+      setRepositoryDocuments((current) => ({ ...current, ...discovered.documents }));
+      const available = Object.entries(discovered.status).filter(([, status]) => status === 'available').map(([path]) => path);
+      setSelectedRepositoryFiles(available.length ? available : selectedRepositoryFiles);
+      if (!available.length) {
+        setError('No known documentation files were found. Paste README, architecture, modules, or flows content manually.');
+      }
+    }
+  }
+
+  async function analyzeRepositoryDocuments() {
+    const selectedRepo = profile.repository_connection.repository_id;
+    const selectedFiles = selectedRepositoryFiles.length ? selectedRepositoryFiles : Object.keys(repositoryDocuments);
+    if (!selectedFiles.length) {
+      setError('Select or paste at least one repository document before analyzing.');
+      return;
+    }
+    const analyzed = await withLoading('Analyzing repository documents...', async () => {
+      const fetchedDocuments: Record<string, string> = {};
+      if (selectedRepo) {
+        const projectName = await getProjectName();
+        const client = getClient(GitRestClient);
+        const branch = profile.repository_connection.branch || 'main';
+        for (const path of selectedFiles) {
+          try {
+            const buffer = await client.getItemContent(
+              selectedRepo,
+              path.startsWith('/') ? path : `/${path}`,
+              projectName,
+              undefined,
+              undefined,
+              true,
+              undefined,
+              false,
+              { version: branch, versionOptions: GitVersionOptions.None, versionType: GitVersionType.Branch },
+              true,
+            );
+            fetchedDocuments[path] = new TextDecoder('utf-8').decode(buffer);
+          } catch {
+            // Missing docs are expected in many repos; pasted content below remains available.
+          }
+        }
+      }
+      const documents = {
+        ...fetchedDocuments,
+        ...Object.fromEntries(Object.entries(repositoryDocuments).filter(([, content]) => content.trim())),
+      };
+      if (!Object.keys(documents).length) {
+        throw new Error('No selected repository documents could be loaded. Paste document content below and try Analyze Documents.');
+      }
+      return postJson<ProjectProfile>('/repository/analyze', {
+        profile,
+        repository: {
+          provider: 'azure_devops',
+          project: await getProjectName(),
+          repository_id: selectedRepo,
+          repository_name: profile.repository_connection.repository_name,
+          branch: profile.repository_connection.branch || 'main',
+        },
+        selected_files: selectedFiles,
+        documents,
+      });
+    });
+    if (analyzed) {
+      setProfile(analyzed);
+    }
+  }
+
   return (
     <main className="planner-shell">
       <header className="planner-header">
@@ -520,79 +871,540 @@ function ProjectIntelligenceTab() {
       {loading ? <div className="planner-banner">{message || 'Working...'}</div> : null}
       {error ? <div className="planner-error">{error}</div> : null}
 
-      {editingProfile ? (
-        <OnboardingForm
+      <WorkflowTabs activeTab={activeTab} onChange={setActiveTab} />
+
+      {activeTab === 'project' ? (
+        <>
+          {editingProfile ? (
+            <OnboardingForm
+              profile={profile}
+              loading={loading}
+              onProfileChange={setProfile}
+              onAnalyze={() => void analyzeDescription()}
+              onSave={() => void saveProfile()}
+            />
+          ) : (
+            <>
+              <ProjectProfileSummary profile={profile} />
+              <StandardsAndGuidelinesSummary profile={profile} />
+            </>
+          )}
+          <RepositoryIntelligenceCard
+            profile={profile}
+            repositories={repositories}
+            branches={branches}
+            repositoryDocuments={repositoryDocuments}
+            fileStatus={repositoryFileStatus}
+            selectedFiles={selectedRepositoryFiles}
+            loading={loading}
+            onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+            onProfileChange={setProfile}
+            onRepositoryDocumentsChange={setRepositoryDocuments}
+            onFileStatusChange={setRepositoryFileStatus}
+            onSelectedFilesChange={setSelectedRepositoryFiles}
+            onAnalyzeReadme={() => void analyzeReadme()}
+            onDiscoverDocuments={() => void discoverRepositoryDocuments()}
+            onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
+          />
+          <KnowledgeProfilePreview profile={profile} />
+          <ProjectIntelligenceProviderDiagnostics metadata={latestProvider} />
+          <RoadmapCard />
+        </>
+      ) : null}
+
+      {activeTab === 'planner' ? (
+        <AIPlannerWorkspace
           profile={profile}
           loading={loading}
-          onProfileChange={setProfile}
-          onAnalyze={() => void analyzeDescription()}
-          onSave={() => void saveProfile()}
+          currentWorkItem={currentWorkItem}
+          childDrafts={childDrafts}
+          creationLog={creationLog}
+          providerMetadata={latestProvider}
+          selectedItemType={selectedItemType}
+          onItemTypeChange={setSelectedItemType}
+          epicInput={epicInput}
+          featureInput={featureInput}
+          storyInput={storyInput}
+          acceptanceCriteria={acceptanceCriteria}
+          epicResult={epicResult}
+          featureResult={featureResult}
+          storyResult={storyResult}
+          setEpicInput={setEpicInput}
+          setFeatureInput={setFeatureInput}
+          setStoryInput={setStoryInput}
+          setAcceptanceCriteria={setAcceptanceCriteria}
+          refineEpic={() => void refineEpic()}
+          refineFeature={() => void refineFeature()}
+          refineStory={() => void refineStory()}
+          generateChildren={() => void generateChildrenForCurrentType()}
+          updateDraftSelection={updateDraftSelection}
+          createSelectedChildren={() => void createSelectedChildWorkItems()}
+          buildExecutionPackage={() => void buildExecutionPackage()}
         />
-      ) : (
-        <ProjectProfileSummary profile={profile} />
-      )}
+      ) : null}
 
-      <KnowledgeProfilePreview profile={profile} />
-      <RefinementReadinessDashboard
-        profile={profile}
-        epicResult={epicResult}
-        featureResult={featureResult}
-        storyResult={storyResult}
-        hasImpact={Boolean(epicImpact || featureImpact || storyImpact)}
-      />
-      <ProjectIntelligenceProviderDiagnostics metadata={latestProvider} />
-      <RepositoryIntelligenceCard
-        profile={profile}
-        repositories={repositories}
-        branches={branches}
-        loading={loading}
-        onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
-        onProfileChange={setProfile}
-        onAnalyzeReadme={() => void analyzeReadme()}
-      />
-      <ProjectRefinementCards
-        loading={loading}
-        epicInput={epicInput}
-        featureInput={featureInput}
-        storyInput={storyInput}
-        epicResult={epicResult}
-        featureResult={featureResult}
-        storyResult={storyResult}
-        setEpicInput={setEpicInput}
-        setFeatureInput={setFeatureInput}
-        setStoryInput={setStoryInput}
-        refineEpic={() => void refineEpic()}
-        refineFeature={() => void refineFeature()}
-        refineStory={() => void refineStory()}
-      />
-      <ImpactAnalysisDashboard
-        loading={loading}
-        epicInput={epicImpactInput}
-        featureInput={featureImpactInput}
-        storyInput={storyImpactInput}
-        epicImpact={epicImpact}
-        featureImpact={featureImpact}
-        storyImpact={storyImpact}
-        setEpicInput={setEpicImpactInput}
-        setFeatureInput={setFeatureImpactInput}
-        setStoryInput={setStoryImpactInput}
-        analyzeEpic={() => void analyzeEpicImpact()}
-        analyzeFeature={() => void analyzeFeatureImpact()}
-        analyzeStory={() => void analyzeStoryImpact()}
-      />
-      <StoryPromptGeneration
-        loading={loading}
-        storyTitle={storyTitle}
-        storyDescription={storyDescription}
-        acceptanceCriteria={acceptanceCriteria}
-        prompts={prompts}
-        setStoryTitle={setStoryTitle}
-        setStoryDescription={setStoryDescription}
-        setAcceptanceCriteria={setAcceptanceCriteria}
-        generatePrompts={() => void generatePrompts()}
-      />
-      <RoadmapCard />
+      {activeTab === 'developer' ? (
+        <DeveloperWorkspace
+          executionContext={executionContext}
+          devPrompt={devPrompt}
+          uiPrompt={uiPrompt}
+          qaPrompt={qaPrompt}
+          copilotContext={copilotContext}
+          onGenerate={() => void buildExecutionPackage()}
+          loading={loading}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function WorkflowTabs({
+  activeTab,
+  onChange,
+}: {
+  activeTab: 'project' | 'planner' | 'developer';
+  onChange: (tab: 'project' | 'planner' | 'developer') => void;
+}) {
+  const tabs: Array<{ id: 'project' | 'planner' | 'developer'; label: string; subtitle: string }> = [
+    { id: 'project', label: 'Project Intelligence', subtitle: 'Setup and knowledge' },
+    { id: 'planner', label: 'AI Planner', subtitle: 'Epic to task flow' },
+    { id: 'developer', label: 'Developer Workspace', subtitle: 'Execution prompts' },
+  ];
+  return (
+    <nav className="planner-tabs" aria-label="Project Intelligence workspace tabs">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          className={`planner-tab ${activeTab === tab.id ? 'active' : ''}`}
+          onClick={() => onChange(tab.id)}
+          type="button"
+        >
+          <span>{tab.label}</span>
+          <small>{tab.subtitle}</small>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function StandardsAndGuidelinesSummary({ profile }: { profile: ProjectProfile }) {
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Development Standards & UI Guidelines</div>
+      <div className="planner-grid">
+        <ListBlock title="Architecture Patterns" items={profile.development_standards.architecture_patterns} />
+        <ListBlock title="Coding Guidelines" items={profile.development_standards.coding_guidelines} />
+        <ListBlock title="Security Requirements" items={profile.development_standards.security_requirements} />
+        <ListBlock title="Testing Requirements" items={profile.development_standards.testing_requirements} />
+      </div>
+      <div className="planner-status-grid">
+        <Row label="UI Guidelines" value={summarizeUiGuidelines(profile)} />
+      </div>
+    </section>
+  );
+}
+
+function AIPlannerWorkspace({
+  profile,
+  loading,
+  currentWorkItem,
+  childDrafts,
+  creationLog,
+  providerMetadata,
+  selectedItemType,
+  onItemTypeChange,
+  epicInput,
+  featureInput,
+  storyInput,
+  acceptanceCriteria,
+  epicResult,
+  featureResult,
+  storyResult,
+  setEpicInput,
+  setFeatureInput,
+  setStoryInput,
+  setAcceptanceCriteria,
+  refineEpic,
+  refineFeature,
+  refineStory,
+  generateChildren,
+  updateDraftSelection,
+  createSelectedChildren,
+  buildExecutionPackage,
+}: {
+  profile: ProjectProfile;
+  loading: boolean;
+  currentWorkItem?: AdoWorkItem;
+  childDrafts: ChildDraft[];
+  creationLog: string[];
+  providerMetadata?: ProviderMetadata;
+  selectedItemType: 'Epic' | 'Feature' | 'Story' | 'Task';
+  onItemTypeChange: (type: 'Epic' | 'Feature' | 'Story' | 'Task') => void;
+  epicInput: { title: string; description: string };
+  featureInput: { title: string; description: string };
+  storyInput: { title: string; description: string };
+  acceptanceCriteria: string;
+  epicResult?: EpicRefinement;
+  featureResult?: FeatureRefinement;
+  storyResult?: StoryRefinement;
+  setEpicInput: (value: { title: string; description: string }) => void;
+  setFeatureInput: (value: { title: string; description: string }) => void;
+  setStoryInput: (value: { title: string; description: string }) => void;
+  setAcceptanceCriteria: (value: string) => void;
+  refineEpic: () => void;
+  refineFeature: () => void;
+  refineStory: () => void;
+  generateChildren: () => void;
+  updateDraftSelection: (draftId: string, selected: boolean) => void;
+  createSelectedChildren: () => void;
+  buildExecutionPackage: () => void;
+}) {
+  const readOnly = currentWorkItem?.state.toLowerCase() === 'closed';
+  return (
+    <>
+      <WorkItemContextCard workItem={currentWorkItem} />
+      <section className="planner-card">
+        <div className="planner-label">AI Planner</div>
+        <div className="planner-subtle">Work through planning in delivery order: Epic, Feature, Story, then Task execution.</div>
+        <KnowledgeRegistryNotice profile={profile} />
+        {readOnly ? <div className="planner-error">This work item is Closed. Planning output is read-only.</div> : null}
+        {currentWorkItem?.state.toLowerCase() === 'active' ? <div className="planner-banner">This work item is Active. AI Planner will ask before regeneration.</div> : null}
+        <div className="planner-pill-row">
+          {(['Epic', 'Feature', 'Story', 'Task'] as const).map((type) => (
+            <button
+              key={type}
+              type="button"
+              className={`planner-pill ${selectedItemType === type ? 'active' : ''}`}
+              onClick={() => onItemTypeChange(type)}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {selectedItemType === 'Epic' ? (
+        <section className="planner-card">
+          <div className="planner-label">Epic Workflow</div>
+          <div className="planner-subtle">Refine the epic goal, then generate project-aware feature recommendations.</div>
+          <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
+          <div className="planner-actions">
+            <button className="planner-button secondary" onClick={refineEpic} disabled={loading || !epicInput.title.trim()}>Refine Epic</button>
+            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !epicInput.title.trim()}>Generate Features</button>
+          </div>
+          {epicResult ? (
+            <div className="planner-status-grid">
+              <EpicRefinementResult result={epicResult} />
+              <CardList title="Generated Features" items={epicResult.recommended_features} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {selectedItemType === 'Feature' ? (
+        <section className="planner-card">
+          <div className="planner-label">Feature Workflow</div>
+          <div className="planner-subtle">Refine the feature and generate meaningful stories from project modules and flows.</div>
+          <RefinementInput input={featureInput} setInput={setFeatureInput} titlePlaceholder="Order visibility" descriptionPlaceholder="Describe feature behavior, affected users, and delivery scope." />
+          <div className="planner-actions">
+            <button className="planner-button secondary" onClick={refineFeature} disabled={loading || !featureInput.title.trim()}>Refine Feature</button>
+            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Stories</button>
+          </div>
+          {featureResult ? (
+            <div className="planner-status-grid">
+              <FeatureRefinementResult result={featureResult} />
+              <CardList title="Generated Stories" items={featureResult.recommended_stories} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {selectedItemType === 'Story' ? (
+        <section className="planner-card">
+          <div className="planner-label">Story Workflow</div>
+          <div className="planner-subtle">Refine the story, acceptance criteria, affected areas, and proposed implementation tasks.</div>
+          <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Track order delivery status" descriptionPlaceholder="Describe the story, user outcome, and acceptance expectations." />
+          <textarea
+            className="planner-textarea compact"
+            value={acceptanceCriteria}
+            onChange={(event) => setAcceptanceCriteria(event.target.value)}
+            placeholder="Acceptance criteria, one per line"
+          />
+          <div className="planner-actions">
+            <button className="planner-button secondary" onClick={refineStory} disabled={loading || !storyInput.title.trim()}>Refine Story</button>
+            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Tasks</button>
+            <button className="planner-button secondary" onClick={buildExecutionPackage} disabled={loading || !storyInput.title.trim()}>Generate Execution Package</button>
+          </div>
+          {storyResult ? (
+            <div className="planner-status-grid">
+              <StoryRefinementResult result={storyResult} />
+              <GeneratedTasksPreview story={storyResult} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {selectedItemType === 'Task' ? (
+        <section className="planner-card">
+          <div className="planner-label">Task Workflow</div>
+          <div className="planner-subtle">Generate execution context and prompts for a developer workspace.</div>
+          <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Implement approved story task" descriptionPlaceholder="Describe the task or approved story scope." />
+          <textarea
+            className="planner-textarea compact"
+            value={acceptanceCriteria}
+            onChange={(event) => setAcceptanceCriteria(event.target.value)}
+            placeholder="Acceptance criteria or task validation notes, one per line"
+          />
+          <div className="planner-actions">
+            <button className="planner-button" onClick={buildExecutionPackage} disabled={loading || !storyInput.title.trim()}>Generate Execution Package</button>
+          </div>
+          {storyResult ? <GeneratedTasksPreview story={storyResult} /> : null}
+        </section>
+      ) : null}
+      <GeneratedChildWorkItems
+        drafts={childDrafts}
+        creationLog={creationLog}
+        currentWorkItem={currentWorkItem}
+        providerMetadata={providerMetadata}
+        loading={loading}
+        onSelectionChange={updateDraftSelection}
+        onCreateSelected={createSelectedChildren}
+      />
+    </>
+  );
+}
+
+function WorkItemContextCard({ workItem }: { workItem?: AdoWorkItem }) {
+  if (!workItem) {
+    return (
+      <section className="planner-card">
+        <div className="planner-label">Azure DevOps Work Item</div>
+        <div className="planner-subtle">No current Azure DevOps work item was detected. Open this tab from a Boards work item to load context automatically.</div>
+      </section>
+    );
+  }
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Azure DevOps Work Item</div>
+      <div className="planner-status-grid">
+        <Row label="ID" value={`#${workItem.id}`} />
+        <Row label="Type" value={workItem.type || 'Unknown'} />
+        <Row label="Title" value={workItem.title || 'Untitled'} />
+        <Row label="State" value={workItem.state || 'Unknown'} />
+        <Row label="Parent Hierarchy" value={workItem.parents.map((parent) => `${parent.type} #${parent.id}: ${parent.title}`).join(' > ') || 'No parent loaded'} />
+        <Row label="Child Links" value={workItem.children.map((child) => `${child.type} #${child.id}: ${child.title}`).join(', ') || 'No child links loaded'} />
+      </div>
+    </section>
+  );
+}
+
+function GeneratedChildWorkItems({
+  drafts,
+  creationLog,
+  currentWorkItem,
+  providerMetadata,
+  loading,
+  onSelectionChange,
+  onCreateSelected,
+}: {
+  drafts: ChildDraft[];
+  creationLog: string[];
+  currentWorkItem?: AdoWorkItem;
+  providerMetadata?: ProviderMetadata;
+  loading: boolean;
+  onSelectionChange: (draftId: string, selected: boolean) => void;
+  onCreateSelected: () => void;
+}) {
+  if (!drafts.length && !creationLog.length) {
+    return null;
+  }
+  const selectedCount = drafts.filter((draft) => draft.selected && draft.status !== 'created').length;
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Generated Child Work Items</div>
+      <div className="planner-subtle">Preview generated children before creating them in Azure DevOps under {currentWorkItem ? `${currentWorkItem.type} #${currentWorkItem.id}` : 'the current work item'}.</div>
+      <SourceBadge metadata={providerMetadata} />
+      {drafts.map((draft) => (
+        <div className="planner-task" key={draft.id}>
+          <label className="planner-checkbox">
+            <input
+              type="checkbox"
+              checked={draft.selected}
+              disabled={draft.status === 'created'}
+              onChange={(event) => onSelectionChange(draft.id, event.target.checked)}
+            />
+            <strong>{draft.type}: {draft.title}</strong>
+          </label>
+          <span>{draft.description}</span>
+          <ListBlock title="Acceptance Criteria" items={draft.acceptanceCriteria} />
+          <div className="planner-subtle">
+            Status: {draft.status}
+            {draft.azureId ? ` #${draft.azureId}` : ''}
+            {draft.error ? ` - ${draft.error}` : ''}
+          </div>
+        </div>
+      ))}
+      <div className="planner-actions">
+        <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, true))} disabled={loading}>Select All</button>
+        <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, false))} disabled={loading}>Skip All</button>
+        <button className="planner-button" onClick={onCreateSelected} disabled={loading || !selectedCount}>Create Selected</button>
+      </div>
+      {creationLog.length ? (
+        <div className="planner-task">
+          <div className="planner-label">Creation Activity</div>
+          <ul className="planner-list">
+            {creationLog.map((entry) => <li key={entry}>{entry}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function GeneratedTasksPreview({ story }: { story: StoryRefinement }) {
+  const tasks = [
+    {
+      title: 'UI Task',
+      description: story.ui_considerations.join(' ') || 'Confirm UI behavior, states, accessibility, and validation copy for the approved story.',
+    },
+    {
+      title: 'Dev Task',
+      description: story.technical_considerations.join(' ') || 'Implement the approved story inside the affected modules and flows.',
+    },
+    {
+      title: 'QA Task',
+      description: story.qa_considerations.join(' ') || 'Prepare manual and regression checks for the approved acceptance criteria.',
+    },
+  ];
+  return (
+    <div className="planner-task">
+      <div className="planner-label">Generated Tasks</div>
+      {tasks.map((task) => (
+        <div className="planner-task" key={task.title}>
+          <strong>{task.title}</strong>
+          <span>{task.description}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function KnowledgeRegistryNotice({ profile }: { profile: ProjectProfile }) {
+  const hasKnowledge = Boolean(profile.knowledge_registry.modules.length || profile.knowledge_registry.flows.length || profile.knowledge_registry.components.length);
+  if (hasKnowledge) {
+    return (
+      <div className="planner-banner">
+        Knowledge Registry active: {[
+          profile.knowledge_registry.modules.length ? `${profile.knowledge_registry.modules.length} modules` : '',
+          profile.knowledge_registry.flows.length ? `${profile.knowledge_registry.flows.length} flows` : '',
+          profile.knowledge_registry.components.length ? `${profile.knowledge_registry.components.length} components` : '',
+        ].filter(Boolean).join(', ')}
+      </div>
+    );
+  }
+  return <div className="planner-banner">Repository intelligence is not available. Output may be profile-based.</div>;
+}
+
+function DeveloperWorkspace({
+  executionContext,
+  devPrompt,
+  uiPrompt,
+  qaPrompt,
+  copilotContext,
+  onGenerate,
+  loading,
+}: {
+  executionContext?: ExecutionContextResult;
+  devPrompt?: PromptBuilderResult;
+  uiPrompt?: PromptBuilderResult;
+  qaPrompt?: PromptBuilderResult;
+  copilotContext?: CopilotContextResult;
+  onGenerate: () => void;
+  loading: boolean;
+}) {
+  const hasPackage = Boolean(executionContext || devPrompt || uiPrompt || qaPrompt || copilotContext);
+  const vsCodeUri = executionContext ? buildVsCodeExecutionPackageUri(executionContext, devPrompt, uiPrompt, qaPrompt, copilotContext) : '';
+  return (
+    <>
+      <section className="planner-card">
+        <div className="planner-label">Developer Workspace</div>
+        <div className="planner-subtle">Execution-ready context for VS Code, Copilot, or manual implementation.</div>
+        <div className="planner-actions">
+          <button className="planner-button" onClick={onGenerate} disabled={loading}>Generate Execution Package</button>
+          {vsCodeUri ? (
+            <button className="planner-button secondary" onClick={() => window.open(vsCodeUri, '_blank')} disabled={loading}>Open in VS Code</button>
+          ) : null}
+        </div>
+      </section>
+      {!hasPackage ? (
+        <section className="planner-card">
+          <div className="planner-subtle">No execution package generated yet. Generate one from the Story or Task workflow.</div>
+        </section>
+      ) : null}
+      {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
+      {devPrompt ? <PromptBlock title="Dev Prompt" value={devPrompt.prompt} metadata={devPrompt} copyable /> : null}
+      {uiPrompt ? <PromptBlock title="UI Prompt" value={uiPrompt.prompt} metadata={uiPrompt} copyable /> : null}
+      {qaPrompt ? <PromptBlock title="QA Prompt" value={qaPrompt.prompt} metadata={qaPrompt} copyable /> : null}
+      {copilotContext ? (
+        <div className="planner-task">
+          <div className="planner-label">Copilot Context</div>
+          <SourceBadge metadata={copilotContext} />
+          <div className="planner-actions">
+            <button className="planner-button secondary" onClick={() => void copyText(copilotContext.context)}>Copy</button>
+          </div>
+          <pre className="planner-prompt">{copilotContext.context}</pre>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function ExecutionContextBlock({ context }: { context: ExecutionContextResult }) {
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Execution Context</div>
+      <SourceBadge metadata={context} />
+      <div className="planner-status-grid">
+        <Row label="Story Summary" value={context.story_summary || 'Not generated yet'} />
+        <Row label="Execution Readiness" value={`${context.execution_readiness_result || context.execution_readiness || 'Not assessed'} (${context.execution_readiness_score || 0}%)`} />
+        <Row label="Technology Stack" value={formatStack(context.technology_stack || EMPTY_STACK) || 'Not captured'} />
+      </div>
+      <div className="planner-grid">
+        <ListBlock title="Acceptance Criteria" items={context.acceptance_criteria || []} />
+        <ListBlock title="Affected Applications" items={context.affected_applications || []} />
+        <ListBlock title="Affected Modules" items={context.affected_modules || []} />
+        <ListBlock title="Affected Flows" items={context.affected_flows || []} />
+        <ListBlock title="Dependencies" items={context.dependencies || []} />
+        <ListBlock title="Risks" items={context.risks || []} />
+        <ListBlock title="Recommended Files" items={context.recommended_files || []} />
+        <ListBlock title="Development Tasks" items={context.implementation_tasks || []} />
+        <ListBlock title="Testing Tasks" items={context.testing_tasks || []} />
+        <ListBlock title="Documentation Tasks" items={context.documentation_tasks || []} />
+        <ListBlock title="Implementation Notes" items={context.implementation_notes || []} />
+      </div>
+      <div className="planner-task">
+        <div className="planner-label">Acceptance Criteria Mapping</div>
+        {(context.acceptance_criteria_mapping || []).length ? (
+          <ul className="planner-list">
+            {context.acceptance_criteria_mapping.map((item) => (
+              <li key={`${item.acceptance_criterion}-${item.implementation_task}`}>
+                <strong>{item.acceptance_criterion}</strong>: {item.implementation_task}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="planner-subtle">No acceptance criteria mapping generated yet.</div>
+        )}
+      </div>
+      <div className="planner-task">
+        <div className="planner-label">Readiness Breakdown</div>
+        <div className="planner-status-grid">
+          {Object.entries(context.execution_readiness_breakdown || {}).map(([key, value]) => (
+            <Row key={key} label={titleCase(key)} value={`${value}%`} />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -833,7 +1645,10 @@ function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
         <Row label="Technology Summary" value={formatStack(profile.technology_stack) || 'Not captured yet'} />
         <Row label="Detected Modules" value={profile.knowledge_registry.modules.join(', ') || 'Pending README analysis'} />
         <Row label="Detected Flows" value={profile.knowledge_registry.flows.join(', ') || 'Pending README analysis'} />
-        <Row label="Architecture Summary" value={profile.readme_analysis.architecture_notes.join(', ') || 'Pending README analysis'} />
+        <Row label="Detected Components" value={profile.knowledge_registry.components.join(', ') || 'Pending repository analysis'} />
+        <Row label="Architecture Summary" value={(profile.knowledge_registry.architecture_notes || profile.readme_analysis.architecture_notes).join(', ') || 'Pending repository analysis'} />
+        <Row label="Standards" value={profile.knowledge_registry.standards.join(', ') || profile.knowledge_profile_preview.standards.join(', ') || 'Pending repository analysis'} />
+        <Row label="Source Files" value={profile.knowledge_registry.source_files.join(', ') || profile.repository_sources.join(', ') || 'Pending repository analysis'} />
         <Row label="Repository Status" value={profile.knowledge_profile_preview.repository_status} />
         <Row label="Project Intelligence Readiness" value={profile.knowledge_profile_preview.readiness || readiness(profile)} />
       </div>
@@ -845,22 +1660,39 @@ function RepositoryIntelligenceCard({
   profile,
   repositories,
   branches,
+  repositoryDocuments,
+  fileStatus,
+  selectedFiles,
   loading,
   onSelectRepository,
   onProfileChange,
+  onRepositoryDocumentsChange,
+  onFileStatusChange,
+  onSelectedFilesChange,
   onAnalyzeReadme,
+  onDiscoverDocuments,
+  onAnalyzeDocuments,
 }: {
   profile: ProjectProfile;
   repositories: GitRepository[];
   branches: string[];
+  repositoryDocuments: Record<string, string>;
+  fileStatus: Record<string, 'available' | 'missing' | 'unknown'>;
+  selectedFiles: string[];
   loading: boolean;
   onSelectRepository: (repositoryId: string) => void;
   onProfileChange: (profile: ProjectProfile) => void;
+  onRepositoryDocumentsChange: (documents: Record<string, string>) => void;
+  onFileStatusChange: (status: Record<string, 'available' | 'missing' | 'unknown'>) => void;
+  onSelectedFilesChange: (files: string[]) => void;
   onAnalyzeReadme: () => void;
+  onDiscoverDocuments: () => void;
+  onAnalyzeDocuments: () => void;
 }) {
   return (
     <section className="planner-card">
       <div className="planner-label">Repository Intelligence</div>
+      <div className="planner-subtle">Select known documentation files from Azure Repos, or paste content manually if repository file access is unavailable.</div>
       <div className="planner-grid">
         <select className="planner-input" value={profile.repository_connection.repository_id} onChange={(event) => onSelectRepository(event.target.value)}>
           <option value="">Select Azure DevOps repository</option>
@@ -894,17 +1726,80 @@ function RepositoryIntelligenceCard({
         <button className="planner-button" onClick={onAnalyzeReadme} disabled={loading || !profile.repository_connection.repository_id}>
           Analyze README
         </button>
+        <button className="planner-button secondary" onClick={onDiscoverDocuments} disabled={loading || !profile.repository_connection.repository_id}>
+          Discover Documents
+        </button>
+        <button className="planner-button" onClick={onAnalyzeDocuments} disabled={loading || (!profile.repository_connection.repository_id && !Object.values(repositoryDocuments).some((content) => content.trim()))}>
+          Analyze Documents
+        </button>
       </div>
+      <div className="planner-task">
+        <div className="planner-label">Known Documentation Files</div>
+        <div className="planner-checkbox-grid">
+          {REPOSITORY_DOCUMENTS.map((path) => (
+            <label key={path} className="planner-checkbox">
+              <input
+                type="checkbox"
+                checked={selectedFiles.includes(path)}
+                onChange={(event) => {
+                  const next = event.target.checked
+                    ? [...selectedFiles, path]
+                    : selectedFiles.filter((file) => file !== path);
+                  onSelectedFilesChange(Array.from(new Set(next)));
+                }}
+              />
+              <span>{path}</span>
+              <span className={`planner-file-status ${fileStatus[path] || 'unknown'}`}>{fileStatus[path] || 'unknown'}</span>
+            </label>
+          ))}
+        </div>
+        <div className="planner-actions">
+          <button
+            className="planner-button secondary"
+            onClick={() => onSelectedFilesChange(Object.entries(fileStatus).filter(([, status]) => status === 'available').map(([path]) => path))}
+            disabled={loading || !Object.values(fileStatus).includes('available')}
+          >
+            Select Discovered
+          </button>
+          <button
+            className="planner-button secondary"
+            onClick={() => {
+              onFileStatusChange({});
+              onSelectedFilesChange(['README.md', 'architecture.md', 'modules.md', 'flows.md']);
+            }}
+            disabled={loading}
+          >
+            Reset Discovery
+          </button>
+        </div>
+      </div>
+      <details className="planner-task">
+        <summary className="planner-label">Manual Document Paste Fallback</summary>
+        <div className="planner-grid">
+          {['README.md', 'architecture.md', 'modules.md', 'flows.md'].map((path) => (
+            <div key={path}>
+              <div className="planner-label">{path}</div>
+              <textarea
+                className="planner-textarea compact"
+                value={repositoryDocuments[path] || ''}
+                onChange={(event) => onRepositoryDocumentsChange({ ...repositoryDocuments, [path]: event.target.value })}
+                placeholder={`Paste ${path} content here if Azure Repos cannot load it.`}
+              />
+            </div>
+          ))}
+        </div>
+      </details>
       <div className="planner-status-grid">
         <Row label="Repository" value={profile.repository_connection.repository_name || 'Not connected'} />
         <Row label="Branch" value={profile.repository_connection.branch || 'Not selected'} />
         <Row label="Status" value={profile.repository_connection.status || 'Not connected'} />
         <Row label="README Analysis" value={profile.readme_analysis.summary || 'Pending'} />
-        <Row label="Architecture Discovery" value={profile.readme_analysis.architecture_notes.join(', ') || 'Pending'} />
+        <Row label="Architecture Discovery" value={(profile.knowledge_registry.architecture_notes || profile.readme_analysis.architecture_notes).join(', ') || 'Pending'} />
         <Row label="Flow Discovery" value={profile.knowledge_registry.flows.join(', ') || 'Pending'} />
         <Row label="Module Discovery" value={profile.knowledge_registry.modules.join(', ') || 'Pending'} />
+        <Row label="Source Files" value={profile.knowledge_registry.source_files.join(', ') || profile.repository_sources.join(', ') || 'Pending'} />
       </div>
-      <div className="planner-subtle">Only README ingestion is enabled in this preview. Full repository scans are intentionally not included.</div>
+      <div className="planner-subtle">Only known documentation ingestion is enabled in this preview. Full repository scans are intentionally not included.</div>
     </section>
   );
 }
@@ -1297,13 +2192,10 @@ function RoadmapCard() {
           <ul className="planner-list">
             <li>Project Profile</li>
             <li>Project Intelligence</li>
-            <li>Story Prompt Generation</li>
             <li>Repository Intelligence</li>
-            <li>Epic Intelligence</li>
-            <li>Feature Intelligence</li>
-            <li>Story Intelligence</li>
-            <li>Impact Analysis</li>
-            <li>Execution Context Builder</li>
+            <li>Knowledge Registry</li>
+            <li>AI Planner Workflow</li>
+            <li>Developer Workspace</li>
           </ul>
         </div>
         <div>
@@ -1330,14 +2222,46 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PromptBlock({ title, value, metadata }: { title: string; value: string; metadata?: ProviderMetadata }) {
+function PromptBlock({ title, value, metadata, copyable }: { title: string; value: string; metadata?: ProviderMetadata; copyable?: boolean }) {
   return (
     <div className="planner-task">
       <div className="planner-label">{title}</div>
       <SourceBadge metadata={metadata} />
+      {copyable ? (
+        <div className="planner-actions">
+          <button className="planner-button secondary" onClick={() => void copyText(value)}>Copy</button>
+        </div>
+      ) : null}
       <pre className="planner-prompt">{value}</pre>
     </div>
   );
+}
+
+function buildVsCodeExecutionPackageUri(
+  executionContext: ExecutionContextResult,
+  devPrompt?: PromptBuilderResult,
+  uiPrompt?: PromptBuilderResult,
+  qaPrompt?: PromptBuilderResult,
+  copilotContext?: CopilotContextResult,
+): string {
+  const payload = {
+    execution_context: executionContext,
+    dev_prompt: devPrompt?.prompt || '',
+    ui_prompt: uiPrompt?.prompt || '',
+    qa_prompt: qaPrompt?.prompt || '',
+    copilot_context: copilotContext?.context || '',
+  };
+  const params = new URLSearchParams({
+    payload: btoa(unescape(encodeURIComponent(JSON.stringify(payload)))),
+  });
+  return `vscode://rathiesh.ai-gen-vscode/loadExecutionPackage?${params.toString()}`;
+}
+
+async function copyText(value: string): Promise<void> {
+  if (!value) {
+    return;
+  }
+  await navigator.clipboard?.writeText(value);
 }
 
 async function getProfile(): Promise<ProjectProfile> {
@@ -1346,6 +2270,204 @@ async function getProfile(): Promise<ProjectProfile> {
     throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
   }
   return response.json() as Promise<ProjectProfile>;
+}
+
+async function loadCurrentWorkItem(): Promise<AdoWorkItem | undefined> {
+  try {
+    const service = await SDK.getService<IWorkItemFormService>(WorkItemTrackingServiceIds.WorkItemFormService);
+    const fields = await service.getFieldValues([
+      'System.Id',
+      'System.Title',
+      'System.WorkItemType',
+      'System.Description',
+      'Microsoft.VSTS.Common.AcceptanceCriteria',
+      'System.State',
+      'System.AreaPath',
+      'System.IterationPath',
+      'System.Tags',
+    ]);
+    const id = Number(fields['System.Id'] || 0);
+    if (!id) {
+      return undefined;
+    }
+    const project = await getProjectName();
+    const collectionUri = getCollectionUri();
+    const full = await fetchAdoWorkItem(collectionUri, project, id);
+    return {
+      id,
+      type: String(fields['System.WorkItemType'] || full.type || ''),
+      title: String(fields['System.Title'] || full.title || ''),
+      description: String(fields['System.Description'] || full.description || ''),
+      acceptanceCriteria: String(fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || full.acceptanceCriteria || ''),
+      state: String(fields['System.State'] || full.state || ''),
+      areaPath: String(fields['System.AreaPath'] || full.areaPath || ''),
+      iterationPath: String(fields['System.IterationPath'] || full.iterationPath || ''),
+      tags: splitTags(String(fields['System.Tags'] || full.tags || '')),
+      project,
+      collectionUri,
+      parentIds: full.parentIds,
+      childIds: full.childIds,
+      parents: await loadParentChain(collectionUri, project, full.parentIds[0]),
+      children: await loadHierarchy(collectionUri, project, full.childIds, 'child'),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchAdoWorkItem(collectionUri: string, projectName: string, id: number): Promise<AdoWorkItem & { parentIds: number[]; childIds: number[] }> {
+  const token = await SDK.getAccessToken();
+  const response = await fetch(`${trimTrailingSlash(collectionUri)}/${encodeURIComponent(projectName)}/_apis/wit/workItems/${id}?$expand=relations&api-version=7.1`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error(`Azure DevOps returned HTTP ${response.status} while loading work item #${id}.`);
+  }
+  const body = await response.json() as {
+    id: number;
+    fields?: Record<string, unknown>;
+    relations?: Array<{ rel?: string; url?: string }>;
+  };
+  const fields = body.fields || {};
+  const relations = body.relations || [];
+  return {
+    id: body.id,
+    type: String(fields['System.WorkItemType'] || ''),
+    title: String(fields['System.Title'] || ''),
+    description: String(fields['System.Description'] || ''),
+    acceptanceCriteria: String(fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || ''),
+    state: String(fields['System.State'] || ''),
+    areaPath: String(fields['System.AreaPath'] || ''),
+    iterationPath: String(fields['System.IterationPath'] || ''),
+    tags: splitTags(String(fields['System.Tags'] || '')),
+    project: projectName,
+    collectionUri,
+    parentIds: relations.filter((relation) => relation.rel === 'System.LinkTypes.Hierarchy-Reverse').map((relation) => extractWorkItemId(relation.url)).filter(Boolean),
+    childIds: relations.filter((relation) => relation.rel === 'System.LinkTypes.Hierarchy-Forward').map((relation) => extractWorkItemId(relation.url)).filter(Boolean),
+    parents: [],
+    children: [],
+  };
+}
+
+async function loadHierarchy(collectionUri: string, projectName: string, ids: number[], direction: 'parent' | 'child'): Promise<AdoWorkItemSummary[]> {
+  if (!ids.length) {
+    return [];
+  }
+  const summaries = await Promise.all(ids.slice(0, direction === 'parent' ? 3 : 20).map(async (id) => {
+    const item = await fetchAdoWorkItem(collectionUri, projectName, id);
+    return { id: item.id, type: item.type, title: item.title, state: item.state };
+  }));
+  return direction === 'parent' ? summaries.reverse() : summaries;
+}
+
+async function loadParentChain(collectionUri: string, projectName: string, parentId?: number): Promise<AdoWorkItemSummary[]> {
+  const chain: AdoWorkItemSummary[] = [];
+  let nextId = parentId || 0;
+  const seen = new Set<number>();
+  while (nextId && !seen.has(nextId) && chain.length < 4) {
+    seen.add(nextId);
+    const item = await fetchAdoWorkItem(collectionUri, projectName, nextId);
+    chain.unshift({ id: item.id, type: item.type, title: item.title, state: item.state });
+    nextId = item.parentIds[0] || 0;
+  }
+  return chain;
+}
+
+async function createAdoWorkItem(parent: AdoWorkItem, accessToken: string, draft: ChildDraft): Promise<number> {
+  const fields: Record<string, string> = {
+    'System.Title': draft.title,
+    'System.Description': draft.description,
+    'System.AreaPath': parent.areaPath,
+    'System.IterationPath': parent.iterationPath,
+  };
+  if (draft.type !== 'Task' && draft.acceptanceCriteria.length) {
+    fields['Microsoft.VSTS.Common.AcceptanceCriteria'] = draft.acceptanceCriteria.map((item) => `<div>${escapeHtml(item)}</div>`).join('');
+  }
+  if (parent.tags.length) {
+    fields['System.Tags'] = parent.tags.join('; ');
+  }
+  const operations: Array<Record<string, unknown>> = Object.entries(fields)
+    .filter(([, value]) => String(value || '').trim())
+    .map(([field, value]) => ({ op: 'add', path: `/fields/${field}`, value }));
+  operations.push({
+    op: 'add',
+    path: '/relations/-',
+    value: {
+      rel: 'System.LinkTypes.Hierarchy-Reverse',
+      url: `${trimTrailingSlash(parent.collectionUri)}/${encodeURIComponent(parent.project)}/_apis/wit/workItems/${parent.id}`,
+    },
+  });
+  const typeName = encodeURIComponent(`$${draft.type}`);
+  const response = await fetch(`${trimTrailingSlash(parent.collectionUri)}/${encodeURIComponent(parent.project)}/_apis/wit/workitems/${typeName}?api-version=7.1`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json-patch+json',
+    },
+    body: JSON.stringify(operations),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Azure DevOps returned HTTP ${response.status} while creating ${draft.type}${body ? `: ${body.slice(0, 400)}` : ''}.`);
+  }
+  const body = await response.json() as { id: number };
+  return body.id;
+}
+
+async function addAdoComment(workItem: AdoWorkItem, text: string): Promise<void> {
+  const accessToken = await SDK.getAccessToken();
+  await fetch(`${trimTrailingSlash(workItem.collectionUri)}/${encodeURIComponent(workItem.project)}/_apis/wit/workItems/${workItem.id}/comments?api-version=7.1-preview.4`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ text }),
+  });
+}
+
+function featureDraftsFromEpic(result: EpicRefinement): ChildDraft[] {
+  return result.recommended_features.map((feature, index) => ({
+    id: `feature_${index + 1}`,
+    type: 'Feature',
+    title: feature.title,
+    description: feature.description,
+    acceptanceCriteria: result.business_outcomes.length ? result.business_outcomes : ['Feature supports the approved epic outcome.'],
+    selected: true,
+    status: 'preview',
+  }));
+}
+
+function storyDraftsFromFeature(result: FeatureRefinement): ChildDraft[] {
+  return result.recommended_stories.map((story, index) => ({
+    id: `story_${index + 1}`,
+    type: 'User Story',
+    title: story.title,
+    description: story.description,
+    acceptanceCriteria: [
+      `${story.title} is visible and testable.`,
+      ...result.affected_flows.slice(0, 3).map((flow) => `${flow} flow is covered end to end.`),
+    ],
+    selected: true,
+    status: 'preview',
+  }));
+}
+
+function taskDraftsFromStory(result: StoryRefinement): ChildDraft[] {
+  const tasks = [
+    { title: `Design ${result.story_summary}`, description: result.ui_considerations.join(' ') || 'Confirm UI states and interaction behavior.' },
+    { title: `Implement ${result.story_summary}`, description: result.technical_considerations.join(' ') || 'Implement the approved behavior in the affected modules.' },
+    { title: `Test ${result.story_summary}`, description: result.qa_considerations.join(' ') || 'Validate acceptance criteria and regression coverage.' },
+  ];
+  return tasks.map((task, index) => ({
+    id: `task_${index + 1}`,
+    type: 'Task',
+    title: cleanGeneratedTitle(task.title),
+    description: task.description,
+    acceptanceCriteria: result.acceptance_criteria,
+    selected: true,
+    status: 'preview',
+  }));
 }
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
@@ -1362,6 +2484,54 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
 
 function splitLines(value: string): string[] {
   return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
+}
+
+function splitTags(value: string): string[] {
+  return value.split(/[;,]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function extractWorkItemId(url?: string): number {
+  const match = String(url || '').match(/workItems\/(\d+)/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function normalizePlannerItemType(type: string): 'Epic' | 'Feature' | 'Story' | 'Task' {
+  const normalized = type.toLowerCase();
+  if (normalized.includes('epic')) return 'Epic';
+  if (normalized.includes('feature')) return 'Feature';
+  if (normalized.includes('task')) return 'Task';
+  return 'Story';
+}
+
+function htmlToText(value: string): string {
+  const element = document.createElement('div');
+  element.innerHTML = value || '';
+  return (element.textContent || element.innerText || '').trim();
+}
+
+function cleanGeneratedTitle(value: string): string {
+  return value.replace(/\s+/g, ' ').replace(/^(.{0,120}).*$/, '$1').trim();
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function getCollectionUri(): string {
+  const pageContext = SDK.getPageContext() as unknown as {
+    webContext?: {
+      collection?: { uri?: string };
+    };
+  };
+  return pageContext.webContext?.collection?.uri || `${window.location.origin}/`;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
 function isProfileComplete(profile: ProjectProfile): boolean {

@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "ai-gen-work-item-tools",
   "publisher": "AiIntelliCodegen",
-  "version": "1.0.37",
+  "version": "1.0.41",
   "name": "ai-gen Work Item Tools",
   "description": "Convert Azure DevOps work items into ai-gen execution packets.",
   "public": false,

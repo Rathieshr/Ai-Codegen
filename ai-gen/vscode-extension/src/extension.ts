@@ -122,6 +122,36 @@ async function refreshState(): Promise<PlannerViewState> {
 
 async function handleAiGenUri(uri: vscode.Uri): Promise<void> {
   const path = uri.path.replace(/^\/+/, '');
+  if (path === 'loadExecutionPackage') {
+    const params = new URLSearchParams(uri.query);
+    const encodedPayload = String(params.get('payload') || '').trim();
+    if (!encodedPayload) {
+      vscode.window.showErrorMessage('ai-gen execution package link is missing payload.');
+      return;
+    }
+    let payload: {
+      dev_prompt?: string;
+      ui_prompt?: string;
+      qa_prompt?: string;
+      copilot_context?: string;
+      execution_context?: Record<string, unknown>;
+    };
+    try {
+      payload = JSON.parse(Buffer.from(encodedPayload, 'base64').toString('utf8'));
+    } catch {
+      vscode.window.showErrorMessage('ai-gen execution package link could not be decoded.');
+      return;
+    }
+    const devPrompt = String(payload.dev_prompt || '').trim();
+    const summary = String(payload.execution_context?.story_summary || 'Execution package loaded from Azure DevOps.');
+    if (devPrompt) {
+      await vscode.env.clipboard.writeText(devPrompt);
+    }
+    sidebarProvider?.update(getState(devPrompt ? 'Execution package loaded. Dev Prompt copied to clipboard.' : 'Execution package loaded.'));
+    await vscode.commands.executeCommand('workbench.view.extension.aiGen');
+    vscode.window.showInformationMessage(devPrompt ? `ai-gen execution package loaded: ${summary}` : `ai-gen execution package loaded without a Dev Prompt: ${summary}`);
+    return;
+  }
   if (path !== 'loadStoryPrompt') {
     vscode.window.showWarningMessage(`Unsupported ai-gen link: ${path || uri.path}`);
     return;

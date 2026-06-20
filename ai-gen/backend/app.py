@@ -323,6 +323,13 @@ class ProjectIntelligenceRefinementRequest(BaseModel):
     story: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProjectIntelligenceExecutionRequest(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+    knowledge_profile: dict[str, Any] = Field(default_factory=dict)
+    story: dict[str, Any] = Field(default_factory=dict)
+    impact_analysis: dict[str, Any] = Field(default_factory=dict)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -392,6 +399,56 @@ def analyze_project_feature_impact(request: ProjectIntelligenceRefinementRequest
 @app.post("/project-intelligence/analyze-epic-impact")
 def analyze_project_epic_impact(request: ProjectIntelligenceRefinementRequest) -> dict:
     return project_intelligence_service.analyze_epic_impact(request.epic, request.profile, request.knowledge_profile)
+
+
+@app.post("/project-intelligence/build-execution-context")
+def build_project_execution_context(request: ProjectIntelligenceExecutionRequest) -> dict:
+    return project_intelligence_service.build_execution_context(
+        request.story,
+        request.profile,
+        request.knowledge_profile,
+        request.impact_analysis,
+    )
+
+
+@app.post("/project-intelligence/build-dev-prompt")
+def build_project_dev_prompt(request: ProjectIntelligenceExecutionRequest) -> dict:
+    return project_intelligence_service.build_dev_prompt(
+        request.story,
+        request.profile,
+        request.knowledge_profile,
+        request.impact_analysis,
+    )
+
+
+@app.post("/project-intelligence/build-ui-prompt")
+def build_project_ui_prompt(request: ProjectIntelligenceExecutionRequest) -> dict:
+    return project_intelligence_service.build_ui_prompt(
+        request.story,
+        request.profile,
+        request.knowledge_profile,
+        request.impact_analysis,
+    )
+
+
+@app.post("/project-intelligence/build-qa-prompt")
+def build_project_qa_prompt(request: ProjectIntelligenceExecutionRequest) -> dict:
+    return project_intelligence_service.build_qa_prompt(
+        request.story,
+        request.profile,
+        request.knowledge_profile,
+        request.impact_analysis,
+    )
+
+
+@app.post("/project-intelligence/build-copilot-context")
+def build_project_copilot_context(request: ProjectIntelligenceExecutionRequest) -> dict:
+    return project_intelligence_service.build_copilot_context(
+        request.story,
+        request.profile,
+        request.knowledge_profile,
+        request.impact_analysis,
+    )
 
 
 @app.post("/story-planner/sessions")

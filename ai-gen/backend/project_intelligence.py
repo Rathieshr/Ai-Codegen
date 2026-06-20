@@ -334,6 +334,150 @@ class ProjectIntelligenceService:
             "recommended_rollout_strategy": _rollout_strategy(active_profile, keywords),
         }
 
+    def build_execution_context(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+        impact_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        story = story or {}
+        title = _clean_text(story.get("title")) or "Untitled story"
+        description = _clean_text(story.get("description"))
+        refined_story = self.refine_story(story, active_profile, active_profile["knowledge_registry"])
+        impact = _normalize_story_impact(
+            impact_analysis or self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"])
+        )
+        acceptance = _string_list(story.get("acceptance_criteria")) or refined_story["acceptance_criteria"]
+        has_impact = any(impact[key] for key in ["affected_applications", "affected_modules", "affected_flows", "dependencies", "risks"])
+        readiness = _execution_readiness_score(active_profile, has_impact)
+        return {
+            "story_summary": _sentence(title, description or refined_story["story_summary"]),
+            "acceptance_criteria": acceptance,
+            "affected_applications": impact["affected_applications"] or refined_story["affected_applications"],
+            "affected_modules": impact["affected_modules"] or refined_story["affected_modules"],
+            "affected_flows": impact["affected_flows"] or refined_story["affected_flows"],
+            "dependencies": impact["dependencies"] or refined_story["dependencies"],
+            "risks": impact["risks"] or refined_story["risks"],
+            "technology_stack": active_profile["technology_stack"],
+            "ui_guidelines": active_profile["ui_guidelines"],
+            "development_standards": active_profile["development_standards"],
+            "recommended_files": _recommended_files(active_profile, impact),
+            "implementation_notes": _implementation_notes(active_profile, impact),
+            "execution_readiness": readiness["label"],
+        }
+
+    def build_dev_prompt(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+        impact_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        return {
+            "prompt": _execution_prompt(
+                "Dev Prompt",
+                context,
+                [
+                    "Implement the approved story without changing unrelated behavior.",
+                    "Use the affected modules and flows as the primary implementation boundary.",
+                    f"Technology Stack: {_format_stack(context['technology_stack']) or 'Confirm stack before implementation.'}",
+                    f"Coding Standards: {_format_standards(context['development_standards']) or 'Follow existing project standards.'}",
+                    f"Architecture Rules: {', '.join(active_profile['readme_analysis']['architecture_notes']) or 'Preserve current architecture boundaries.'}",
+                    f"Recommended Files: {', '.join(context['recommended_files']) or 'Inspect the affected modules before editing.'}",
+                ],
+            )
+        }
+
+    def build_ui_prompt(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+        impact_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        ui = context["ui_guidelines"]
+        return {
+            "prompt": _execution_prompt(
+                "UI Prompt",
+                context,
+                [
+                    "Design the affected user experience and states for the approved story.",
+                    f"Colors: primary={ui['primary_color'] or 'use project default'}, secondary={ui['secondary_color'] or 'use project default'}",
+                    f"Typography: {ui['typography'] or 'use project default'}",
+                    f"Component Library: {ui['component_library'] or 'reuse existing components'}",
+                    f"Accessibility Rules: {', '.join(ui['accessibility_rules']) or 'Validate accessibility expectations.'}",
+                    f"Affected User Flows: {', '.join(context['affected_flows']) or 'Confirm affected flows.'}",
+                ],
+            )
+        }
+
+    def build_qa_prompt(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+        impact_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        impact = _normalize_story_impact(impact_analysis or self.analyze_story_impact(story, _normalize_profile(profile or self.get_profile()), knowledge_profile or {}))
+        return {
+            "prompt": _execution_prompt(
+                "QA Prompt",
+                context,
+                [
+                    "Create manual and automation-ready coverage for the approved story.",
+                    f"Risks: {', '.join(context['risks']) or 'Confirm risks before testing.'}",
+                    f"Dependencies: {', '.join(context['dependencies']) or 'Confirm dependencies before testing.'}",
+                    f"Integration Points: {', '.join(impact['integration_points']) or 'Confirm integration points.'}",
+                    f"Regression Areas: {', '.join(_unique(context['affected_flows'] + context['affected_modules'])) or 'Confirm regression scope.'}",
+                ],
+            )
+        }
+
+    def build_copilot_context(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+        impact_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        lines = [
+            "Project Awareness Context",
+            "",
+            f"Project: {active_profile['project_name'] or 'Not specified'}",
+            f"Domain: {active_profile['domain'] or active_profile['knowledge_profile_preview']['domain'] or 'Not specified'}",
+            f"Project Type: {active_profile['project_type'] or 'Not specified'}",
+            "",
+            f"Story: {_clean_text(story.get('title')) or 'Untitled story'}",
+            context["story_summary"],
+            "",
+            "Affected Applications:",
+            *_bullet_lines(context["affected_applications"]),
+            "",
+            "Affected Modules:",
+            *_bullet_lines(context["affected_modules"]),
+            "",
+            "Affected Flows:",
+            *_bullet_lines(context["affected_flows"]),
+            "",
+            "Architecture:",
+            *_bullet_lines(active_profile["readme_analysis"]["architecture_notes"] or _flatten_standards(active_profile["development_standards"])),
+            "",
+            "Dependencies:",
+            *_bullet_lines(context["dependencies"]),
+            "",
+            "Standards:",
+            *_bullet_lines(_flatten_standards(context["development_standards"])),
+        ]
+        return {"context": "\n".join(lines).strip()}
+
 
 def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     ui = profile.get("ui_guidelines") if isinstance(profile.get("ui_guidelines"), dict) else {}
@@ -1129,6 +1273,95 @@ def _execution_readiness_score(profile: dict[str, Any], has_impact: bool = False
             "development_standards": standards,
         },
     }
+
+
+def _normalize_story_impact(value: dict[str, Any]) -> dict[str, list[str]]:
+    impact = value if isinstance(value, dict) else {}
+    return {
+        "affected_applications": _string_list(impact.get("affected_applications")),
+        "affected_modules": _string_list(impact.get("affected_modules")),
+        "affected_flows": _string_list(impact.get("affected_flows")),
+        "affected_components": _string_list(impact.get("affected_components")),
+        "dependencies": _string_list(impact.get("dependencies")),
+        "risks": _string_list(impact.get("risks")),
+        "integration_points": _string_list(impact.get("integration_points")),
+        "recommended_reviewers": _string_list(impact.get("recommended_reviewers")),
+    }
+
+
+def _recommended_files(profile: dict[str, Any], impact: dict[str, list[str]]) -> list[str]:
+    files: list[str] = []
+    modules = impact["affected_modules"]
+    flows = impact["affected_flows"]
+    components = impact["affected_components"]
+    if any(app["type"] == "Mobile" for app in profile["applications"]):
+        files.extend(_file_guess("mobile", components or flows or modules))
+    if any(app["type"] in ["Backend", "API"] for app in profile["applications"]):
+        files.extend(_file_guess("backend", modules or flows))
+    if any(app["type"] == "Web Portal" for app in profile["applications"]):
+        files.extend(_file_guess("web", components or flows))
+    return _unique(files)[:8]
+
+
+def _file_guess(area: str, values: list[str]) -> list[str]:
+    guesses: list[str] = []
+    for value in values[:3]:
+        slug = _clean_text(value).replace(" ", "").replace("-", "")
+        if not slug:
+            continue
+        if area == "mobile":
+            guesses.extend([f"mobile/**/{slug}*.xaml", f"mobile/**/{slug}*ViewModel.*"])
+        elif area == "backend":
+            guesses.extend([f"backend/**/{slug}*Controller.*", f"backend/**/{slug}*Service.*"])
+        else:
+            guesses.extend([f"web/**/{slug}*.tsx", f"web/**/{slug}*.css"])
+    return guesses
+
+
+def _implementation_notes(profile: dict[str, Any], impact: dict[str, list[str]]) -> list[str]:
+    notes = [
+        "Keep implementation scoped to the approved story and impacted modules.",
+        "Preserve existing behavior outside affected flows.",
+    ]
+    if profile["readme_analysis"]["architecture_notes"]:
+        notes.append("Respect README architecture notes before changing module boundaries.")
+    if impact["dependencies"]:
+        notes.append("Coordinate dependency behavior before final validation.")
+    if impact["risks"]:
+        notes.append("Cover listed risks with targeted tests or explicit verification notes.")
+    return _unique(notes)
+
+
+def _execution_prompt(title: str, context: dict[str, Any], instructions: list[str]) -> str:
+    sections = [
+        f"# {title}",
+        "",
+        "# Story",
+        context["story_summary"],
+        "",
+        "# Acceptance Criteria",
+        *_bullet_lines(context["acceptance_criteria"]),
+        "",
+        "# Impact Analysis",
+        f"- Applications: {', '.join(context['affected_applications']) or 'Not identified'}",
+        f"- Modules: {', '.join(context['affected_modules']) or 'Not identified'}",
+        f"- Flows: {', '.join(context['affected_flows']) or 'Not identified'}",
+        f"- Dependencies: {', '.join(context['dependencies']) or 'Not identified'}",
+        f"- Risks: {', '.join(context['risks']) or 'Not identified'}",
+        "",
+        "# Project Context",
+        f"- Technology Stack: {_format_stack(context['technology_stack']) or 'Not specified'}",
+        f"- Development Standards: {_format_standards(context['development_standards']) or 'Not specified'}",
+        f"- Execution Readiness: {context['execution_readiness']}",
+        "",
+        "# Instructions",
+        *_bullet_lines(instructions),
+    ]
+    return "\n".join(sections).strip()
+
+
+def _bullet_lines(values: list[str]) -> list[str]:
+    return [f"- {value}" for value in values] if values else ["- Not identified"]
 
 
 def _prompt(title: str, story_title: str, story_description: str, context_lines: list[str], instructions: list[str]) -> str:

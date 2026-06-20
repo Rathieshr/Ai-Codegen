@@ -266,6 +266,95 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Large event history performance", prompts["qa_prompt"])
         self.assertIn("Fault Monitoring API", prompts["qa_prompt"])
 
+    def test_execution_context_builder_uses_project_and_impact_intelligence(self) -> None:
+        profile = {
+            "project_name": "LineDefender Mobile Platform",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "Hubbell field operations platform for fault event review.",
+            "repository_connection": {"status": "README analyzed"},
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Backend API", "type": "Backend"}],
+            "technology_stack": {"mobile": ["MAUI"], "backend": [".NET"]},
+            "development_standards": {
+                "architecture_patterns": ["MVVM", "Repository Pattern"],
+                "testing_requirements": ["Unit Tests Required"],
+            },
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Event Repository"],
+                "flows": ["Fault Event Review"],
+                "components": ["Fault Detail Screen"],
+            },
+            "readme_analysis": {"architecture_notes": ["Mobile app uses MVVM.", "Backend APIs use Repository Pattern."]},
+        }
+        story = {
+            "title": "Display Fault Event Details",
+            "description": "As a field operator, I want to display fault event details.",
+            "acceptance_criteria": ["Fault event details are visible from the event list."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            context = service.build_execution_context(story, profile)
+
+        self.assertIn("Mobile App", context["affected_applications"])
+        self.assertIn("Backend API", context["affected_applications"])
+        self.assertIn("Fault Monitoring", context["affected_modules"])
+        self.assertIn("Telemetry", context["affected_modules"])
+        self.assertIn("Fault Event Review", context["affected_flows"])
+        self.assertIn("Telemetry Service", context["dependencies"])
+        self.assertIn("Event Repository", context["dependencies"])
+        self.assertEqual(context["technology_stack"]["mobile"], ["MAUI"])
+        self.assertEqual(context["technology_stack"]["backend"], [".NET"])
+        self.assertIn("MVVM", context["development_standards"]["architecture_patterns"])
+        self.assertIn("Execution Ready", context["execution_readiness"])
+
+    def test_prompt_builders_and_copilot_context_are_project_aware(self) -> None:
+        profile = {
+            "project_name": "LineDefender Mobile Platform",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "Hubbell field operations platform for fault event review.",
+            "repository_connection": {"status": "README analyzed"},
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Backend API", "type": "Backend"}],
+            "technology_stack": {"mobile": ["MAUI"], "backend": [".NET"]},
+            "ui_guidelines": {
+                "primary_color": "#004B8D",
+                "typography": "Segoe UI",
+                "component_library": "Hubbell Mobile UI",
+                "accessibility_rules": ["WCAG AA"],
+            },
+            "development_standards": {
+                "architecture_patterns": ["MVVM", "Repository Pattern"],
+                "testing_requirements": ["Unit Tests Required"],
+            },
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review"],
+            },
+            "readme_analysis": {"architecture_notes": ["Mobile app uses MVVM.", "Backend APIs use Repository Pattern."]},
+        }
+        story = {"title": "Display Fault Event Details", "acceptance_criteria": ["Fault details include timestamp and severity."]}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            dev_prompt = service.build_dev_prompt(story, profile)["prompt"]
+            ui_prompt = service.build_ui_prompt(story, profile)["prompt"]
+            qa_prompt = service.build_qa_prompt(story, profile)["prompt"]
+            copilot_context = service.build_copilot_context(story, profile)["context"]
+
+        self.assertIn("Technology Stack: mobile: MAUI; backend: .NET", dev_prompt)
+        self.assertIn("Coding Standards: MVVM; Repository Pattern; Unit Tests Required", dev_prompt)
+        self.assertIn("Architecture Rules: Mobile app uses MVVM., Backend APIs use Repository Pattern.", dev_prompt)
+        self.assertIn("Component Library: Hubbell Mobile UI", ui_prompt)
+        self.assertIn("Affected User Flows:", ui_prompt)
+        self.assertIn("Fault Event Review", ui_prompt)
+        self.assertIn("Risks: Large event history performance", qa_prompt)
+        self.assertIn("Regression Areas:", qa_prompt)
+        self.assertIn("Fault Event Review", qa_prompt)
+        self.assertIn("Fault Monitoring", qa_prompt)
+        self.assertIn("Project: LineDefender Mobile Platform", copilot_context)
+        self.assertIn("Fault Monitoring", copilot_context)
+        self.assertIn("Telemetry", copilot_context)
+        self.assertIn("Repository Pattern", copilot_context)
+
 
 if __name__ == "__main__":
     unittest.main()

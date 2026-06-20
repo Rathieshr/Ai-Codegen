@@ -1249,14 +1249,15 @@ function RoadmapCard() {
             <li>Feature Intelligence</li>
             <li>Story Intelligence</li>
             <li>Impact Analysis</li>
+            <li>Execution Context Builder</li>
           </ul>
         </div>
         <div>
           <div className="planner-label">Coming Next</div>
           <ul className="planner-list">
-            <li>VS Code Intelligence</li>
-            <li>Copilot Context Builder</li>
+            <li>Copilot Deep Integration</li>
             <li>PR Validation</li>
+            <li>Story Coverage Validation</li>
             <li>Teams Agent</li>
             <li>Autonomous Planning Agent</li>
           </ul>

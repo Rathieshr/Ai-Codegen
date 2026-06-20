@@ -379,6 +379,21 @@ def refine_project_story(request: ProjectIntelligenceRefinementRequest) -> dict:
     return project_intelligence_service.refine_story(request.story, request.profile, request.knowledge_profile)
 
 
+@app.post("/project-intelligence/analyze-story-impact")
+def analyze_project_story_impact(request: ProjectIntelligenceRefinementRequest) -> dict:
+    return project_intelligence_service.analyze_story_impact(request.story, request.profile, request.knowledge_profile)
+
+
+@app.post("/project-intelligence/analyze-feature-impact")
+def analyze_project_feature_impact(request: ProjectIntelligenceRefinementRequest) -> dict:
+    return project_intelligence_service.analyze_feature_impact(request.feature, request.profile, request.knowledge_profile)
+
+
+@app.post("/project-intelligence/analyze-epic-impact")
+def analyze_project_epic_impact(request: ProjectIntelligenceRefinementRequest) -> dict:
+    return project_intelligence_service.analyze_epic_impact(request.epic, request.profile, request.knowledge_profile)
+
+
 @app.post("/story-planner/sessions")
 def start_story_planner_session(request: StoryPlannerStartRequest) -> dict:
     return story_planner_service.start_session(

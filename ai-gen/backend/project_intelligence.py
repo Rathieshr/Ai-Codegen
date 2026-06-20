@@ -119,6 +119,7 @@ class ProjectIntelligenceService:
         title = _clean_text(story.get("title")) or "Approved story"
         description = _clean_text(story.get("description")) or "Implement the approved behavior."
         acceptance = _string_list(story.get("acceptance_criteria"))
+        impact = self.analyze_story_impact(story, active_profile)
         context_lines = _profile_context_lines(active_profile)
         acceptance_lines = acceptance or ["Confirm the implementation satisfies the approved story scope."]
         return {
@@ -130,6 +131,8 @@ class ProjectIntelligenceService:
                 [
                     "Design the screen, states, validations, and accessibility behavior.",
                     "Apply the configured UI guidelines and component library where available.",
+                    f"Affected Applications: {', '.join(impact['affected_applications']) or 'Confirm affected UI surface.'}",
+                    f"Affected Flows: {', '.join(impact['affected_flows']) or 'Confirm affected user flows.'}",
                     *[f"Acceptance: {item}" for item in acceptance_lines],
                 ],
             ),
@@ -141,6 +144,8 @@ class ProjectIntelligenceService:
                 [
                     "Implement the approved story using the project technology stack.",
                     "Respect existing architecture boundaries and security expectations.",
+                    f"Affected Modules: {', '.join(impact['affected_modules']) or 'Confirm affected modules.'}",
+                    f"Dependencies: {', '.join(impact['dependencies']) or 'Confirm dependencies.'}",
                     *[f"Acceptance: {item}" for item in acceptance_lines],
                 ],
             ),
@@ -152,6 +157,9 @@ class ProjectIntelligenceService:
                 [
                     "Create manual and automation-ready test coverage for the approved story.",
                     "Include happy path, negative, edge, accessibility, and regression checks.",
+                    f"Risks: {', '.join(impact['risks']) or 'Confirm delivery risks.'}",
+                    f"Integration Points: {', '.join(impact['integration_points']) or 'Confirm integration points.'}",
+                    f"Test Areas: {', '.join(impact['affected_flows'] + impact['affected_modules']) or 'Confirm test areas.'}",
                     *[f"Acceptance: {item}" for item in acceptance_lines],
                 ],
             ),
@@ -259,6 +267,71 @@ class ProjectIntelligenceService:
             "ui_considerations": _ui_considerations(active_profile, flows),
             "technical_considerations": _technical_considerations(active_profile, modules),
             "qa_considerations": _qa_considerations(active_profile, flows),
+        }
+
+    def analyze_story_impact(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        title = _clean_text(story.get("title")) or "Untitled story"
+        description = _clean_text(story.get("description"))
+        keywords = _context_keywords(title, description, active_profile)
+        modules = _impact_modules(active_profile, title, description, keywords)
+        flows = _impact_flows(active_profile, title, description, keywords)
+        return {
+            "affected_applications": _impact_applications(active_profile, keywords),
+            "affected_modules": modules,
+            "affected_flows": flows,
+            "affected_components": _impact_components(active_profile, modules, flows),
+            "dependencies": _impact_dependencies(active_profile, keywords, modules, flows),
+            "risks": _impact_risks(active_profile, keywords, modules, flows),
+            "integration_points": _integration_points(active_profile, modules, flows),
+            "recommended_reviewers": _recommended_reviewers(active_profile, modules, flows),
+        }
+
+    def analyze_feature_impact(
+        self,
+        feature: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        title = _clean_text(feature.get("title")) or "Untitled feature"
+        description = _clean_text(feature.get("description"))
+        keywords = _context_keywords(title, description, active_profile)
+        modules = _impact_modules(active_profile, title, description, keywords, fallback_count=4)
+        flows = _impact_flows(active_profile, title, description, keywords, fallback_count=4)
+        return {
+            "affected_applications": _impact_applications(active_profile, keywords),
+            "affected_modules": modules,
+            "affected_flows": flows,
+            "cross_team_dependencies": _cross_team_dependencies(active_profile, modules),
+            "integration_points": _integration_points(active_profile, modules, flows),
+            "risks": _impact_risks(active_profile, keywords, modules, flows),
+        }
+
+    def analyze_epic_impact(
+        self,
+        epic: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        title = _clean_text(epic.get("title")) or "Untitled epic"
+        description = _clean_text(epic.get("description"))
+        keywords = _context_keywords(title, description, active_profile)
+        modules = _impact_modules(active_profile, title, description, keywords, fallback_count=6)
+        flows = _impact_flows(active_profile, title, description, keywords, fallback_count=6)
+        return {
+            "affected_applications": _impact_applications(active_profile, keywords),
+            "affected_modules": modules,
+            "affected_flows": flows,
+            "program_dependencies": _program_dependencies(active_profile, modules, flows),
+            "risks": _impact_risks(active_profile, keywords, modules, flows),
+            "recommended_rollout_strategy": _rollout_strategy(active_profile, keywords),
         }
 
 
@@ -672,6 +745,12 @@ def _context_keywords(title: str, description: str, profile: dict[str, Any]) -> 
         "meter",
         "field",
         "inspection",
+        "otp",
+        "login",
+        "token",
+        "session",
+        "sms",
+        "auth",
     ]:
         if keyword in text:
             keywords.append(keyword)
@@ -895,6 +974,161 @@ def _clean_title(value: str) -> str:
 def _remove_generic_names(values: list[str]) -> list[str]:
     generic_tokens = ["feature slice", "story 1", "story 2", "slice 1", "slice 2"]
     return [value for value in values if not any(token in value.lower() for token in generic_tokens)]
+
+
+def _impact_modules(profile: dict[str, Any], title: str, description: str, keywords: list[str], fallback_count: int = 3) -> list[str]:
+    modules = profile["knowledge_registry"]["modules"]
+    selected = _select_relevant_items(modules, title, description, fallback_count=fallback_count)
+    if any(keyword in keywords for keyword in ["otp", "login", "token", "session", "auth"]):
+        selected = _unique(["Authentication", *selected])
+    if any(keyword in keywords for keyword in ["fault", "event"]):
+        selected = _unique(["Fault Monitoring", *selected])
+    if "telemetry" in keywords:
+        selected = _unique(["Telemetry", *selected])
+    if "firmware" in keywords:
+        selected = _unique(["Firmware Update", *selected])
+    return selected[:fallback_count + 2]
+
+
+def _impact_flows(profile: dict[str, Any], title: str, description: str, keywords: list[str], fallback_count: int = 3) -> list[str]:
+    flows = _select_relevant_items(profile["knowledge_registry"]["flows"], title, description, fallback_count=fallback_count)
+    if any(keyword in keywords for keyword in ["otp", "login", "auth"]):
+        flows = _unique(["Login", "Token Refresh", *flows])
+    if any(keyword in keywords for keyword in ["fault", "event"]):
+        flows = _unique(["Fault Event Review", *flows])
+    if "telemetry" in keywords:
+        flows = _unique(["Telemetry Review", *flows])
+    if "firmware" in keywords:
+        flows = _unique(["Firmware Rollout", *flows])
+    return flows[:fallback_count + 2]
+
+
+def _impact_applications(profile: dict[str, Any], keywords: list[str]) -> list[str]:
+    apps = _application_names(profile)
+    if apps:
+        return apps
+    if any(keyword in keywords for keyword in ["otp", "login", "fault", "telemetry"]):
+        return ["Mobile App", "Backend API"]
+    return ["Application"]
+
+
+def _impact_components(profile: dict[str, Any], modules: list[str], flows: list[str]) -> list[str]:
+    components = profile["knowledge_registry"]["components"]
+    if components:
+        return components[:6]
+    generated = []
+    generated.extend(f"{module} component" for module in modules[:3])
+    generated.extend(f"{flow} screen" for flow in flows[:2])
+    return _unique(generated)
+
+
+def _impact_dependencies(profile: dict[str, Any], keywords: list[str], modules: list[str], flows: list[str]) -> list[str]:
+    dependencies = []
+    if any(keyword in keywords for keyword in ["otp", "sms"]):
+        dependencies.extend(["Auth Service", "SMS Provider"])
+    if any(keyword in keywords for keyword in ["token", "session", "login", "auth"]):
+        dependencies.extend(["Auth Service", "Session Store", "Token Refresh"])
+    if any(keyword in keywords for keyword in ["fault", "event"]):
+        dependencies.extend(["Event Repository", "Fault Classification Rules"])
+    if "telemetry" in keywords:
+        dependencies.extend(["Telemetry Service", "Device Connectivity"])
+    if "firmware" in keywords:
+        dependencies.extend(["Firmware Version Service", "Device Update Channel"])
+    dependencies.extend(_dependencies_for_profile(profile))
+    dependencies.extend(f"{module} owner review" for module in modules[:2])
+    dependencies.extend(f"{flow} regression coverage" for flow in flows[:2])
+    return _unique(dependencies)[:10]
+
+
+def _impact_risks(profile: dict[str, Any], keywords: list[str], modules: list[str], flows: list[str]) -> list[str]:
+    risks = []
+    if any(keyword in keywords for keyword in ["otp", "login", "token", "session", "auth"]):
+        risks.extend(["Session invalidation", "Token compatibility", "Authentication failure handling"])
+    if any(keyword in keywords for keyword in ["fault", "event"]):
+        risks.extend(["Large event history performance", "Fault detail accuracy"])
+    if "telemetry" in keywords:
+        risks.extend(["Connectivity issues", "Telemetry freshness gaps"])
+    if "firmware" in keywords:
+        risks.extend(["Version mismatch during rollout", "Partial device upgrade visibility"])
+    risks.extend(_risks_for_profile(profile, keywords))
+    if not modules and not flows:
+        risks.append("Impact confidence is limited without repository intelligence")
+    return _unique(risks)[:10]
+
+
+def _integration_points(profile: dict[str, Any], modules: list[str], flows: list[str]) -> list[str]:
+    points = []
+    points.extend(f"{module} API" for module in modules[:4])
+    points.extend(f"{flow} workflow" for flow in flows[:4])
+    if profile["readme_analysis"]["architecture_notes"]:
+        points.append("Architecture constraints from README")
+    return _unique(points) or ["Project profile integration points"]
+
+
+def _recommended_reviewers(profile: dict[str, Any], modules: list[str], flows: list[str]) -> list[str]:
+    reviewers = ["Product owner"]
+    if modules:
+        reviewers.append("Module owner")
+    if flows:
+        reviewers.append("QA lead")
+    if any(app["type"] in ["Mobile", "Web Portal"] for app in profile["applications"]):
+        reviewers.append("UI engineer")
+    if any(profile["technology_stack"].values()):
+        reviewers.append("Technical lead")
+    return _unique(reviewers)
+
+
+def _cross_team_dependencies(profile: dict[str, Any], modules: list[str]) -> list[str]:
+    dependencies = []
+    app_types = {app["type"] for app in profile["applications"]}
+    if len(app_types) > 1:
+        dependencies.append(f"Coordinate across {', '.join(sorted(app_types))} teams")
+    dependencies.extend(f"{module} module owner alignment" for module in modules[:3])
+    return _unique(dependencies) or ["Product and engineering alignment"]
+
+
+def _program_dependencies(profile: dict[str, Any], modules: list[str], flows: list[str]) -> list[str]:
+    dependencies = _cross_team_dependencies(profile, modules)
+    dependencies.extend(f"{flow} rollout sequencing" for flow in flows[:3])
+    dependencies.append("Release planning and stakeholder communication")
+    return _unique(dependencies)
+
+
+def _rollout_strategy(profile: dict[str, Any], keywords: list[str]) -> list[str]:
+    strategy = ["Start with a controlled pilot", "Validate telemetry and support signals before broad rollout"]
+    if any(keyword in keywords for keyword in ["firmware", "device", "fault", "telemetry"]):
+        strategy.extend(["Roll out by device cohort", "Monitor operational dashboards after each cohort"])
+    if any(app["type"] in ["Mobile", "Web Portal"] for app in profile["applications"]):
+        strategy.append("Coordinate UI release notes and user enablement")
+    return _unique(strategy)
+
+
+def _execution_readiness_score(profile: dict[str, Any], has_impact: bool = False) -> dict[str, Any]:
+    project_profile = 25 if profile.get("project_description") else 0
+    repository = 25 if profile["repository_connection"]["status"] == "README analyzed" else 0
+    registry = 20 if (profile["knowledge_registry"]["modules"] or profile["knowledge_registry"]["flows"]) else 0
+    impact = 15 if has_impact else 0
+    standards = 15 if _flatten_standards(profile["development_standards"]) else 0
+    score = project_profile + repository + registry + impact + standards
+    if score >= 85:
+        label = "Execution Ready"
+    elif score >= 65:
+        label = "Advanced"
+    elif score >= 40:
+        label = "Intermediate"
+    else:
+        label = "Basic"
+    return {
+        "score": score,
+        "label": label,
+        "breakdown": {
+            "project_profile": project_profile,
+            "repository_intelligence": repository,
+            "knowledge_registry": registry,
+            "impact_analysis": impact,
+            "development_standards": standards,
+        },
+    }
 
 
 def _prompt(title: str, story_title: str, story_description: str, context_lines: list[str], instructions: list[str]) -> str:

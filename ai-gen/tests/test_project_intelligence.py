@@ -166,6 +166,106 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("LineDefender UI", " ".join(refined["ui_considerations"]))
         self.assertIn("Unit tests required", refined["qa_considerations"])
 
+    def test_story_impact_identifies_otp_dependencies(self) -> None:
+        profile = {
+            "project_name": "Customer Access Platform",
+            "domain": "Retail",
+            "project_type": "Mobile Application",
+            "project_description": "Customer mobile app with backend authentication APIs.",
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Backend API", "type": "Backend"}],
+            "knowledge_registry": {
+                "modules": ["Authentication", "Customer Profile"],
+                "flows": ["Login", "Token Refresh"],
+                "components": ["OTP Entry Screen"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            impact = service.analyze_story_impact({"title": "Add OTP Login", "description": "Users verify login with SMS OTP and token refresh."}, profile)
+
+        self.assertIn("Mobile App", impact["affected_applications"])
+        self.assertIn("Backend API", impact["affected_applications"])
+        self.assertIn("Authentication", impact["affected_modules"])
+        self.assertIn("Login", impact["affected_flows"])
+        self.assertIn("Auth Service", impact["dependencies"])
+        self.assertIn("SMS Provider", impact["dependencies"])
+        self.assertIn("Session invalidation", impact["risks"])
+
+    def test_story_impact_uses_linedefender_repository_knowledge(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "Line device monitoring with telemetry, fault events, and field operations.",
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Backend API", "type": "Backend"}],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Event Repository"],
+                "flows": ["Fault Event Review", "Telemetry Review"],
+                "components": ["Fault Detail Screen", "Event Timeline"],
+            },
+            "readme_analysis": {"architecture_notes": ["Events publish telemetry to the operations API."]},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            impact = service.analyze_story_impact({"title": "Display Fault Event Details", "description": "Show large fault history with connectivity-aware telemetry details."}, profile)
+
+        self.assertIn("Mobile App", impact["affected_applications"])
+        self.assertIn("Backend API", impact["affected_applications"])
+        self.assertIn("Fault Monitoring", impact["affected_modules"])
+        self.assertIn("Telemetry", impact["affected_modules"])
+        self.assertIn("Fault Event Review", impact["affected_flows"])
+        self.assertIn("Event Repository", impact["dependencies"])
+        self.assertIn("Telemetry Service", impact["dependencies"])
+        self.assertIn("Large event history performance", impact["risks"])
+        self.assertIn("Connectivity issues", impact["risks"])
+
+    def test_feature_and_epic_impact_return_domain_specific_dependencies(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_description": "Monitor telemetry, faults, and firmware rollout.",
+            "applications": [{"name": "Operations Portal", "type": "Web Portal"}, {"name": "Device API", "type": "Backend"}],
+            "knowledge_registry": {
+                "modules": ["Telemetry", "Firmware Update", "Fault Monitoring"],
+                "flows": ["Device monitoring", "Fault Event Review", "Firmware Rollout"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            feature_impact = service.analyze_feature_impact({"title": "Fault Event Monitoring"}, profile)
+            epic_impact = service.analyze_epic_impact({"title": "Improve Device Monitoring"}, profile)
+
+        self.assertIn("Fault Monitoring", feature_impact["affected_modules"])
+        self.assertIn("Fault Event Review", feature_impact["affected_flows"])
+        self.assertIn("Coordinate across Backend, Web Portal teams", feature_impact["cross_team_dependencies"])
+        self.assertIn("Release planning and stakeholder communication", epic_impact["program_dependencies"])
+        self.assertIn("Roll out by device cohort", epic_impact["recommended_rollout_strategy"])
+
+    def test_story_prompts_include_impact_context(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_description": "Line device monitoring with fault events.",
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Backend API", "type": "Backend"}],
+            "technology_stack": {"mobile": ["Kotlin"], "backend": ["FastAPI"]},
+            "development_standards": {"testing_requirements": ["Regression tests required"]},
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            prompts = service.generate_story_prompts({"title": "Display Fault Event Details", "acceptance_criteria": ["Fault details are visible."]}, profile)
+
+        self.assertIn("Affected Applications: Mobile App, Backend API", prompts["ui_prompt"])
+        self.assertIn("Fault Event Review", prompts["ui_prompt"])
+        self.assertIn("Fault Monitoring", prompts["dev_prompt"])
+        self.assertIn("Telemetry", prompts["dev_prompt"])
+        self.assertIn("Event Repository", prompts["dev_prompt"])
+        self.assertIn("Large event history performance", prompts["qa_prompt"])
+        self.assertIn("Fault Monitoring API", prompts["qa_prompt"])
+
 
 if __name__ == "__main__":
     unittest.main()

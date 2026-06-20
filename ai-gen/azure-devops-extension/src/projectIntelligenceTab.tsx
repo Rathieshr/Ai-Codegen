@@ -139,6 +139,35 @@ type StoryRefinement = {
   qa_considerations: string[];
 };
 
+type StoryImpact = {
+  affected_applications: string[];
+  affected_modules: string[];
+  affected_flows: string[];
+  affected_components: string[];
+  dependencies: string[];
+  risks: string[];
+  integration_points: string[];
+  recommended_reviewers: string[];
+};
+
+type FeatureImpact = {
+  affected_applications: string[];
+  affected_modules: string[];
+  affected_flows: string[];
+  cross_team_dependencies: string[];
+  integration_points: string[];
+  risks: string[];
+};
+
+type EpicImpact = {
+  affected_applications: string[];
+  affected_modules: string[];
+  affected_flows: string[];
+  program_dependencies: string[];
+  risks: string[];
+  recommended_rollout_strategy: string[];
+};
+
 const EMPTY_STACK: TechnologyStack = {
   mobile: [],
   backend: [],
@@ -212,6 +241,12 @@ function ProjectIntelligenceTab() {
   const [epicResult, setEpicResult] = useState<EpicRefinement | undefined>();
   const [featureResult, setFeatureResult] = useState<FeatureRefinement | undefined>();
   const [storyResult, setStoryResult] = useState<StoryRefinement | undefined>();
+  const [epicImpactInput, setEpicImpactInput] = useState({ title: '', description: '' });
+  const [featureImpactInput, setFeatureImpactInput] = useState({ title: '', description: '' });
+  const [storyImpactInput, setStoryImpactInput] = useState({ title: '', description: '' });
+  const [epicImpact, setEpicImpact] = useState<EpicImpact | undefined>();
+  const [featureImpact, setFeatureImpact] = useState<FeatureImpact | undefined>();
+  const [storyImpact, setStoryImpact] = useState<StoryImpact | undefined>();
   const [repositories, setRepositories] = useState<GitRepository[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [editingProfile, setEditingProfile] = useState(false);
@@ -320,6 +355,39 @@ function ProjectIntelligenceTab() {
     }));
     if (result) {
       setStoryResult(result);
+    }
+  }
+
+  async function analyzeEpicImpact() {
+    const result = await withLoading('Analyzing epic impact...', () => postJson<EpicImpact>('/analyze-epic-impact', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      epic: epicImpactInput,
+    }));
+    if (result) {
+      setEpicImpact(result);
+    }
+  }
+
+  async function analyzeFeatureImpact() {
+    const result = await withLoading('Analyzing feature impact...', () => postJson<FeatureImpact>('/analyze-feature-impact', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      feature: featureImpactInput,
+    }));
+    if (result) {
+      setFeatureImpact(result);
+    }
+  }
+
+  async function analyzeStoryImpact() {
+    const result = await withLoading('Analyzing story impact...', () => postJson<StoryImpact>('/analyze-story-impact', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      story: storyImpactInput,
+    }));
+    if (result) {
+      setStoryImpact(result);
     }
   }
 
@@ -448,7 +516,13 @@ function ProjectIntelligenceTab() {
       )}
 
       <KnowledgeProfilePreview profile={profile} />
-      <RefinementReadinessDashboard profile={profile} epicResult={epicResult} featureResult={featureResult} storyResult={storyResult} />
+      <RefinementReadinessDashboard
+        profile={profile}
+        epicResult={epicResult}
+        featureResult={featureResult}
+        storyResult={storyResult}
+        hasImpact={Boolean(epicImpact || featureImpact || storyImpact)}
+      />
       <RepositoryIntelligenceCard
         profile={profile}
         repositories={repositories}
@@ -472,6 +546,21 @@ function ProjectIntelligenceTab() {
         refineEpic={() => void refineEpic()}
         refineFeature={() => void refineFeature()}
         refineStory={() => void refineStory()}
+      />
+      <ImpactAnalysisDashboard
+        loading={loading}
+        epicInput={epicImpactInput}
+        featureInput={featureImpactInput}
+        storyInput={storyImpactInput}
+        epicImpact={epicImpact}
+        featureImpact={featureImpact}
+        storyImpact={storyImpact}
+        setEpicInput={setEpicImpactInput}
+        setFeatureInput={setFeatureImpactInput}
+        setStoryInput={setStoryImpactInput}
+        analyzeEpic={() => void analyzeEpicImpact()}
+        analyzeFeature={() => void analyzeFeatureImpact()}
+        analyzeStory={() => void analyzeStoryImpact()}
       />
       <StoryPromptGeneration
         loading={loading}
@@ -807,12 +896,15 @@ function RefinementReadinessDashboard({
   epicResult,
   featureResult,
   storyResult,
+  hasImpact,
 }: {
   profile: ProjectProfile;
   epicResult?: EpicRefinement;
   featureResult?: FeatureRefinement;
   storyResult?: StoryRefinement;
+  hasImpact: boolean;
 }) {
+  const execution = executionReadiness(profile, hasImpact);
   return (
     <section className="planner-card">
       <div className="planner-label">Refinement Intelligence Status</div>
@@ -823,8 +915,129 @@ function RefinementReadinessDashboard({
         <Row label="Epic Intelligence" value={epicResult ? 'Ready' : 'Not run'} />
         <Row label="Feature Intelligence" value={featureResult ? 'Ready' : 'Not run'} />
         <Row label="Story Intelligence" value={storyResult ? 'Ready' : 'Not run'} />
+        <Row label="Impact Analysis" value={hasImpact ? 'Ready' : 'Not run'} />
+        <Row label="Execution Readiness Score" value={`${execution.score}% - ${execution.label}`} />
+        <Row label="Readiness Breakdown" value={execution.breakdown} />
       </div>
     </section>
+  );
+}
+
+function ImpactAnalysisDashboard({
+  loading,
+  epicInput,
+  featureInput,
+  storyInput,
+  epicImpact,
+  featureImpact,
+  storyImpact,
+  setEpicInput,
+  setFeatureInput,
+  setStoryInput,
+  analyzeEpic,
+  analyzeFeature,
+  analyzeStory,
+}: {
+  loading: boolean;
+  epicInput: { title: string; description: string };
+  featureInput: { title: string; description: string };
+  storyInput: { title: string; description: string };
+  epicImpact?: EpicImpact;
+  featureImpact?: FeatureImpact;
+  storyImpact?: StoryImpact;
+  setEpicInput: (value: { title: string; description: string }) => void;
+  setFeatureInput: (value: { title: string; description: string }) => void;
+  setStoryInput: (value: { title: string; description: string }) => void;
+  analyzeEpic: () => void;
+  analyzeFeature: () => void;
+  analyzeStory: () => void;
+}) {
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Impact Analysis Dashboard</div>
+      <div className="planner-subtle">Use project profile and repository intelligence to identify affected systems before execution.</div>
+      <div className="planner-grid">
+        <ImpactCard title="Epic Impact" input={epicInput} setInput={setEpicInput} onAnalyze={analyzeEpic} loading={loading} placeholder="Improve Device Monitoring">
+          {epicImpact ? <EpicImpactResult result={epicImpact} /> : null}
+        </ImpactCard>
+        <ImpactCard title="Feature Impact" input={featureInput} setInput={setFeatureInput} onAnalyze={analyzeFeature} loading={loading} placeholder="Fault Event Monitoring">
+          {featureImpact ? <FeatureImpactResult result={featureImpact} /> : null}
+        </ImpactCard>
+        <ImpactCard title="Story Impact" input={storyInput} setInput={setStoryInput} onAnalyze={analyzeStory} loading={loading} placeholder="Display Fault Event Details">
+          {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
+        </ImpactCard>
+      </div>
+    </section>
+  );
+}
+
+function ImpactCard({
+  title,
+  input,
+  setInput,
+  onAnalyze,
+  loading,
+  placeholder,
+  children,
+}: {
+  title: string;
+  input: { title: string; description: string };
+  setInput: (value: { title: string; description: string }) => void;
+  onAnalyze: () => void;
+  loading: boolean;
+  placeholder: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="planner-task">
+      <div className="planner-label">{title}</div>
+      <RefinementInput input={input} setInput={setInput} titlePlaceholder={placeholder} descriptionPlaceholder="Describe scope, behavior, or rollout concern." />
+      <div className="planner-actions">
+        <button className="planner-button" onClick={onAnalyze} disabled={loading || !input.title.trim()}>Analyze Impact</button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EpicImpactResult({ result }: { result: EpicImpact }) {
+  return (
+    <div>
+      <ListBlock title="Applications" items={result.affected_applications} />
+      <ListBlock title="Modules" items={result.affected_modules} />
+      <ListBlock title="Flows" items={result.affected_flows} />
+      <ListBlock title="Program Dependencies" items={result.program_dependencies} />
+      <ListBlock title="Risks" items={result.risks} />
+      <ListBlock title="Rollout Strategy" items={result.recommended_rollout_strategy} />
+    </div>
+  );
+}
+
+function FeatureImpactResult({ result }: { result: FeatureImpact }) {
+  return (
+    <div>
+      <ListBlock title="Applications" items={result.affected_applications} />
+      <ListBlock title="Modules" items={result.affected_modules} />
+      <ListBlock title="Flows" items={result.affected_flows} />
+      <ListBlock title="Cross-Team Dependencies" items={result.cross_team_dependencies} />
+      <ListBlock title="Integration Points" items={result.integration_points} />
+      <ListBlock title="Risks" items={result.risks} />
+    </div>
+  );
+}
+
+function StoryImpactResult({ result }: { result: StoryImpact }) {
+  return (
+    <div>
+      <ListBlock title="Applications" items={result.affected_applications} />
+      <ListBlock title="Modules" items={result.affected_modules} />
+      <ListBlock title="Flows" items={result.affected_flows} />
+      <ListBlock title="Components" items={result.affected_components} />
+      <ListBlock title="Dependencies" items={result.dependencies} />
+      <ListBlock title="Risks" items={result.risks} />
+      <ListBlock title="Integration Points" items={result.integration_points} />
+      <ListBlock title="Recommended Reviewers" items={result.recommended_reviewers} />
+    </div>
   );
 }
 
@@ -1031,17 +1244,21 @@ function RoadmapCard() {
             <li>Project Profile</li>
             <li>Project Intelligence</li>
             <li>Story Prompt Generation</li>
+            <li>Repository Intelligence</li>
+            <li>Epic Intelligence</li>
+            <li>Feature Intelligence</li>
+            <li>Story Intelligence</li>
+            <li>Impact Analysis</li>
           </ul>
         </div>
         <div>
           <div className="planner-label">Coming Next</div>
           <ul className="planner-list">
-            <li>Repository Intelligence</li>
-            <li>Epic Intelligence</li>
-            <li>Feature Intelligence</li>
-            <li>Story Intelligence</li>
-            <li>VS Code Integration</li>
+            <li>VS Code Intelligence</li>
+            <li>Copilot Context Builder</li>
             <li>PR Validation</li>
+            <li>Teams Agent</li>
+            <li>Autonomous Planning Agent</li>
           </ul>
         </div>
       </div>
@@ -1150,6 +1367,21 @@ function readiness(profile: ProjectProfile): string {
     return 'Intermediate';
   }
   return 'Basic';
+}
+
+function executionReadiness(profile: ProjectProfile, hasImpact: boolean): { score: number; label: string; breakdown: string } {
+  const projectProfile = profile.project_description.trim() ? 25 : 0;
+  const repository = profile.repository_connection.status === 'README analyzed' ? 25 : 0;
+  const registry = profile.knowledge_registry.modules.length || profile.knowledge_registry.flows.length ? 20 : 0;
+  const impact = hasImpact ? 15 : 0;
+  const standards = Object.values(profile.development_standards).some((items) => items.length > 0) ? 15 : 0;
+  const score = projectProfile + repository + registry + impact + standards;
+  const label = score >= 85 ? 'Execution Ready' : score >= 65 ? 'Advanced' : score >= 40 ? 'Intermediate' : 'Basic';
+  return {
+    score,
+    label,
+    breakdown: `Project Profile ${projectProfile}%, Repository Intelligence ${repository}%, Knowledge Registry ${registry}%, Impact Analysis ${impact}%, Development Standards ${standards}%`,
+  };
 }
 
 function stackPlaceholder(field: keyof TechnologyStack): string {

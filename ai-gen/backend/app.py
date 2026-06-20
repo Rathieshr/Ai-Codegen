@@ -302,11 +302,17 @@ class ProjectIntelligenceProfileRequest(BaseModel):
 
 class ProjectIntelligenceDescriptionRequest(BaseModel):
     description: str = ""
+    force_provider: str = ""
+    allow_fallback: bool = True
+    mode: str = ""
 
 
 class ProjectIntelligencePromptRequest(BaseModel):
     story: dict[str, Any] = Field(default_factory=dict)
     profile: Optional[dict[str, Any]] = None
+    force_provider: str = ""
+    allow_fallback: bool = True
+    mode: str = ""
 
 
 class ProjectIntelligenceReadmeRequest(BaseModel):
@@ -321,6 +327,9 @@ class ProjectIntelligenceRefinementRequest(BaseModel):
     epic: dict[str, Any] = Field(default_factory=dict)
     feature: dict[str, Any] = Field(default_factory=dict)
     story: dict[str, Any] = Field(default_factory=dict)
+    force_provider: str = ""
+    allow_fallback: bool = True
+    mode: str = ""
 
 
 class ProjectIntelligenceExecutionRequest(BaseModel):
@@ -328,6 +337,16 @@ class ProjectIntelligenceExecutionRequest(BaseModel):
     knowledge_profile: dict[str, Any] = Field(default_factory=dict)
     story: dict[str, Any] = Field(default_factory=dict)
     impact_analysis: dict[str, Any] = Field(default_factory=dict)
+    force_provider: str = ""
+    allow_fallback: bool = True
+    mode: str = ""
+
+
+class ProjectIntelligenceProviderProbeRequest(BaseModel):
+    prompt: str = ""
+    force_provider: str = ""
+    allow_fallback: bool = True
+    mode: str = ""
 
 
 @app.get("/health")
@@ -358,12 +377,12 @@ def save_project_intelligence_profile(request: ProjectIntelligenceProfileRequest
 
 @app.post("/project-intelligence/analyze-description")
 def analyze_project_description(request: ProjectIntelligenceDescriptionRequest) -> dict:
-    return project_intelligence_service.analyze_description(request.description)
+    return project_intelligence_service.analyze_description(request.description, _project_intelligence_options(request))
 
 
 @app.post("/project-intelligence/generate-story-prompts")
 def generate_project_story_prompts(request: ProjectIntelligencePromptRequest) -> dict:
-    return project_intelligence_service.generate_story_prompts(request.story, request.profile)
+    return project_intelligence_service.generate_story_prompts(request.story, request.profile, _project_intelligence_options(request))
 
 
 @app.post("/project-intelligence/analyze-readme")
@@ -373,17 +392,17 @@ def analyze_project_readme(request: ProjectIntelligenceReadmeRequest) -> dict:
 
 @app.post("/project-intelligence/refine-epic")
 def refine_project_epic(request: ProjectIntelligenceRefinementRequest) -> dict:
-    return project_intelligence_service.refine_epic(request.epic, request.profile, request.knowledge_profile)
+    return project_intelligence_service.refine_epic(request.epic, request.profile, request.knowledge_profile, _project_intelligence_options(request))
 
 
 @app.post("/project-intelligence/refine-feature")
 def refine_project_feature(request: ProjectIntelligenceRefinementRequest) -> dict:
-    return project_intelligence_service.refine_feature(request.feature, request.profile, request.knowledge_profile)
+    return project_intelligence_service.refine_feature(request.feature, request.profile, request.knowledge_profile, _project_intelligence_options(request))
 
 
 @app.post("/project-intelligence/refine-story")
 def refine_project_story(request: ProjectIntelligenceRefinementRequest) -> dict:
-    return project_intelligence_service.refine_story(request.story, request.profile, request.knowledge_profile)
+    return project_intelligence_service.refine_story(request.story, request.profile, request.knowledge_profile, _project_intelligence_options(request))
 
 
 @app.post("/project-intelligence/analyze-story-impact")
@@ -408,6 +427,7 @@ def build_project_execution_context(request: ProjectIntelligenceExecutionRequest
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
+        _project_intelligence_options(request),
     )
 
 
@@ -418,6 +438,7 @@ def build_project_dev_prompt(request: ProjectIntelligenceExecutionRequest) -> di
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
+        _project_intelligence_options(request),
     )
 
 
@@ -428,6 +449,7 @@ def build_project_ui_prompt(request: ProjectIntelligenceExecutionRequest) -> dic
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
+        _project_intelligence_options(request),
     )
 
 
@@ -438,6 +460,7 @@ def build_project_qa_prompt(request: ProjectIntelligenceExecutionRequest) -> dic
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
+        _project_intelligence_options(request),
     )
 
 
@@ -448,7 +471,21 @@ def build_project_copilot_context(request: ProjectIntelligenceExecutionRequest) 
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
+        _project_intelligence_options(request),
     )
+
+
+@app.post("/project-intelligence/provider-probe")
+def project_intelligence_provider_probe(request: ProjectIntelligenceProviderProbeRequest) -> dict:
+    return project_intelligence_service.provider_probe(request.prompt, _project_intelligence_options(request))
+
+
+def _project_intelligence_options(request: Any) -> dict[str, Any]:
+    return {
+        "force_provider": getattr(request, "force_provider", ""),
+        "allow_fallback": bool(getattr(request, "allow_fallback", True)),
+        "mode": getattr(request, "mode", ""),
+    }
 
 
 @app.post("/story-planner/sessions")

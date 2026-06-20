@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from backend.refinement.provider import get_refiner_status, get_refinement_provider
+
 
 DEFAULT_PROFILE: dict[str, Any] = {
     "onboarding_completed": False,
@@ -86,7 +88,7 @@ class ProjectIntelligenceService:
         self._profile_path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
         return normalized
 
-    def analyze_description(self, description: str) -> dict[str, Any]:
+    def analyze_description(self, description: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         base = self.get_profile()
         text = _clean_text(description)
         profile = {
@@ -111,9 +113,14 @@ class ProjectIntelligenceService:
                 ),
             },
         }
-        return _normalize_profile(profile)
+        return _with_provider_metadata(_normalize_profile(profile), _fallback_metadata("domain_fallback", "description analysis uses deterministic project-domain inference."))
 
-    def generate_story_prompts(self, story: dict[str, Any] | None = None, profile: dict[str, Any] | None = None) -> dict[str, str]:
+    def generate_story_prompts(
+        self,
+        story: dict[str, Any] | None = None,
+        profile: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         active_profile = _normalize_profile(profile or self.get_profile())
         story = story or {}
         title = _clean_text(story.get("title")) or "Approved story"
@@ -122,7 +129,7 @@ class ProjectIntelligenceService:
         impact = self.analyze_story_impact(story, active_profile)
         context_lines = _profile_context_lines(active_profile)
         acceptance_lines = acceptance or ["Confirm the implementation satisfies the approved story scope."]
-        return {
+        deterministic = {
             "ui_prompt": _prompt(
                 "UI Prompt",
                 title,
@@ -164,6 +171,19 @@ class ProjectIntelligenceService:
                 ],
             ),
         }
+        phi = _project_phi_json(
+            "generate_story_prompts",
+            active_profile,
+            story,
+            deterministic,
+            options,
+            ["ui_prompt", "dev_prompt", "qa_prompt"],
+        )
+        if phi["used"]:
+            return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["ui_prompt", "dev_prompt", "qa_prompt"])}, phi["metadata"])
+        if phi["blocked"]:
+            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+        return _with_provider_metadata(deterministic, phi["metadata"])
 
     def analyze_readme(
         self,
@@ -206,6 +226,7 @@ class ProjectIntelligenceService:
         epic: dict[str, Any],
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _normalize_profile(profile or self.get_profile())
         active_profile = _merge_external_knowledge(active_profile, knowledge_profile or {})
@@ -213,7 +234,7 @@ class ProjectIntelligenceService:
         description = _clean_text(epic.get("description"))
         keywords = _context_keywords(title, description, active_profile)
         features = _recommended_features(keywords, active_profile)
-        return {
+        deterministic = {
             "business_goal": _sentence(f"Improve {title}", description or active_profile["project_description"]),
             "business_outcomes": _business_outcomes(keywords, active_profile),
             "users": _users_for_profile(active_profile),
@@ -223,19 +244,26 @@ class ProjectIntelligenceService:
             "dependencies": _dependencies_for_profile(active_profile),
             "recommended_features": features,
         }
+        phi = _project_phi_json("refine_epic", active_profile, epic, deterministic, options, list(deterministic.keys()))
+        if phi["used"]:
+            return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
+        if phi["blocked"]:
+            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+        return _with_provider_metadata(deterministic, phi["metadata"])
 
     def refine_feature(
         self,
         feature: dict[str, Any],
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(feature.get("title")) or "Untitled feature"
         description = _clean_text(feature.get("description"))
         modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
         flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
-        return {
+        deterministic = {
             "feature_summary": _sentence(title, description or f"Deliver {title} using project-aware modules and flows."),
             "affected_modules": modules,
             "affected_flows": flows,
@@ -243,12 +271,19 @@ class ProjectIntelligenceService:
             "risks": _risks_for_profile(active_profile, _context_keywords(title, description, active_profile)),
             "recommended_stories": _recommended_stories(title, modules, flows, active_profile),
         }
+        phi = _project_phi_json("refine_feature", active_profile, feature, deterministic, options, list(deterministic.keys()))
+        if phi["used"]:
+            return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
+        if phi["blocked"]:
+            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+        return _with_provider_metadata(deterministic, phi["metadata"])
 
     def refine_story(
         self,
         story: dict[str, Any],
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(story.get("title")) or "Untitled story"
@@ -256,7 +291,7 @@ class ProjectIntelligenceService:
         modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
         flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
         applications = _application_names(active_profile)
-        return {
+        deterministic = {
             "story_summary": _sentence(title, description or f"Implement {title} within the approved project context."),
             "acceptance_criteria": _acceptance_criteria(title, flows, modules),
             "affected_applications": applications,
@@ -268,6 +303,12 @@ class ProjectIntelligenceService:
             "technical_considerations": _technical_considerations(active_profile, modules),
             "qa_considerations": _qa_considerations(active_profile, flows),
         }
+        phi = _project_phi_json("refine_story", active_profile, story, deterministic, options, list(deterministic.keys()))
+        if phi["used"]:
+            return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
+        if phi["blocked"]:
+            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+        return _with_provider_metadata(deterministic, phi["metadata"])
 
     def analyze_story_impact(
         self,
@@ -290,6 +331,7 @@ class ProjectIntelligenceService:
             "risks": _impact_risks(active_profile, keywords, modules, flows),
             "integration_points": _integration_points(active_profile, modules, flows),
             "recommended_reviewers": _recommended_reviewers(active_profile, modules, flows),
+            **_fallback_metadata("deterministic_fallback", "impact analysis is deterministic in this preview."),
         }
 
     def analyze_feature_impact(
@@ -311,6 +353,7 @@ class ProjectIntelligenceService:
             "cross_team_dependencies": _cross_team_dependencies(active_profile, modules),
             "integration_points": _integration_points(active_profile, modules, flows),
             "risks": _impact_risks(active_profile, keywords, modules, flows),
+            **_fallback_metadata("deterministic_fallback", "impact analysis is deterministic in this preview."),
         }
 
     def analyze_epic_impact(
@@ -332,6 +375,7 @@ class ProjectIntelligenceService:
             "program_dependencies": _program_dependencies(active_profile, modules, flows),
             "risks": _impact_risks(active_profile, keywords, modules, flows),
             "recommended_rollout_strategy": _rollout_strategy(active_profile, keywords),
+            **_fallback_metadata("deterministic_fallback", "impact analysis is deterministic in this preview."),
         }
 
     def build_execution_context(
@@ -340,19 +384,20 @@ class ProjectIntelligenceService:
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
         impact_analysis: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         story = story or {}
         title = _clean_text(story.get("title")) or "Untitled story"
         description = _clean_text(story.get("description"))
-        refined_story = self.refine_story(story, active_profile, active_profile["knowledge_registry"])
+        refined_story = self.refine_story(story, active_profile, active_profile["knowledge_registry"], {"force_provider": "deterministic_fallback"})
         impact = _normalize_story_impact(
             impact_analysis or self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"])
         )
         acceptance = _string_list(story.get("acceptance_criteria")) or refined_story["acceptance_criteria"]
         has_impact = any(impact[key] for key in ["affected_applications", "affected_modules", "affected_flows", "dependencies", "risks"])
         readiness = _execution_readiness_score(active_profile, has_impact)
-        return {
+        return _with_provider_metadata({
             "story_summary": _sentence(title, description or refined_story["story_summary"]),
             "acceptance_criteria": acceptance,
             "affected_applications": impact["affected_applications"] or refined_story["affected_applications"],
@@ -366,7 +411,7 @@ class ProjectIntelligenceService:
             "recommended_files": _recommended_files(active_profile, impact),
             "implementation_notes": _implementation_notes(active_profile, impact),
             "execution_readiness": readiness["label"],
-        }
+        }, _fallback_metadata("domain_fallback", "execution context combines deterministic impact and project profile context."))
 
     def build_dev_prompt(
         self,
@@ -374,10 +419,11 @@ class ProjectIntelligenceService:
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
         impact_analysis: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
-        return {
+        deterministic = {
             "prompt": _execution_prompt(
                 "Dev Prompt",
                 context,
@@ -391,6 +437,12 @@ class ProjectIntelligenceService:
                 ],
             )
         }
+        phi = _project_phi_json("build_dev_prompt", active_profile, story, deterministic, options, ["prompt"])
+        if phi["used"]:
+            return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
+        if phi["blocked"]:
+            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+        return _with_provider_metadata(deterministic, phi["metadata"])
 
     def build_ui_prompt(
         self,
@@ -398,10 +450,11 @@ class ProjectIntelligenceService:
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
         impact_analysis: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
         ui = context["ui_guidelines"]
-        return {
+        deterministic = {
             "prompt": _execution_prompt(
                 "UI Prompt",
                 context,
@@ -415,6 +468,7 @@ class ProjectIntelligenceService:
                 ],
             )
         }
+        return _with_provider_metadata(deterministic, _fallback_metadata("domain_fallback", "UI prompt uses deterministic project UI context."))
 
     def build_qa_prompt(
         self,
@@ -422,10 +476,11 @@ class ProjectIntelligenceService:
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
         impact_analysis: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
         impact = _normalize_story_impact(impact_analysis or self.analyze_story_impact(story, _normalize_profile(profile or self.get_profile()), knowledge_profile or {}))
-        return {
+        deterministic = {
             "prompt": _execution_prompt(
                 "QA Prompt",
                 context,
@@ -438,6 +493,7 @@ class ProjectIntelligenceService:
                 ],
             )
         }
+        return _with_provider_metadata(deterministic, _fallback_metadata("domain_fallback", "QA prompt uses deterministic risk and dependency context."))
 
     def build_copilot_context(
         self,
@@ -445,8 +501,9 @@ class ProjectIntelligenceService:
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
         impact_analysis: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         lines = [
             "Project Awareness Context",
@@ -476,7 +533,25 @@ class ProjectIntelligenceService:
             "Standards:",
             *_bullet_lines(_flatten_standards(context["development_standards"])),
         ]
-        return {"context": "\n".join(lines).strip()}
+        deterministic = {"context": "\n".join(lines).strip()}
+        phi = _project_phi_json("build_copilot_context", active_profile, story, deterministic, options, ["context"])
+        if phi["used"]:
+            return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["context"])}, phi["metadata"])
+        if phi["blocked"]:
+            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+        return _with_provider_metadata(deterministic, phi["metadata"])
+
+    def provider_probe(self, prompt: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+        options = options or {}
+        phi = _project_phi_probe(prompt, options)
+        return {
+            "provider_used": phi["metadata"]["provider_used"],
+            "phi_status": phi["metadata"]["phi_status"],
+            "raw_response_preview": phi["metadata"]["phi_raw_response_preview"],
+            "parsed_response": phi.get("parsed", {}),
+            "latency_ms": phi["metadata"]["phi_latency_ms"],
+            **phi["metadata"],
+        }
 
 
 def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
@@ -1273,6 +1348,190 @@ def _execution_readiness_score(profile: dict[str, Any], has_impact: bool = False
             "development_standards": standards,
         },
     }
+
+
+def _project_phi_json(
+    operation: str,
+    profile: dict[str, Any],
+    item: dict[str, Any],
+    deterministic: dict[str, Any],
+    options: dict[str, Any] | None,
+    expected_keys: list[str],
+) -> dict[str, Any]:
+    prompt = _project_phi_prompt(operation, profile, item, deterministic, expected_keys)
+    return _project_phi_probe(prompt, options, expected_keys=expected_keys)
+
+
+def _project_phi_probe(prompt: str, options: dict[str, Any] | None, expected_keys: list[str] | None = None) -> dict[str, Any]:
+    options = options or {}
+    force_provider = _clean_text(options.get("force_provider"))
+    allow_fallback = bool(options.get("allow_fallback", True))
+    deterministic_only = _clean_text(options.get("mode")) == "deterministic_only" or force_provider == "deterministic_fallback"
+    if deterministic_only:
+        return {
+            "used": False,
+            "blocked": False,
+            "parsed": {},
+            "metadata": _fallback_metadata("deterministic_fallback", "deterministic_only mode selected."),
+        }
+    if force_provider == "domain_fallback":
+        return {
+            "used": False,
+            "blocked": False,
+            "parsed": {},
+            "metadata": _fallback_metadata("domain_fallback", "domain_fallback provider was forced."),
+        }
+    use_phi = force_provider == "azure_phi" or os.getenv("AI_GEN_PROJECT_INTELLIGENCE_USE_PHI") == "1"
+    if not use_phi:
+        return {
+            "used": False,
+            "blocked": False,
+            "parsed": {},
+            "metadata": _fallback_metadata("domain_fallback", "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI is not enabled."),
+        }
+    provider = get_refinement_provider()
+    if provider is None or not provider.is_enabled():
+        metadata = _fallback_metadata("deterministic_fallback", "Azure Phi provider is not configured.")
+        metadata["phi_status"] = "not_configured"
+        return _fallback_or_block(metadata, force_provider, allow_fallback)
+    health = provider.health_snapshot() if hasattr(provider, "health_snapshot") else {}
+    if force_provider != "azure_phi" and health.get("health") != "healthy":
+        metadata = _fallback_metadata("domain_fallback", f"Azure Phi health is {health.get('health') or 'unknown'}.")
+        metadata.update(_provider_status_metadata(provider, {}, health))
+        metadata["provider_used"] = "domain_fallback"
+        metadata["source"] = "domain_fallback"
+        metadata["fallback_used"] = True
+        metadata["fallback_reason"] = f"Azure Phi health is {health.get('health') or 'unknown'}."
+        return _fallback_or_block(metadata, force_provider, allow_fallback)
+    probe = provider.probe_json(
+        "Return strict JSON only. Do not include markdown or explanations.",
+        prompt,
+        max_tokens=900,
+        response_format_enabled=False,
+        allow_retry_without_response_format=True,
+    )
+    parsed = probe.get("parsed_json") if isinstance(probe.get("parsed_json"), dict) else {}
+    has_expected = bool(parsed) and (not expected_keys or any(key in parsed for key in expected_keys))
+    metadata = _provider_status_metadata(provider, probe, health)
+    if has_expected:
+        metadata.update(
+            {
+                "provider_used": "azure_phi",
+                "source": "azure_phi",
+                "phi_status": "success",
+                "fallback_used": False,
+                "fallback_reason": "",
+            }
+        )
+        return {"used": True, "blocked": False, "parsed": parsed, "metadata": metadata}
+    metadata.update(
+        {
+            "provider_used": "domain_fallback" if allow_fallback else "azure_phi",
+            "source": "domain_fallback" if allow_fallback else "azure_phi",
+            "phi_status": probe.get("failure_reason") or probe.get("status") or "unusable_response",
+            "fallback_used": allow_fallback,
+            "fallback_reason": probe.get("failure_message") or probe.get("parse_error") or "Azure Phi returned unusable structured output.",
+        }
+    )
+    return _fallback_or_block(metadata, force_provider, allow_fallback)
+
+
+def _fallback_or_block(metadata: dict[str, Any], force_provider: str, allow_fallback: bool) -> dict[str, Any]:
+    blocked = force_provider == "azure_phi" and not allow_fallback
+    if blocked:
+        metadata["fallback_used"] = False
+        metadata["provider_used"] = "azure_phi"
+        metadata["source"] = "azure_phi"
+    return {"used": False, "blocked": blocked, "parsed": {}, "metadata": metadata}
+
+
+def _project_phi_prompt(
+    operation: str,
+    profile: dict[str, Any],
+    item: dict[str, Any],
+    deterministic: dict[str, Any],
+    expected_keys: list[str],
+) -> str:
+    return json.dumps(
+        {
+            "operation": operation,
+            "expected_json_keys": expected_keys,
+            "project_context": {
+                "project_name": profile.get("project_name"),
+                "domain": profile.get("domain"),
+                "project_type": profile.get("project_type"),
+                "description": profile.get("project_description"),
+                "applications": profile.get("applications"),
+                "technology_stack": profile.get("technology_stack"),
+                "development_standards": profile.get("development_standards"),
+                "ui_guidelines": profile.get("ui_guidelines"),
+                "knowledge_registry": profile.get("knowledge_registry"),
+                "architecture_notes": profile.get("readme_analysis", {}).get("architecture_notes", []),
+            },
+            "input": item,
+            "deterministic_draft": deterministic,
+            "instruction": "Return only strict JSON. Improve specificity using the project context. Keep exactly the expected keys where possible.",
+        },
+        ensure_ascii=True,
+    )
+
+
+def _provider_status_metadata(provider: Any, probe: dict[str, Any], health: dict[str, Any] | None = None) -> dict[str, Any]:
+    health = health or (provider.health_snapshot() if hasattr(provider, "health_snapshot") else {})
+    config = provider.safe_config() if hasattr(provider, "safe_config") else {}
+    parsed = probe.get("parsed_json") if isinstance(probe.get("parsed_json"), dict) else {}
+    raw_preview = str(probe.get("raw_content") or probe.get("raw_response_preview") or "")[:1500]
+    return {
+        "provider_used": "azure_phi",
+        "source": "azure_phi",
+        "phi_status": probe.get("status") or probe.get("failure_reason") or "unknown",
+        "fallback_used": False,
+        "fallback_reason": "",
+        "phi_latency_ms": int(probe.get("elapsed_ms") or 0),
+        "phi_raw_response_preview": raw_preview,
+        "phi_parsed_response_preview": json.dumps(parsed, ensure_ascii=True)[:1500] if parsed else "",
+        "provider_configured": bool(config.get("configured", provider.is_enabled() if hasattr(provider, "is_enabled") else False)),
+        "provider_deployment": health.get("deployment") or config.get("deployment"),
+        "provider_health": health.get("health") or config.get("deployment_health") or "unknown",
+        "provider_last_success": health.get("last_success"),
+        "provider_last_failure": health.get("last_failure"),
+    }
+
+
+def _fallback_metadata(provider_used: str, reason: str) -> dict[str, Any]:
+    status = get_refiner_status()
+    return {
+        "provider_used": provider_used,
+        "source": provider_used,
+        "phi_status": "skipped",
+        "fallback_used": provider_used != "azure_phi",
+        "fallback_reason": reason,
+        "phi_latency_ms": 0,
+        "phi_raw_response_preview": "",
+        "phi_parsed_response_preview": "",
+        "provider_configured": bool(status.get("configured")),
+        "provider_deployment": status.get("model"),
+        "provider_health": "unknown",
+        "provider_last_success": None,
+        "provider_last_failure": None,
+    }
+
+
+def _with_provider_metadata(payload: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    return {**payload, **metadata}
+
+
+def _merge_known_fields(base: dict[str, Any], incoming: dict[str, Any], keys: Any) -> dict[str, Any]:
+    merged = dict(base)
+    for key in keys:
+        value = incoming.get(key)
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
+def _pick_string_fields(incoming: dict[str, Any], keys: list[str]) -> dict[str, str]:
+    return {key: _clean_text(incoming.get(key)) for key in keys if _clean_text(incoming.get(key))}
 
 
 def _normalize_story_impact(value: dict[str, Any]) -> dict[str, list[str]]:

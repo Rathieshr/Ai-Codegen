@@ -1,10 +1,8 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import { CommonServiceIds, IProjectPageService } from 'azure-devops-extension-api/Common/CommonServices';
-import { getClient } from 'azure-devops-extension-api/Common/Client';
-import { GitRestClient } from 'azure-devops-extension-api/Git/GitClient';
-import { GitRepository, GitVersionOptions, GitVersionType } from 'azure-devops-extension-api/Git/Git';
+import { GitRepository } from 'azure-devops-extension-api/Git/Git';
 import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './storyPlanner.css';
 
@@ -34,6 +32,9 @@ const PROJECT_TYPES = [
 
 const APPLICATION_TYPES = ['Mobile', 'Backend', 'Firmware', 'Web Portal', 'Analytics', 'Desktop', 'API'];
 const STACK_FIELDS: Array<keyof TechnologyStack> = ['mobile', 'backend', 'firmware', 'analytics', 'frontend'];
+const API_TIMEOUT_MS = 120000;
+const REPOSITORY_SDK_TIMEOUT_MS = 8000;
+const REPOSITORY_FILE_TIMEOUT_MS = 10000;
 const REPOSITORY_DOCUMENTS = [
   'README.md',
   'docs/README.md',
@@ -67,6 +68,25 @@ type DevelopmentStandards = {
   coding_guidelines: string[];
   security_requirements: string[];
   testing_requirements: string[];
+};
+
+type ModuleDetail = {
+  name: string;
+  responsibilities?: string[];
+  dependencies?: string[];
+  source_file?: string;
+};
+
+type FlowDetail = {
+  name: string;
+  steps?: string[];
+  source_file?: string;
+};
+
+type ComponentDetail = {
+  name: string;
+  type?: string;
+  source_file?: string;
 };
 
 type ProviderMetadata = {
@@ -108,9 +128,13 @@ type ProjectProfile = {
   knowledge_registry: {
     applications: ApplicationProfile[];
     modules: string[];
+    module_details?: ModuleDetail[];
     flows: string[];
+    flow_details?: FlowDetail[];
     components: string[];
+    component_details?: ComponentDetail[];
     architecture_notes: string[];
+    technology_stack?: TechnologyStack;
     standards: string[];
     source_files: string[];
   };
@@ -364,13 +388,18 @@ function ProjectIntelligenceTab() {
   const [creationLog, setCreationLog] = useState<string[]>([]);
   const [repositories, setRepositories] = useState<GitRepository[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
+  const [repositoryLoadMessage, setRepositoryLoadMessage] = useState('');
   const [repositoryDocuments, setRepositoryDocuments] = useState<Record<string, string>>({});
   const [selectedRepositoryFiles, setSelectedRepositoryFiles] = useState<string[]>(['README.md', 'architecture.md', 'modules.md', 'flows.md']);
   const [repositoryFileStatus, setRepositoryFileStatus] = useState<Record<string, 'available' | 'missing' | 'unknown'>>({});
   const [editingProfile, setEditingProfile] = useState(false);
+  const [showQuickStart, setShowQuickStart] = useState(true);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('Loading Project Intelligence...');
   const [error, setError] = useState('');
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'error'>('saved');
+  const initializedRef = useRef(false);
+  const lastSavedProfileRef = useRef('');
   const latestProvider = latestProviderMetadata([copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
 
   useEffect(() => {
@@ -380,7 +409,9 @@ function ProjectIntelligenceTab() {
       try {
         const loaded = await getProfile();
         setProfile(loaded);
-        setEditingProfile(!isProfileComplete(loaded));
+        lastSavedProfileRef.current = JSON.stringify(loaded);
+        setEditingProfile(!loaded.project_name.trim());
+        setShowQuickStart(!loaded.project_name.trim());
         const workItem = await loadCurrentWorkItem();
         if (workItem) {
           setCurrentWorkItem(workItem);
@@ -391,6 +422,7 @@ function ProjectIntelligenceTab() {
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load project profile.');
       } finally {
+        initializedRef.current = true;
         setLoading(false);
         setMessage('');
       }
@@ -399,9 +431,35 @@ function ProjectIntelligenceTab() {
       setLoading(false);
       setMessage('');
       setError(text);
+      initializedRef.current = true;
       void SDK.notifyLoadFailed(text);
     });
   }, []);
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      return undefined;
+    }
+    const serialized = JSON.stringify(profile);
+    if (serialized === lastSavedProfileRef.current) {
+      setSaveStatus('saved');
+      return undefined;
+    }
+    setSaveStatus('unsaved');
+    const timeout = window.setTimeout(async () => {
+      const snapshot = profile;
+      const snapshotSerialized = JSON.stringify(snapshot);
+      setSaveStatus('saving');
+      try {
+        await postJson<ProjectProfile>('/profile', { profile: snapshot });
+        lastSavedProfileRef.current = snapshotSerialized;
+        setSaveStatus('saved');
+      } catch {
+        setSaveStatus('error');
+      }
+    }, 900);
+    return () => window.clearTimeout(timeout);
+  }, [profile]);
 
   async function withLoading<T>(nextMessage: string, action: () => Promise<T>): Promise<T | undefined> {
     setLoading(true);
@@ -431,7 +489,36 @@ function ProjectIntelligenceTab() {
     const saved = await withLoading('Saving project profile...', () => postJson<ProjectProfile>('/profile', { profile }));
     if (saved) {
       setProfile(saved);
+      lastSavedProfileRef.current = JSON.stringify(saved);
+      setSaveStatus('saved');
       setEditingProfile(false);
+    }
+  }
+
+  async function analyzeProject() {
+    const analyzed = await withLoading('Analyzing project...', async () => {
+      let workingProfile = profile;
+      if (workingProfile.project_description.trim()) {
+        const descriptionProfile = await postJson<ProjectProfile>('/analyze-description', {
+          description: workingProfile.project_description,
+        });
+        workingProfile = mergeProfile(workingProfile, descriptionProfile);
+      }
+      if (workingProfile.repository_connection.repository_id) {
+        const repositoryAnalysis = await analyzeRepositoryDocumentsForProfile(workingProfile);
+        if (repositoryAnalysis) {
+          workingProfile = repositoryAnalysis;
+        }
+      }
+      return workingProfile;
+    });
+    if (analyzed) {
+      setProfile(analyzed);
+      lastSavedProfileRef.current = JSON.stringify(analyzed);
+      setSaveStatus('saved');
+      setEditingProfile(false);
+      setShowQuickStart(false);
+      setActiveTab('planner');
     }
   }
 
@@ -657,25 +744,52 @@ function ProjectIntelligenceTab() {
   }
 
   async function loadRepositories() {
+    setRepositoryLoadMessage('Loading Azure DevOps repositories...');
     try {
-      const projectName = await getProjectName();
-      const client = getClient(GitRestClient);
-      const repos = await client.getRepositories(projectName);
-      setRepositories(repos || []);
-    } catch {
-      setError('Could not load Azure DevOps repositories. You can still use the saved Project Intelligence profile.');
+      const repos = await fetchAdoRepositories();
+      const visibleRepos = (repos || []).filter((repo) => repo.id && repo.name);
+      setRepositories(visibleRepos);
+      if (
+        profile.repository_connection.repository_id
+        && !visibleRepos.some((repo) => repo.id === profile.repository_connection.repository_id)
+      ) {
+        setProfile((current) => ({
+          ...current,
+          repository_connection: {
+            ...current.repository_connection,
+            repository_id: '',
+            repository_name: '',
+            status: 'Not connected',
+          },
+        }));
+        setBranches([]);
+      }
+      setRepositoryLoadMessage(
+        visibleRepos.length
+          ? `Loaded ${visibleRepos.length} Azure DevOps repositories.`
+          : 'No repositories were returned for this project. Check Code read permission and retry.',
+      );
+    } catch (loadError) {
+      const detail = loadError instanceof Error ? loadError.message : String(loadError);
+      setRepositories([]);
+      setRepositoryLoadMessage(`Could not load repositories from Azure DevOps. Check Code read permission and retry. ${detail}`);
+      setError('Could not load Azure DevOps repositories. Repository must be selected from the Azure DevOps dropdown.');
     }
   }
 
   async function selectRepository(repositoryId: string) {
     const selected = repositories.find((repo) => repo.id === repositoryId);
+    if (repositoryId && !selected) {
+      setError('Select a repository from the Azure DevOps dropdown. Manual repository values are not supported.');
+      return;
+    }
     const nextProfile = {
       ...profile,
       repository_connection: {
         ...profile.repository_connection,
-        repository_id: selected?.id || repositoryId,
+        repository_id: selected?.id || '',
         repository_name: selected?.name || '',
-        status: selected ? 'Repository selected' : profile.repository_connection.status,
+        status: selected ? 'Repository selected' : 'Not connected',
       },
     };
     setProfile(nextProfile);
@@ -684,10 +798,7 @@ function ProjectIntelligenceTab() {
       return;
     }
     try {
-      const projectName = await getProjectName();
-      const client = getClient(GitRestClient);
-      const stats = await client.getBranches(selected.id, projectName);
-      const branchNames = (stats || []).map((branch) => String(branch.name || '')).filter(Boolean);
+      const branchNames = await fetchAdoBranches(selected.id);
       setBranches(branchNames);
       const defaultBranch = normalizeBranchName(selected.defaultBranch || '') || branchNames[0] || '';
       setProfile({
@@ -698,35 +809,23 @@ function ProjectIntelligenceTab() {
           status: 'Repository connected',
         },
       });
-    } catch {
-      setError('Repository selected, but branches could not be loaded.');
+    } catch (branchError) {
+      const detail = branchError instanceof Error ? branchError.message : String(branchError);
+      setRepositoryLoadMessage(`Repository selected, but branches could not be loaded. Type the branch name manually. ${detail}`);
+      setError('Repository selected, but branches could not be loaded. Type the branch name manually.');
     }
   }
 
   async function analyzeReadme() {
     const selectedRepo = profile.repository_connection.repository_id;
-    if (!selectedRepo) {
-      setError('Select a repository before analyzing README.');
+    if (!selectedRepo || !repositories.some((repo) => repo.id === selectedRepo)) {
+      setError('Select a repository from the Azure DevOps dropdown before analyzing README.');
       return;
     }
     const analyzed = await withLoading('Loading and analyzing README...', async () => {
-      const projectName = await getProjectName();
-      const client = getClient(GitRestClient);
       const readmePath = profile.repository_connection.readme_path || '/README.md';
       const branch = profile.repository_connection.branch || 'main';
-      const buffer = await client.getItemContent(
-        selectedRepo,
-        readmePath,
-        projectName,
-        undefined,
-        undefined,
-        true,
-        undefined,
-        false,
-        { version: branch, versionOptions: GitVersionOptions.None, versionType: GitVersionType.Branch },
-        true,
-      );
-      const readmeContent = new TextDecoder('utf-8').decode(buffer);
+      const readmeContent = await fetchAdoRepositoryFileContent(selectedRepo, readmePath, branch);
       return postJson<ProjectProfile>('/analyze-readme', {
         profile,
         readme_content: readmeContent,
@@ -745,36 +844,28 @@ function ProjectIntelligenceTab() {
 
   async function discoverRepositoryDocuments() {
     const selectedRepo = profile.repository_connection.repository_id;
-    if (!selectedRepo) {
-      setError('Select a repository before discovering documentation.');
+    if (!selectedRepo || !repositories.some((repo) => repo.id === selectedRepo)) {
+      setError('Select a repository from the Azure DevOps dropdown before discovering documentation.');
       return;
     }
     const discovered = await withLoading('Discovering repository documentation...', async () => {
-      const projectName = await getProjectName();
-      const client = getClient(GitRestClient);
       const branch = profile.repository_connection.branch || 'main';
       const nextStatus: Record<string, 'available' | 'missing' | 'unknown'> = {};
       const nextDocuments: Record<string, string> = {};
-      for (const path of REPOSITORY_DOCUMENTS) {
+      const discoveredFiles = await Promise.all(REPOSITORY_DOCUMENTS.map(async (path) => {
         try {
-          const buffer = await client.getItemContent(
-            selectedRepo,
-            path.startsWith('/') ? path : `/${path}`,
-            projectName,
-            undefined,
-            undefined,
-            true,
-            undefined,
-            false,
-            { version: branch, versionOptions: GitVersionOptions.None, versionType: GitVersionType.Branch },
-            true,
-          );
-          nextStatus[path] = 'available';
-          nextDocuments[path] = new TextDecoder('utf-8').decode(buffer);
+          const content = await fetchAdoRepositoryFileContent(selectedRepo, path, branch);
+          return { path, status: 'available' as const, content };
         } catch {
-          nextStatus[path] = 'missing';
+          return { path, status: 'missing' as const, content: '' };
         }
-      }
+      }));
+      discoveredFiles.forEach((file) => {
+        nextStatus[file.path] = file.status;
+        if (file.content) {
+          nextDocuments[file.path] = file.content;
+        }
+      });
       return { status: nextStatus, documents: nextDocuments };
     });
     if (discovered) {
@@ -788,59 +879,64 @@ function ProjectIntelligenceTab() {
     }
   }
 
+  async function analyzeRepositoryDocumentsForProfile(sourceProfile: ProjectProfile): Promise<ProjectProfile | undefined> {
+    const selectedRepo = sourceProfile.repository_connection.repository_id;
+    const selectedFiles = selectedRepositoryFiles.length ? selectedRepositoryFiles : REPOSITORY_DOCUMENTS;
+    const fetchedDocuments: Record<string, string> = {};
+    if (selectedRepo && repositories.some((repo) => repo.id === selectedRepo)) {
+      const branch = sourceProfile.repository_connection.branch || 'main';
+      const nextStatus: Record<string, 'available' | 'missing' | 'unknown'> = {};
+      const fetchedFiles = await Promise.all(selectedFiles.map(async (path) => {
+        try {
+          const content = await fetchAdoRepositoryFileContent(selectedRepo, path, branch);
+          return { path, status: 'available' as const, content };
+        } catch {
+          return { path, status: 'missing' as const, content: '' };
+        }
+      }));
+      fetchedFiles.forEach((file) => {
+        nextStatus[file.path] = file.status;
+        if (file.content) {
+          fetchedDocuments[file.path] = file.content;
+        }
+      });
+      setRepositoryFileStatus((current) => ({ ...current, ...nextStatus }));
+      const available = Object.entries(nextStatus).filter(([, status]) => status === 'available').map(([path]) => path);
+      if (available.length) {
+        setSelectedRepositoryFiles(available);
+      }
+    }
+    const documents = {
+      ...fetchedDocuments,
+      ...Object.fromEntries(Object.entries(repositoryDocuments).filter(([, content]) => content.trim())),
+    };
+    if (!Object.keys(documents).length) {
+      return sourceProfile;
+    }
+    return postJson<ProjectProfile>('/repository/analyze', {
+      profile: sourceProfile,
+      repository: {
+        provider: 'azure_devops',
+        project: await getProjectName(),
+        repository_id: selectedRepo,
+        repository_name: sourceProfile.repository_connection.repository_name,
+        branch: sourceProfile.repository_connection.branch || 'main',
+      },
+      selected_files: Object.keys(documents),
+      documents,
+    });
+  }
+
   async function analyzeRepositoryDocuments() {
-    const selectedRepo = profile.repository_connection.repository_id;
-    const selectedFiles = selectedRepositoryFiles.length ? selectedRepositoryFiles : Object.keys(repositoryDocuments);
-    if (!selectedFiles.length) {
+    if (profile.repository_connection.repository_id && !repositories.some((repo) => repo.id === profile.repository_connection.repository_id)) {
+      setError('Select a repository from the Azure DevOps dropdown, or paste document content in Manual Document Paste Fallback.');
+      return;
+    }
+    if (!profile.repository_connection.repository_id && !Object.values(repositoryDocuments).some((content) => content.trim())) {
       setError('Select or paste at least one repository document before analyzing.');
       return;
     }
-    const analyzed = await withLoading('Analyzing repository documents...', async () => {
-      const fetchedDocuments: Record<string, string> = {};
-      if (selectedRepo) {
-        const projectName = await getProjectName();
-        const client = getClient(GitRestClient);
-        const branch = profile.repository_connection.branch || 'main';
-        for (const path of selectedFiles) {
-          try {
-            const buffer = await client.getItemContent(
-              selectedRepo,
-              path.startsWith('/') ? path : `/${path}`,
-              projectName,
-              undefined,
-              undefined,
-              true,
-              undefined,
-              false,
-              { version: branch, versionOptions: GitVersionOptions.None, versionType: GitVersionType.Branch },
-              true,
-            );
-            fetchedDocuments[path] = new TextDecoder('utf-8').decode(buffer);
-          } catch {
-            // Missing docs are expected in many repos; pasted content below remains available.
-          }
-        }
-      }
-      const documents = {
-        ...fetchedDocuments,
-        ...Object.fromEntries(Object.entries(repositoryDocuments).filter(([, content]) => content.trim())),
-      };
-      if (!Object.keys(documents).length) {
-        throw new Error('No selected repository documents could be loaded. Paste document content below and try Analyze Documents.');
-      }
-      return postJson<ProjectProfile>('/repository/analyze', {
-        profile,
-        repository: {
-          provider: 'azure_devops',
-          project: await getProjectName(),
-          repository_id: selectedRepo,
-          repository_name: profile.repository_connection.repository_name,
-          branch: profile.repository_connection.branch || 'main',
-        },
-        selected_files: selectedFiles,
-        documents,
-      });
-    });
+    const analyzed = await withLoading('Analyzing repository documents...', () => analyzeRepositoryDocumentsForProfile(profile));
     if (analyzed) {
       setProfile(analyzed);
     }
@@ -853,19 +949,22 @@ function ProjectIntelligenceTab() {
           <div className="planner-title">Project Intelligence Preview</div>
           <div className="planner-subtitle">
             {editingProfile
-              ? 'Set up project context once, then use it quietly inside planning, prompts, and validation.'
+              ? 'Start with a project name and repository. Project Intelligence can fill in the rest.'
               : 'Project-aware context is ready for backlog refinement and story execution prompts.'}
           </div>
+          <div className={`planner-save-status ${saveStatus}`}>{saveStatusLabel(saveStatus)}</div>
         </div>
-        {editingProfile ? (
-          <button className="planner-button secondary" onClick={() => void saveProfile()} disabled={loading || !profile.project_description.trim()}>
-            Finish Setup
-          </button>
-        ) : (
-          <button className="planner-button secondary" onClick={() => setEditingProfile(true)} disabled={loading}>
-            Edit Project Profile
-          </button>
-        )}
+        <button
+          className="planner-button secondary"
+          onClick={() => {
+            const next = !(editingProfile || showQuickStart);
+            setEditingProfile(next);
+            setShowQuickStart(next);
+          }}
+          disabled={loading}
+        >
+          {editingProfile || showQuickStart ? 'Hide Setup' : 'Edit Project Profile'}
+        </button>
       </header>
 
       {loading ? <div className="planner-banner">{message || 'Working...'}</div> : null}
@@ -875,29 +974,36 @@ function ProjectIntelligenceTab() {
 
       {activeTab === 'project' ? (
         <>
-          {editingProfile ? (
-            <OnboardingForm
+          <ProjectHealthDashboard profile={profile} />
+          <ProjectProfileCompletion profile={profile} />
+          {showQuickStart ? (
+            <QuickStartSetup
               profile={profile}
+              repositories={repositories}
+              branches={branches}
+              repositoryLoadMessage={repositoryLoadMessage}
               loading={loading}
               onProfileChange={setProfile}
-              onAnalyze={() => void analyzeDescription()}
-              onSave={() => void saveProfile()}
+              onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+              onReloadRepositories={() => void loadRepositories()}
+              onAnalyzeProject={() => void analyzeProject()}
             />
-          ) : (
-            <>
-              <ProjectProfileSummary profile={profile} />
-              <StandardsAndGuidelinesSummary profile={profile} />
-            </>
-          )}
+          ) : null}
+          {!editingProfile && profile.project_name.trim() ? (
+            <ProjectProfileSummary profile={profile} />
+          ) : null}
           <RepositoryIntelligenceCard
             profile={profile}
             repositories={repositories}
             branches={branches}
+            repositoryLoadMessage={repositoryLoadMessage}
             repositoryDocuments={repositoryDocuments}
             fileStatus={repositoryFileStatus}
             selectedFiles={selectedRepositoryFiles}
             loading={loading}
+            showConnectionControls={!showQuickStart}
             onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+            onReloadRepositories={() => void loadRepositories()}
             onProfileChange={setProfile}
             onRepositoryDocumentsChange={setRepositoryDocuments}
             onFileStatusChange={setRepositoryFileStatus}
@@ -906,7 +1012,19 @@ function ProjectIntelligenceTab() {
             onDiscoverDocuments={() => void discoverRepositoryDocuments()}
             onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
           />
+          <details className="planner-card">
+            <summary className="planner-label">Advanced Manual Profile Fields</summary>
+            <div className="planner-subtle">Optional fallback fields. Repository intelligence should be the preferred source for modules, flows, architecture notes, and standards.</div>
+            <OnboardingForm
+              profile={profile}
+              loading={loading}
+              onProfileChange={setProfile}
+              onAnalyze={() => void analyzeDescription()}
+              onSave={() => void saveProfile()}
+            />
+          </details>
           <KnowledgeProfilePreview profile={profile} />
+          <StandardsAndGuidelinesSummary profile={profile} />
           <ProjectIntelligenceProviderDiagnostics metadata={latestProvider} />
           <RoadmapCard />
         </>
@@ -1067,6 +1185,9 @@ function AIPlannerWorkspace({
         <div className="planner-label">AI Planner</div>
         <div className="planner-subtle">Work through planning in delivery order: Epic, Feature, Story, then Task execution.</div>
         <KnowledgeRegistryNotice profile={profile} />
+        {profileCompletion(profile).percent < 70 ? (
+          <div className="planner-banner">Project profile is incomplete. Results may be less accurate, but you can continue planning.</div>
+        ) : null}
         {readOnly ? <div className="planner-error">This work item is Closed. Planning output is read-only.</div> : null}
         {currentWorkItem?.state.toLowerCase() === 'active' ? <div className="planner-banner">This work item is Active. AI Planner will ask before regeneration.</div> : null}
         <div className="planner-pill-row">
@@ -1408,6 +1529,148 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
   );
 }
 
+function QuickStartSetup({
+  profile,
+  repositories,
+  branches,
+  repositoryLoadMessage,
+  loading,
+  onProfileChange,
+  onSelectRepository,
+  onReloadRepositories,
+  onAnalyzeProject,
+}: {
+  profile: ProjectProfile;
+  repositories: GitRepository[];
+  branches: string[];
+  repositoryLoadMessage: string;
+  loading: boolean;
+  onProfileChange: (profile: ProjectProfile) => void;
+  onSelectRepository: (repositoryId: string) => void;
+  onReloadRepositories: () => void;
+  onAnalyzeProject: () => void;
+}) {
+  return (
+    <section className="planner-card planner-quick-start">
+      <div>
+        <div className="planner-label">Quick Start</div>
+        <div className="planner-subtle">Enter the minimum context. Repository documents will fill the profile when available.</div>
+      </div>
+      <div>
+        <div className="planner-label">Project Name</div>
+        <input
+          className="planner-input"
+          value={profile.project_name}
+          onChange={(event) => onProfileChange({ ...profile, project_name: event.target.value })}
+          placeholder="LineDefender Smart Monitoring Platform"
+        />
+      </div>
+      <div className="planner-grid">
+        <div>
+          <div className="planner-label">Repository optional</div>
+          <select className="planner-input" value={repositories.some((repo) => repo.id === profile.repository_connection.repository_id) ? profile.repository_connection.repository_id : ''} onChange={(event) => onSelectRepository(event.target.value)} disabled={!repositories.length}>
+            <option value="">{repositories.length ? 'No repository selected' : 'No repositories loaded'}</option>
+            {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
+          </select>
+          {repositoryLoadMessage ? <div className="planner-subtle">{repositoryLoadMessage}</div> : null}
+          <div className="planner-actions compact">
+            <button className="planner-button secondary" onClick={onReloadRepositories} disabled={loading}>Retry Repositories</button>
+          </div>
+        </div>
+        <div>
+          <div className="planner-label">Branch</div>
+          {branches.length ? (
+            <select
+              className="planner-input"
+              value={profile.repository_connection.branch}
+              onChange={(event) => onProfileChange({
+                ...profile,
+                repository_connection: { ...profile.repository_connection, branch: event.target.value, status: profile.repository_connection.repository_id ? 'Repository connected' : profile.repository_connection.status },
+              })}
+            >
+              <option value="">Default branch</option>
+              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+              {profile.repository_connection.branch && !branches.includes(profile.repository_connection.branch) ? (
+                <option value={profile.repository_connection.branch}>{profile.repository_connection.branch}</option>
+              ) : null}
+            </select>
+          ) : (
+            <input
+              className="planner-input"
+              value={profile.repository_connection.branch}
+              onChange={(event) => onProfileChange({
+                ...profile,
+                repository_connection: { ...profile.repository_connection, branch: event.target.value, status: profile.repository_connection.repository_id ? 'Repository connected' : profile.repository_connection.status },
+              })}
+              placeholder="main"
+            />
+          )}
+        </div>
+      </div>
+      <div>
+        <div className="planner-label">Project Description optional</div>
+        <textarea
+          className="planner-textarea compact"
+          value={profile.project_description}
+          onChange={(event) => onProfileChange({ ...profile, project_description: event.target.value })}
+          placeholder="Describe the product goal, domain, users, and major systems. You can paste a short brief here."
+        />
+      </div>
+      <div className="planner-actions">
+        <button className="planner-button" onClick={onAnalyzeProject} disabled={loading || !profile.project_name.trim()}>
+          Analyze Project
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ProjectProfileCompletion({ profile }: { profile: ProjectProfile }) {
+  const completion = profileCompletion(profile);
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Project Profile Completion</div>
+      <div className="planner-completion-row">
+        <div className="planner-completion-bar" aria-label={`Project profile ${completion.percent}% complete`}>
+          <span style={{ width: `${completion.percent}%` }} />
+        </div>
+        <strong>{completion.percent}% Complete</strong>
+      </div>
+      {completion.missing.length ? (
+        <div className="planner-subtle">Missing: {completion.missing.join(', ')}</div>
+      ) : (
+        <div className="planner-subtle">Project profile has enough context for planning and execution prompts.</div>
+      )}
+    </section>
+  );
+}
+
+function ProjectHealthDashboard({ profile }: { profile: ProjectProfile }) {
+  const completion = profileCompletion(profile);
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Project Health</div>
+      <div className="planner-health-grid">
+        <HealthCard title="Repository Connected" status={profile.repository_connection.repository_id ? 'Ready' : 'Missing'} detail={profile.repository_connection.repository_name || 'Optional, but recommended'} />
+        <HealthCard title="Knowledge Registry" status={profile.knowledge_registry.modules.length || profile.knowledge_registry.flows.length ? 'Ready' : 'Missing'} detail={registrySummary(profile)} />
+        <HealthCard title="UI Guidelines" status={summarizeUiGuidelines(profile) === 'Not captured yet' ? 'Missing' : 'Ready'} detail={summarizeUiGuidelines(profile)} />
+        <HealthCard title="Development Standards" status={hasDevelopmentStandards(profile) ? 'Ready' : 'Missing'} detail={hasDevelopmentStandards(profile) ? 'Captured' : 'Repository scan can detect this'} />
+        <HealthCard title="Execution Readiness" status={completion.percent >= 70 ? 'Ready' : completion.percent >= 35 ? 'Partial' : 'Missing'} detail={`${completion.percent}% profile completion`} />
+      </div>
+    </section>
+  );
+}
+
+function HealthCard({ title, status, detail }: { title: string; status: 'Missing' | 'Partial' | 'Ready'; detail: string }) {
+  return (
+    <div className={`planner-health-card ${status.toLowerCase()}`}>
+      <strong>{title}</strong>
+      <span>{status}</span>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
 function OnboardingForm({
   profile,
   loading,
@@ -1515,7 +1778,7 @@ function ApplicationsEditor({ profile, onProfileChange }: { profile: ProjectProf
     <section className="planner-card">
       <div className="planner-label">Applications</div>
       {applications.map((application, index) => (
-        <div className="planner-grid" key={`${application.name}-${index}`}>
+        <div className="planner-grid" key={`application-${index}`}>
           <input
             className="planner-input"
             value={application.name}
@@ -1537,7 +1800,7 @@ function ApplicationsEditor({ profile, onProfileChange }: { profile: ProjectProf
 
   function updateApplication(index: number, next: ApplicationProfile) {
     const updated = applications.map((item, itemIndex) => itemIndex === index ? next : item);
-    onProfileChange({ ...profile, applications: updated.filter((item) => item.name.trim()) });
+    onProfileChange({ ...profile, applications: updated });
   }
 }
 
@@ -1634,6 +1897,15 @@ function ProjectProfileSummary({ profile }: { profile: ProjectProfile }) {
 }
 
 function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
+  const modules = registryModuleDetails(profile);
+  const flows = registryFlowDetails(profile);
+  const components = registryComponentDetails(profile);
+  const architecture = profile.knowledge_registry.architecture_notes.length
+    ? profile.knowledge_registry.architecture_notes
+    : profile.readme_analysis.architecture_notes;
+  const standards = profile.knowledge_registry.standards.length
+    ? profile.knowledge_registry.standards
+    : profile.knowledge_profile_preview.standards;
   return (
     <section className="planner-card">
       <div className="planner-label">Knowledge Profile Preview</div>
@@ -1642,17 +1914,61 @@ function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
         <Row label="Domain" value={profile.domain || profile.knowledge_profile_preview.domain || 'Not analyzed yet'} />
         <Row label="Project Type" value={profile.project_type || 'Not captured yet'} />
         <Row label="Applications" value={formatApplications(profile.applications) || 'Not captured yet'} />
-        <Row label="Technology Summary" value={formatStack(profile.technology_stack) || 'Not captured yet'} />
-        <Row label="Detected Modules" value={profile.knowledge_registry.modules.join(', ') || 'Pending README analysis'} />
-        <Row label="Detected Flows" value={profile.knowledge_registry.flows.join(', ') || 'Pending README analysis'} />
-        <Row label="Detected Components" value={profile.knowledge_registry.components.join(', ') || 'Pending repository analysis'} />
-        <Row label="Architecture Summary" value={(profile.knowledge_registry.architecture_notes || profile.readme_analysis.architecture_notes).join(', ') || 'Pending repository analysis'} />
-        <Row label="Standards" value={profile.knowledge_registry.standards.join(', ') || profile.knowledge_profile_preview.standards.join(', ') || 'Pending repository analysis'} />
+        <Row label="Technology Summary" value={technologySummary(profile) || 'Not captured yet'} />
         <Row label="Source Files" value={profile.knowledge_registry.source_files.join(', ') || profile.repository_sources.join(', ') || 'Pending repository analysis'} />
         <Row label="Repository Status" value={profile.knowledge_profile_preview.repository_status} />
         <Row label="Project Intelligence Readiness" value={profile.knowledge_profile_preview.readiness || readiness(profile)} />
       </div>
+      <div className="planner-grid">
+        <RegistryModuleCard modules={modules} />
+        <RegistryFlowCard flows={flows} />
+        <RegistryComponentCard components={components} />
+        <ListBlock title="Architecture" items={architecture.length ? architecture : ['Pending repository analysis']} />
+        <ListBlock title="Standards" items={standards.length ? standards : ['Pending repository analysis']} />
+      </div>
     </section>
+  );
+}
+
+function RegistryModuleCard({ modules }: { modules: ModuleDetail[] }) {
+  return (
+    <div className="planner-task">
+      <div className="planner-label">Modules</div>
+      {modules.length ? modules.map((module) => (
+        <div className="planner-task" key={module.name}>
+          <strong>{module.name}</strong>
+          <ListBlock title="Responsibilities" items={module.responsibilities?.length ? module.responsibilities : ['Not captured']} />
+          <ListBlock title="Dependencies" items={module.dependencies?.length ? module.dependencies : ['Not captured']} />
+        </div>
+      )) : <div className="planner-subtle">Pending repository analysis</div>}
+    </div>
+  );
+}
+
+function RegistryFlowCard({ flows }: { flows: FlowDetail[] }) {
+  return (
+    <div className="planner-task">
+      <div className="planner-label">Flows</div>
+      {flows.length ? flows.map((flow) => (
+        <div className="planner-task" key={flow.name}>
+          <strong>{flow.name}</strong>
+          {flow.steps?.length ? <ListBlock title="Steps" items={flow.steps} /> : null}
+        </div>
+      )) : <div className="planner-subtle">Pending repository analysis</div>}
+    </div>
+  );
+}
+
+function RegistryComponentCard({ components }: { components: ComponentDetail[] }) {
+  return (
+    <div className="planner-task">
+      <div className="planner-label">Components</div>
+      {components.length ? (
+        <ul className="planner-list">
+          {components.map((component) => <li key={component.name}>{component.name}{component.type ? ` (${component.type})` : ''}</li>)}
+        </ul>
+      ) : <div className="planner-subtle">Pending repository analysis</div>}
+    </div>
   );
 }
 
@@ -1660,11 +1976,14 @@ function RepositoryIntelligenceCard({
   profile,
   repositories,
   branches,
+  repositoryLoadMessage,
   repositoryDocuments,
   fileStatus,
   selectedFiles,
   loading,
+  showConnectionControls,
   onSelectRepository,
+  onReloadRepositories,
   onProfileChange,
   onRepositoryDocumentsChange,
   onFileStatusChange,
@@ -1676,11 +1995,14 @@ function RepositoryIntelligenceCard({
   profile: ProjectProfile;
   repositories: GitRepository[];
   branches: string[];
+  repositoryLoadMessage: string;
   repositoryDocuments: Record<string, string>;
   fileStatus: Record<string, 'available' | 'missing' | 'unknown'>;
   selectedFiles: string[];
   loading: boolean;
+  showConnectionControls: boolean;
   onSelectRepository: (repositoryId: string) => void;
+  onReloadRepositories: () => void;
   onProfileChange: (profile: ProjectProfile) => void;
   onRepositoryDocumentsChange: (documents: Record<string, string>) => void;
   onFileStatusChange: (status: Record<string, 'available' | 'missing' | 'unknown'>) => void;
@@ -1689,47 +2011,78 @@ function RepositoryIntelligenceCard({
   onDiscoverDocuments: () => void;
   onAnalyzeDocuments: () => void;
 }) {
+  const selectedRepositoryLoaded = repositories.some((repo) => repo.id === profile.repository_connection.repository_id);
   return (
     <section className="planner-card">
       <div className="planner-label">Repository Intelligence</div>
-      <div className="planner-subtle">Select known documentation files from Azure Repos, or paste content manually if repository file access is unavailable.</div>
-      <div className="planner-grid">
-        <select className="planner-input" value={profile.repository_connection.repository_id} onChange={(event) => onSelectRepository(event.target.value)}>
-          <option value="">Select Azure DevOps repository</option>
-          {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
-        </select>
-        <select
-          className="planner-input"
-          value={profile.repository_connection.branch}
-          onChange={(event) => onProfileChange({
-            ...profile,
-            repository_connection: { ...profile.repository_connection, branch: event.target.value, status: 'Repository connected' },
-          })}
-        >
-          <option value="">Select branch</option>
-          {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-          {profile.repository_connection.branch && !branches.includes(profile.repository_connection.branch) ? (
-            <option value={profile.repository_connection.branch}>{profile.repository_connection.branch}</option>
-          ) : null}
-        </select>
+      <div className="planner-subtle">
+        {showConnectionControls
+          ? 'Connect Azure Repos and analyze known documentation files.'
+          : 'Repository selection lives in Quick Start. Use this area only for README/docs discovery and manual fallback.'}
       </div>
-      <input
-        className="planner-input"
-        value={profile.repository_connection.readme_path}
-        onChange={(event) => onProfileChange({
-          ...profile,
-          repository_connection: { ...profile.repository_connection, readme_path: event.target.value || '/README.md' },
-        })}
-        placeholder="/README.md"
-      />
+      {showConnectionControls ? (
+        <>
+          <div className="planner-grid">
+            <select className="planner-input" value={repositories.some((repo) => repo.id === profile.repository_connection.repository_id) ? profile.repository_connection.repository_id : ''} onChange={(event) => onSelectRepository(event.target.value)} disabled={!repositories.length}>
+              <option value="">{repositories.length ? 'Select Azure DevOps repository' : 'No repositories loaded'}</option>
+              {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
+            </select>
+            {branches.length ? (
+              <select
+                className="planner-input"
+                value={profile.repository_connection.branch}
+                onChange={(event) => onProfileChange({
+                  ...profile,
+                  repository_connection: { ...profile.repository_connection, branch: event.target.value, status: 'Repository connected' },
+                })}
+              >
+                <option value="">Select branch</option>
+                {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+                {profile.repository_connection.branch && !branches.includes(profile.repository_connection.branch) ? (
+                  <option value={profile.repository_connection.branch}>{profile.repository_connection.branch}</option>
+                ) : null}
+              </select>
+            ) : (
+              <input
+                className="planner-input"
+                value={profile.repository_connection.branch}
+                onChange={(event) => onProfileChange({
+                  ...profile,
+                  repository_connection: { ...profile.repository_connection, branch: event.target.value, status: profile.repository_connection.repository_id ? 'Repository connected' : profile.repository_connection.status },
+                })}
+                placeholder="main"
+              />
+            )}
+          </div>
+          {repositoryLoadMessage ? <div className="planner-subtle">{repositoryLoadMessage}</div> : null}
+          <div className="planner-actions compact">
+            <button className="planner-button secondary" onClick={onReloadRepositories} disabled={loading}>Retry Repositories</button>
+          </div>
+          <input
+            className="planner-input"
+            value={profile.repository_connection.readme_path}
+            onChange={(event) => onProfileChange({
+              ...profile,
+              repository_connection: { ...profile.repository_connection, readme_path: event.target.value || '/README.md' },
+            })}
+            placeholder="/README.md"
+          />
+        </>
+      ) : null}
+      {!showConnectionControls ? (
+        <div className="planner-status-grid">
+          <Row label="Repository" value={profile.repository_connection.repository_name || 'No repository selected'} />
+          <Row label="Branch" value={profile.repository_connection.branch || 'Default branch'} />
+        </div>
+      ) : null}
       <div className="planner-actions">
-        <button className="planner-button" onClick={onAnalyzeReadme} disabled={loading || !profile.repository_connection.repository_id}>
+        <button className="planner-button" onClick={onAnalyzeReadme} disabled={loading || !selectedRepositoryLoaded}>
           Analyze README
         </button>
-        <button className="planner-button secondary" onClick={onDiscoverDocuments} disabled={loading || !profile.repository_connection.repository_id}>
+        <button className="planner-button secondary" onClick={onDiscoverDocuments} disabled={loading || !selectedRepositoryLoaded}>
           Discover Documents
         </button>
-        <button className="planner-button" onClick={onAnalyzeDocuments} disabled={loading || (!profile.repository_connection.repository_id && !Object.values(repositoryDocuments).some((content) => content.trim()))}>
+        <button className="planner-button" onClick={onAnalyzeDocuments} disabled={loading || (!selectedRepositoryLoaded && !Object.values(repositoryDocuments).some((content) => content.trim()))}>
           Analyze Documents
         </button>
       </div>
@@ -2272,6 +2625,78 @@ async function getProfile(): Promise<ProjectProfile> {
   return response.json() as Promise<ProjectProfile>;
 }
 
+async function fetchAdoRepositories(): Promise<GitRepository[]> {
+  const projectName = await getProjectIdentifier();
+  const response = await fetchAdoRest<{ value?: Array<{ id?: string; name?: string; defaultBranch?: string; remoteUrl?: string; webUrl?: string }> }>(
+    `${encodeURIComponent(projectName)}/_apis/git/repositories?api-version=7.1`,
+    REPOSITORY_SDK_TIMEOUT_MS,
+    'Azure DevOps repository list timed out.',
+  );
+  return (response.value || [])
+    .filter((repo) => repo.id && repo.name)
+    .map((repo) => ({
+      id: repo.id,
+      name: repo.name,
+      defaultBranch: repo.defaultBranch,
+      remoteUrl: repo.remoteUrl,
+      webUrl: repo.webUrl,
+    } as GitRepository));
+}
+
+async function fetchAdoBranches(repositoryId: string): Promise<string[]> {
+  const projectName = await getProjectIdentifier();
+  const response = await fetchAdoRest<{ value?: Array<{ name?: string }> }>(
+    `${encodeURIComponent(projectName)}/_apis/git/repositories/${encodeURIComponent(repositoryId)}/refs?filter=heads/&api-version=7.1`,
+    REPOSITORY_SDK_TIMEOUT_MS,
+    'Azure DevOps branch list timed out.',
+  );
+  return (response.value || [])
+    .map((branch) => normalizeBranchName(String(branch.name || '')))
+    .filter(Boolean);
+}
+
+async function fetchAdoRepositoryFileContent(repositoryId: string, path: string, branch: string): Promise<string> {
+  const projectName = await getProjectIdentifier();
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const params = new URLSearchParams({
+    path: normalizedPath,
+    includeContent: 'true',
+    resolveLfs: 'true',
+    'versionDescriptor.version': branch || 'main',
+    'versionDescriptor.versionType': 'branch',
+    'api-version': '7.1',
+  });
+  const response = await fetchAdoRest<{ content?: string }>(
+    `${encodeURIComponent(projectName)}/_apis/git/repositories/${encodeURIComponent(repositoryId)}/items?${params.toString()}`,
+    REPOSITORY_FILE_TIMEOUT_MS,
+    `Timed out loading ${normalizedPath} from Azure DevOps.`,
+  );
+  if (!response.content) {
+    throw new Error(`${normalizedPath} did not contain readable text content.`);
+  }
+  return response.content;
+}
+
+async function fetchAdoRest<T>(relativePath: string, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  const token = await SDK.getAccessToken();
+  const url = `${trimTrailingSlash(getCollectionUri())}/${relativePath.replace(/^\/+/, '')}`;
+  const response = await withTimeout(
+    fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    }),
+    timeoutMs,
+    timeoutMessage,
+  );
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Azure DevOps returned HTTP ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 async function loadCurrentWorkItem(): Promise<AdoWorkItem | undefined> {
   try {
     const service = await SDK.getService<IWorkItemFormService>(WorkItemTrackingServiceIds.WorkItemFormService);
@@ -2471,15 +2896,27 @@ function taskDraftsFromStory(result: StoryRefinement): ChildDraft[] {
 }
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
+    }
+    return response.json() as Promise<T>;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Timed out contacting Project Intelligence backend after ${Math.round(API_TIMEOUT_MS / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return response.json() as Promise<T>;
 }
 
 function splitLines(value: string): string[] {
@@ -2538,6 +2975,44 @@ function isProfileComplete(profile: ProjectProfile): boolean {
   return Boolean(profile.onboarding_completed || profile.project_description.trim());
 }
 
+function saveStatusLabel(status: 'saved' | 'saving' | 'unsaved' | 'error'): string {
+  if (status === 'saving') return 'Saving...';
+  if (status === 'unsaved') return 'Unsaved changes';
+  if (status === 'error') return 'Autosave failed';
+  return 'Saved';
+}
+
+function profileCompletion(profile: ProjectProfile): { percent: number; missing: string[] } {
+  const checks = [
+    { label: 'Project Name', ready: Boolean(profile.project_name.trim()) },
+    { label: 'Project Description', ready: Boolean(profile.project_description.trim()) },
+    { label: 'Repository', ready: Boolean(profile.repository_connection.repository_id || profile.repository_sources.length) },
+    { label: 'Applications', ready: Boolean(profile.applications.length || profile.knowledge_registry.applications.length) },
+    { label: 'Technology Stack', ready: STACK_FIELDS.some((field) => profile.technology_stack[field].length > 0) },
+    { label: 'Knowledge Registry', ready: Boolean(profile.knowledge_registry.modules.length || profile.knowledge_registry.flows.length || profile.knowledge_registry.components.length) },
+    { label: 'UI Guidelines', ready: summarizeUiGuidelines(profile) !== 'Not captured yet' },
+    { label: 'Development Standards', ready: hasDevelopmentStandards(profile) },
+  ];
+  const readyCount = checks.filter((check) => check.ready).length;
+  return {
+    percent: Math.round((readyCount / checks.length) * 100),
+    missing: checks.filter((check) => !check.ready).map((check) => check.label),
+  };
+}
+
+function hasDevelopmentStandards(profile: ProjectProfile): boolean {
+  return Object.values(profile.development_standards).some((items) => items.length > 0) || profile.knowledge_registry.standards.length > 0;
+}
+
+function registrySummary(profile: ProjectProfile): string {
+  const parts = [
+    profile.knowledge_registry.modules.length ? `${profile.knowledge_registry.modules.length} modules` : '',
+    profile.knowledge_registry.flows.length ? `${profile.knowledge_registry.flows.length} flows` : '',
+    profile.knowledge_registry.components.length ? `${profile.knowledge_registry.components.length} components` : '',
+  ].filter(Boolean);
+  return parts.join(', ') || 'Analyze repository documents';
+}
+
 function mergeProfile(current: ProjectProfile, analyzed: ProjectProfile): ProjectProfile {
   return {
     ...current,
@@ -2563,6 +3038,35 @@ async function getProjectName(): Promise<string> {
   const projectService = await SDK.getService<IProjectPageService>(CommonServiceIds.ProjectPageService);
   const project = await projectService.getProject();
   return String(project?.name || SDK.getWebContext().project?.name || '');
+}
+
+async function getProjectIdentifier(): Promise<string> {
+  try {
+    const projectName = await getProjectName();
+    if (projectName) {
+      return projectName;
+    }
+  } catch {
+    // Some Azure DevOps contribution surfaces do not expose ProjectPageService.
+  }
+  const project = SDK.getWebContext().project;
+  return String(project?.id || project?.name || '');
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
 }
 
 function normalizeBranchName(branch: string): string {
@@ -2599,18 +3103,64 @@ function sourceLabel(source?: string): string {
 }
 
 function readiness(profile: ProjectProfile): string {
-  const hasDescription = Boolean(profile.project_description.trim());
+  const hasDescription = Boolean(profile.project_description.trim() || profile.project_name.trim());
   const hasApplications = profile.applications.length > 0;
-  const hasStack = STACK_FIELDS.some((field) => profile.technology_stack[field].length > 0);
-  const hasStandards = Object.values(profile.development_standards).some((items) => items.length > 0);
-  const hasRegistry = profile.knowledge_registry.modules.length > 0 || profile.knowledge_registry.flows.length > 0;
-  if (hasDescription && hasApplications && hasStack && (hasStandards || hasRegistry)) {
+  const stack = profile.knowledge_registry.technology_stack || profile.technology_stack;
+  const hasStack = STACK_FIELDS.some((field) => stack[field]?.length > 0);
+  const hasStandards = Object.values(profile.development_standards).some((items) => items.length > 0) || profile.knowledge_registry.standards.length > 0;
+  const hasRepositoryDocs = Boolean(profile.repository_sources.length || profile.knowledge_registry.source_files.length);
+  const hasRegistry = profile.knowledge_registry.modules.length > 0 && profile.knowledge_registry.flows.length > 0;
+  if (hasDescription && hasApplications && hasStack && hasRepositoryDocs && hasRegistry && hasStandards) {
+    return 'Execution Ready';
+  }
+  if (hasDescription && hasApplications && hasStack && hasRepositoryDocs && hasRegistry) {
     return 'Advanced';
   }
   if (hasDescription && hasApplications && hasStack) {
     return 'Intermediate';
   }
   return 'Basic';
+}
+
+function registryModuleDetails(profile: ProjectProfile): ModuleDetail[] {
+  const details = profile.knowledge_registry.module_details || [];
+  if (details.length) {
+    return details;
+  }
+  return profile.knowledge_registry.modules.map((name) => ({ name, responsibilities: [], dependencies: [] }));
+}
+
+function registryFlowDetails(profile: ProjectProfile): FlowDetail[] {
+  const details = profile.knowledge_registry.flow_details || [];
+  if (details.length) {
+    return details;
+  }
+  return profile.knowledge_registry.flows.map((name) => ({ name, steps: [] }));
+}
+
+function registryComponentDetails(profile: ProjectProfile): ComponentDetail[] {
+  const details = profile.knowledge_registry.component_details || [];
+  if (details.length) {
+    return details;
+  }
+  return profile.knowledge_registry.components.map((name) => ({ name }));
+}
+
+function technologySummary(profile: ProjectProfile): string {
+  const stack = mergeTechnologyStack(profile.technology_stack, profile.knowledge_registry.technology_stack);
+  const stackText = formatStack(stack);
+  const architecture = profile.development_standards.architecture_patterns.length
+    ? `Architecture: ${profile.development_standards.architecture_patterns.join(', ')}`
+    : '';
+  return [stackText, architecture].filter(Boolean).join('; ');
+}
+
+function mergeTechnologyStack(base: TechnologyStack, incoming?: TechnologyStack): TechnologyStack {
+  const next: TechnologyStack = { mobile: [], backend: [], firmware: [], analytics: [], frontend: [] };
+  STACK_FIELDS.forEach((field) => {
+    next[field] = Array.from(new Set([...(base[field] || []), ...((incoming && incoming[field]) || [])]));
+  });
+  return next;
 }
 
 function executionReadiness(profile: ProjectProfile, hasImpact: boolean): { score: number; label: string; breakdown: string } {

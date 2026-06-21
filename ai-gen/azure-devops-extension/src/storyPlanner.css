@@ -22,6 +22,87 @@ body {
   gap: 14px;
 }
 
+.planner-quick-start {
+  border-color: #b8d9f5;
+}
+
+.planner-save-status {
+  display: inline-flex;
+  margin-top: 8px;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  background: #eefbf3;
+  color: #166534;
+}
+
+.planner-save-status.saving,
+.planner-save-status.unsaved {
+  background: #fff7e6;
+  color: #8a5a00;
+}
+
+.planner-save-status.error {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.planner-completion-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.planner-completion-bar {
+  flex: 1;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #e8eef5;
+}
+
+.planner-completion-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: #0078d4;
+}
+
+.planner-health-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.planner-health-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.planner-health-card span {
+  font-weight: 700;
+}
+
+.planner-health-card.ready span {
+  color: #166534;
+}
+
+.planner-health-card.partial span {
+  color: #8a5a00;
+}
+
+.planner-health-card.missing span {
+  color: #b42318;
+}
+
+.planner-health-card small {
+  color: #53657d;
+}
+
 .planner-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -253,4 +334,19 @@ body {
   border: 1px solid #fecdca;
   border-radius: 8px;
   padding: 12px;
+}
+
+@media (max-width: 760px) {
+  .planner-tabs,
+  .planner-grid,
+  .planner-health-grid,
+  .planner-checkbox-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-header,
+  .planner-completion-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }

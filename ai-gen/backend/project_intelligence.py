@@ -48,9 +48,13 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "knowledge_registry": {
         "applications": [],
         "modules": [],
+        "module_details": [],
         "flows": [],
+        "flow_details": [],
         "components": [],
+        "component_details": [],
         "architecture_notes": [],
+        "technology_stack": {},
         "standards": [],
         "source_files": [],
     },
@@ -287,6 +291,7 @@ class ProjectIntelligenceService:
         next_profile = {
             **active_profile,
             "repository_connection": repository_connection,
+            "project_description": active_profile["project_description"] or analysis["readme_summary"],
             "readme_analysis": {
                 **active_profile["readme_analysis"],
                 "summary": analysis["readme_summary"] or active_profile["readme_analysis"]["summary"],
@@ -297,6 +302,9 @@ class ProjectIntelligenceService:
             },
             "knowledge_registry": registry,
             "applications": _merge_applications(active_profile["applications"], analysis["detected_applications"]),
+            "domain": active_profile["domain"] or _infer_domain(" ".join([*documents.values(), analysis["readme_summary"], analysis["architecture_summary"]])),
+            "project_type": active_profile["project_type"] or _infer_project_type(" ".join(documents.values())),
+            "technology_stack": _merge_stack(active_profile["technology_stack"], analysis["technology_stack"]),
             "development_standards": _merge_development_standards(active_profile["development_standards"], analysis["development_standards"]),
             "ui_guidelines": {
                 **active_profile["ui_guidelines"],
@@ -306,9 +314,18 @@ class ProjectIntelligenceService:
             "knowledge_profile_preview": {
                 **active_profile["knowledge_profile_preview"],
                 "systems": [app["name"] for app in _merge_applications(active_profile["applications"], analysis["detected_applications"])],
+                "domain": active_profile["domain"] or _infer_domain(" ".join(documents.values())),
                 "standards": _unique([*active_profile["knowledge_profile_preview"]["standards"], *analysis["ui_standards"], *analysis["development_standards"]]),
                 "repository_status": "Repository documents analyzed" if documents else "Repository documents not found",
-                "readiness": _readiness({**active_profile, "knowledge_registry": registry}),
+                "readiness": _readiness({
+                    **active_profile,
+                    "project_description": active_profile["project_description"] or analysis["readme_summary"],
+                    "knowledge_registry": registry,
+                    "applications": _merge_applications(active_profile["applications"], analysis["detected_applications"]),
+                    "technology_stack": _merge_stack(active_profile["technology_stack"], analysis["technology_stack"]),
+                    "repository_sources": _unique([*active_profile["repository_sources"], *analysis["source_files"]]),
+                    "development_standards": _merge_development_standards(active_profile["development_standards"], analysis["development_standards"]),
+                }),
             },
         }
         saved = self.save_profile(next_profile)
@@ -776,15 +793,81 @@ def _normalize_readme_analysis(value: Any) -> dict[str, Any]:
 
 def _normalize_knowledge_registry(value: Any) -> dict[str, Any]:
     registry = value if isinstance(value, dict) else {}
+    module_details = _normalize_module_details(registry.get("module_details") or registry.get("modules"))
+    flow_details = _normalize_flow_details(registry.get("flow_details") or registry.get("flows"))
+    component_details = _normalize_component_details(registry.get("component_details") or registry.get("components"))
+    modules = _unique([*_registry_names(registry.get("modules")), *[item["name"] for item in module_details]])
+    flows = _unique([*_registry_names(registry.get("flows")), *[item["name"] for item in flow_details]])
+    components = _unique([*_registry_names(registry.get("components")), *[item["name"] for item in component_details]])
     return {
         "applications": _normalize_applications(registry.get("applications")),
-        "modules": _string_list(registry.get("modules")),
-        "flows": _string_list(registry.get("flows")),
-        "components": _string_list(registry.get("components")),
+        "modules": modules,
+        "module_details": module_details,
+        "flows": flows,
+        "flow_details": flow_details,
+        "components": components,
+        "component_details": component_details,
         "architecture_notes": _string_list(registry.get("architecture_notes")),
+        "technology_stack": _normalize_stack(registry.get("technology_stack")),
         "standards": _string_list(registry.get("standards")),
         "source_files": _string_list(registry.get("source_files")),
     }
+
+
+def _normalize_module_details(value: Any) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    if not isinstance(value, list):
+        return details
+    for item in value:
+        if isinstance(item, dict):
+            name = _clean_registry_name(item.get("name"))
+            responsibilities = _string_list(item.get("responsibilities"))
+            dependencies = _string_list(item.get("dependencies"))
+            source_file = _clean_text(item.get("source_file"))
+        else:
+            name = _clean_registry_name(item)
+            responsibilities = []
+            dependencies = []
+            source_file = ""
+        if name:
+            details.append({"name": name, "responsibilities": responsibilities, "dependencies": dependencies, "source_file": source_file})
+    return _unique_details(details, "name")
+
+
+def _normalize_flow_details(value: Any) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    if not isinstance(value, list):
+        return details
+    for item in value:
+        if isinstance(item, dict):
+            name = _clean_registry_name(item.get("name"))
+            steps = _string_list(item.get("steps"))
+            source_file = _clean_text(item.get("source_file"))
+        else:
+            name = _clean_registry_name(item)
+            steps = []
+            source_file = ""
+        if name:
+            details.append({"name": name, "steps": steps, "source_file": source_file})
+    return _unique_details(details, "name")
+
+
+def _normalize_component_details(value: Any) -> list[dict[str, str]]:
+    details: list[dict[str, str]] = []
+    if not isinstance(value, list):
+        return details
+    for item in value:
+        if isinstance(item, dict):
+            name = _clean_registry_name(item.get("name"))
+            component_type = _clean_text(item.get("type")) or _component_type(name)
+            source_file = _clean_text(item.get("source_file"))
+        else:
+            name = _clean_registry_name(item)
+            component_type = _component_type(name)
+            source_file = ""
+        if name and _is_component_name(name):
+            details.append({"name": name, "type": component_type, "source_file": source_file})
+    return _unique_details(details, "name")
 
 
 def _normalize_stack(value: Any) -> dict[str, list[str]]:
@@ -802,12 +885,14 @@ def _normalize_stack(value: Any) -> dict[str, list[str]]:
 def _infer_applications(text: str) -> list[dict[str, str]]:
     lowered = text.lower()
     apps: list[dict[str, str]] = []
-    if any(word in lowered for word in ["ios", "android", "mobile"]):
+    if any(word in lowered for word in ["ios", "android", "mobile", "field mobile"]):
         apps.append({"name": "Mobile App", "type": "Mobile"})
-    if any(word in lowered for word in ["backend", "api", "service"]):
+    if any(word in lowered for word in ["backend", "api", "service", "asp.net"]):
         apps.append({"name": "Backend", "type": "Backend"})
     if "firmware" in lowered:
         apps.append({"name": "Firmware", "type": "Firmware"})
+    if any(word in lowered for word in ["operations dashboard", "operator dashboard", "web portal"]):
+        apps.append({"name": "Operations Dashboard", "type": "Web Portal"})
     if any(word in lowered for word in ["analytics", "report", "dashboard"]):
         apps.append({"name": "Analytics", "type": "Analytics"})
     return apps or [{"name": "Application", "type": "API"}]
@@ -828,10 +913,16 @@ def _infer_stack(text: str) -> dict[str, list[str]]:
         "Node.js": ["node"],
         "Python": ["python"],
         "FastAPI": ["fastapi"],
+        "ASP.NET Core": ["asp.net core", "aspnetcore"],
+        "REST APIs": ["rest api", "rest apis"],
+        "SQL Server": ["sql server"],
+        "Azure Data Platform": ["azure data platform", "azure analytics", "azure"],
+        "Databricks": ["databricks"],
         "Swift": ["swift", "ios"],
         "Kotlin": ["kotlin", "android"],
+        "Android": ["android"],
         ".NET": [".net", "dotnet"],
-        "MAUI": ["maui"],
+        ".NET MAUI": [".net maui", "maui"],
         "Flutter": ["flutter"],
         "C": [" firmware c "],
         "C++": ["c++"],
@@ -847,8 +938,10 @@ def _infer_domain(text: str) -> str:
         return "Travel and booking"
     if any(word in lowered for word in ["commerce", "checkout", "payment", "order"]):
         return "E-commerce"
+    if any(word in lowered for word in ["grid", "fault", "outage", "linedefender"]):
+        return "Utility Grid Management"
     if any(word in lowered for word in ["meter", "energy", "utility"]):
-        return "Utilities"
+        return "Smart Metering"
     if any(word in lowered for word in ["community", "property", "tenant"]):
         return "Community management"
     return "General product delivery"
@@ -902,14 +995,20 @@ def _profile_context_lines(profile: dict[str, Any]) -> list[str]:
 
 
 def _readiness(profile: dict[str, Any]) -> str:
-    has_description = bool(_clean_text(profile.get("project_description")))
+    has_description = bool(_clean_text(profile.get("project_description")) or _clean_text(profile.get("project_name")))
     has_apps = bool(_normalize_applications(profile.get("applications")))
     stack = _normalize_stack(profile.get("technology_stack"))
     has_stack = any(stack.values())
     registry = _normalize_knowledge_registry(profile.get("knowledge_registry"))
+    has_repository_docs = bool(_string_list(profile.get("repository_sources")) or registry["source_files"])
+    has_registry = bool(registry["modules"] and registry["flows"])
     standards = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
-    has_standards = bool(_flatten_standards(standards))
-    if has_description and has_apps and has_stack and (has_standards or registry["modules"] or registry["flows"]):
+    has_standards = bool(_flatten_standards(standards) or registry["standards"])
+    if has_description and has_apps and has_stack and has_repository_docs and has_registry and has_standards:
+        return "Execution Ready"
+    if has_description and has_apps and has_stack and has_repository_docs and has_registry:
+        return "Advanced"
+    if has_description and has_apps and has_stack and has_standards:
         return "Advanced"
     if has_description and has_apps and has_stack:
         return "Intermediate"
@@ -960,11 +1059,11 @@ def _stack_category(item: str) -> str:
     lowered = item.lower()
     if any(word in lowered for word in ["kotlin", "swift", "flutter", "maui"]):
         return "mobile"
-    if any(word in lowered for word in ["fastapi", "python", "node", ".net", "dotnet"]):
+    if any(word in lowered for word in ["fastapi", "python", "node", ".net", "dotnet", "asp.net", "rest api", "sql server"]):
         return "backend"
     if any(word in lowered for word in ["c++", "firmware"]):
         return "firmware"
-    if any(word in lowered for word in ["analytics", "spark", "power bi", "dashboard"]):
+    if any(word in lowered for word in ["analytics", "spark", "power bi", "dashboard", "azure data", "databricks"]):
         return "analytics"
     return "frontend"
 
@@ -973,18 +1072,25 @@ def _analyze_readme_content(readme_content: str) -> dict[str, Any]:
     text = readme_content.strip()
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     summary = _extract_summary(lines)
-    modules = _extract_section_items(lines, ["modules", "packages", "services", "components"])
-    flows = _extract_section_items(lines, ["flows", "features", "workflows", "user journeys"])
+    module_details = _extract_module_details(text, "README.md")
+    flow_details = _extract_flow_details(text, "README.md")
+    modules = [item["name"] for item in module_details] or _extract_section_items(lines, ["modules", "packages", "services"])
+    flows = [item["name"] for item in flow_details] or _extract_section_items(lines, ["flows", "workflows", "user journeys"])
     architecture_notes = _extract_architecture_notes(lines)
     applications = _extract_applications_from_readme(text)
-    components = _extract_section_items(lines, ["components", "screens", "pages"])
+    component_details = _extract_component_details(text, "README.md")
+    components = [item["name"] for item in component_details]
     return {
         "summary": summary,
         "applications": applications,
         "modules": modules,
+        "module_details": module_details,
         "flows": flows,
+        "flow_details": flow_details,
         "architecture_notes": architecture_notes,
         "components": components,
+        "component_details": component_details,
+        "technology_stack": _infer_stack(text),
         "standards": [],
         "source_files": [],
     }
@@ -995,10 +1101,14 @@ def _analyze_repository_documents(documents: dict[str, str]) -> dict[str, Any]:
     architecture_notes: list[str] = []
     detected_applications: list[dict[str, str]] = []
     detected_modules: list[str] = []
+    module_details: list[dict[str, Any]] = []
     detected_flows: list[str] = []
+    flow_details: list[dict[str, Any]] = []
     detected_components: list[str] = []
+    component_details: list[dict[str, str]] = []
     ui_standards: list[str] = []
     development_standards: list[str] = []
+    detected_stack = _normalize_stack({})
     warnings: list[str] = []
     source_files: list[str] = []
 
@@ -1006,49 +1116,77 @@ def _analyze_repository_documents(documents: dict[str, str]) -> dict[str, Any]:
         lowered_path = path.lower()
         source_files.append(path)
         parsed = _analyze_readme_content(content)
+        detected_stack = _merge_stack(detected_stack, parsed.get("technology_stack", {}), _infer_stack(content))
         if "readme" in lowered_path and not readme_summary:
             readme_summary = parsed["summary"]
+            detected_applications = _merge_applications(detected_applications, parsed["applications"])
         if "architecture" in lowered_path:
-            architecture_notes.extend(_extract_document_items(content, ["architecture", "notes", "decisions", "patterns"]) or parsed["architecture_notes"])
-            detected_components.extend(_extract_document_items(content, ["components", "services", "systems"]))
+            architecture_notes.extend(_extract_architecture_notes([line.strip() for line in content.splitlines() if line.strip()]))
+            extracted_components = _extract_component_details(content, path)
+            component_details.extend(extracted_components)
+            detected_components.extend([item["name"] for item in extracted_components])
             detected_applications = _merge_applications(detected_applications, _extract_applications_from_readme(content))
         elif "modules" in lowered_path:
-            detected_modules.extend(_extract_document_items(content, ["modules", "services", "packages", "domains"]) or parsed["modules"])
-            detected_components.extend(_extract_document_items(content, ["components", "classes", "screens"]))
+            extracted_modules = _extract_module_details(content, path)
+            module_details.extend(extracted_modules)
+            detected_modules.extend([item["name"] for item in extracted_modules] or _extract_module_names_from_root_lists(content))
         elif "flows" in lowered_path:
-            detected_flows.extend(_extract_document_items(content, ["flows", "workflows", "journeys", "scenarios"]) or parsed["flows"])
+            extracted_flows = _extract_flow_details(content, path)
+            flow_details.extend(extracted_flows)
+            detected_flows.extend([item["name"] for item in extracted_flows] or _extract_flow_names_from_root_lists(content))
         elif "ui-guidelines" in lowered_path:
-            ui_standards.extend(_extract_document_items(content, ["ui guidelines", "accessibility", "components", "design rules"]) or _extract_bullets(content))
+            ui_standards.extend(_extract_standards(content, ["ui guidelines", "accessibility", "design rules"]))
         elif "coding-standards" in lowered_path:
-            development_standards.extend(_extract_document_items(content, ["coding standards", "security", "testing", "architecture"]) or _extract_bullets(content))
+            development_standards.extend(_extract_standards(content, ["coding standards", "security", "testing", "architecture"]))
         else:
             detected_applications = _merge_applications(detected_applications, parsed["applications"])
             detected_modules.extend(parsed["modules"])
+            module_details.extend(parsed["module_details"])
             detected_flows.extend(parsed["flows"])
+            flow_details.extend(parsed["flow_details"])
             detected_components.extend(parsed["components"])
+            component_details.extend(parsed["component_details"])
             architecture_notes.extend(parsed["architecture_notes"])
+            ui_standards.extend(_extract_standards(content, ["ui guidelines", "accessibility", "design rules"]))
+            development_standards.extend(_extract_standards(content, ["coding standards", "security", "testing", "architecture"]))
 
     if not documents:
         warnings.append("No repository documents were available for analysis.")
 
-    architecture_summary = ". ".join(_unique(architecture_notes)[:3])
+    architecture_notes = _clean_architecture_notes(architecture_notes)
+    architecture_summary = _architecture_summary(documents, architecture_notes, detected_stack)
+    module_details = _unique_details(module_details, "name")
+    flow_details = _unique_details(flow_details, "name")
+    component_details = _unique_details(component_details, "name")
+    detected_modules = _clean_registry_names(_unique([*detected_modules, *[item["name"] for item in module_details]]), kind="module")
+    detected_flows = _clean_registry_names(_unique([*detected_flows, *[item["name"] for item in flow_details]]), kind="flow")
+    detected_components = _clean_registry_names(_unique([*detected_components, *[item["name"] for item in component_details]]), kind="component")
+    standards = _unique([*ui_standards, *development_standards])
     return {
         "readme_summary": readme_summary,
         "architecture_summary": architecture_summary,
         "architecture_notes": _unique(architecture_notes),
         "detected_applications": detected_applications,
         "detected_modules": _unique(detected_modules),
+        "module_details": module_details,
         "detected_flows": _unique(detected_flows),
+        "flow_details": flow_details,
         "detected_components": _unique(detected_components),
+        "component_details": component_details,
         "ui_standards": _unique(ui_standards),
         "development_standards": _unique(development_standards),
+        "technology_stack": detected_stack,
         "source_files": _unique(source_files),
         "warnings": warnings,
         "applications": detected_applications,
         "modules": _unique(detected_modules),
+        "module_details": module_details,
         "flows": _unique(detected_flows),
+        "flow_details": flow_details,
         "components": _unique(detected_components),
-        "standards": _unique([*ui_standards, *development_standards]),
+        "component_details": component_details,
+        "standards": standards,
+        "technology_stack": detected_stack,
     }
 
 
@@ -1057,6 +1195,180 @@ def _extract_document_items(content: str, sections: list[str]) -> list[str]:
     section_items = _extract_section_items(lines, sections)
     labelled_items = _extract_labelled_items(lines, sections)
     return _unique([*section_items, *labelled_items]) or _extract_bullets(content)
+
+
+def _markdown_sections(content: str) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw in content.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            title = _clean_registry_name(stripped.lstrip("#").strip())
+            current = {"level": level, "title": title, "lines": []}
+            sections.append(current)
+        elif current is not None:
+            current["lines"].append(stripped)
+    return sections
+
+
+def _extract_module_details(content: str, source_file: str) -> list[dict[str, Any]]:
+    sections = _markdown_sections(content)
+    details: list[dict[str, Any]] = []
+    module_parent_active = False
+    for index, section in enumerate(sections):
+        title = section["title"]
+        lowered = title.lower()
+        if _is_detail_section_title(lowered) and details:
+            _attach_module_detail(details[-1], lowered, section["lines"])
+            continue
+        if _is_module_container_title(lowered):
+            module_parent_active = True
+            for name in _module_names_from_lines(section["lines"]):
+                details.append({"name": name, "responsibilities": [], "dependencies": [], "source_file": source_file})
+            continue
+        if section["level"] <= 1 and not _is_module_container_title(lowered):
+            module_parent_active = False
+        if module_parent_active or lowered.endswith(" module"):
+            if _is_detail_section_title(lowered):
+                if details:
+                    _attach_module_detail(details[-1], lowered, section["lines"])
+                continue
+            if _is_detail_section_title(lowered) and details:
+                _attach_module_detail(details[-1], lowered, section["lines"])
+                continue
+            if _is_module_heading(title):
+                detail = {
+                    "name": _clean_registry_name(title.replace("Module", "").strip()) if lowered.endswith(" module") else title,
+                    "responsibilities": [],
+                    "dependencies": [],
+                    "source_file": source_file,
+                }
+                detail["responsibilities"].extend(_section_detail_lines(section["lines"], ["responsibilities", "responsibility"]))
+                detail["dependencies"].extend(_section_detail_lines(section["lines"], ["dependencies", "dependency"]))
+                details.append(detail)
+            elif _is_detail_section_title(lowered) and details:
+                _attach_module_detail(details[-1], lowered or previous, section["lines"])
+    inline = _extract_labelled_items([line.strip() for line in content.splitlines() if line.strip()], ["modules"])
+    for name in inline:
+        cleaned = _clean_registry_name(name)
+        if _is_module_name(cleaned):
+            details.append({"name": cleaned, "responsibilities": [], "dependencies": [], "source_file": source_file})
+    return _unique_details(details, "name")
+
+
+def _attach_module_detail(module: dict[str, Any], title: str, lines: list[str]) -> None:
+    values = _clean_registry_names(_extract_bullets("\n".join(lines)) or [_clean_bullet(line) for line in lines], kind="detail")
+    if "depend" in title:
+        module["dependencies"] = _unique([*module.get("dependencies", []), *values])
+    elif "respons" in title or "capabil" in title:
+        module["responsibilities"] = _unique([*module.get("responsibilities", []), *values])
+
+
+def _section_detail_lines(lines: list[str], labels: list[str]) -> list[str]:
+    details: list[str] = []
+    active = ""
+    for line in lines:
+        stripped = _clean_bullet(line)
+        lowered = stripped.lower().rstrip(":")
+        if any(label in lowered for label in labels):
+            active = lowered
+            if ":" in stripped:
+                details.extend(_split_inline_values(stripped.split(":", 1)[1]))
+            continue
+        if active and line.strip().startswith(("-", "*")):
+            details.append(stripped)
+    return _unique(details)
+
+
+def _module_names_from_lines(lines: list[str]) -> list[str]:
+    names = []
+    for line in lines:
+        if not line.strip().startswith(("-", "*")):
+            continue
+        candidate = _clean_bullet(line).split(":", 1)[0]
+        if _is_module_name(candidate):
+            names.append(_clean_registry_name(candidate))
+    return _unique(names)
+
+
+def _extract_module_names_from_root_lists(content: str) -> list[str]:
+    names = []
+    for section in _markdown_sections(content):
+        if _is_module_container_title(section["title"].lower()):
+            names.extend(_module_names_from_lines(section["lines"]))
+    names.extend(name for name in _extract_labelled_items([line.strip() for line in content.splitlines() if line.strip()], ["modules"]) if _is_module_name(name))
+    return _unique(names)
+
+
+def _extract_flow_details(content: str, source_file: str) -> list[dict[str, Any]]:
+    sections = _markdown_sections(content)
+    details: list[dict[str, Any]] = []
+    flow_parent_active = False
+    for section in sections:
+        title = section["title"]
+        lowered = title.lower()
+        if _is_flow_container_title(lowered):
+            flow_parent_active = True
+            for name in _flow_names_from_lines(section["lines"]):
+                details.append({"name": name, "steps": [], "source_file": source_file})
+            continue
+        if section["level"] <= 2 and not _is_flow_container_title(lowered):
+            flow_parent_active = False
+        if flow_parent_active or _is_flow_name(title):
+            if _is_detail_section_title(lowered):
+                if details:
+                    details[-1]["steps"] = _unique([*details[-1].get("steps", []), *_extract_bullets("\n".join(section["lines"]))])
+                continue
+            if _is_flow_name(title):
+                details.append({"name": _clean_registry_name(title), "steps": _extract_bullets("\n".join(section["lines"])), "source_file": source_file})
+    inline = _extract_labelled_items([line.strip() for line in content.splitlines() if line.strip()], ["flows"])
+    for name in inline:
+        cleaned = _clean_registry_name(name)
+        if _is_flow_name(cleaned):
+            details.append({"name": cleaned, "steps": [], "source_file": source_file})
+    return _unique_details(details, "name")
+
+
+def _flow_names_from_lines(lines: list[str]) -> list[str]:
+    names = []
+    for line in lines:
+        if not line.strip().startswith(("-", "*")):
+            continue
+        candidate = _clean_bullet(line).split(":", 1)[0]
+        if _is_flow_name(candidate):
+            names.append(_clean_registry_name(candidate))
+    return _unique(names)
+
+
+def _extract_flow_names_from_root_lists(content: str) -> list[str]:
+    names = []
+    for section in _markdown_sections(content):
+        if _is_flow_container_title(section["title"].lower()):
+            names.extend(_flow_names_from_lines(section["lines"]))
+    names.extend(name for name in _extract_labelled_items([line.strip() for line in content.splitlines() if line.strip()], ["flows"]) if _is_flow_name(name))
+    return _unique(names)
+
+
+def _extract_component_details(content: str, source_file: str) -> list[dict[str, str]]:
+    sections = _markdown_sections(content)
+    details: list[dict[str, str]] = []
+    for section in sections:
+        if not _is_component_container_title(section["title"].lower()):
+            continue
+        for item in _extract_bullets("\n".join(section["lines"])):
+            name = _clean_registry_name(item.split(":", 1)[0])
+            if _is_component_name(name):
+                details.append({"name": name, "type": _component_type(name), "source_file": source_file})
+    labelled = _extract_labelled_items([line.strip() for line in content.splitlines() if line.strip()], ["components", "services", "systems"])
+    for name in labelled:
+        cleaned = _clean_registry_name(name)
+        if _is_component_name(cleaned):
+            details.append({"name": cleaned, "type": _component_type(cleaned), "source_file": source_file})
+    return _unique_details(details, "name")
 
 
 def _extract_labelled_items(lines: list[str], labels: list[str]) -> list[str]:
@@ -1074,13 +1386,21 @@ def _extract_labelled_items(lines: list[str], labels: list[str]) -> list[str]:
     return _unique(items)
 
 
+def _split_inline_values(value: str) -> list[str]:
+    return [_clean_registry_name(part) for part in value.replace(";", ",").split(",") if _clean_registry_name(part)]
+
+
 def _extract_bullets(content: str) -> list[str]:
     items: list[str] = []
     for line in content.splitlines():
         stripped = line.strip()
         if stripped.startswith(("-", "*")):
-            items.append(stripped.lstrip("-* ").split(":", 1)[0].strip())
+            items.append(_clean_bullet(stripped))
     return _unique(items)
+
+
+def _clean_bullet(line: str) -> str:
+    return _clean_registry_name(line.strip().lstrip("-* ").strip())
 
 
 def _extract_summary(lines: list[str]) -> str:
@@ -1116,6 +1436,207 @@ def _extract_architecture_notes(lines: list[str]) -> list[str]:
     return _unique(notes + keyword_notes)[:10]
 
 
+def _extract_standards(content: str, sections: list[str]) -> list[str]:
+    values = []
+    for section in _markdown_sections(content):
+        if any(name in section["title"].lower() for name in sections):
+            values.extend(_extract_bullets("\n".join(section["lines"])))
+    values.extend(_extract_labelled_items([line.strip() for line in content.splitlines() if line.strip()], sections))
+    values.extend(_known_standards_from_text(content))
+    return _clean_registry_names(values, kind="standard")
+
+
+def _known_standards_from_text(text: str) -> list[str]:
+    lowered = text.lower()
+    standards = []
+    mapping = {
+        "Role-based access control": ["role-based access", "rbac"],
+        "Secure communication": ["secure communication", "tls", "https"],
+        "Audit logging": ["audit logging", "audit log"],
+        "Structured logging": ["structured logging"],
+        "Input validation": ["input validation", "validate input"],
+        "Unit and integration tests": ["unit and integration", "unit tests", "integration tests"],
+        "Offline-first mobile handling": ["offline-first", "offline first"],
+        "High contrast field UI": ["high contrast"],
+        "48dp minimum touch target": ["48dp", "touch target"],
+    }
+    for label, needles in mapping.items():
+        if any(needle in lowered for needle in needles):
+            standards.append(label)
+    return standards
+
+
+def _clean_architecture_notes(notes: list[str]) -> list[str]:
+    cleaned = []
+    for note in notes:
+        value = _clean_registry_name(note)
+        if ":" in value and value.split(":", 1)[0].lower().strip() in {"architecture", "architecture notes", "notes"}:
+            value = _clean_registry_name(value.split(":", 1)[1])
+        if not value or len(value) < 12:
+            continue
+        lowered = value.lower()
+        if any(token in lowered for token in ["```", "|", "+---", "sequence diagram", "mermaid"]):
+            continue
+        if lowered.startswith(("responsibilities", "dependencies", "fields", "steps")):
+            continue
+        cleaned.append(value.rstrip(".") + ".")
+    return _unique(cleaned)[:8]
+
+
+def _architecture_summary(documents: dict[str, str], notes: list[str], stack: dict[str, list[str]]) -> str:
+    combined = "\n".join(documents.values())
+    lowered = combined.lower()
+    if "linedefender" in lowered or ("telemetry" in lowered and "fault" in lowered):
+        parts = ["The LineDefender platform is a multi-system architecture with mobile, backend, dashboard, analytics, and device telemetry integration layers"]
+        technologies = []
+        if "maui" in lowered or ".net maui" in lowered:
+            technologies.append(".NET MAUI for field mobile workflows")
+        if "asp.net" in lowered or "rest api" in lowered or "rest APIs".lower() in lowered:
+            technologies.append("ASP.NET Core REST APIs for device and telemetry services")
+        if "react" in lowered or "typescript" in lowered:
+            technologies.append("React/TypeScript for operator dashboards")
+        if "databricks" in lowered or "azure" in lowered:
+            technologies.append("Azure/Databricks for analytics")
+        if technologies:
+            parts.append("It uses " + ", ".join(technologies))
+        return ". ".join(parts).rstrip(".") + "."
+    if notes:
+        return " ".join(notes[:3])[:600]
+    stack_text = _format_stack(stack)
+    return f"Architecture uses {stack_text}." if stack_text else ""
+
+
+def _merge_stack(*stacks: Any) -> dict[str, list[str]]:
+    merged = _normalize_stack({})
+    for stack in stacks:
+        normalized = _normalize_stack(stack)
+        for category, values in normalized.items():
+            merged[category] = _unique([*merged.get(category, []), *values])
+    return merged
+
+
+def _clean_registry_names(values: list[str], kind: str) -> list[str]:
+    cleaned = []
+    for value in values:
+        name = _clean_registry_name(value)
+        if kind == "module" and not _is_module_name(name):
+            continue
+        if kind == "flow":
+            if not _is_flow_name(name):
+                continue
+        if kind == "component" and not _is_component_name(name):
+            continue
+        if kind in {"standard", "detail"} and not name:
+            continue
+        cleaned.append(name)
+    return _unique(cleaned)
+
+
+def _clean_registry_name(value: Any) -> str:
+    text = _clean_text(value)
+    text = text.strip("`| ")
+    text = text.replace("###", "").replace("##", "").replace("#", "")
+    text = text.replace("```text", "").replace("```", "")
+    text = text.strip("-*| ")
+    text = text.split("  ")[0].strip()
+    return text[:160].strip()
+
+
+def _is_module_container_title(title: str) -> bool:
+    return any(token == title or token in title for token in ["modules", "core modules", "domain modules", "application modules"])
+
+
+def _is_flow_container_title(title: str) -> bool:
+    return any(token == title or token in title for token in ["flows", "workflows", "user journeys", "scenarios"])
+
+
+def _is_component_container_title(title: str) -> bool:
+    return any(token == title or token in title for token in ["components", "services", "systems", "architecture components", "applications"])
+
+
+def _is_detail_section_title(title: str) -> bool:
+    return any(token in title for token in ["responsibilities", "dependencies", "steps", "fields", "rules"])
+
+
+def _is_module_heading(title: str) -> bool:
+    lowered = title.lower()
+    return _is_module_name(title) and not _is_detail_section_title(lowered) and "flow" not in lowered
+
+
+def _is_module_name(name: str) -> bool:
+    cleaned = _clean_registry_name(name)
+    lowered = cleaned.lower()
+    if not cleaned or len(cleaned.split()) > 5:
+        return False
+    blocked = ["token management", "identity provider", "device id", "serial number", "timestamp", "responsibilities", "dependencies", "unit tests", "input validation", "audit logging"]
+    if any(block in lowered for block in blocked):
+        return False
+    return any(word in lowered for word in ["auth", "device", "telemetry", "fault", "firmware", "asset", "report", "meter", "inventory", "billing", "outage", "monitoring", "repository"])
+
+
+def _is_flow_name(name: str) -> bool:
+    cleaned = _clean_registry_name(name)
+    lowered = cleaned.lower()
+    if not cleaned or len(cleaned.split()) > 7:
+        return False
+    if any(block in lowered for block in ["field", "timestamp", "serial number", "device id", "rules", "standards"]):
+        return False
+    return "flow" in lowered or any(word in lowered for word in ["login", "lookup", "review", "investigation", "status", "upgrade", "onboarding", "inspection", "analytics", "triage", "rollout"])
+
+
+def _is_component_name(name: str) -> bool:
+    cleaned = _clean_registry_name(name)
+    lowered = cleaned.lower()
+    if not cleaned or len(cleaned.split()) > 7:
+        return False
+    blocked = ["device id", "serial number", "timestamp", "48dp", "touch target", "high contrast", "role-based access", "input validation", "audit logging", "unit tests", "future", "risk", "goal"]
+    if any(block in lowered for block in blocked):
+        return False
+    return any(word in lowered for word in ["application", "api", "dashboard", "platform", "layer", "service", "repository", "portal", "database", "device", "integration", "screen", "timeline"])
+
+
+def _component_type(name: str) -> str:
+    lowered = name.lower()
+    if "mobile" in lowered or "application" in lowered:
+        return "application"
+    if "dashboard" in lowered or "portal" in lowered:
+        return "ui"
+    if "database" in lowered or "repository" in lowered:
+        return "database"
+    if "device" in lowered and "service" not in lowered:
+        return "device"
+    if "analytics" in lowered:
+        return "analytics"
+    if "integration" in lowered or "layer" in lowered:
+        return "integration"
+    return "service"
+
+
+def _ensure_suffix(value: str, suffix: str) -> str:
+    cleaned = _clean_registry_name(value)
+    return cleaned if not cleaned or cleaned.lower().endswith(suffix.lower()) else f"{cleaned} {suffix}"
+
+
+def _unique_details(values: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for value in values:
+        name = _clean_registry_name(value.get(key))
+        lookup = name.lower()
+        if not name or lookup in seen:
+            continue
+        seen.add(lookup)
+        next_value = {**value, key: name}
+        if "responsibilities" in next_value:
+            next_value["responsibilities"] = _unique(_string_list(next_value.get("responsibilities")))
+        if "dependencies" in next_value:
+            next_value["dependencies"] = _unique(_string_list(next_value.get("dependencies")))
+        if "steps" in next_value:
+            next_value["steps"] = _unique(_string_list(next_value.get("steps")))
+        result.append(next_value)
+    return result
+
+
 def _extract_applications_from_readme(text: str) -> list[dict[str, str]]:
     inferred = _infer_applications(text)
     return [] if inferred == [{"name": "Application", "type": "API"}] else inferred
@@ -1123,12 +1644,20 @@ def _extract_applications_from_readme(text: str) -> list[dict[str, str]]:
 
 def _merge_knowledge_registry(existing: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_knowledge_registry(existing)
+    module_details = _unique_details([*normalized["module_details"], *_normalize_module_details(analysis.get("module_details") or analysis.get("modules"))], "name")
+    flow_details = _unique_details([*normalized["flow_details"], *_normalize_flow_details(analysis.get("flow_details") or analysis.get("flows"))], "name")
+    component_details = _unique_details([*normalized["component_details"], *_normalize_component_details(analysis.get("component_details") or analysis.get("components"))], "name")
+    technology_stack = _merge_stack(normalized.get("technology_stack", {}), analysis.get("technology_stack", {}))
     return {
         "applications": _merge_applications(normalized["applications"], analysis.get("applications", [])),
-        "modules": _unique([*normalized["modules"], *_string_list(analysis.get("modules"))]),
-        "flows": _unique([*normalized["flows"], *_string_list(analysis.get("flows"))]),
-        "components": _unique([*normalized["components"], *_string_list(analysis.get("components"))]),
+        "modules": _unique([*normalized["modules"], *_registry_names(analysis.get("modules")), *[item["name"] for item in module_details]]),
+        "module_details": module_details,
+        "flows": _unique([*normalized["flows"], *_registry_names(analysis.get("flows")), *[item["name"] for item in flow_details]]),
+        "flow_details": flow_details,
+        "components": _unique([*normalized["components"], *_registry_names(analysis.get("components")), *[item["name"] for item in component_details]]),
+        "component_details": component_details,
         "architecture_notes": _unique([*normalized["architecture_notes"], *_string_list(analysis.get("architecture_notes"))]),
+        "technology_stack": technology_stack,
         "standards": _unique([*normalized["standards"], *_string_list(analysis.get("standards"))]),
         "source_files": _unique([*normalized["source_files"], *_string_list(analysis.get("source_files"))]),
     }
@@ -1966,6 +2495,18 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [_clean_text(item) for item in value if _clean_text(item)]
     return []
+
+
+def _registry_names(value: Any) -> list[str]:
+    if isinstance(value, list):
+        names = []
+        for item in value:
+            if isinstance(item, dict):
+                names.append(_clean_registry_name(item.get("name")))
+            else:
+                names.append(_clean_registry_name(item))
+        return _unique([name for name in names if name])
+    return _string_list(value)
 
 
 def _clean_text(value: Any) -> str:

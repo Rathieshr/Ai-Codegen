@@ -675,6 +675,141 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(result["parsed_response"], {"features": ["Fault Monitoring"]})
         self.assertEqual(result["latency_ms"], 123)
 
+    def test_repository_modules_store_responsibilities_and_dependencies_separately(self) -> None:
+        documents = {
+            "modules.md": """
+# Core Modules
+
+## Authentication
+### Responsibilities
+- Login
+- Token management
+- Role-based access
+### Dependencies
+- Identity Provider
+
+## Device Management
+### Responsibilities
+- Device registration
+- Device inventory
+- Device lookup
+### Dependencies
+- Device Repository
+""",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            profile = ProjectIntelligenceService().analyze_repository_documents(documents, {"repository_id": "repo-ld"})
+
+        registry = profile["knowledge_registry"]
+        self.assertIn("Authentication", registry["modules"])
+        self.assertIn("Device Management", registry["modules"])
+        self.assertNotIn("Token management", registry["modules"])
+        self.assertNotIn("Identity Provider", registry["modules"])
+        auth = next(item for item in registry["module_details"] if item["name"] == "Authentication")
+        self.assertIn("Token management", auth["responsibilities"])
+        self.assertIn("Identity Provider", auth["dependencies"])
+
+    def test_linedefender_repository_docs_produce_curated_registry(self) -> None:
+        documents = {
+            "README.md": """
+# LineDefender Smart Monitoring Platform
+LineDefender is a multi-system utility grid management platform for field mobile workflows, backend APIs, operator dashboards, analytics, and device telemetry integration.
+""",
+            "modules.md": """
+# Core Modules
+- Authentication
+- Device Management
+- Telemetry
+- Fault Monitoring
+- Firmware Management
+- Asset Health
+- Reporting
+""",
+            "flows.md": """
+# Operational Flows
+- Login Flow
+- Device Lookup Flow
+- Fault Event Review Flow
+- Device Health Review Flow
+- Firmware Status Flow
+- Outage Investigation Flow
+""",
+            "architecture.md": """
+# Architecture
+```text
+Mobile | API | Dashboard
+```
+The LineDefender platform includes a Mobile Application, Backend API, Operations Dashboard, Analytics Platform, Device / Telemetry Integration Layer, Telemetry Communication Layer, Device Services, Telemetry Service, Event Repository, Device Repository, and Device Communication Layer.
+It uses .NET MAUI for field mobile workflows, ASP.NET Core REST APIs for device and telemetry services, React/TypeScript for operator dashboards, and Azure/Databricks for analytics.
+
+# Components
+- Mobile Application
+- Backend API
+- Operations Dashboard
+- Analytics Platform
+- Device / Telemetry Integration Layer
+- Telemetry Communication Layer
+- Device Services
+- Telemetry Service
+- Event Repository
+- Device Repository
+- Device Communication Layer
+- Device ID
+- Timestamp
+""",
+            "ui-guidelines.md": """
+# UI Guidelines
+- Offline-first mobile handling
+- High contrast field UI
+- 48dp minimum touch target
+""",
+            "coding-standards.md": """
+# Coding Standards
+- Role-based access control
+- Secure communication
+- Audit logging
+- Structured logging
+- Input validation
+- Unit and integration tests
+""",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            profile = ProjectIntelligenceService().analyze_repository_documents(documents, {"repository_id": "repo-ld"})
+
+        registry = profile["knowledge_registry"]
+        for module in ["Authentication", "Device Management", "Telemetry", "Fault Monitoring", "Firmware Management", "Asset Health", "Reporting"]:
+            self.assertIn(module, registry["modules"])
+        for flow in ["Login Flow", "Device Lookup Flow", "Fault Event Review Flow", "Device Health Review Flow", "Firmware Status Flow", "Outage Investigation Flow"]:
+            self.assertIn(flow, registry["flows"])
+        for component in ["Mobile Application", "Backend API", "Operations Dashboard", "Analytics Platform", "Device / Telemetry Integration Layer", "Telemetry Service", "Event Repository", "Device Repository"]:
+            self.assertIn(component, registry["components"])
+        self.assertNotIn("Device ID", registry["components"])
+        self.assertNotIn("Timestamp", registry["components"])
+        self.assertFalse(any("```" in note or "|" in note for note in registry["architecture_notes"]))
+        self.assertIn("Role-based access control", registry["standards"])
+        self.assertIn("48dp minimum touch target", registry["standards"])
+        self.assertIn(profile["knowledge_profile_preview"]["readiness"], ["Advanced", "Execution Ready"])
+
+    def test_repository_architecture_summary_is_clean(self) -> None:
+        documents = {
+            "architecture.md": """
+# Architecture
+```text
+App | API | Database
+```
+Architecture Notes: Backend telemetry APIs publish events to the operations portal.
+- Mobile app uses MVVM.
+- Backend APIs use Repository Pattern.
+""",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            profile = ProjectIntelligenceService().analyze_repository_documents(documents, {"repository_id": "repo-ld"})
+
+        summary = profile["architecture_summary"]
+        self.assertNotIn("```", summary)
+        self.assertNotIn("|", summary)
+        self.assertIn("Backend telemetry APIs publish events to the operations portal.", profile["knowledge_registry"]["architecture_notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,8 +91,9 @@ class AzurePhiProvider:
 
         # --- Prompt length guard: skip if combined prompt is too long ---
         combined_len = len(system_prompt) + len(user_prompt)
-        if combined_len > _MAX_PROMPT_CHARS:
-            logger.warning("ai-gen phi prompt_too_long chars=%d max=%d — skipping", combined_len, _MAX_PROMPT_CHARS)
+        max_prompt_chars = _int_env("AI_GEN_REFINER_MAX_PROMPT_CHARS", _MAX_PROMPT_CHARS)
+        if combined_len > max_prompt_chars:
+            logger.warning("ai-gen phi prompt_too_long chars=%d max=%d — skipping", combined_len, max_prompt_chars)
             return self._empty_result("prompt_too_long", f"Combined prompt ({combined_len} chars) exceeds limit to avoid timeout.")
 
         request_timeout = max(1, int(timeout_seconds)) if timeout_seconds is not None else self.timeout

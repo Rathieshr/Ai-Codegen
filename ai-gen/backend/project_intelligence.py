@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -10,9 +11,14 @@ from typing import Any
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 
 
+logger = logging.getLogger("ai_gen.project_intelligence")
+
 PROJECT_CONTEXT_MIN_TOKENS = 1500
 PROJECT_CONTEXT_MAX_TOKENS = 2500
 PROJECT_CONTEXT_DEFAULT_TOKENS = 2200
+PROJECT_PHI_SYSTEM_PROMPT = "Return strict JSON only."
+PROJECT_PHI_INSTRUCTION = "Use the compact project context. Return only the requested JSON keys."
+PROJECT_PROVIDER_PROMPT_CHAR_LIMIT = 4800
 
 
 KNOWN_REPOSITORY_DOCUMENTS = [
@@ -2210,8 +2216,39 @@ def _project_phi_probe(
         metadata["fallback_reason"] = f"Azure Phi health is {health.get('health') or 'unknown'}."
         metadata = _with_context_diagnostics(metadata, context_diagnostics)
         return _fallback_or_block(metadata, force_provider, allow_fallback)
+    context_diagnostics = _with_final_prompt_diagnostics(PROJECT_PHI_SYSTEM_PROMPT, prompt, context_diagnostics)
+    if int(context_diagnostics.get("final_prompt_tokens") or 0) > int(context_diagnostics.get("model_context_limit") or 0):
+        logger.warning(
+            "project-intelligence phi blocked_by_budget_guard operation=%s final_prompt_tokens=%s model_context_limit=%s compressed_context_tokens=%s largest_sections=%s",
+            context_diagnostics.get("operation") or "unknown",
+            context_diagnostics.get("final_prompt_tokens"),
+            context_diagnostics.get("model_context_limit"),
+            context_diagnostics.get("compressed_context_tokens"),
+            context_diagnostics.get("largest_context_sections"),
+        )
+        metadata = _fallback_metadata("domain_fallback" if allow_fallback else "azure_phi", _budget_guard_reason(context_diagnostics))
+        metadata.update(_provider_status_metadata(provider, {}, health))
+        metadata.update(
+            {
+                "provider_used": "domain_fallback" if allow_fallback else "azure_phi",
+                "source": "domain_fallback" if allow_fallback else "azure_phi",
+                "phi_status": "blocked_by_budget_guard",
+                "fallback_used": allow_fallback,
+                "fallback_reason": _budget_guard_reason(context_diagnostics),
+                "prompt_too_long_stage": "before_provider_call",
+            }
+        )
+        metadata = _with_context_diagnostics(metadata, context_diagnostics)
+        return _fallback_or_block(metadata, force_provider, allow_fallback)
+    logger.info(
+        "project-intelligence phi prompt_ready final_prompt_tokens=%s model_context_limit=%s compressed_context_tokens=%s compression_ratio=%s",
+        context_diagnostics.get("final_prompt_tokens"),
+        context_diagnostics.get("model_context_limit"),
+        context_diagnostics.get("compressed_context_tokens"),
+        context_diagnostics.get("compression_ratio"),
+    )
     probe = provider.probe_json(
-        "Return strict JSON only. Do not include markdown or explanations.",
+        PROJECT_PHI_SYSTEM_PROMPT,
         prompt,
         max_tokens=900,
         response_format_enabled=False,
@@ -2238,8 +2275,17 @@ def _project_phi_probe(
             "phi_status": probe.get("failure_reason") or probe.get("status") or "unusable_response",
             "fallback_used": allow_fallback,
             "fallback_reason": probe.get("failure_message") or probe.get("parse_error") or "Azure Phi returned unusable structured output.",
+            "prompt_too_long_stage": _prompt_too_long_stage(probe),
         }
     )
+    if metadata.get("phi_status") == "prompt_too_long":
+        logger.warning(
+            "project-intelligence phi prompt_too_long_stage=%s final_prompt_tokens=%s model_context_limit=%s fallback_reason=%s",
+            metadata.get("prompt_too_long_stage"),
+            metadata.get("final_prompt_tokens"),
+            metadata.get("model_context_limit"),
+            metadata.get("fallback_reason"),
+        )
     return _fallback_or_block(metadata, force_provider, allow_fallback)
 
 
@@ -2277,18 +2323,88 @@ def _project_phi_prompt_with_diagnostics(
     deterministic: dict[str, Any],
     expected_keys: list[str],
 ) -> tuple[str, dict[str, Any]]:
-    project_context, diagnostics = _budgeted_project_context(operation, profile, item)
-    return json.dumps(
-        {
+    budget_tokens = _context_budget_tokens()
+    raw_context = _project_summary_context(operation, profile, item, compression_level=0)
+    raw_context_tokens = _estimate_tokens(json.dumps(raw_context, ensure_ascii=True, separators=(",", ":")))
+    selected_prompt = ""
+    selected_diagnostics: dict[str, Any] = {}
+    for level in [0, 1, 2, 3, 4]:
+        project_context = _project_summary_context(operation, profile, item, compression_level=level)
+        payload = _project_phi_payload(operation, expected_keys, project_context, item, deterministic, compression_level=level)
+        prompt = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+        context_tokens = _estimate_tokens(json.dumps(project_context, ensure_ascii=True, separators=(",", ":")))
+        diagnostics = {
             "operation": operation,
-            "expected_json_keys": expected_keys,
-            "project_context": project_context,
-            "input": item,
-            "deterministic_draft": deterministic,
-            "instruction": "Return only strict JSON. Improve specificity using the project context. Keep exactly the expected keys where possible.",
-        },
-        ensure_ascii=True,
-    ), diagnostics
+            "original_context_tokens": raw_context_tokens,
+            "compressed_context_tokens": context_tokens,
+            "context_size": raw_context_tokens,
+            "context_after_compression": context_tokens,
+            "tokens_sent": _estimate_tokens(prompt),
+            "configured_budget_tokens": budget_tokens,
+            "context_budget_tokens": budget_tokens,
+            "compression_applied": level > 0 or context_tokens < raw_context_tokens,
+            "compression_ratio": round(context_tokens / max(raw_context_tokens, 1), 3),
+            "context_compression_level": level,
+        }
+        diagnostics.update(_section_diagnostics(payload))
+        diagnostics = _with_final_prompt_diagnostics(PROJECT_PHI_SYSTEM_PROMPT, prompt, diagnostics)
+        selected_prompt = prompt
+        selected_diagnostics = diagnostics
+        if diagnostics["final_prompt_tokens"] <= diagnostics["model_context_limit"]:
+            break
+    return selected_prompt, selected_diagnostics
+
+
+def _project_phi_payload(
+    operation: str,
+    expected_keys: list[str],
+    project_context: dict[str, Any],
+    item: dict[str, Any],
+    deterministic: dict[str, Any],
+    compression_level: int = 0,
+) -> dict[str, Any]:
+    return {
+        "operation": operation,
+        "expected_json_keys": expected_keys,
+        "project_context": project_context,
+        "input": _compact_input_item(item),
+        "draft": _compact_deterministic_draft(deterministic, compression_level),
+        "instruction": PROJECT_PHI_INSTRUCTION,
+    }
+
+
+def _compact_input_item(item: dict[str, Any]) -> dict[str, Any]:
+    compacted: dict[str, Any] = {}
+    for key in ["id", "type", "title", "description", "acceptance_criteria", "state", "tags"]:
+        value = item.get(key)
+        if isinstance(value, str):
+            compacted[key] = _truncate_text(value, 700 if key == "description" else 300)
+        elif isinstance(value, list):
+            compacted[key] = [_truncate_text(entry, 220) for entry in value[:8]]
+        elif value not in (None, "", [], {}):
+            compacted[key] = value
+    return compacted
+
+
+def _compact_deterministic_draft(deterministic: dict[str, Any], compression_level: int = 0) -> dict[str, Any]:
+    compacted: dict[str, Any] = {}
+    for key, value in deterministic.items():
+        compacted[key] = _compact_draft_value(value, compression_level)
+    return compacted
+
+
+def _compact_draft_value(value: Any, compression_level: int = 0) -> Any:
+    string_limits = [900, 650, 420, 260, 160]
+    list_limits = [8, 6, 5, 3, 2]
+    dict_limits = [12, 10, 8, 6, 4]
+    level = min(compression_level, 4)
+    if isinstance(value, str):
+        return _truncate_text(value, string_limits[level])
+    if isinstance(value, list):
+        return [_compact_draft_value(item, compression_level) for item in value[: list_limits[level]]]
+    if isinstance(value, dict):
+        return {key: _compact_draft_value(item, compression_level) for key, item in list(value.items())[: dict_limits[level]]}
+    return value
 
 
 def _budgeted_project_context(operation: str, profile: dict[str, Any], item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -2320,10 +2436,10 @@ def _budgeted_project_context(operation: str, profile: dict[str, Any], item: dic
 def _project_summary_context(operation: str, profile: dict[str, Any], item: dict[str, Any], compression_level: int) -> dict[str, Any]:
     registry = _normalize_knowledge_registry(profile.get("knowledge_registry", {}))
     selected = _select_semantic_registry_context(operation, item, profile, registry, compression_level)
-    description_limits = [900, 650, 420, 260]
-    architecture_limits = [650, 450, 280, 180]
-    standards_limits = [8, 6, 4, 3]
-    source_limits = [8, 5, 3, 0]
+    description_limits = [900, 650, 420, 260, 140]
+    architecture_limits = [650, 450, 280, 180, 90]
+    standards_limits = [8, 6, 4, 3, 1]
+    source_limits = [8, 5, 3, 0, 0]
     return {
         "project_name": profile.get("project_name"),
         "domain": profile.get("domain"),
@@ -2385,8 +2501,8 @@ def _semantic_limits(operation: str, compression_level: int) -> dict[str, int]:
         base = {"modules": 8, "module_details": 6, "flows": 8, "flow_details": 6, "components": 8, "component_details": 6}
     else:
         base = {"modules": 6, "module_details": 5, "flows": 6, "flow_details": 5, "components": 6, "component_details": 5}
-    reductions = [1.0, 0.7, 0.45, 0.28]
-    factor = reductions[min(compression_level, 3)]
+    reductions = [1.0, 0.7, 0.45, 0.28, 0.16]
+    factor = reductions[min(compression_level, 4)]
     return {key: max(1, int(value * factor)) for key, value in base.items()}
 
 
@@ -2469,6 +2585,81 @@ def _estimate_tokens(text: str) -> int:
     return max(1, (len(text) + 3) // 4)
 
 
+def _with_final_prompt_diagnostics(system_prompt: str, user_prompt: str, diagnostics: dict[str, Any] | None) -> dict[str, Any]:
+    updated = dict(diagnostics or {})
+    system_tokens = _estimate_tokens(system_prompt)
+    user_tokens = _estimate_tokens(user_prompt)
+    output_schema_tokens = _estimate_tokens(_clean_text(updated.get("output_schema_preview")))
+    final_tokens = system_tokens + user_tokens
+    updated.update(
+        {
+            "system_prompt_tokens": system_tokens,
+            "user_prompt_tokens": user_tokens,
+            "output_schema_tokens": output_schema_tokens,
+            "final_prompt_tokens": final_tokens,
+            "model_context_limit": _model_context_limit_tokens(),
+            "final_prompt_preview": user_prompt[:900],
+        }
+    )
+    return updated
+
+
+def _section_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+    sections = {
+        "project_context": payload.get("project_context", {}),
+        "input": payload.get("input", {}),
+        "draft": payload.get("draft", {}),
+        "expected_json_keys": payload.get("expected_json_keys", []),
+        "instruction": payload.get("instruction", ""),
+    }
+    section_tokens = {
+        key: _estimate_tokens(json.dumps(value, ensure_ascii=True, separators=(",", ":")))
+        for key, value in sections.items()
+    }
+    largest = sorted(section_tokens.items(), key=lambda item: item[1], reverse=True)[:5]
+    return {
+        "largest_context_sections": [{"section": key, "tokens": tokens} for key, tokens in largest],
+        "output_schema_preview": json.dumps(payload.get("expected_json_keys", []), ensure_ascii=True),
+    }
+
+
+def _model_context_limit_tokens() -> int:
+    provider_char_limit = _provider_prompt_char_limit()
+    env_limit = os.getenv("AI_GEN_PROJECT_MODEL_CONTEXT_TOKENS")
+    try:
+        configured = int(env_limit) if env_limit else 0
+    except ValueError:
+        configured = 0
+    provider_token_limit = max(1, provider_char_limit // 4)
+    return min(configured, provider_token_limit) if configured else provider_token_limit
+
+
+def _provider_prompt_char_limit() -> int:
+    try:
+        return max(1, int(os.getenv("AI_GEN_REFINER_MAX_PROMPT_CHARS", str(PROJECT_PROVIDER_PROMPT_CHAR_LIMIT))))
+    except ValueError:
+        return PROJECT_PROVIDER_PROMPT_CHAR_LIMIT
+
+
+def _budget_guard_reason(diagnostics: dict[str, Any]) -> str:
+    largest = diagnostics.get("largest_context_sections") or []
+    section = largest[0] if largest and isinstance(largest[0], dict) else {}
+    section_label = section.get("section") or "unknown"
+    return (
+        "Project Intelligence Phi prompt blocked before provider call: "
+        f"final_prompt_tokens={diagnostics.get('final_prompt_tokens')} exceeds "
+        f"model_context_limit={diagnostics.get('model_context_limit')}. "
+        f"Largest section: {section_label}."
+    )
+
+
+def _prompt_too_long_stage(probe: dict[str, Any]) -> str:
+    status = probe.get("failure_reason") or probe.get("status")
+    if status == "prompt_too_long":
+        return "provider_request_validation"
+    return ""
+
+
 def _compact_stack(profile: dict[str, Any]) -> dict[str, list[str]]:
     registry = profile.get("knowledge_registry", {}) if isinstance(profile.get("knowledge_registry"), dict) else {}
     return _merge_stack(profile.get("technology_stack", {}), registry.get("technology_stack", {}))
@@ -2544,7 +2735,7 @@ def _provider_status_metadata(provider: Any, probe: dict[str, Any], health: dict
     return {
         "provider_used": "azure_phi",
         "source": "azure_phi",
-        "phi_status": probe.get("status") or probe.get("failure_reason") or "unknown",
+        "phi_status": probe.get("failure_reason") or probe.get("status") or "unknown",
         "fallback_used": False,
         "fallback_reason": "",
         "phi_latency_ms": int(probe.get("elapsed_ms") or 0),

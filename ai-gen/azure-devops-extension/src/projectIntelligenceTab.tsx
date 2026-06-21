@@ -109,6 +109,18 @@ type ProviderMetadata = {
   context_budget_tokens?: number;
   compression_ratio?: number;
   context_compression_level?: number;
+  original_context_tokens?: number;
+  compressed_context_tokens?: number;
+  system_prompt_tokens?: number;
+  user_prompt_tokens?: number;
+  output_schema_tokens?: number;
+  final_prompt_tokens?: number;
+  model_context_limit?: number;
+  configured_budget_tokens?: number;
+  compression_applied?: boolean;
+  largest_context_sections?: Array<{ section?: string; tokens?: number }>;
+  final_prompt_preview?: string;
+  prompt_too_long_stage?: string;
 };
 
 type ProjectProfile = {
@@ -2213,6 +2225,13 @@ function ProjectIntelligenceProviderDiagnostics({ metadata }: { metadata?: Provi
         <Row label="Context After Compression" value={formatNumber(metadata?.context_after_compression)} />
         <Row label="Tokens Sent" value={metadata?.tokens_sent ? `${metadata.tokens_sent} / ${metadata.context_budget_tokens || 2500}` : 'n/a'} />
         <Row label="Compression Ratio" value={metadata?.compression_ratio !== undefined ? `${Math.round(metadata.compression_ratio * 100)}%` : 'n/a'} />
+        <Row label="Final Prompt Tokens" value={metadata?.final_prompt_tokens ? `${metadata.final_prompt_tokens} / ${metadata.model_context_limit || 'n/a'}` : 'n/a'} />
+        <Row label="System Prompt Tokens" value={formatNumber(metadata?.system_prompt_tokens)} />
+        <Row label="User Prompt Tokens" value={formatNumber(metadata?.user_prompt_tokens)} />
+        <Row label="Compression Applied" value={metadata?.compression_applied === undefined ? 'n/a' : metadata.compression_applied ? 'Yes' : 'No'} />
+        <Row label="Largest Sections" value={formatLargestSections(metadata?.largest_context_sections)} />
+        <Row label="Prompt Too Long Stage" value={metadata?.prompt_too_long_stage || 'n/a'} />
+        <Row label="Final Prompt Preview" value={metadata?.final_prompt_preview ? metadata.final_prompt_preview.slice(0, 240) : 'n/a'} />
         <Row label="Fallback Reason" value={String(metadata?.fallback_reason || 'n/a')} />
       </div>
     </details>
@@ -3100,6 +3119,13 @@ function latestProviderMetadata(items: Array<ProviderMetadata | undefined>): Pro
 
 function formatNumber(value?: number): string {
   return value === undefined || value === null ? 'n/a' : value.toLocaleString();
+}
+
+function formatLargestSections(sections?: Array<{ section?: string; tokens?: number }>): string {
+  if (!sections?.length) {
+    return 'n/a';
+  }
+  return sections.map((item) => `${item.section || 'unknown'} ${item.tokens || 0}`).join(', ');
 }
 
 function sourceLabel(source?: string): string {

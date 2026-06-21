@@ -59,6 +59,18 @@ class FailingPhiProvider(HealthyPhiProvider):
         }
 
 
+class RecordingPhiProvider(HealthyPhiProvider):
+    def __init__(self, parsed: dict | None = None) -> None:
+        super().__init__(parsed)
+        self.system_prompt = ""
+        self.user_prompt = ""
+
+    def probe_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        return super().probe_json(system_prompt, user_prompt, **kwargs)
+
+
 class UnhealthyPhiProvider(HealthyPhiProvider):
     def health_snapshot(self) -> dict:
         return {
@@ -767,6 +779,8 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertLessEqual(diagnostics["tokens_sent"], 2500)
         self.assertLessEqual(diagnostics["context_after_compression"], diagnostics["context_size"])
         self.assertLessEqual(diagnostics["compression_ratio"], 1)
+        self.assertLessEqual(diagnostics["final_prompt_tokens"], diagnostics["model_context_limit"])
+        self.assertIn("largest_context_sections", diagnostics)
         self.assertIn("project_summary", prompt)
         self.assertIn("Fault Monitoring", prompt)
         self.assertIn("Fault Event Review", prompt)
@@ -793,8 +807,82 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("context_size", refined)
         self.assertIn("context_after_compression", refined)
         self.assertIn("tokens_sent", refined)
+        self.assertIn("final_prompt_tokens", refined)
+        self.assertIn("largest_context_sections", refined)
         self.assertIn("compression_ratio", refined)
         self.assertLessEqual(refined["tokens_sent"], 2500)
+
+    def test_refine_epic_final_phi_prompt_uses_compressed_context(self) -> None:
+        provider = RecordingPhiProvider({"business_goal": "Phi goal", "recommended_features": []})
+        profile = {
+            "project_description": "LineDefender monitors fault events and telemetry. " * 120,
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", *[f"Raw Module {index}" for index in range(80)]],
+                "module_details": [
+                    {
+                        "name": "Fault Monitoring" if index == 0 else f"Raw Module {index}",
+                        "responsibilities": [f"Responsibility {inner}" for inner in range(20)],
+                        "dependencies": [f"Dependency {inner}" for inner in range(20)],
+                    }
+                    for index in range(80)
+                ],
+                "flows": ["Fault Event Review", *[f"Raw Flow {index}" for index in range(80)]],
+                "flow_details": [{"name": f"Raw Flow {index}", "steps": [f"Step {inner}" for inner in range(20)]} for index in range(80)],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            result = ProjectIntelligenceService().refine_epic({"title": "Improve Fault Event Monitoring"}, profile)
+
+        self.assertEqual(provider.calls, 1)
+        self.assertLessEqual(len(provider.system_prompt) + len(provider.user_prompt), 4800)
+        self.assertIn("Fault Monitoring", provider.user_prompt)
+        self.assertNotIn("Raw Module 79", provider.user_prompt)
+        self.assertEqual(result["phi_status"], "success")
+
+    def test_build_execution_context_uses_budget_manager(self) -> None:
+        provider = RecordingPhiProvider({"story_summary": "Phi execution story", "implementation_tasks": ["Implement fault details"]})
+        profile = {
+            "project_description": "LineDefender platform. " * 100,
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", *[f"Module {index}" for index in range(70)]],
+                "flows": ["Fault Event Review", *[f"Flow {index}" for index in range(70)]],
+                "architecture_notes": ["Architecture note. " * 100],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            result = ProjectIntelligenceService().build_execution_context({"title": "Display Fault Event Details"}, profile)
+
+        self.assertEqual(provider.calls, 1)
+        self.assertLessEqual(len(provider.system_prompt) + len(provider.user_prompt), 4800)
+        self.assertIn("final_prompt_tokens", result)
+        self.assertNotEqual(result["phi_status"], "prompt_too_long")
+
+    def test_budget_guard_blocks_before_provider_when_final_prompt_exceeds_limit(self) -> None:
+        provider = RecordingPhiProvider({"story_summary": "Should not be called"})
+        profile = {
+            "project_description": "Fault monitoring platform.",
+            "knowledge_registry": {"modules": ["Fault Monitoring"], "flows": ["Fault Event Review"]},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1", "AI_GEN_REFINER_MAX_PROMPT_CHARS": "400"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            result = ProjectIntelligenceService().refine_story({"title": "Display Fault Event Details"}, profile)
+
+        self.assertEqual(provider.calls, 0)
+        self.assertEqual(result["phi_status"], "blocked_by_budget_guard")
+        self.assertEqual(result["prompt_too_long_stage"], "before_provider_call")
+        self.assertIn("final_prompt_tokens", result)
+        self.assertIn("Largest section", result["fallback_reason"])
 
     def test_repository_modules_store_responsibilities_and_dependencies_separately(self) -> None:
         documents = {

@@ -553,6 +553,58 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertFalse(refined["fallback_used"])
         self.assertEqual(refined["business_goal"], "Phi goal")
 
+    def test_refine_epic_uses_phi_by_default_when_provider_is_healthy(self) -> None:
+        provider = HealthyPhiProvider()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir},
+            clear=False,
+        ), patch.dict(os.environ, {"AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": ""}, clear=False), patch(
+            "backend.project_intelligence.get_refinement_provider",
+            return_value=provider,
+        ):
+            os.environ.pop("AI_GEN_PROJECT_INTELLIGENCE_USE_PHI", None)
+            service = ProjectIntelligenceService()
+            refined = service.refine_epic({"title": "Improve Device Monitoring"}, {"project_description": "Fault monitoring platform."})
+
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(refined["provider_used"], "azure_phi")
+        self.assertEqual(refined["phi_status"], "success")
+
+    def test_project_intelligence_phi_can_be_disabled_explicitly(self) -> None:
+        provider = HealthyPhiProvider()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "0"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            service = ProjectIntelligenceService()
+            refined = service.refine_epic({"title": "Improve Device Monitoring"}, {"project_description": "Fault monitoring platform."})
+
+        self.assertEqual(provider.calls, 0)
+        self.assertEqual(refined["provider_used"], "domain_fallback")
+        self.assertEqual(refined["phi_status"], "skipped")
+        self.assertIn("disabled", refined["fallback_reason"])
+
+    def test_execution_package_builders_use_phi_when_available(self) -> None:
+        provider = HealthyPhiProvider({"prompt": "Phi generated UI prompt"})
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir},
+            clear=False,
+        ), patch.dict(os.environ, {"AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": ""}, clear=False), patch(
+            "backend.project_intelligence.get_refinement_provider",
+            return_value=provider,
+        ):
+            os.environ.pop("AI_GEN_PROJECT_INTELLIGENCE_USE_PHI", None)
+            service = ProjectIntelligenceService()
+            prompt = service.build_ui_prompt({"title": "Display Fault Event Details"}, {"project_description": "Fault monitoring platform."})
+
+        self.assertGreaterEqual(provider.calls, 1)
+        self.assertEqual(prompt["provider_used"], "azure_phi")
+        self.assertEqual(prompt["phi_status"], "success")
+        self.assertEqual(prompt["prompt"], "Phi generated UI prompt")
+
     def test_refine_epic_falls_back_when_phi_unhealthy(self) -> None:
         provider = UnhealthyPhiProvider()
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(

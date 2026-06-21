@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from backend.project_intelligence import ProjectIntelligenceService
+from backend.project_intelligence import ProjectIntelligenceService, _project_phi_prompt, _project_phi_prompt_with_diagnostics
 
 
 class HealthyPhiProvider:
@@ -674,6 +674,127 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(result["phi_status"], "success")
         self.assertEqual(result["parsed_response"], {"features": ["Fault Monitoring"]})
         self.assertEqual(result["latency_ms"], 123)
+
+    def test_project_phi_prompt_compacts_large_knowledge_registry(self) -> None:
+        large_profile = {
+            "project_name": "LineDefender",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "Project context. " * 400,
+            "applications": [{"name": "Mobile App", "type": "Mobile"}],
+            "technology_stack": {"mobile": [".NET MAUI"], "backend": ["ASP.NET Core"]},
+            "development_standards": {"coding_guidelines": [f"Guideline {index}" for index in range(40)]},
+            "ui_guidelines": {"accessibility_rules": [f"UI rule {index}" for index in range(40)]},
+            "readme_analysis": {"architecture_notes": ["Architecture note. " * 100 for _ in range(10)]},
+            "knowledge_registry": {
+                "modules": [f"Module {index}" for index in range(60)],
+                "module_details": [
+                    {
+                        "name": f"Module {index}",
+                        "responsibilities": [f"Responsibility {inner}" for inner in range(20)],
+                        "dependencies": [f"Dependency {inner}" for inner in range(20)],
+                        "source_file": "modules.md",
+                    }
+                    for index in range(60)
+                ],
+                "flows": [f"Flow {index}" for index in range(60)],
+                "flow_details": [{"name": f"Flow {index}", "steps": [f"Step {inner}" for inner in range(20)]} for index in range(60)],
+                "components": [f"Component {index}" for index in range(60)],
+                "component_details": [{"name": f"Component {index}", "type": "service"} for index in range(60)],
+                "architecture_notes": ["Registry architecture note. " * 100 for _ in range(20)],
+                "standards": [f"Standard {index}" for index in range(60)],
+                "source_files": [f"docs/file-{index}.md" for index in range(60)],
+            },
+        }
+
+        prompt = _project_phi_prompt(
+            "refine_story",
+            large_profile,
+            {"title": "Display Fault Event Details"},
+            {"story_summary": "Draft", "acceptance_criteria": []},
+            ["story_summary", "acceptance_criteria"],
+        )
+
+        self.assertLess(len(prompt), 12000)
+        self.assertIn("Module 0", prompt)
+        self.assertNotIn("Module 40", prompt)
+        self.assertNotIn("Responsibility 19", prompt)
+        self.assertNotIn("docs/file-40.md", prompt)
+
+    def test_context_budget_manager_summarizes_before_phi(self) -> None:
+        large_profile = {
+            "project_name": "LineDefender",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "LineDefender monitors grid assets, outage events, telemetry, firmware, and field workflows. " * 180,
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Operations Portal", "type": "Web Portal"}],
+            "technology_stack": {"mobile": [".NET MAUI"], "backend": ["ASP.NET Core"], "analytics": ["Power BI"]},
+            "development_standards": {"coding_guidelines": [f"Guideline {index}" for index in range(60)]},
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Firmware Management", *[f"Module {index}" for index in range(80)]],
+                "module_details": [
+                    {
+                        "name": "Fault Monitoring" if index == 0 else f"Module {index}",
+                        "responsibilities": [f"Fault event responsibility {inner}" for inner in range(20)],
+                        "dependencies": [f"Telemetry dependency {inner}" for inner in range(20)],
+                    }
+                    for index in range(80)
+                ],
+                "flows": ["Fault Event Review", "Outage Investigation", *[f"Flow {index}" for index in range(80)]],
+                "flow_details": [
+                    {
+                        "name": "Fault Event Review" if index == 0 else f"Flow {index}",
+                        "steps": [f"Review fault event step {inner}" for inner in range(20)],
+                    }
+                    for index in range(80)
+                ],
+                "components": [f"Component {index}" for index in range(80)],
+                "component_details": [{"name": f"Component {index}", "type": "service"} for index in range(80)],
+                "architecture_notes": ["Architecture note for telemetry and fault analysis. " * 120 for _ in range(20)],
+                "standards": [f"Standard {index}" for index in range(80)],
+                "source_files": [f"docs/file-{index}.md" for index in range(80)],
+            },
+        }
+
+        prompt, diagnostics = _project_phi_prompt_with_diagnostics(
+            "refine_story",
+            large_profile,
+            {"title": "Display Fault Event Details", "description": "Show telemetry and outage context for a fault event."},
+            {"story_summary": "Draft", "acceptance_criteria": []},
+            ["story_summary", "acceptance_criteria"],
+        )
+
+        self.assertLessEqual(diagnostics["tokens_sent"], 2500)
+        self.assertLessEqual(diagnostics["context_after_compression"], diagnostics["context_size"])
+        self.assertLessEqual(diagnostics["compression_ratio"], 1)
+        self.assertIn("project_summary", prompt)
+        self.assertIn("Fault Monitoring", prompt)
+        self.assertIn("Fault Event Review", prompt)
+        self.assertNotIn("Module 79", prompt)
+
+    def test_project_phi_metadata_includes_context_diagnostics(self) -> None:
+        provider = HealthyPhiProvider({"story_summary": "Phi story", "acceptance_criteria": ["AC 1"]})
+        profile = {
+            "project_description": "Fault monitoring platform.",
+            "knowledge_registry": {
+                "modules": [f"Module {index}" for index in range(50)],
+                "flows": [f"Flow {index}" for index in range(50)],
+                "architecture_notes": ["Architecture note. " * 80],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            refined = ProjectIntelligenceService().refine_story({"title": "Display Fault Event Details"}, profile)
+
+        self.assertEqual(refined["provider_used"], "azure_phi")
+        self.assertIn("context_size", refined)
+        self.assertIn("context_after_compression", refined)
+        self.assertIn("tokens_sent", refined)
+        self.assertIn("compression_ratio", refined)
+        self.assertLessEqual(refined["tokens_sent"], 2500)
 
     def test_repository_modules_store_responsibilities_and_dependencies_separately(self) -> None:
         documents = {

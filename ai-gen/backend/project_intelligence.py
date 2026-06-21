@@ -10,6 +10,11 @@ from typing import Any
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 
 
+PROJECT_CONTEXT_MIN_TOKENS = 1500
+PROJECT_CONTEXT_MAX_TOKENS = 2500
+PROJECT_CONTEXT_DEFAULT_TOKENS = 2200
+
+
 KNOWN_REPOSITORY_DOCUMENTS = [
     "README.md",
     "docs/README.md",
@@ -2150,11 +2155,16 @@ def _project_phi_json(
     options: dict[str, Any] | None,
     expected_keys: list[str],
 ) -> dict[str, Any]:
-    prompt = _project_phi_prompt(operation, profile, item, deterministic, expected_keys)
-    return _project_phi_probe(prompt, options, expected_keys=expected_keys)
+    prompt, context_diagnostics = _project_phi_prompt_with_diagnostics(operation, profile, item, deterministic, expected_keys)
+    return _project_phi_probe(prompt, options, expected_keys=expected_keys, context_diagnostics=context_diagnostics)
 
 
-def _project_phi_probe(prompt: str, options: dict[str, Any] | None, expected_keys: list[str] | None = None) -> dict[str, Any]:
+def _project_phi_probe(
+    prompt: str,
+    options: dict[str, Any] | None,
+    expected_keys: list[str] | None = None,
+    context_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     options = options or {}
     force_provider = _clean_text(options.get("force_provider"))
     allow_fallback = bool(options.get("allow_fallback", True))
@@ -2164,14 +2174,14 @@ def _project_phi_probe(prompt: str, options: dict[str, Any] | None, expected_key
             "used": False,
             "blocked": False,
             "parsed": {},
-            "metadata": _fallback_metadata("deterministic_fallback", "deterministic_only mode selected."),
+            "metadata": _with_context_diagnostics(_fallback_metadata("deterministic_fallback", "deterministic_only mode selected."), context_diagnostics),
         }
     if force_provider == "domain_fallback":
         return {
             "used": False,
             "blocked": False,
             "parsed": {},
-            "metadata": _fallback_metadata("domain_fallback", "domain_fallback provider was forced."),
+            "metadata": _with_context_diagnostics(_fallback_metadata("domain_fallback", "domain_fallback provider was forced."), context_diagnostics),
         }
     use_phi = force_provider == "azure_phi" or _project_phi_enabled_by_default()
     if not use_phi:
@@ -2179,12 +2189,16 @@ def _project_phi_probe(prompt: str, options: dict[str, Any] | None, expected_key
             "used": False,
             "blocked": False,
             "parsed": {},
-            "metadata": _fallback_metadata("domain_fallback", "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI disabled Project Intelligence Phi calls."),
+            "metadata": _with_context_diagnostics(
+                _fallback_metadata("domain_fallback", "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI disabled Project Intelligence Phi calls."),
+                context_diagnostics,
+            ),
         }
     provider = get_refinement_provider()
     if provider is None or not provider.is_enabled():
         metadata = _fallback_metadata("deterministic_fallback", "Azure Phi provider is not configured.")
         metadata["phi_status"] = "not_configured"
+        metadata = _with_context_diagnostics(metadata, context_diagnostics)
         return _fallback_or_block(metadata, force_provider, allow_fallback)
     health = provider.health_snapshot() if hasattr(provider, "health_snapshot") else {}
     if force_provider != "azure_phi" and health.get("health") != "healthy":
@@ -2194,6 +2208,7 @@ def _project_phi_probe(prompt: str, options: dict[str, Any] | None, expected_key
         metadata["source"] = "domain_fallback"
         metadata["fallback_used"] = True
         metadata["fallback_reason"] = f"Azure Phi health is {health.get('health') or 'unknown'}."
+        metadata = _with_context_diagnostics(metadata, context_diagnostics)
         return _fallback_or_block(metadata, force_provider, allow_fallback)
     probe = provider.probe_json(
         "Return strict JSON only. Do not include markdown or explanations.",
@@ -2204,7 +2219,7 @@ def _project_phi_probe(prompt: str, options: dict[str, Any] | None, expected_key
     )
     parsed = probe.get("parsed_json") if isinstance(probe.get("parsed_json"), dict) else {}
     has_expected = bool(parsed) and (not expected_keys or any(key in parsed for key in expected_keys))
-    metadata = _provider_status_metadata(provider, probe, health)
+    metadata = _with_context_diagnostics(_provider_status_metadata(provider, probe, health), context_diagnostics)
     if has_expected:
         metadata.update(
             {
@@ -2251,28 +2266,274 @@ def _project_phi_prompt(
     deterministic: dict[str, Any],
     expected_keys: list[str],
 ) -> str:
+    prompt, _diagnostics = _project_phi_prompt_with_diagnostics(operation, profile, item, deterministic, expected_keys)
+    return prompt
+
+
+def _project_phi_prompt_with_diagnostics(
+    operation: str,
+    profile: dict[str, Any],
+    item: dict[str, Any],
+    deterministic: dict[str, Any],
+    expected_keys: list[str],
+) -> tuple[str, dict[str, Any]]:
+    project_context, diagnostics = _budgeted_project_context(operation, profile, item)
     return json.dumps(
         {
             "operation": operation,
             "expected_json_keys": expected_keys,
-            "project_context": {
-                "project_name": profile.get("project_name"),
-                "domain": profile.get("domain"),
-                "project_type": profile.get("project_type"),
-                "description": profile.get("project_description"),
-                "applications": profile.get("applications"),
-                "technology_stack": profile.get("technology_stack"),
-                "development_standards": profile.get("development_standards"),
-                "ui_guidelines": profile.get("ui_guidelines"),
-                "knowledge_registry": profile.get("knowledge_registry"),
-                "architecture_notes": profile.get("readme_analysis", {}).get("architecture_notes", []),
-            },
+            "project_context": project_context,
             "input": item,
             "deterministic_draft": deterministic,
             "instruction": "Return only strict JSON. Improve specificity using the project context. Keep exactly the expected keys where possible.",
         },
         ensure_ascii=True,
-    )
+    ), diagnostics
+
+
+def _budgeted_project_context(operation: str, profile: dict[str, Any], item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    budget_tokens = _context_budget_tokens()
+    raw_context = _project_summary_context(operation, profile, item, compression_level=0)
+    raw_tokens = _estimate_tokens(json.dumps(raw_context, ensure_ascii=True))
+    compressed_context = raw_context
+    compression_level = 0
+    compressed_tokens = raw_tokens
+    for level in [0, 1, 2, 3]:
+        candidate = _project_summary_context(operation, profile, item, compression_level=level)
+        candidate_tokens = _estimate_tokens(json.dumps(candidate, ensure_ascii=True))
+        compressed_context = candidate
+        compressed_tokens = candidate_tokens
+        compression_level = level
+        if candidate_tokens <= budget_tokens:
+            break
+    diagnostics = {
+        "context_size": raw_tokens,
+        "context_after_compression": compressed_tokens,
+        "tokens_sent": compressed_tokens,
+        "context_budget_tokens": budget_tokens,
+        "compression_ratio": round(compressed_tokens / max(raw_tokens, 1), 3),
+        "context_compression_level": compression_level,
+    }
+    return compressed_context, diagnostics
+
+
+def _project_summary_context(operation: str, profile: dict[str, Any], item: dict[str, Any], compression_level: int) -> dict[str, Any]:
+    registry = _normalize_knowledge_registry(profile.get("knowledge_registry", {}))
+    selected = _select_semantic_registry_context(operation, item, profile, registry, compression_level)
+    description_limits = [900, 650, 420, 260]
+    architecture_limits = [650, 450, 280, 180]
+    standards_limits = [8, 6, 4, 3]
+    source_limits = [8, 5, 3, 0]
+    return {
+        "project_name": profile.get("project_name"),
+        "domain": profile.get("domain"),
+        "project_type": profile.get("project_type"),
+        "description": _truncate_text(profile.get("project_description"), description_limits[min(compression_level, 3)]),
+        "project_summary": {
+            "applications": profile.get("applications") or registry.get("applications"),
+            "top_modules": selected["modules"],
+            "top_flows": selected["flows"],
+            "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), architecture_limits[min(compression_level, 3)]),
+        },
+        "technology_stack": _compact_stack(profile),
+        "development_standards": _compact_development_standards(profile.get("development_standards", {}), registry),
+        "ui_guidelines": _compact_ui_guidelines(profile.get("ui_guidelines", {}), registry),
+        "knowledge_registry": {
+            "modules": selected["modules"],
+            "module_details": selected["module_details"],
+            "flows": selected["flows"],
+            "flow_details": selected["flow_details"],
+            "components": selected["components"],
+            "component_details": selected["component_details"],
+            "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), architecture_limits[min(compression_level, 3)]),
+            "standards": registry["standards"][: standards_limits[min(compression_level, 3)]],
+            "source_files": registry["source_files"][: source_limits[min(compression_level, 3)]],
+        },
+    }
+
+
+def _select_semantic_registry_context(
+    operation: str,
+    item: dict[str, Any],
+    profile: dict[str, Any],
+    registry: dict[str, Any],
+    compression_level: int,
+) -> dict[str, Any]:
+    terms = _semantic_context_terms(operation, item, profile)
+    limits = _semantic_limits(operation, compression_level)
+    modules = _rank_by_semantic_match(registry["modules"], terms)[: limits["modules"]]
+    flows = _rank_by_semantic_match(registry["flows"], terms)[: limits["flows"]]
+    components = _rank_by_semantic_match(registry["components"], terms)[: limits["components"]]
+    module_details = _matching_details(registry["module_details"], modules, terms, limits["module_details"], detail_keys=["responsibilities", "dependencies"])
+    flow_details = _matching_details(registry["flow_details"], flows, terms, limits["flow_details"], detail_keys=["steps"])
+    component_details = _matching_details(registry["component_details"], components, terms, limits["component_details"], detail_keys=[])
+    return {
+        "modules": modules,
+        "module_details": module_details,
+        "flows": flows,
+        "flow_details": flow_details,
+        "components": components,
+        "component_details": component_details,
+    }
+
+
+def _semantic_limits(operation: str, compression_level: int) -> dict[str, int]:
+    operation_key = _clean_text(operation).lower()
+    if "epic" in operation_key:
+        base = {"modules": 10, "module_details": 8, "flows": 10, "flow_details": 8, "components": 10, "component_details": 8}
+    elif "feature" in operation_key:
+        base = {"modules": 8, "module_details": 6, "flows": 8, "flow_details": 6, "components": 8, "component_details": 6}
+    else:
+        base = {"modules": 6, "module_details": 5, "flows": 6, "flow_details": 5, "components": 6, "component_details": 5}
+    reductions = [1.0, 0.7, 0.45, 0.28]
+    factor = reductions[min(compression_level, 3)]
+    return {key: max(1, int(value * factor)) for key, value in base.items()}
+
+
+def _semantic_context_terms(operation: str, item: dict[str, Any], profile: dict[str, Any]) -> set[str]:
+    parts = [
+        operation,
+        item.get("title"),
+        item.get("description"),
+        item.get("acceptance_criteria"),
+        profile.get("project_name"),
+        profile.get("domain"),
+        profile.get("project_type"),
+        profile.get("project_description"),
+    ]
+    text = " ".join(_clean_text(part) for part in parts)
+    words = []
+    for raw in text.replace("_", " ").replace("-", " ").replace("/", " ").split():
+        word = "".join(ch for ch in raw.lower() if ch.isalnum())
+        if len(word) >= 3 and word not in {"the", "and", "for", "with", "from", "this", "that", "into", "user", "story", "feature", "epic", "task"}:
+            words.append(word)
+    return set(words)
+
+
+def _rank_by_semantic_match(values: list[str], terms: set[str]) -> list[str]:
+    ranked = []
+    for index, value in enumerate(values):
+        value_text = _clean_text(value)
+        value_words = set("".join(ch for ch in raw.lower() if ch.isalnum()) for raw in value_text.replace("-", " ").split())
+        score = len([term for term in terms if term in value_words or term in value_text.lower()])
+        ranked.append((score, -index, value))
+    ranked.sort(reverse=True)
+    return [value for _score, _index, value in ranked]
+
+
+def _matching_details(
+    details: list[dict[str, Any]],
+    selected_names: list[str],
+    terms: set[str],
+    limit: int,
+    detail_keys: list[str],
+) -> list[dict[str, Any]]:
+    selected_lookup = {name.lower() for name in selected_names}
+    ranked = []
+    for index, detail in enumerate(details):
+        name = _clean_text(detail.get("name"))
+        combined = " ".join([name, *[" ".join(_string_list(detail.get(key))) for key in detail_keys]]).lower()
+        score = len([term for term in terms if term in combined])
+        if name.lower() in selected_lookup:
+            score += 5
+        ranked.append((score, -index, detail))
+    ranked.sort(reverse=True)
+    compacted = []
+    for _score, _index, detail in ranked[:limit]:
+        item = {"name": detail.get("name")}
+        for key in detail_keys:
+            item[key] = _string_list(detail.get(key))[:3]
+        if "type" in detail:
+            item["type"] = detail.get("type")
+        compacted.append(item)
+    return compacted
+
+
+def _architecture_summary_text(profile: dict[str, Any], registry: dict[str, Any]) -> str:
+    notes = [
+        *_string_list(registry.get("architecture_notes")),
+        *_string_list(profile.get("readme_analysis", {}).get("architecture_notes") if isinstance(profile.get("readme_analysis"), dict) else []),
+    ]
+    return " ".join(_truncate_text(note, 240) for note in _unique(notes)[:4])
+
+
+def _context_budget_tokens() -> int:
+    try:
+        configured = int(os.getenv("AI_GEN_PROJECT_CONTEXT_BUDGET_TOKENS", str(PROJECT_CONTEXT_DEFAULT_TOKENS)))
+    except ValueError:
+        configured = PROJECT_CONTEXT_DEFAULT_TOKENS
+    return min(PROJECT_CONTEXT_MAX_TOKENS, max(PROJECT_CONTEXT_MIN_TOKENS, configured))
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, (len(text) + 3) // 4)
+
+
+def _compact_stack(profile: dict[str, Any]) -> dict[str, list[str]]:
+    registry = profile.get("knowledge_registry", {}) if isinstance(profile.get("knowledge_registry"), dict) else {}
+    return _merge_stack(profile.get("technology_stack", {}), registry.get("technology_stack", {}))
+
+
+def _compact_development_standards(standards: dict[str, Any], registry: dict[str, Any]) -> dict[str, list[str]]:
+    normalized = {
+        "architecture_patterns": _string_list(standards.get("architecture_patterns"))[:5],
+        "coding_guidelines": _string_list(standards.get("coding_guidelines"))[:5],
+        "security_requirements": _string_list(standards.get("security_requirements"))[:5],
+        "testing_requirements": _string_list(standards.get("testing_requirements"))[:5],
+    }
+    registry_standards = _string_list(registry.get("standards"))
+    if registry_standards:
+        normalized["coding_guidelines"] = _unique([*normalized["coding_guidelines"], *registry_standards[:6]])[:8]
+    return normalized
+
+
+def _compact_ui_guidelines(ui: dict[str, Any], registry: dict[str, Any]) -> dict[str, Any]:
+    standards = _string_list(registry.get("standards"))
+    accessibility = _unique([*_string_list(ui.get("accessibility_rules")), *[item for item in standards if any(token in item.lower() for token in ["access", "contrast", "touch", "offline"])]])
+    return {
+        "primary_color": _clean_text(ui.get("primary_color")),
+        "secondary_color": _clean_text(ui.get("secondary_color")),
+        "typography": _clean_text(ui.get("typography")),
+        "component_library": _clean_text(ui.get("component_library")),
+        "accessibility_rules": accessibility[:6],
+    }
+
+
+def _compact_knowledge_registry(registry: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_knowledge_registry(registry)
+    module_details = []
+    for module in normalized["module_details"][:8]:
+        module_details.append(
+            {
+                "name": module["name"],
+                "responsibilities": _string_list(module.get("responsibilities"))[:4],
+                "dependencies": _string_list(module.get("dependencies"))[:4],
+            }
+        )
+    flow_details = []
+    for flow in normalized["flow_details"][:8]:
+        flow_details.append({"name": flow["name"], "steps": _string_list(flow.get("steps"))[:5]})
+    component_details = []
+    for component in normalized["component_details"][:10]:
+        component_details.append({"name": component["name"], "type": component.get("type")})
+    return {
+        "modules": normalized["modules"][:10],
+        "module_details": module_details,
+        "flows": normalized["flows"][:10],
+        "flow_details": flow_details,
+        "components": normalized["components"][:12],
+        "component_details": component_details,
+        "architecture_summary": " ".join(_truncate_text(note, 220) for note in normalized["architecture_notes"][:3]),
+        "standards": normalized["standards"][:10],
+        "source_files": normalized["source_files"][:8],
+    }
+
+
+def _truncate_text(value: Any, max_chars: int) -> str:
+    text = _clean_text(value)
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
 
 
 def _provider_status_metadata(provider: Any, probe: dict[str, Any], health: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2314,6 +2575,12 @@ def _fallback_metadata(provider_used: str, reason: str) -> dict[str, Any]:
         "provider_last_success": None,
         "provider_last_failure": None,
     }
+
+
+def _with_context_diagnostics(metadata: dict[str, Any], diagnostics: dict[str, Any] | None) -> dict[str, Any]:
+    if diagnostics:
+        metadata.update(diagnostics)
+    return metadata
 
 
 def _with_provider_metadata(payload: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:

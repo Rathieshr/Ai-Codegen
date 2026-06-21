@@ -103,6 +103,12 @@ type ProviderMetadata = {
   provider_health?: string;
   provider_last_success?: string | null;
   provider_last_failure?: string | null;
+  context_size?: number;
+  context_after_compression?: number;
+  tokens_sent?: number;
+  context_budget_tokens?: number;
+  compression_ratio?: number;
+  context_compression_level?: number;
 };
 
 type ProjectProfile = {
@@ -2203,6 +2209,10 @@ function ProjectIntelligenceProviderDiagnostics({ metadata }: { metadata?: Provi
         <Row label="Current Response Source" value={sourceLabel(metadata?.source || metadata?.provider_used)} />
         <Row label="Phi Status" value={String(metadata?.phi_status || 'Not run')} />
         <Row label="Phi Latency" value={metadata?.phi_latency_ms ? `${metadata.phi_latency_ms} ms` : 'n/a'} />
+        <Row label="Context Size" value={formatNumber(metadata?.context_size)} />
+        <Row label="Context After Compression" value={formatNumber(metadata?.context_after_compression)} />
+        <Row label="Tokens Sent" value={metadata?.tokens_sent ? `${metadata.tokens_sent} / ${metadata.context_budget_tokens || 2500}` : 'n/a'} />
+        <Row label="Compression Ratio" value={metadata?.compression_ratio !== undefined ? `${Math.round(metadata.compression_ratio * 100)}%` : 'n/a'} />
         <Row label="Fallback Reason" value={String(metadata?.fallback_reason || 'n/a')} />
       </div>
     </details>
@@ -3086,6 +3096,10 @@ function summarizeUiGuidelines(profile: ProjectProfile): string {
 
 function latestProviderMetadata(items: Array<ProviderMetadata | undefined>): ProviderMetadata | undefined {
   return items.find((item) => item && (item.provider_used || item.source || item.phi_status));
+}
+
+function formatNumber(value?: number): string {
+  return value === undefined || value === null ? 'n/a' : value.toLocaleString();
 }
 
 function sourceLabel(source?: string): string {

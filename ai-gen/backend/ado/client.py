@@ -78,7 +78,7 @@ class AdoConfig:
 
     @property
     def base_url(self) -> str:
-        return self.org_url.rstrip("/")
+        return self._organization_url(self.org_url)
 
     @property
     def project_url(self) -> str:
@@ -87,6 +87,22 @@ class AdoConfig:
     def project_url_for(self, project: str | None = None) -> str:
         selected = project or self.project
         return f"{self.base_url}/{urllib.parse.quote(selected, safe='')}"
+
+    @staticmethod
+    def _organization_url(raw_url: str) -> str:
+        """Return the Azure DevOps organization URL even if a project URL was supplied."""
+        url = (raw_url or "").strip().rstrip("/")
+        if not url:
+            return ""
+        parsed = urllib.parse.urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return url
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if parsed.netloc.lower() == "dev.azure.com" and path_parts:
+            path = f"/{path_parts[0]}"
+        else:
+            path = ""
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
 class AdoClient:
@@ -128,6 +144,7 @@ class AdoClient:
             {
                 "id": item.get("id", ""),
                 "name": item.get("name", ""),
+                "description": item.get("description", ""),
                 "state": item.get("state", ""),
                 "visibility": item.get("visibility", ""),
             }

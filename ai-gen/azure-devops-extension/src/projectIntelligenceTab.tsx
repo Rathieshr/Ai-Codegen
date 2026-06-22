@@ -183,8 +183,19 @@ type ProjectProfile = {
 type AdoProject = {
   id: string;
   name: string;
+  description?: string;
   state?: string;
   visibility?: string;
+  source?: string;
+};
+
+type AdoProjectListResponse = {
+  projects: AdoProject[];
+  configured?: boolean;
+  missing_env?: string[];
+  warnings?: string[];
+  default_project?: string;
+  organization_url?: string;
 };
 
 type AzureDevOpsConnectorMapping = {
@@ -193,6 +204,12 @@ type AzureDevOpsConnectorMapping = {
   repository_id: string;
   repository_name: string;
   branch: string;
+};
+
+type AzureProjectContext = {
+  id: string;
+  name: string;
+  description: string;
 };
 
 type PromptResult = ProviderMetadata & {
@@ -456,16 +473,31 @@ function ProjectIntelligenceTab() {
       SDK.notifyLoadSucceeded();
       try {
         const loaded = await getProfile();
-        setProfile(loaded);
-        lastSavedProfileRef.current = JSON.stringify(loaded);
-        setEditingProfile(!loaded.project_name.trim());
-        setShowQuickStart(!loaded.project_name.trim());
+        const projectContext = await loadAzureProjectContext();
+        const seeded = seedProfileFromAzureProject(loaded, projectContext);
+        const seededChanged = JSON.stringify(seeded) !== JSON.stringify(loaded);
+        if (seededChanged) {
+          try {
+            const saved = await postJson<ProjectProfile>('/profile', { profile: seeded });
+            setProfile(saved);
+            lastSavedProfileRef.current = JSON.stringify(saved);
+          } catch {
+            setProfile(seeded);
+            lastSavedProfileRef.current = JSON.stringify(loaded);
+            setSaveStatus('unsaved');
+          }
+        } else {
+          setProfile(seeded);
+          lastSavedProfileRef.current = JSON.stringify(seeded);
+        }
+        setEditingProfile(!seeded.project_name.trim());
+        setShowQuickStart(!seeded.project_name.trim() && !seeded.project_description.trim());
         const workItem = await loadCurrentWorkItem();
         if (workItem) {
           setCurrentWorkItem(workItem);
           seedPlannerFromWorkItem(workItem);
         }
-        void loadAdoProjects(loaded);
+        void loadAdoProjects(seeded);
         setError('');
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load project profile.');
@@ -794,18 +826,33 @@ function ProjectIntelligenceTab() {
   async function loadAdoProjects(sourceProfile: ProjectProfile = profile) {
     setRepositoryLoadMessage('Loading Azure DevOps projects...');
     try {
-      const projects = await fetchAdoProjects();
+      const projectResponse = await fetchAdoProjects();
+      const projects = projectResponse.projects || [];
       setAdoProjects(projects);
       const selectedProject = getAdoMapping(sourceProfile).ado_project || projects[0]?.name || '';
       if (selectedProject) {
+        const selectedAdoProject = projects.find((project) => project.name === selectedProject);
         if (!getAdoMapping(sourceProfile).ado_project) {
           setProfile(applyAdoMapping(sourceProfile, { ado_project: selectedProject }));
+        }
+        if (selectedAdoProject && (!sourceProfile.project_name.trim() || !sourceProfile.project_description.trim())) {
+          setProfile((current) => seedProfileFromAzureProject(current, {
+            id: selectedAdoProject.id,
+            name: selectedAdoProject.name,
+            description: selectedAdoProject.description || '',
+          }));
+        }
+        if (projectResponse.warnings?.length) {
+          setRepositoryLoadMessage(projectResponse.warnings.join(' '));
         }
         await loadRepositories(selectedProject, sourceProfile);
       } else {
         setRepositories([]);
         setBranches([]);
-        setRepositoryLoadMessage('No Azure DevOps projects were returned. Check backend ADO_ORG_URL/ADO_PAT.');
+        const missing = projectResponse.missing_env?.length
+          ? ` Missing backend env: ${projectResponse.missing_env.join(', ')}.`
+          : '';
+        setRepositoryLoadMessage(`No Azure DevOps projects were returned.${missing} Configure ADO_PROJECT or grant the PAT Project read access.`);
       }
     } catch (loadError) {
       const detail = loadError instanceof Error ? loadError.message : String(loadError);
@@ -813,7 +860,7 @@ function ProjectIntelligenceTab() {
       setRepositories([]);
       setBranches([]);
       setRepositoryLoadMessage(`Could not load Azure DevOps projects from backend connector. ${detail}`);
-      setError('Could not load Azure DevOps projects. Check backend ADO_ORG_URL/ADO_PAT and Project permissions.');
+      setError('Could not load Azure DevOps projects. Check backend ADO_ORG_URL, ADO_PAT, ADO_PROJECT, and Project/Code read permissions.');
     }
   }
 
@@ -2760,9 +2807,12 @@ async function getProfile(): Promise<ProjectProfile> {
   return response.json() as Promise<ProjectProfile>;
 }
 
-async function fetchAdoProjects(): Promise<AdoProject[]> {
-  const response = await getJson<{ projects?: AdoProject[]; error?: string }>('/connectors/azure-devops/projects');
-  return response.projects || [];
+async function fetchAdoProjects(): Promise<AdoProjectListResponse> {
+  const response = await getJson<AdoProjectListResponse & { error?: string }>('/connectors/azure-devops/projects');
+  return {
+    ...response,
+    projects: response.projects || [],
+  };
 }
 
 async function fetchAdoRepositories(adoProject: string): Promise<GitRepository[]> {
@@ -3271,6 +3321,63 @@ async function getProjectName(): Promise<string> {
   const projectService = await SDK.getService<IProjectPageService>(CommonServiceIds.ProjectPageService);
   const project = await projectService.getProject();
   return String(project?.name || SDK.getWebContext().project?.name || '');
+}
+
+async function loadAzureProjectContext(): Promise<AzureProjectContext | undefined> {
+  try {
+    const projectService = await SDK.getService<IProjectPageService>(CommonServiceIds.ProjectPageService);
+    const pageProject = await projectService.getProject();
+    const webProject = SDK.getWebContext().project;
+    const id = String(pageProject?.id || webProject?.id || '');
+    const name = String(pageProject?.name || webProject?.name || '');
+    let description = String((pageProject as { description?: string } | undefined)?.description || '');
+    if (!description && (id || name)) {
+      try {
+        const key = encodeURIComponent(id || name);
+        const project = await fetchAdoRest<{ id?: string; name?: string; description?: string }>(
+          `/_apis/projects/${key}?api-version=7.1`,
+          REPOSITORY_SDK_TIMEOUT_MS,
+          'Azure DevOps project details timed out.',
+        );
+        description = String(project.description || '');
+        return {
+          id: String(project.id || id),
+          name: String(project.name || name),
+          description,
+        };
+      } catch {
+        // Project description is optional; keep the page context values.
+      }
+    }
+    if (!id && !name) {
+      return undefined;
+    }
+    return { id, name, description };
+  } catch {
+    const webProject = SDK.getWebContext().project;
+    const id = String(webProject?.id || '');
+    const name = String(webProject?.name || '');
+    return id || name ? { id, name, description: '' } : undefined;
+  }
+}
+
+function seedProfileFromAzureProject(profile: ProjectProfile, project?: AzureProjectContext): ProjectProfile {
+  if (!project) {
+    return profile;
+  }
+  const projectName = profile.project_name.trim() || project.name;
+  const projectDescription = profile.project_description.trim() || project.description;
+  const projectId = (profile.project_id || '').trim() || project.id || project.name;
+  const next = {
+    ...profile,
+    project_id: projectId,
+    project_name: projectName,
+    project_description: projectDescription,
+  };
+  if (!getAdoMapping(profile).ado_project && project.name) {
+    return applyAdoMapping(next, { ado_project: project.name });
+  }
+  return next;
 }
 
 async function getProjectIdentifier(): Promise<string> {

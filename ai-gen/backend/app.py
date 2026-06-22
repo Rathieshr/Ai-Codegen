@@ -520,8 +520,37 @@ def project_intelligence_ado_projects() -> dict:
     if not client.is_platform_configured:
         return {"projects": [], "configured": False, "missing_env": _ado_missing_platform_env()}
     try:
-        return {"projects": client.list_projects(), "configured": True, "missing_env": []}
+        projects = client.list_projects()
+        warnings: list[str] = []
+        if not projects and os.getenv("ADO_PROJECT", "").strip():
+            projects = [_ado_default_project_option()]
+            warnings.append(
+                "Azure DevOps project listing returned no projects. Using configured ADO_PROJECT as a fallback."
+            )
+        return {
+            "projects": projects,
+            "configured": True,
+            "missing_env": [],
+            "warnings": warnings,
+            "default_project": os.getenv("ADO_PROJECT", "").strip(),
+            "organization_url": client._cfg.base_url,
+        }
     except Exception as exc:
+        projects = []
+        warnings = [str(exc)]
+        if os.getenv("ADO_PROJECT", "").strip():
+            projects = [_ado_default_project_option()]
+            warnings.append(
+                "Azure DevOps project listing failed. Using configured ADO_PROJECT as a fallback."
+            )
+            return {
+                "projects": projects,
+                "configured": True,
+                "missing_env": [],
+                "warnings": warnings,
+                "default_project": os.getenv("ADO_PROJECT", "").strip(),
+                "organization_url": client._cfg.base_url,
+            }
         return JSONResponse(
             status_code=502,
             content={"projects": [], "configured": True, "error": str(exc), "missing_env": []},
@@ -599,6 +628,18 @@ def _project_intelligence_options(request: Any) -> dict[str, Any]:
 
 def _ado_missing_platform_env() -> list[str]:
     return [name for name in ["ADO_ORG_URL", "ADO_PAT"] if not os.getenv(name)]
+
+
+def _ado_default_project_option() -> dict[str, str]:
+    project = os.getenv("ADO_PROJECT", "").strip()
+    return {
+        "id": project,
+        "name": project,
+        "description": os.getenv("ADO_PROJECT_DESCRIPTION", "").strip(),
+        "state": "configured",
+        "visibility": "",
+        "source": "ADO_PROJECT",
+    }
 
 
 @app.post("/story-planner/sessions")

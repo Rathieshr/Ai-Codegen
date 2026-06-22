@@ -47,6 +47,14 @@ class AdoConfigTests(unittest.TestCase):
         cfg = AdoConfig(org_url="https://dev.azure.com/org/", project="P", pat="t")
         self.assertFalse(cfg.base_url.endswith("/"))
 
+    def test_base_url_strips_project_path_from_dev_azure_org_url(self) -> None:
+        cfg = AdoConfig(org_url="https://dev.azure.com/org/MyProject", project="P", pat="t")
+        self.assertEqual(cfg.base_url, "https://dev.azure.com/org")
+
+    def test_base_url_strips_project_path_from_visualstudio_org_url(self) -> None:
+        cfg = AdoConfig(org_url="https://org.visualstudio.com/MyProject", project="P", pat="t")
+        self.assertEqual(cfg.base_url, "https://org.visualstudio.com")
+
 
 # ── AdoClient tests ───────────────────────────────────────────────────────────
 
@@ -140,6 +148,24 @@ class AdoClientTests(unittest.TestCase):
             with self.assertRaises(AdoClientError) as ctx:
                 client.get_work_item(99)
             self.assertEqual(ctx.exception.status, 401)
+
+
+class AdoProjectConnectorEndpointTests(unittest.TestCase):
+    def test_project_endpoint_falls_back_to_configured_project_when_listing_empty(self) -> None:
+        from backend import app as backend_app
+
+        fake_client = MagicMock()
+        fake_client.is_platform_configured = True
+        fake_client.list_projects.return_value = []
+        fake_client._cfg.base_url = "https://dev.azure.com/org"
+
+        with patch.dict("os.environ", {"ADO_PROJECT": "Ai Gen"}, clear=False):
+            with patch.object(backend_app, "AdoClient", return_value=fake_client):
+                response = backend_app.project_intelligence_ado_projects()
+
+        self.assertEqual(response["projects"][0]["name"], "Ai Gen")
+        self.assertEqual(response["projects"][0]["source"], "ADO_PROJECT")
+        self.assertIn("warnings", response)
 
 
 # ── AdoAutomation tests ───────────────────────────────────────────────────────

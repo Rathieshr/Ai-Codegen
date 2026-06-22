@@ -13,9 +13,9 @@ from backend.refinement.provider import get_refiner_status, get_refinement_provi
 
 logger = logging.getLogger("ai_gen.project_intelligence")
 
-PROJECT_CONTEXT_MIN_TOKENS = 1500
-PROJECT_CONTEXT_MAX_TOKENS = 2500
-PROJECT_CONTEXT_DEFAULT_TOKENS = 2200
+PROJECT_CONTEXT_MIN_TOKENS = 600
+PROJECT_CONTEXT_MAX_TOKENS = 900
+PROJECT_CONTEXT_DEFAULT_TOKENS = 800
 PROJECT_PHI_SYSTEM_PROMPT = "Return strict JSON only."
 PROJECT_PHI_INSTRUCTION = "Use the compact project context. Return only the requested JSON keys."
 PROJECT_PROVIDER_PROMPT_CHAR_LIMIT = 4800
@@ -3020,7 +3020,7 @@ def _budgeted_project_context(operation: str, profile: dict[str, Any], item: dic
     compressed_context = raw_context
     compression_level = 0
     compressed_tokens = raw_tokens
-    for level in [0, 1, 2, 3]:
+    for level in [0, 1, 2, 3, 4]:
         candidate = _project_summary_context(operation, profile, item, compression_level=level)
         candidate_tokens = _estimate_tokens(json.dumps(candidate, ensure_ascii=True))
         compressed_context = candidate
@@ -3042,20 +3042,20 @@ def _budgeted_project_context(operation: str, profile: dict[str, Any], item: dic
 def _project_summary_context(operation: str, profile: dict[str, Any], item: dict[str, Any], compression_level: int) -> dict[str, Any]:
     registry = _normalize_knowledge_registry(profile.get("knowledge_registry", {}))
     selected = _select_semantic_registry_context(operation, item, profile, registry, compression_level)
-    description_limits = [900, 650, 420, 260, 140]
-    architecture_limits = [650, 450, 280, 180, 90]
-    standards_limits = [8, 6, 4, 3, 1]
-    source_limits = [8, 5, 3, 0, 0]
+    description_limits = [900, 650, 420, 260, 140, 70]
+    architecture_limits = [650, 450, 280, 180, 90, 40]
+    standards_limits = [8, 6, 4, 3, 1, 0]
+    source_limits = [8, 5, 3, 0, 0, 0]
     return {
         "project_name": profile.get("project_name"),
         "domain": profile.get("domain"),
         "project_type": profile.get("project_type"),
-        "description": _truncate_text(profile.get("project_description"), description_limits[min(compression_level, 3)]),
+        "description": _truncate_text(profile.get("project_description"), description_limits[min(compression_level, 4)]),
         "project_summary": {
             "applications": profile.get("applications") or registry.get("applications"),
             "top_modules": selected["modules"],
             "top_flows": selected["flows"],
-            "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), architecture_limits[min(compression_level, 3)]),
+            "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), architecture_limits[min(compression_level, 4)]),
         },
         "technology_stack": _compact_stack(profile),
         "development_standards": _compact_development_standards(profile.get("development_standards", {}), registry),
@@ -3067,9 +3067,9 @@ def _project_summary_context(operation: str, profile: dict[str, Any], item: dict
             "flow_details": selected["flow_details"],
             "components": selected["components"],
             "component_details": selected["component_details"],
-            "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), architecture_limits[min(compression_level, 3)]),
-            "standards": registry["standards"][: standards_limits[min(compression_level, 3)]],
-            "source_files": registry["source_files"][: source_limits[min(compression_level, 3)]],
+            "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), architecture_limits[min(compression_level, 4)]),
+            "standards": registry["standards"][: standards_limits[min(compression_level, 4)]],
+            "source_files": registry["source_files"][: source_limits[min(compression_level, 4)]],
         },
     }
 

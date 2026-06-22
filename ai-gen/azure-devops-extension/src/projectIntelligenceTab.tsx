@@ -868,6 +868,7 @@ function ProjectIntelligenceTab() {
 
   async function loadRepositories(adoProject = getAdoMapping(profile).ado_project, sourceProfile: ProjectProfile = profile) {
     setRepositoryLoadMessage('Loading Azure DevOps repositories...');
+    console.log('[DEBUG] loadRepositories called:', { adoProject, hasSourceProfile: !!sourceProfile, storedProject: getAdoMapping(profile).ado_project });
     if (!adoProject) {
       setRepositories([]);
       setBranches([]);
@@ -876,7 +877,9 @@ function ProjectIntelligenceTab() {
     }
     try {
       const repos = await fetchAdoRepositories(adoProject);
+      console.log('[DEBUG] Fetched repositories:', { count: repos.length, repos });
       const visibleRepos = (repos || []).filter((repo) => repo.id && repo.name);
+      console.log('[DEBUG] Visible repositories after filter:', { count: visibleRepos.length, visibleRepos });
       setRepositories(visibleRepos);
       if (
         sourceProfile.repository_connection.repository_id
@@ -2819,7 +2822,10 @@ async function fetchAdoProjects(): Promise<AdoProjectListResponse> {
 
 async function fetchAdoRepositories(adoProject: string): Promise<GitRepository[]> {
   const params = new URLSearchParams({ ado_project: adoProject });
-  const response = await getJson<{ repositories?: GitRepository[]; error?: string }>(`/connectors/azure-devops/repositories?${params.toString()}`);
+  const url = `/connectors/azure-devops/repositories?${params.toString()}`;
+  console.log('[DEBUG] Fetching repositories:', { adoProject, url });
+  const response = await getJson<{ repositories?: GitRepository[]; error?: string }>(url);
+  console.log('[DEBUG] Repositories response:', { count: response.repositories?.length || 0, response });
   return response.repositories || [];
 }
 

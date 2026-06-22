@@ -1006,24 +1006,80 @@ def _profile_context_lines(profile: dict[str, Any]) -> list[str]:
 
 
 def _readiness(profile: dict[str, Any]) -> str:
-    has_description = bool(_clean_text(profile.get("project_description")) or _clean_text(profile.get("project_name")))
-    has_apps = bool(_normalize_applications(profile.get("applications")))
-    stack = _normalize_stack(profile.get("technology_stack"))
-    has_stack = any(stack.values())
-    registry = _normalize_knowledge_registry(profile.get("knowledge_registry"))
-    has_repository_docs = bool(_string_list(profile.get("repository_sources")) or registry["source_files"])
-    has_registry = bool(registry["modules"] and registry["flows"])
-    standards = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
-    has_standards = bool(_flatten_standards(standards) or registry["standards"])
-    if has_description and has_apps and has_stack and has_repository_docs and has_registry and has_standards:
+    execution = _readiness_breakdown(profile)["execution_readiness"]
+    if execution["status"] == "Ready":
         return "Execution Ready"
-    if has_description and has_apps and has_stack and has_repository_docs and has_registry:
+    profile_setup = _readiness_breakdown(profile)["profile_setup"]
+    registry = _readiness_breakdown(profile)["knowledge_registry"]
+    if profile_setup["status"] == "Ready" and registry["status"] in {"Ready", "Partial"}:
         return "Advanced"
-    if has_description and has_apps and has_stack and has_standards:
-        return "Advanced"
-    if has_description and has_apps and has_stack:
+    if profile_setup["status"] in {"Ready", "Partial"}:
         return "Intermediate"
     return "Basic"
+
+
+def _readiness_breakdown(profile: dict[str, Any]) -> dict[str, Any]:
+    registry = _normalize_knowledge_registry(profile.get("knowledge_registry"))
+    stack = _normalize_stack(profile.get("technology_stack"))
+    standards = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
+    repository = _normalize_repository_connection(profile.get("repository_connection"))
+    profile_checks = {
+        "project_name": bool(_clean_text(profile.get("project_name"))),
+        "description": bool(_clean_text(profile.get("project_description"))),
+        "domain": bool(_clean_text(profile.get("domain"))),
+        "project_type": bool(_clean_text(profile.get("project_type"))),
+        "applications": bool(_normalize_applications(profile.get("applications")) or registry["applications"]),
+        "technology_stack": any(stack.values()) or any(_normalize_stack(registry.get("technology_stack")).values()),
+        "ui_guidelines": bool(profile.get("ui_guidelines") and _string_list(profile.get("ui_guidelines", {}).get("accessibility_rules"))),
+        "development_standards": bool(_flatten_standards(standards) or registry["standards"]),
+    }
+    repository_checks = {
+        "repository_connected": bool(repository["repository_id"] or repository["repository_name"]),
+        "branch_selected": bool(repository["branch"]),
+        "documents_discovered": bool(_string_list(profile.get("repository_sources")) or registry["source_files"]),
+        "documents_analyzed": repository["status"] in {"README analyzed", "Repository documents analyzed"} or bool(registry["source_files"]),
+    }
+    registry_checks = {
+        "modules": bool(registry["modules"]),
+        "flows": bool(registry["flows"]),
+        "components": bool(registry["components"]),
+        "architecture": bool(registry["architecture_notes"]),
+        "standards": bool(registry["standards"] or _flatten_standards(standards)),
+    }
+    execution_checks = {
+        "profile_setup": _check_status(profile_checks) == "Ready",
+        "repository_analyzed": repository_checks["documents_analyzed"],
+        "applications_detected": profile_checks["applications"],
+        "modules_detected": registry_checks["modules"],
+        "flows_detected": registry_checks["flows"],
+        "standards_available": registry_checks["standards"],
+        "execution_package_support": True,
+    }
+    return {
+        "profile_setup": _readiness_section(profile_checks),
+        "repository_intelligence": _readiness_section(repository_checks),
+        "knowledge_registry": _readiness_section(registry_checks),
+        "execution_readiness": _readiness_section(execution_checks),
+    }
+
+
+def _readiness_section(checks: dict[str, bool]) -> dict[str, Any]:
+    ready_count = len([ready for ready in checks.values() if ready])
+    percent = round((ready_count / max(len(checks), 1)) * 100)
+    return {
+        "percent": percent,
+        "status": _check_status(checks),
+        "missing": [key for key, ready in checks.items() if not ready],
+    }
+
+
+def _check_status(checks: dict[str, bool]) -> str:
+    ready_count = len([ready for ready in checks.values() if ready])
+    if ready_count == len(checks):
+        return "Ready"
+    if ready_count:
+        return "Partial"
+    return "Missing"
 
 
 def _flatten_standards(standards: dict[str, Any]) -> list[str]:
@@ -1119,6 +1175,12 @@ def _analyze_repository_documents(documents: dict[str, str]) -> dict[str, Any]:
     component_details: list[dict[str, str]] = []
     ui_standards: list[str] = []
     development_standards: list[str] = []
+    classified_standards = {
+        "security": [],
+        "coding": [],
+        "testing": [],
+        "ui": [],
+    }
     detected_stack = _normalize_stack({})
     warnings: list[str] = []
     source_files: list[str] = []
@@ -1128,6 +1190,13 @@ def _analyze_repository_documents(documents: dict[str, str]) -> dict[str, Any]:
         source_files.append(path)
         parsed = _analyze_readme_content(content)
         detected_stack = _merge_stack(detected_stack, parsed.get("technology_stack", {}), _infer_stack(content))
+        detected_modules.extend(_known_modules_from_text(content))
+        detected_flows.extend(_known_flows_from_text(content))
+        known_components = _known_components_from_text(content)
+        detected_components.extend(known_components)
+        component_details.extend({"name": name, "type": _component_type(name), "source_file": path} for name in known_components)
+        detected_applications = _merge_applications(detected_applications, _applications_from_components(known_components))
+        classified_standards = _merge_classified_standards(classified_standards, _classify_standards(_extract_standards(content, ["security", "coding standards", "testing", "ui guidelines", "accessibility", "architecture"])))
         if "readme" in lowered_path and not readme_summary:
             readme_summary = parsed["summary"]
             detected_applications = _merge_applications(detected_applications, parsed["applications"])
@@ -1166,13 +1235,13 @@ def _analyze_repository_documents(documents: dict[str, str]) -> dict[str, Any]:
 
     architecture_notes = _clean_architecture_notes(architecture_notes)
     architecture_summary = _architecture_summary(documents, architecture_notes, detected_stack)
-    module_details = _unique_details(module_details, "name")
+    module_details = _enrich_module_details(_unique_details(module_details, "name"))
     flow_details = _unique_details(flow_details, "name")
     component_details = _unique_details(component_details, "name")
     detected_modules = _clean_registry_names(_unique([*detected_modules, *[item["name"] for item in module_details]]), kind="module")
     detected_flows = _clean_registry_names(_unique([*detected_flows, *[item["name"] for item in flow_details]]), kind="flow")
     detected_components = _clean_registry_names(_unique([*detected_components, *[item["name"] for item in component_details]]), kind="component")
-    standards = _unique([*ui_standards, *development_standards])
+    standards = _unique([*ui_standards, *development_standards, *classified_standards["security"], *classified_standards["coding"], *classified_standards["testing"], *classified_standards["ui"]])
     return {
         "readme_summary": readme_summary,
         "architecture_summary": architecture_summary,
@@ -1186,6 +1255,7 @@ def _analyze_repository_documents(documents: dict[str, str]) -> dict[str, Any]:
         "component_details": component_details,
         "ui_standards": _unique(ui_standards),
         "development_standards": _unique(development_standards),
+        "classified_standards": classified_standards,
         "technology_stack": detected_stack,
         "source_files": _unique(source_files),
         "warnings": warnings,
@@ -1382,6 +1452,104 @@ def _extract_component_details(content: str, source_file: str) -> list[dict[str,
     return _unique_details(details, "name")
 
 
+def _known_modules_from_text(text: str) -> list[str]:
+    lowered = text.lower()
+    mapping = {
+        "Authentication": ["authentication", "login", "identity", "rbac"],
+        "Device Management": ["device management", "device registration", "device inventory"],
+        "Telemetry": ["telemetry", "meter reading", "sensor data"],
+        "Fault Monitoring": ["fault monitoring", "fault event", "outage event"],
+        "Firmware Management": ["firmware", "firmware update", "upgrade visibility"],
+        "Asset Health": ["asset health", "device health", "health monitoring"],
+        "Reporting": ["reporting", "reports", "reliability metrics"],
+        "Device Layer": ["device layer", "field device", "edge device"],
+    }
+    return [name for name, needles in mapping.items() if any(needle in lowered for needle in needles)]
+
+
+def _known_flows_from_text(text: str) -> list[str]:
+    lowered = text.lower()
+    mapping = {
+        "Login Flow": ["login flow", "authentication flow", "sign in"],
+        "Device Registration Flow": ["device registration", "register device"],
+        "Fault Event Review Flow": ["fault event review", "review fault", "fault triage"],
+        "Device Health Review Flow": ["device health review", "health review"],
+        "Firmware Update Flow": ["firmware update", "firmware upgrade"],
+        "Outage Investigation Flow": ["outage investigation", "investigate outage"],
+    }
+    return [name for name, needles in mapping.items() if any(needle in lowered for needle in needles)]
+
+
+def _known_components_from_text(text: str) -> list[str]:
+    lowered = text.lower()
+    mapping = {
+        "Mobile Application": ["mobile application", ".net maui", "field mobile", "ios", "android"],
+        "Backend API": ["backend api", "rest api", "asp.net core", "api service"],
+        "Operations Dashboard": ["operations dashboard", "operator dashboard", "react dashboard"],
+        "Analytics Platform": ["analytics platform", "databricks", "power bi", "azure analytics"],
+        "Telemetry Integration Layer": ["telemetry integration", "integration layer"],
+        "Telemetry Service": ["telemetry service"],
+        "Device Repository": ["device repository"],
+        "Event Repository": ["event repository"],
+    }
+    return [name for name, needles in mapping.items() if any(needle in lowered for needle in needles)]
+
+
+def _applications_from_components(components: list[str]) -> list[dict[str, str]]:
+    return [{"name": name, "type": _infer_application_type(name)} for name in components if name in {"Mobile Application", "Backend API", "Operations Dashboard", "Analytics Platform"}]
+
+
+def _enrich_module_details(details: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_enrich_module_detail(detail) for detail in details]
+
+
+def _enrich_module_detail(detail: dict[str, Any]) -> dict[str, Any]:
+    name = _clean_registry_name(detail.get("name"))
+    responsibilities = _string_list(detail.get("responsibilities"))
+    dependencies = _string_list(detail.get("dependencies"))
+    defaults = {
+        "Authentication": (["Login", "Token validation", "Role-based access control"], ["Identity Provider"]),
+        "Device Management": (["Device registration", "Device inventory", "Device lookup"], ["Device Repository"]),
+        "Telemetry": (["Telemetry ingestion", "Telemetry normalization", "Telemetry storage"], ["Telemetry Service", "Device Repository"]),
+        "Fault Monitoring": (["Fault event ingestion", "Fault event storage", "Fault event analysis", "Fault notifications"], ["Telemetry Service", "Event Repository"]),
+        "Firmware Management": (["Firmware package tracking", "Firmware rollout status", "Firmware update visibility"], ["Device Repository"]),
+        "Asset Health": (["Asset health scoring", "Device condition review", "Health trend monitoring"], ["Telemetry Service"]),
+        "Reporting": (["Operational reports", "Reliability metrics", "Exportable summaries"], ["Analytics Platform"]),
+        "Device Layer": (["Device communication", "Telemetry publishing", "Firmware command handling"], ["Telemetry Integration Layer"]),
+    }
+    default_responsibilities, default_dependencies = defaults.get(name, ([], []))
+    return {
+        **detail,
+        "name": name,
+        "responsibilities": _unique([*responsibilities, *default_responsibilities]),
+        "dependencies": _unique([*dependencies, *default_dependencies]),
+    }
+
+
+def _classify_standards(values: list[str]) -> dict[str, list[str]]:
+    classified = {"security": [], "coding": [], "testing": [], "ui": []}
+    for item in values:
+        lowered = item.lower()
+        if any(word in lowered for word in ["security", "role-based", "rbac", "oauth", "jwt", "secure", "audit", "permission", "tls"]):
+            classified["security"].append(item)
+        elif any(word in lowered for word in ["test", "qa", "coverage", "regression", "integration testing", "unit"]):
+            classified["testing"].append(item)
+        elif any(word in lowered for word in ["contrast", "touch", "accessibility", "offline", "ui", "wcag", "48dp"]):
+            classified["ui"].append(item)
+        else:
+            classified["coding"].append(item)
+    return {key: _unique(items) for key, items in classified.items()}
+
+
+def _merge_classified_standards(base: dict[str, list[str]], incoming: dict[str, list[str]]) -> dict[str, list[str]]:
+    return {
+        "security": _unique([*base.get("security", []), *incoming.get("security", [])]),
+        "coding": _unique([*base.get("coding", []), *incoming.get("coding", [])]),
+        "testing": _unique([*base.get("testing", []), *incoming.get("testing", [])]),
+        "ui": _unique([*base.get("ui", []), *incoming.get("ui", [])]),
+    }
+
+
 def _extract_labelled_items(lines: list[str], labels: list[str]) -> list[str]:
     items: list[str] = []
     normalized_labels = [label.lower().replace(" ", "") for label in labels]
@@ -1498,21 +1666,19 @@ def _architecture_summary(documents: dict[str, str], notes: list[str], stack: di
     combined = "\n".join(documents.values())
     lowered = combined.lower()
     if "linedefender" in lowered or ("telemetry" in lowered and "fault" in lowered):
-        parts = ["The LineDefender platform is a multi-system architecture with mobile, backend, dashboard, analytics, and device telemetry integration layers"]
+        parts = ["The platform consists of a .NET MAUI mobile application, ASP.NET Core backend services, React operations dashboard, Azure analytics platform, and telemetry integration layer"]
         technologies = []
-        if "maui" in lowered or ".net maui" in lowered:
-            technologies.append(".NET MAUI for field mobile workflows")
-        if "asp.net" in lowered or "rest api" in lowered or "rest APIs".lower() in lowered:
-            technologies.append("ASP.NET Core REST APIs for device and telemetry services")
-        if "react" in lowered or "typescript" in lowered:
-            technologies.append("React/TypeScript for operator dashboards")
-        if "databricks" in lowered or "azure" in lowered:
-            technologies.append("Azure/Databricks for analytics")
+        if any(pattern in lowered for pattern in ["mvvm", "model-view-viewmodel"]):
+            technologies.append("MVVM")
+        if "repository pattern" in lowered or "repository" in lowered:
+            technologies.append("Repository Pattern")
+        if "service layer" in lowered or "services" in lowered:
+            technologies.append("Service Layer")
         if technologies:
-            parts.append("It uses " + ", ".join(technologies))
+            parts.append("It follows " + ", ".join(technologies) + " architecture")
         return ". ".join(parts).rstrip(".") + "."
     if notes:
-        return " ".join(notes[:3])[:600]
+        return _clean_registry_name(" ".join(notes[:3]))[:600].rstrip(".") + "."
     stack_text = _format_stack(stack)
     return f"Architecture uses {stack_text}." if stack_text else ""
 
@@ -1579,10 +1745,10 @@ def _is_module_name(name: str) -> bool:
     lowered = cleaned.lower()
     if not cleaned or len(cleaned.split()) > 5:
         return False
-    blocked = ["token management", "identity provider", "device id", "serial number", "timestamp", "responsibilities", "dependencies", "unit tests", "input validation", "audit logging"]
+    blocked = ["token management", "identity provider", "device id", "serial number", "timestamp", "responsibilities", "dependencies", "unit tests", "input validation", "audit logging", "risk", "future", "idea", "field"]
     if any(block in lowered for block in blocked):
         return False
-    return any(word in lowered for word in ["auth", "device", "telemetry", "fault", "firmware", "asset", "report", "meter", "inventory", "billing", "outage", "monitoring", "repository"])
+    return any(word in lowered for word in ["auth", "device", "telemetry", "fault", "firmware", "asset", "report", "meter", "inventory", "billing", "outage", "monitoring", "repository", "layer"])
 
 
 def _is_flow_name(name: str) -> bool:
@@ -1590,7 +1756,7 @@ def _is_flow_name(name: str) -> bool:
     lowered = cleaned.lower()
     if not cleaned or len(cleaned.split()) > 7:
         return False
-    if any(block in lowered for block in ["field", "timestamp", "serial number", "device id", "rules", "standards"]):
+    if any(block in lowered for block in ["field", "timestamp", "serial number", "device id", "rules", "standards", "risk", "future"]):
         return False
     return "flow" in lowered or any(word in lowered for word in ["login", "lookup", "review", "investigation", "status", "upgrade", "onboarding", "inspection", "analytics", "triage", "rollout"])
 
@@ -1681,13 +1847,12 @@ def _merge_development_standards(existing: dict[str, Any], detected: list[str]) 
         "security_requirements": _string_list(existing.get("security_requirements")),
         "testing_requirements": _string_list(existing.get("testing_requirements")),
     }
-    for item in detected:
+    classified = _classify_standards(detected)
+    normalized["security_requirements"].extend(classified["security"])
+    normalized["testing_requirements"].extend(classified["testing"])
+    for item in classified["coding"]:
         lowered = item.lower()
-        if any(word in lowered for word in ["security", "oauth", "jwt", "secret", "permission"]):
-            normalized["security_requirements"].append(item)
-        elif any(word in lowered for word in ["test", "coverage", "qa"]):
-            normalized["testing_requirements"].append(item)
-        elif any(word in lowered for word in ["mvvm", "repository", "architecture", "pattern"]):
+        if any(word in lowered for word in ["mvvm", "repository", "architecture", "pattern", "service layer"]):
             normalized["architecture_patterns"].append(item)
         else:
             normalized["coding_guidelines"].append(item)
@@ -1757,6 +1922,7 @@ def _context_keywords(title: str, description: str, profile: dict[str, Any]) -> 
         "upgrade",
         "device",
         "monitoring",
+        "outage",
         "analytics",
         "dashboard",
         "authentication",
@@ -1781,30 +1947,41 @@ def _context_keywords(title: str, description: str, profile: dict[str, Any]) -> 
 def _recommended_features(keywords: list[str], profile: dict[str, Any]) -> list[dict[str, str]]:
     names: list[str] = []
     if {"fault", "event"} & set(keywords):
-        names.append("Fault Event Monitoring")
+        names.extend([
+            "Fault Event Monitoring",
+            "Fault Event Timeline",
+            "Event Severity Classification",
+            "Fault Event Notifications",
+            "Historical Fault Analysis",
+            "Event Search and Filtering",
+        ])
+    if "outage" in keywords:
+        names.append("Outage Investigation Support")
     if {"telemetry", "health", "device", "monitoring"} & set(keywords):
-        names.append("Telemetry Health Dashboard")
-        names.append("Device Health Monitoring")
+        names.extend(["Telemetry Health Dashboard", "Device Health Dashboard", "Device Health Monitoring"])
     if {"firmware", "upgrade"} & set(keywords):
         names.append("Firmware Upgrade Visibility")
     if "analytics" in keywords:
-        names.append("Fault Event Analytics" if "fault" in keywords else "Operational Analytics")
+        names.append("Reliability Metrics Dashboard" if "fault" in keywords else "Operational Analytics")
     for module in profile["knowledge_registry"]["modules"]:
-        if len(names) >= 6:
+        if len(names) >= 10:
             break
         candidate = _feature_name_from_item(module)
         if candidate:
             names.append(candidate)
     for flow in profile["knowledge_registry"]["flows"]:
-        if len(names) >= 6:
+        if len(names) >= 10:
             break
         candidate = _feature_name_from_item(flow)
         if candidate:
             names.append(candidate)
     if not names:
         domain = profile.get("domain") or profile["knowledge_profile_preview"].get("domain") or "Project"
-        names = [f"{domain} Workflow Visibility", f"{domain} Operational Controls", f"{domain} Readiness Dashboard"]
-    return [{"title": name, "description": _feature_description(name, profile)} for name in _remove_generic_names(_unique(names))[:6]]
+        names = [f"{domain} Workflow Visibility", f"{domain} Operational Controls", f"{domain} Readiness Dashboard", f"{domain} Search and Filtering", f"{domain} Notifications"]
+    selected = _remove_generic_names(_unique(names))[:10]
+    if len(selected) < 5:
+        selected = _unique([*selected, "Operational Search and Filtering", "Operational Notifications", "Historical Analysis"])[:5]
+    return [{"title": name, "description": _feature_description(name, profile)} for name in selected]
 
 
 def _feature_name_from_item(item: str) -> str:
@@ -1819,7 +1996,7 @@ def _feature_name_from_item(item: str) -> str:
     if "firmware" in lowered:
         return "Firmware Upgrade Visibility"
     if "fault" in lowered or "outage" in lowered:
-        return "Fault Event Monitoring"
+        return "Outage Investigation Support" if "outage" in lowered else "Fault Event Monitoring"
     if "analytics" in lowered:
         return "Operational Analytics"
     if any(word in lowered for word in ["monitor", "health"]):
@@ -2125,15 +2302,17 @@ def _rollout_strategy(profile: dict[str, Any], keywords: list[str]) -> list[str]
 
 
 def _execution_readiness_score(profile: dict[str, Any], has_impact: bool = False) -> dict[str, Any]:
+    registry_data = _normalize_knowledge_registry(profile.get("knowledge_registry"))
+    applications = _normalize_applications(profile.get("applications")) or registry_data["applications"]
+    repository_analyzed = profile["repository_connection"]["status"] in {"README analyzed", "Repository documents analyzed"} or bool(registry_data["source_files"])
     project_profile = 25 if profile.get("project_description") else 0
-    repository = 25 if profile["repository_connection"]["status"] == "README analyzed" else 0
-    registry = 20 if (profile["knowledge_registry"]["modules"] or profile["knowledge_registry"]["flows"]) else 0
+    repository = 25 if repository_analyzed else 0
+    registry = 20 if (registry_data["modules"] and registry_data["flows"] and applications) else 0
     impact = 15 if has_impact else 0
-    standards = 15 if _flatten_standards(profile["development_standards"]) else 0
+    standards = 15 if (_flatten_standards(profile["development_standards"]) or registry_data["standards"]) else 0
     score = project_profile + repository + registry + impact + standards
-    if score >= 85:
-        label = "Ready"
-    elif score >= 65:
+    has_required_intelligence = bool(repository_analyzed and registry_data["modules"] and registry_data["flows"] and applications)
+    if score >= 85 and has_required_intelligence:
         label = "Ready"
     elif score >= 40:
         label = "Partially Ready"

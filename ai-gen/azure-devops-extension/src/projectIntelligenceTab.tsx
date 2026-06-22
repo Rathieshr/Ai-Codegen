@@ -1644,36 +1644,30 @@ function QuickStartSetup({
 }
 
 function ProjectProfileCompletion({ profile }: { profile: ProjectProfile }) {
-  const completion = profileCompletion(profile);
+  const readiness = profileReadinessBreakdown(profile);
   return (
     <section className="planner-card">
-      <div className="planner-label">Project Profile Completion</div>
-      <div className="planner-completion-row">
-        <div className="planner-completion-bar" aria-label={`Project profile ${completion.percent}% complete`}>
-          <span style={{ width: `${completion.percent}%` }} />
-        </div>
-        <strong>{completion.percent}% Complete</strong>
+      <div className="planner-label">Project Intelligence Readiness</div>
+      <div className="planner-health-grid">
+        {readiness.map((section) => (
+          <HealthCard key={section.title} title={section.title} status={section.status} detail={`${section.percent}%${section.missing.length ? ` missing ${section.missing.join(', ')}` : ' ready'}`} />
+        ))}
       </div>
-      {completion.missing.length ? (
-        <div className="planner-subtle">Missing: {completion.missing.join(', ')}</div>
-      ) : (
-        <div className="planner-subtle">Project profile has enough context for planning and execution prompts.</div>
-      )}
     </section>
   );
 }
 
 function ProjectHealthDashboard({ profile }: { profile: ProjectProfile }) {
-  const completion = profileCompletion(profile);
+  const execution = executionReadiness(profile, false);
   return (
     <section className="planner-card">
       <div className="planner-label">Project Health</div>
       <div className="planner-health-grid">
         <HealthCard title="Repository Connected" status={profile.repository_connection.repository_id ? 'Ready' : 'Missing'} detail={profile.repository_connection.repository_name || 'Optional, but recommended'} />
-        <HealthCard title="Knowledge Registry" status={profile.knowledge_registry.modules.length || profile.knowledge_registry.flows.length ? 'Ready' : 'Missing'} detail={registrySummary(profile)} />
+        <HealthCard title="Knowledge Registry" status={knowledgeRegistryStatus(profile)} detail={registrySummary(profile)} />
         <HealthCard title="UI Guidelines" status={summarizeUiGuidelines(profile) === 'Not captured yet' ? 'Missing' : 'Ready'} detail={summarizeUiGuidelines(profile)} />
         <HealthCard title="Development Standards" status={hasDevelopmentStandards(profile) ? 'Ready' : 'Missing'} detail={hasDevelopmentStandards(profile) ? 'Captured' : 'Repository scan can detect this'} />
-        <HealthCard title="Execution Readiness" status={completion.percent >= 70 ? 'Ready' : completion.percent >= 35 ? 'Partial' : 'Missing'} detail={`${completion.percent}% profile completion`} />
+        <HealthCard title="Execution Readiness" status={execution.label === 'Ready' ? 'Ready' : execution.score >= 40 ? 'Partial' : 'Missing'} detail={`${execution.score}% ${execution.label}`} />
       </div>
     </section>
   );
@@ -3029,6 +3023,71 @@ function profileCompletion(profile: ProjectProfile): { percent: number; missing:
   };
 }
 
+function profileReadinessBreakdown(profile: ProjectProfile): Array<{ title: string; percent: number; missing: string[]; status: 'Missing' | 'Partial' | 'Ready' }> {
+  const stack = mergeTechnologyStack(profile.technology_stack, profile.knowledge_registry.technology_stack);
+  const profileChecks = [
+    { label: 'Project Name', ready: Boolean(profile.project_name.trim()) },
+    { label: 'Description', ready: Boolean(profile.project_description.trim()) },
+    { label: 'Domain', ready: Boolean(profile.domain.trim()) },
+    { label: 'Project Type', ready: Boolean(profile.project_type.trim()) },
+    { label: 'Applications', ready: Boolean(profile.applications.length || profile.knowledge_registry.applications.length) },
+    { label: 'Technology Stack', ready: STACK_FIELDS.some((field) => stack[field].length > 0) },
+    { label: 'UI Guidelines', ready: summarizeUiGuidelines(profile) !== 'Not captured yet' },
+    { label: 'Development Standards', ready: hasDevelopmentStandards(profile) },
+  ];
+  const repositoryChecks = [
+    { label: 'Repository Connected', ready: Boolean(profile.repository_connection.repository_id || profile.repository_connection.repository_name) },
+    { label: 'Branch Selected', ready: Boolean(profile.repository_connection.branch) },
+    { label: 'Documents Discovered', ready: Boolean(profile.repository_sources.length || profile.knowledge_registry.source_files.length) },
+    { label: 'Documents Analyzed', ready: profile.repository_connection.status === 'Repository documents analyzed' || profile.repository_connection.status === 'README analyzed' || Boolean(profile.knowledge_registry.source_files.length) },
+  ];
+  const registryChecks = [
+    { label: 'Modules', ready: Boolean(profile.knowledge_registry.modules.length) },
+    { label: 'Flows', ready: Boolean(profile.knowledge_registry.flows.length) },
+    { label: 'Components', ready: Boolean(profile.knowledge_registry.components.length) },
+    { label: 'Architecture', ready: Boolean(profile.knowledge_registry.architecture_notes.length) },
+    { label: 'Standards', ready: hasDevelopmentStandards(profile) },
+  ];
+  const executionChecks = [
+    { label: 'Profile Setup', ready: readinessSection(profileChecks).status === 'Ready' },
+    { label: 'Repository Analyzed', ready: readinessSection(repositoryChecks).status === 'Ready' },
+    { label: 'Applications', ready: Boolean(profile.applications.length || profile.knowledge_registry.applications.length) },
+    { label: 'Modules', ready: Boolean(profile.knowledge_registry.modules.length) },
+    { label: 'Flows', ready: Boolean(profile.knowledge_registry.flows.length) },
+    { label: 'Standards', ready: hasDevelopmentStandards(profile) },
+    { label: 'Execution Package Support', ready: true },
+  ];
+  return [
+    { title: 'Profile Setup', ...readinessSection(profileChecks) },
+    { title: 'Repository Intelligence', ...readinessSection(repositoryChecks) },
+    { title: 'Knowledge Registry', ...readinessSection(registryChecks) },
+    { title: 'Execution Readiness', ...readinessSection(executionChecks) },
+  ];
+}
+
+function readinessSection(checks: Array<{ label: string; ready: boolean }>): { percent: number; missing: string[]; status: 'Missing' | 'Partial' | 'Ready' } {
+  const readyCount = checks.filter((check) => check.ready).length;
+  const percent = Math.round((readyCount / checks.length) * 100);
+  return {
+    percent,
+    missing: checks.filter((check) => !check.ready).map((check) => check.label),
+    status: readyCount === checks.length ? 'Ready' : readyCount > 0 ? 'Partial' : 'Missing',
+  };
+}
+
+function knowledgeRegistryStatus(profile: ProjectProfile): 'Missing' | 'Partial' | 'Ready' {
+  const readyCount = [
+    profile.knowledge_registry.modules.length > 0,
+    profile.knowledge_registry.flows.length > 0,
+    profile.knowledge_registry.components.length > 0,
+    profile.knowledge_registry.architecture_notes.length > 0,
+  ].filter(Boolean).length;
+  if (readyCount >= 4) {
+    return 'Ready';
+  }
+  return readyCount > 0 ? 'Partial' : 'Missing';
+}
+
 function hasDevelopmentStandards(profile: ProjectProfile): boolean {
   return Object.values(profile.development_standards).some((items) => items.length > 0) || profile.knowledge_registry.standards.length > 0;
 }
@@ -3205,12 +3264,15 @@ function mergeTechnologyStack(base: TechnologyStack, incoming?: TechnologyStack)
 
 function executionReadiness(profile: ProjectProfile, hasImpact: boolean): { score: number; label: string; breakdown: string } {
   const projectProfile = profile.project_description.trim() ? 25 : 0;
-  const repository = profile.repository_connection.status === 'README analyzed' ? 25 : 0;
-  const registry = profile.knowledge_registry.modules.length || profile.knowledge_registry.flows.length ? 20 : 0;
+  const repositoryAnalyzed = profile.repository_connection.status === 'README analyzed' || profile.repository_connection.status === 'Repository documents analyzed' || profile.knowledge_registry.source_files.length > 0;
+  const repository = repositoryAnalyzed ? 25 : 0;
+  const applicationsDetected = Boolean(profile.applications.length || profile.knowledge_registry.applications.length);
+  const registry = profile.knowledge_registry.modules.length && profile.knowledge_registry.flows.length && applicationsDetected ? 20 : 0;
   const impact = hasImpact ? 15 : 0;
-  const standards = Object.values(profile.development_standards).some((items) => items.length > 0) ? 15 : 0;
+  const standards = hasDevelopmentStandards(profile) ? 15 : 0;
   const score = projectProfile + repository + registry + impact + standards;
-  const label = score >= 85 ? 'Execution Ready' : score >= 65 ? 'Advanced' : score >= 40 ? 'Intermediate' : 'Basic';
+  const hasRequiredIntelligence = repositoryAnalyzed && applicationsDetected && profile.knowledge_registry.modules.length > 0 && profile.knowledge_registry.flows.length > 0;
+  const label = score >= 85 && hasRequiredIntelligence ? 'Ready' : score >= 40 ? 'Partially Ready' : 'Not Ready';
   return {
     score,
     label,

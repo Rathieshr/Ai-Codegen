@@ -111,7 +111,7 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(loaded["development_standards"]["architecture_patterns"], ["MVVM"])
         self.assertEqual(loaded["ui_guidelines"]["primary_color"], "#0057D8")
         self.assertEqual(loaded["repository_sources"], ["README.md"])
-        self.assertEqual(loaded["knowledge_profile_preview"]["readiness"], "Advanced")
+        self.assertEqual(loaded["knowledge_profile_preview"]["readiness"], "Intermediate")
         self.assertTrue(loaded["onboarding_completed"])
 
     def test_analyze_description_infers_preview_profile(self) -> None:
@@ -997,7 +997,10 @@ It uses .NET MAUI for field mobile workflows, ASP.NET Core REST APIs for device 
         self.assertFalse(any("```" in note or "|" in note for note in registry["architecture_notes"]))
         self.assertIn("Role-based access control", registry["standards"])
         self.assertIn("48dp minimum touch target", registry["standards"])
-        self.assertIn(profile["knowledge_profile_preview"]["readiness"], ["Advanced", "Execution Ready"])
+        self.assertIn(profile["knowledge_profile_preview"]["readiness"], ["Intermediate", "Advanced", "Execution Ready"])
+        self.assertIn("Role-based access control", profile["development_standards"]["security_requirements"])
+        self.assertIn("Unit and integration tests", profile["development_standards"]["testing_requirements"])
+        self.assertIn("High contrast field UI", profile["ui_guidelines"]["accessibility_rules"])
 
     def test_repository_architecture_summary_is_clean(self) -> None:
         documents = {
@@ -1018,6 +1021,44 @@ Architecture Notes: Backend telemetry APIs publish events to the operations port
         self.assertNotIn("```", summary)
         self.assertNotIn("|", summary)
         self.assertIn("Backend telemetry APIs publish events to the operations portal.", profile["knowledge_registry"]["architecture_notes"])
+
+    def test_execution_readiness_requires_repository_modules_flows_and_applications(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "project_description": "Fault monitoring platform.",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "applications": [{"name": "Mobile Application", "type": "Mobile"}],
+            "technology_stack": {"mobile": [".NET MAUI"], "backend": ["ASP.NET Core"]},
+            "development_standards": {"coding_guidelines": ["Structured logging"], "security_requirements": [], "testing_requirements": [], "architecture_patterns": []},
+            "repository_connection": {"repository_id": "", "repository_name": "", "branch": "", "status": "Not connected"},
+            "knowledge_registry": {"modules": ["Fault Monitoring"], "flows": [], "components": [], "architecture_notes": [], "standards": []},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            context = ProjectIntelligenceService().build_execution_context({"title": "Display Fault Event Details"}, profile, options={"force_provider": "deterministic_fallback"})
+
+        self.assertNotEqual(context["execution_readiness_result"], "Ready")
+        self.assertLess(context["execution_readiness_score"], 85)
+
+    def test_feature_generation_returns_richer_fault_event_feature_set(self) -> None:
+        profile = {
+            "project_description": "LineDefender supports telemetry, fault events, outage investigation, and device health.",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Asset Health", "Firmware Management"],
+                "flows": ["Fault Event Review Flow", "Outage Investigation Flow"],
+                "components": ["Mobile Application", "Backend API"],
+                "architecture_notes": ["Mobile, backend, dashboard, analytics, and telemetry integration layers."],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "0"}, clear=False):
+            refined = ProjectIntelligenceService().refine_epic({"title": "Improve Fault Event Monitoring", "description": "Improve fault event and outage visibility."}, profile)
+
+        titles = [feature["title"] for feature in refined["recommended_features"]]
+        self.assertGreaterEqual(len(titles), 5)
+        self.assertIn("Fault Event Timeline", titles)
+        self.assertIn("Event Severity Classification", titles)
+        self.assertIn("Outage Investigation Support", titles)
+        self.assertNotIn("Feature Slice 1", titles)
 
 
 if __name__ == "__main__":

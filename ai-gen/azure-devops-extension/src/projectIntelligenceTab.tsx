@@ -292,10 +292,15 @@ type FeatureRefinement = ProviderMetadata & {
   risks: string[];
   recommended_stories: Array<{ title: string; description: string; acceptance_criteria?: string[]; coverage_area?: string }>;
   story_generation_diagnostics?: {
+    capabilities_identified?: string[];
+    user_actions_identified?: string[];
     capability_count?: number;
     action_count?: number;
     generated_story_count?: number;
     story_coverage_areas?: string[];
+    story_quality_score?: number;
+    acceptance_criteria_count?: number;
+    rejected_generic_criteria?: string[];
   };
 };
 
@@ -2701,7 +2706,12 @@ function FeatureRefinementResult({ result }: { result: FeatureRefinement }) {
       <Row label="Capability Count" value={formatNumber(diagnostics.capability_count)} />
       <Row label="Action Count" value={formatNumber(diagnostics.action_count)} />
       <Row label="Generated Story Count" value={formatNumber(diagnostics.generated_story_count)} />
+      <Row label="Story Quality Score" value={formatNumber(diagnostics.story_quality_score)} />
+      <Row label="Acceptance Criteria Count" value={formatNumber(diagnostics.acceptance_criteria_count)} />
       <ListBlock title="Story Coverage Areas" items={diagnostics.story_coverage_areas || []} />
+      <ListBlock title="Capabilities Identified" items={diagnostics.capabilities_identified || []} />
+      <ListBlock title="User Actions Identified" items={diagnostics.user_actions_identified || []} />
+      <ListBlock title="Rejected Generic Criteria" items={diagnostics.rejected_generic_criteria || []} />
       <ListBlock title="Affected Modules" items={result.affected_modules} />
       <ListBlock title="Affected Flows" items={result.affected_flows} />
       <ListBlock title="Dependencies" items={result.dependencies} />

@@ -490,7 +490,10 @@ class ProjectIntelligenceService:
         }
         phi = _project_phi_json("refine_feature", active_profile, feature, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
-            return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
+            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
+            merged["recommended_stories"] = story_plan["recommended_stories"]
+            merged["story_generation_diagnostics"] = story_plan["diagnostics"]
+            return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
@@ -2699,6 +2702,7 @@ def _story_decomposition(feature_title: str, modules: list[str], flows: list[str
     actions = _story_actions_for_capability(capability, feature_title)
     personas = _users_for_capability(capability, _users_for_profile(profile))
     stories: list[dict[str, Any]] = []
+    rejected_generic_criteria: list[str] = []
     for index, action in enumerate(actions[:10]):
         persona = personas[index % len(personas)] if personas else "Operations User"
         title = _clean_story_title(action["title"])
@@ -2715,19 +2719,50 @@ def _story_decomposition(feature_title: str, modules: list[str], flows: list[str
                 "flows": flows[:3],
             },
         }
+        story, rejected = _apply_story_quality_gate(story, action, persona)
+        rejected_generic_criteria.extend(rejected)
         if not _story_contains_rejected_terms(story):
             stories.append(story)
     is_small = _is_small_feature(feature)
+    if len(stories) < 5 and not is_small:
+        expanded_actions = _story_actions_for_capability("", feature_title)
+        for action in expanded_actions:
+            if len(stories) >= 5:
+                break
+            if action["coverage_area"] in {story["coverage_area"] for story in stories}:
+                continue
+            persona = personas[len(stories) % len(personas)] if personas else "Operations User"
+            story = {
+                "title": _clean_story_title(action["title"]),
+                "description": f"As a {persona}, I want {action['want']} so that {action['benefit']}.",
+                "persona": persona,
+                "user_goal": action["goal"],
+                "user_action": action["want"],
+                "coverage_area": action["coverage_area"],
+                "acceptance_criteria": _story_acceptance_for_action(action, persona),
+                "supporting_context": {"modules": modules[:3], "flows": flows[:3]},
+            }
+            story, rejected = _apply_story_quality_gate(story, action, persona)
+            rejected_generic_criteria.extend(rejected)
+            if not _story_contains_rejected_terms(story):
+                stories.append(story)
     if len(stories) < 4 and not is_small:
         raise ValueError(f"Story decomposition produced {len(stories)} stories for {feature_title}; minimum is 4.")
     coverage = _unique([story["coverage_area"] for story in stories])
+    quality_scores = [int(story.get("story_quality_score") or 0) for story in stories]
+    average_quality = round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else 0
     return {
         "recommended_stories": stories[:10],
         "diagnostics": {
+            "capabilities_identified": _unique([story["user_goal"] for story in stories]),
+            "user_actions_identified": _unique([story["user_action"] for story in stories]),
             "capability_count": len(_unique([story["user_goal"] for story in stories])),
             "action_count": len(actions),
             "generated_story_count": len(stories[:10]),
             "story_coverage_areas": coverage,
+            "story_quality_score": average_quality,
+            "acceptance_criteria_count": sum(len(story.get("acceptance_criteria") or []) for story in stories[:10]),
+            "rejected_generic_criteria": _unique(rejected_generic_criteria),
             "minimum_story_count": 1 if is_small else 4,
             "small_feature": is_small,
         },
@@ -2796,14 +2831,170 @@ def _is_small_feature(feature: dict[str, Any]) -> bool:
 
 
 def _story_acceptance_for_action(action: dict[str, str], persona: str) -> list[str]:
-    title = action["title"]
+    coverage = action.get("coverage_area", "")
+    if coverage == "View":
+        return [
+            f"{persona} can view the relevant records for {action['goal'].lower()}.",
+            "The list displays Device ID, Fault Type, Severity, Timestamp, Status, and Device Health when available.",
+            "Records can be sorted by Severity and Timestamp.",
+            "The list refreshes without duplicating existing records.",
+            "Users without permission see an access-restricted message instead of the records.",
+        ]
+    if coverage == "Details":
+        return [
+            f"{persona} can open details from the selected record.",
+            "Details display Device ID, Fault Type, Severity, Timestamp, Status, Location, and Telemetry Context.",
+            "Event History and Outage Context are displayed when they exist for the selected record.",
+            "Missing fields are labeled as unavailable without hiding the remaining details.",
+            "User can return to the previous result list without losing filters or search text.",
+        ]
+    if coverage == "Search":
+        return [
+            "User can enter Device ID or Event ID as search text.",
+            "User can execute the search from keyboard or search action.",
+            "Matching critical events are displayed with Device ID, Fault Type, Severity, Timestamp, and Status.",
+            "Partial matches are supported for Device ID and Event ID.",
+            "Search results are returned within 3 seconds for normal project data volume.",
+            "A no-results message is displayed when no matching events are found.",
+        ]
+    if coverage == "Filter":
+        return [
+            "User can filter results by Severity, Status, and Time Range.",
+            "Multiple selected filters are applied together.",
+            "User can reset all filters with one action.",
+            "Filtered results display Device ID, Fault Type, Severity, Timestamp, and Status.",
+            "An empty-results message is displayed when filters match no records.",
+        ]
+    if coverage == "Notifications":
+        return [
+            f"{persona} is notified when a relevant critical event requires attention.",
+            "Notification displays Device ID, Fault Type, Severity, Timestamp, and Status.",
+            "New notifications appear within 60 seconds of event ingestion.",
+            "User can open event details directly from the notification.",
+            "Duplicate notifications for the same active event are grouped or suppressed.",
+        ]
+    if coverage == "Empty states":
+        return [
+            "User sees a clear empty-state message when no records are available.",
+            "Empty state explains whether no data exists or data is temporarily unavailable.",
+            "User is offered a retry or refresh action when the empty state may be temporary.",
+            "Empty state does not display stale records as current data.",
+        ]
+    if coverage == "Error handling":
+        return [
+            "User sees a clear error message when the requested action cannot be completed.",
+            "Error message does not expose internal service, repository, module, or API details.",
+            "User can retry the failed action when retry is safe.",
+            "Validation errors identify the field or choice that needs correction.",
+            "The system preserves the user's current search, filter, or selected context after the error.",
+        ]
+    if coverage == "Audit requirements":
+        return [
+            "User action is recorded with user identity, timestamp, action type, and affected record identifier.",
+            "Audit entry is created when details are viewed, alerts are acknowledged, notes are added, or status is changed.",
+            "Audit history can be reviewed by an authorized operations or support user.",
+            "Audit entries remain available after the related event is resolved.",
+        ]
     return [
-        f"{persona} can {action['want'].replace('to ', '', 1)}.",
-        f"The screen or result clearly shows the information needed to {action['goal'].lower()}.",
-        "The user sees an empty or unavailable-data message when required information cannot be shown.",
-        "The action can be completed without manually checking another system.",
-        f"The outcome is observable for testing: {title}.",
+        f"{persona} can complete the requested action for {action['goal'].lower()}.",
+        "The result displays the fields required for the user decision.",
+        "Unavailable data is clearly identified.",
+        "The action result is observable and repeatable for QA validation.",
     ]
+
+
+def _apply_story_quality_gate(story: dict[str, Any], action: dict[str, str], persona: str) -> tuple[dict[str, Any], list[str]]:
+    criteria = [str(item).strip() for item in story.get("acceptance_criteria", []) if str(item).strip()]
+    cleaned, rejected = _reject_generic_acceptance_criteria(criteria)
+    if len(cleaned) < 4:
+        regenerated, more_rejected = _reject_generic_acceptance_criteria(_story_acceptance_for_action(action, persona))
+        cleaned = regenerated
+        rejected.extend(more_rejected)
+    story["acceptance_criteria"] = cleaned
+    story["acceptance_criteria_count"] = len(cleaned)
+    score = _story_quality_score(story)
+    if score < STORY_QUALITY_THRESHOLD:
+        regenerated, more_rejected = _reject_generic_acceptance_criteria(_story_acceptance_for_action(action, persona))
+        story["acceptance_criteria"] = regenerated
+        story["acceptance_criteria_count"] = len(regenerated)
+        rejected.extend(more_rejected)
+        score = _story_quality_score(story)
+    story["story_quality_score"] = score
+    story["quality_gate"] = "passed" if score >= STORY_QUALITY_THRESHOLD else "failed"
+    return story, rejected
+
+
+STORY_QUALITY_THRESHOLD = 80
+GENERIC_ACCEPTANCE_PHRASES = [
+    "visible and testable",
+    "workflow covered",
+    "workflow is covered",
+    "integration validated",
+    "integrations are validated",
+    "stakeholder confirms",
+    "stakeholders can confirm",
+    "end-to-end covered",
+    "end to end covered",
+    "capability supported",
+]
+
+
+def _reject_generic_acceptance_criteria(criteria: list[str]) -> tuple[list[str], list[str]]:
+    accepted = []
+    rejected = []
+    for criterion in criteria:
+        lowered = criterion.lower()
+        if any(phrase in lowered for phrase in GENERIC_ACCEPTANCE_PHRASES):
+            rejected.append(criterion)
+        else:
+            accepted.append(criterion)
+    return accepted, rejected
+
+
+def _story_quality_score(story: dict[str, Any]) -> int:
+    score = 0
+    user_action = str(story.get("user_action") or "").strip()
+    description = str(story.get("description") or "")
+    criteria = [str(item) for item in story.get("acceptance_criteria") or []]
+    coverage = str(story.get("coverage_area") or "").strip()
+    if user_action and not _story_contains_rejected_terms({"title": "", "description": user_action}):
+        score += 20
+    if " so that " in description and len(description.split(" so that ", 1)[-1].strip()) >= 12:
+        score += 20
+    if len(criteria) >= 4 and not _reject_generic_acceptance_criteria(criteria)[1]:
+        score += 25
+    if _criteria_are_testable(criteria):
+        score += 20
+    if coverage:
+        score += 15
+    return min(score, 100)
+
+
+def _criteria_are_testable(criteria: list[str]) -> bool:
+    if len(criteria) < 4:
+        return False
+    testable_tokens = [
+        "can ",
+        "display",
+        "within ",
+        "message",
+        "returned",
+        "recorded",
+        "timestamp",
+        "filter",
+        "sort",
+        "search",
+        "permission",
+        "audit",
+        "no-results",
+        "empty",
+    ]
+    matches = 0
+    for criterion in criteria:
+        lowered = criterion.lower()
+        if any(token in lowered for token in testable_tokens):
+            matches += 1
+    return matches >= 3
 
 
 def _clean_story_title(title: str) -> str:

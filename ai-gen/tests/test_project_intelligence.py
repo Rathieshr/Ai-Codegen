@@ -417,6 +417,39 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             self.assertTrue(feature["impacted_modules"])
             self.assertTrue(feature["impacted_flows"])
 
+    def test_epic_feature_descriptions_dedupe_applications_and_avoid_template_copy(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_description": "LineDefender monitors fault events, telemetry, outages, and field response.",
+            "applications": [
+                {"name": "Mobile Application", "type": "Mobile"},
+                {"name": "Backend API", "type": "Backend"},
+                {"name": "Operations Dashboard", "type": "API"},
+                {"name": "Analytics Platform", "type": "Analytics"},
+                {"name": "Mobile App", "type": "Mobile"},
+                {"name": "Backend", "type": "Backend"},
+                {"name": "Firmware", "type": "Firmware"},
+                {"name": "Analytics", "type": "Analytics"},
+            ],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Reporting", "Asset Health"],
+                "flows": ["Fault Event Review Flow", "Outage Investigation Flow", "Device Health Review Flow"],
+            },
+        }
+
+        refined = ProjectIntelligenceService().refine_epic(
+            {"title": "Improve Fault Event Monitoring"},
+            profile,
+            options={"force_provider": "deterministic_fallback"},
+        )
+        descriptions = "\n".join(feature["description"] for feature in refined["recommended_features"])
+
+        self.assertNotIn("Deliver Critical Fault Detection as a", descriptions)
+        self.assertIn("Business outcome:", descriptions)
+        self.assertNotIn("Mobile App (Mobile), Backend (Backend)", descriptions)
+        self.assertNotIn("Analytics Platform (Analytics), Mobile App (Mobile), Backend (Backend), Firmware (Firmware), Analytics (Analytics)", descriptions)
+
     def test_feature_story_generation_avoids_generic_fallback_phrases(self) -> None:
         profile = {
             "project_name": "LineDefender Smart Monitoring Platform",

@@ -1217,7 +1217,45 @@ def _flatten_standards(standards: dict[str, Any]) -> list[str]:
 
 
 def _format_applications(applications: list[dict[str, str]]) -> str:
-    return ", ".join(f"{app['name']} ({app['type']})" for app in applications)
+    return ", ".join(f"{app['name']} ({app['type']})" for app in _dedupe_applications(applications))
+
+
+def _dedupe_applications(applications: list[dict[str, str]]) -> list[dict[str, str]]:
+    selected: dict[str, dict[str, str]] = {}
+    for app in applications:
+        name = _clean_title(_clean_text(app.get("name")))
+        app_type = _clean_title(_clean_text(app.get("type")))
+        if not name:
+            continue
+        key = _application_canonical_key(name, app_type)
+        candidate = {"name": name, "type": app_type or "Application"}
+        current = selected.get(key)
+        if current is None or _application_specificity(candidate) > _application_specificity(current):
+            selected[key] = candidate
+    return list(selected.values())
+
+
+def _application_canonical_key(name: str, app_type: str) -> str:
+    text = f"{name} {app_type}".lower()
+    if "mobile" in text:
+        return "mobile"
+    if "backend" in text or "api" in text:
+        return "backend"
+    if "dashboard" in text or "portal" in text or "web" in text:
+        return "portal"
+    if "analytics" in text:
+        return "analytics"
+    if "firmware" in text:
+        return "firmware"
+    return _clean_text(app_type or name).lower()
+
+
+def _application_specificity(app: dict[str, str]) -> int:
+    name = app.get("name", "")
+    score = len(name)
+    if any(word in name.lower() for word in ["api", "dashboard", "portal", "application", "platform"]):
+        score += 20
+    return score
 
 
 def _format_stack(stack: dict[str, list[str]]) -> str:
@@ -2283,6 +2321,8 @@ def _business_outcome_for_capability(capability: str, keywords: list[str]) -> st
         "Telemetry": "Higher confidence in operational decisions through trusted telemetry quality.",
         "Firmware Management": "Safer rollout operations with visible upgrade status and exceptions.",
         "Field Operations": "Better field execution through focused response context.",
+        "Operational Awareness": "Shared operational context across live events, assets, and response status.",
+        "Outage Response": "Faster coordination from outage detection through field response.",
     }
     return outcomes.get(capability, f"Improved {capability.lower()} outcomes for the business.")
 
@@ -2298,6 +2338,8 @@ def _user_problem_for_capability(capability: str, keywords: list[str]) -> str:
         "Telemetry": "telemetry quality issues reduce trust in decisions",
         "Firmware Management": "firmware rollout exceptions are hard to track",
         "Field Operations": "field teams lack response-ready context",
+        "Operational Awareness": "live operational status is spread across disconnected views",
+        "Outage Response": "outage response lacks a shared operational handoff",
     }
     return problems.get(capability, f"{capability.lower()} work is not structured as an independent capability")
 
@@ -2316,9 +2358,14 @@ def _users_for_capability(capability: str, users: list[str]) -> list[str]:
 
 def _feature_description(name: str, capability: str, outcome: str, users: list[str], modules: list[str], flows: list[str], profile: dict[str, Any]) -> str:
     apps = _format_applications(profile["applications"]) or "the affected applications"
+    users_text = ", ".join(_clean_title(user) for user in users if user) or "Operations users"
+    modules_text = ", ".join(modules[:3]) or "the confirmed modules"
+    flows_text = ", ".join(flows[:3]) or "the confirmed flows"
+    problem = _user_problem_for_capability(capability, [])
     return (
-        f"Deliver {name} as a {capability.lower()} capability for {', '.join(users) or 'users'} across {apps}. "
-        f"Outcome: {outcome} Modules: {', '.join(modules) or 'confirm modules'}. Flows: {', '.join(flows) or 'confirm flows'}."
+        f"{name} gives {users_text} a focused way to address when {problem}. "
+        f"It should connect {modules_text} through {flows_text}, with touchpoints in {apps}. "
+        f"Business outcome: {outcome}"
     )
 
 
@@ -2368,7 +2415,7 @@ def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[s
     title = _clean_title(_clean_text(item.get("title")) or _capability_feature_title(capability, keywords, profile))
     return {
         "title": title,
-        "description": _clean_text(item.get("description")) or _feature_description(title, capability, outcome, users, modules, flows, profile),
+        "description": _feature_description(title, capability, outcome, users, modules, flows, profile),
         "capability": capability,
         "business_outcome": outcome,
         "user_problem": _clean_text(item.get("user_problem")) or _user_problem_for_capability(capability, keywords),
@@ -2512,8 +2559,8 @@ def _users_for_profile(profile: dict[str, Any]) -> list[str]:
 
 
 def _application_names(profile: dict[str, Any]) -> list[str]:
-    names = [app["name"] for app in profile["applications"]]
-    return names or [app["name"] for app in profile["knowledge_registry"]["applications"]]
+    apps = _dedupe_applications(profile["applications"] or profile["knowledge_registry"]["applications"])
+    return [app["name"] for app in apps]
 
 
 def _constraints_for_profile(profile: dict[str, Any]) -> list[str]:
@@ -2598,7 +2645,12 @@ def _sentence(title: str, detail: str) -> str:
 
 
 def _clean_title(value: str) -> str:
-    return " ".join(word.capitalize() for word in _clean_text(value).replace("_", " ").replace("-", " ").split())
+    acronyms = {"api": "API", "ui": "UI", "ux": "UX", "qa": "QA", "jwt": "JWT", "oauth": "OAuth", "http": "HTTP", "https": "HTTPS", "rest": "REST"}
+    words = []
+    for word in _clean_text(value).replace("_", " ").replace("-", " ").split():
+        lowered = word.lower()
+        words.append(acronyms.get(lowered, word.capitalize()))
+    return " ".join(words)
 
 
 def _remove_generic_names(values: list[str]) -> list[str]:

@@ -264,7 +264,15 @@ type EpicRefinement = ProviderMetadata & {
   constraints: string[];
   risks: string[];
   dependencies: string[];
-  recommended_features: Array<{ title: string; description: string; acceptance_criteria?: string[] }>;
+  recommended_features: Array<{
+    title: string;
+    description: string;
+    acceptance_criteria?: string[] | string;
+    business_outcome?: string;
+    capability?: string;
+    impacted_modules?: string[];
+    impacted_flows?: string[];
+  }>;
 };
 
 type FeatureRefinement = ProviderMetadata & {
@@ -2671,11 +2679,12 @@ function StoryRefinementResult({ result }: { result: StoryRefinement }) {
 }
 
 function ListBlock({ title, items }: { title: string; items: string[] }) {
+  const normalizedItems = Array.isArray(items) ? items : [String(items || '')].filter(Boolean);
   return (
     <div className="planner-task">
       <div className="planner-label">{title}</div>
       <ul className="planner-list">
-        {(items.length ? items : ['Not identified yet']).map((item) => <li key={item}>{item}</li>)}
+        {(normalizedItems.length ? normalizedItems : ['Not identified yet']).map((item) => <li key={item}>{item}</li>)}
       </ul>
     </div>
   );
@@ -3061,10 +3070,34 @@ function featureDraftsFromEpic(result: EpicRefinement): ChildDraft[] {
     type: 'Feature',
     title: feature.title,
     description: feature.description,
-    acceptanceCriteria: feature.acceptance_criteria?.length ? feature.acceptance_criteria : ['Feature supports the approved epic outcome.'],
+    acceptanceCriteria: acceptanceCriteriaForFeatureDraft(feature, result.business_outcomes),
     selected: true,
     status: 'preview',
   }));
+}
+
+function acceptanceCriteriaForFeatureDraft(
+  feature: EpicRefinement['recommended_features'][number],
+  epicOutcomes: string[],
+): string[] {
+  const explicit = Array.isArray(feature.acceptance_criteria)
+    ? feature.acceptance_criteria
+    : typeof feature.acceptance_criteria === 'string'
+      ? [feature.acceptance_criteria]
+      : [];
+  if (explicit.filter(Boolean).length > 1) {
+    return explicit.filter(Boolean);
+  }
+  const modules = feature.impacted_modules?.slice(0, 2).join(', ') || 'affected modules';
+  const flows = feature.impacted_flows?.slice(0, 2).join(', ') || 'affected flows';
+  const capability = feature.capability ? feature.capability.toLowerCase() : 'capability';
+  const outcome = feature.business_outcome || explicit[0] || epicOutcomes[0] || 'approved epic outcome';
+  return [
+    `${feature.title} has a reviewable user workflow for the ${capability}.`,
+    `${flows} are covered end to end for ${feature.title}.`,
+    `${modules} integrations are validated for ${feature.title}.`,
+    `Business stakeholders can confirm: ${outcome}`,
+  ];
 }
 
 function storyDraftsFromFeature(result: FeatureRefinement): ChildDraft[] {

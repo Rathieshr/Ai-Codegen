@@ -68,6 +68,10 @@ class AdoConfig:
     def is_configured(self) -> bool:
         return bool(self.org_url and self.project and self.pat)
 
+    @property
+    def platform_configured(self) -> bool:
+        return bool(self.org_url and self.pat)
+
     def _base64_pat(self) -> str:
         token = base64.b64encode(f":{self.pat}".encode()).decode()
         return f"Basic {token}"
@@ -80,6 +84,10 @@ class AdoConfig:
     def project_url(self) -> str:
         return f"{self.base_url}/{urllib.parse.quote(self.project, safe='')}"
 
+    def project_url_for(self, project: str | None = None) -> str:
+        selected = project or self.project
+        return f"{self.base_url}/{urllib.parse.quote(selected, safe='')}"
+
 
 class AdoClient:
     """Thin synchronous ADO REST client.
@@ -90,15 +98,103 @@ class AdoClient:
 
     def __init__(self, config: AdoConfig | None = None) -> None:
         self._cfg = config or AdoConfig()
-        if not self._cfg.is_configured:
+        if not self._cfg.platform_configured:
             logger.warning(
-                "ai-gen ADO: ADO_ORG_URL, ADO_PROJECT or ADO_PAT is not set. "
-                "ADO automation will be disabled."
+                "ai-gen ADO: ADO_ORG_URL or ADO_PAT is not set. "
+                "Project-specific connector endpoints and legacy ADO automation are disabled."
+            )
+        elif not self._cfg.project:
+            logger.info(
+                "ai-gen ADO: no default ADO_PROJECT configured. "
+                "Project Intelligence connector endpoints will use per-profile project mappings."
             )
 
     @property
     def is_configured(self) -> bool:
         return self._cfg.is_configured
+
+    @property
+    def is_platform_configured(self) -> bool:
+        return self._cfg.platform_configured
+
+    # ── Project / Repository Discovery ───────────────────────────────────────
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        """List Azure DevOps projects visible to the configured PAT."""
+        self._require_platform_config()
+        url = f"{self._cfg.base_url}/_apis/projects?api-version={self._cfg.api_version}"
+        payload = self._get(url)
+        return [
+            {
+                "id": item.get("id", ""),
+                "name": item.get("name", ""),
+                "state": item.get("state", ""),
+                "visibility": item.get("visibility", ""),
+            }
+            for item in payload.get("value", [])
+            if item.get("id") and item.get("name")
+        ]
+
+    def list_repositories(self, project: str) -> list[dict[str, Any]]:
+        """List Git repositories for a selected Azure DevOps project."""
+        self._require_platform_config()
+        if not project:
+            raise AdoClientError("ADO project is required to list repositories.")
+        url = f"{self._cfg.project_url_for(project)}/_apis/git/repositories?api-version={self._cfg.api_version}"
+        payload = self._get(url)
+        return [
+            {
+                "id": item.get("id", ""),
+                "name": item.get("name", ""),
+                "defaultBranch": item.get("defaultBranch", ""),
+                "remoteUrl": item.get("remoteUrl", ""),
+                "webUrl": item.get("webUrl", ""),
+            }
+            for item in payload.get("value", [])
+            if item.get("id") and item.get("name")
+        ]
+
+    def list_branches(self, project: str, repo_id: str) -> list[str]:
+        """List branch names for a selected Azure DevOps repository."""
+        self._require_platform_config()
+        if not project or not repo_id:
+            raise AdoClientError("ADO project and repository_id are required to list branches.")
+        url = (
+            f"{self._cfg.project_url_for(project)}/_apis/git/repositories/"
+            f"{urllib.parse.quote(repo_id, safe='')}/refs?filter=heads/&api-version={self._cfg.api_version}"
+        )
+        payload = self._get(url)
+        branches: list[str] = []
+        for item in payload.get("value", []):
+            name = str(item.get("name", ""))
+            if name.startswith("refs/heads/"):
+                name = name[len("refs/heads/") :]
+            if name:
+                branches.append(name)
+        return branches
+
+    def get_file_content(self, project: str, repo_id: str, path: str, branch: str = "main") -> str:
+        """Load a text file from an Azure DevOps Git repository."""
+        self._require_platform_config()
+        if not project or not repo_id:
+            raise AdoClientError("ADO project and repository_id are required to load repository files.")
+        normalized_path = path if path.startswith("/") else f"/{path}"
+        query = urllib.parse.urlencode(
+            {
+                "path": normalized_path,
+                "includeContent": "true",
+                "resolveLfs": "true",
+                "versionDescriptor.version": branch or "main",
+                "versionDescriptor.versionType": "branch",
+                "api-version": self._cfg.api_version,
+            }
+        )
+        url = (
+            f"{self._cfg.project_url_for(project)}/_apis/git/repositories/"
+            f"{urllib.parse.quote(repo_id, safe='')}/items?{query}"
+        )
+        payload = self._get(url)
+        return str(payload.get("content") or "")
 
     # ── Work Items ────────────────────────────────────────────────────────────
 
@@ -259,6 +355,10 @@ class AdoClient:
             "Content-Type": content_type,
             "Accept": "application/json",
         }
+
+    def _require_platform_config(self) -> None:
+        if not self._cfg.platform_configured:
+            raise AdoClientError("ADO_ORG_URL and ADO_PAT must be configured.")
 
     def _get(self, url: str) -> dict[str, Any]:
         req = urllib.request.Request(url, headers=self._headers(), method="GET")

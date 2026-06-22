@@ -130,6 +130,81 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(analyzed["project_type"], "Multi-System Platform")
         self.assertEqual(analyzed["knowledge_profile_preview"]["repository_status"], "Repository README scan coming next.")
 
+    def test_project_connector_mapping_stores_ado_project_repository_and_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir, "ADO_ORG_URL": "https://dev.azure.com/acme"}, clear=False):
+            service = ProjectIntelligenceService()
+            mapping = service.save_connector_mapping(
+                {
+                    "ado_project": "GridHub",
+                    "repository_id": "repo-1",
+                    "repository_name": "LineDefender",
+                    "branch": "develop",
+                },
+                project_id="linedefender",
+            )
+            loaded = service.get_connector_mapping("linedefender")
+            profile = service.get_profile()
+
+        self.assertEqual(mapping["organization_url"], "https://dev.azure.com/acme")
+        self.assertEqual(loaded["ado_project"], "GridHub")
+        self.assertEqual(loaded["repository_name"], "LineDefender")
+        self.assertEqual(loaded["branch"], "develop")
+        self.assertEqual(profile["repository_connection"]["repository_id"], "repo-1")
+        self.assertNotIn("ADO_PAT", str(profile))
+        self.assertNotIn("secret", str(profile).lower())
+
+    def test_repository_analyze_uses_saved_connector_mapping(self) -> None:
+        documents = {"README.md": "LineDefender fault monitoring platform."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.save_connector_mapping(
+                {"ado_project": "GridHub", "repository_id": "repo-1", "repository_name": "LineDefender", "branch": "main"}
+            )
+            profile = service.analyze_repository_documents(documents)
+
+        self.assertEqual(profile["connectors"]["azure_devops"]["ado_project"], "GridHub")
+        self.assertEqual(profile["repository_connection"]["repository_name"], "LineDefender")
+
+    def test_repository_analyze_explicit_mapping_overrides_saved_mapping(self) -> None:
+        documents = {"README.md": "Smart Meter platform."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.save_connector_mapping(
+                {"ado_project": "GridHub", "repository_id": "repo-1", "repository_name": "LineDefender", "branch": "main"}
+            )
+            profile = service.analyze_repository_documents(
+                documents,
+                connector_mapping={"ado_project": "Aclara", "repository_id": "repo-2", "repository_name": "SmartMeter", "branch": "release"},
+            )
+
+        self.assertEqual(profile["connectors"]["azure_devops"]["ado_project"], "Aclara")
+        self.assertEqual(profile["repository_connection"]["repository_id"], "repo-2")
+        self.assertEqual(profile["repository_connection"]["branch"], "release")
+
+    def test_legacy_ado_project_env_fallback_still_works(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "ADO_PROJECT": "LegacyProject"},
+            clear=False,
+        ):
+            mapping = ProjectIntelligenceService().resolve_connector_mapping()
+
+        self.assertEqual(mapping["ado_project"], "LegacyProject")
+
+    def test_multiple_profiles_can_map_to_different_ado_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.save_profile({"project_id": "linedefender", "project_name": "LineDefender"})
+            service.save_connector_mapping({"ado_project": "GridHub", "repository_id": "repo-1", "repository_name": "LineDefender", "branch": "main"}, "linedefender")
+            service.save_profile({"project_id": "smart-meter", "project_name": "Smart Meter"})
+            service.save_connector_mapping({"ado_project": "Aclara", "repository_id": "repo-2", "repository_name": "SmartMeter", "branch": "main"}, "smart-meter")
+
+            linedefender = service.get_connector_mapping("linedefender")
+            smart_meter = service.get_connector_mapping("smart-meter")
+
+        self.assertEqual(linedefender["ado_project"], "GridHub")
+        self.assertEqual(smart_meter["ado_project"], "Aclara")
+
     def test_generate_story_prompts_returns_ui_dev_and_qa(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
@@ -290,9 +365,11 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             )
 
         feature_titles = [feature["title"] for feature in refined["recommended_features"]]
-        self.assertIn("Fault Event Monitoring", feature_titles)
-        self.assertIn("Telemetry Health Dashboard", feature_titles)
-        self.assertIn("Firmware Upgrade Visibility", feature_titles)
+        self.assertIn("Critical Fault Detection", feature_titles)
+        self.assertIn("Telemetry Quality Assurance", feature_titles)
+        self.assertIn("Firmware Rollout Visibility", feature_titles)
+        self.assertIn("capability_diagnostics", refined)
+        self.assertGreaterEqual(refined["capability_diagnostics"]["final_feature_count"], 5)
         self.assertFalse(any("Slice" in title or title in {"Story 1", "Story 2"} for title in feature_titles))
 
     def test_linedefender_feature_generation_uses_detected_fault_modules(self) -> None:
@@ -314,9 +391,18 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             )
 
         titles = [feature["title"] for feature in refined["recommended_features"]]
-        self.assertIn("Fault Event Monitoring", titles)
-        self.assertIn("Telemetry Health Dashboard", titles)
+        self.assertIn("Critical Fault Detection", titles)
+        self.assertIn("Operator Alerting", titles)
+        self.assertIn("Device Health Correlation", titles)
+        self.assertIn("Outage Investigation Workspace", titles)
+        self.assertNotIn("Fault Event Monitoring", titles)
         self.assertNotIn("Generic Feature", titles)
+        for feature in refined["recommended_features"]:
+            self.assertTrue(feature["capability"])
+            self.assertTrue(feature["business_outcome"])
+            self.assertTrue(feature["primary_users"])
+            self.assertTrue(feature["impacted_modules"])
+            self.assertTrue(feature["impacted_flows"])
 
     def test_feature_story_generation_avoids_generic_fallback_phrases(self) -> None:
         profile = {
@@ -606,6 +692,46 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(provider.calls, 1)
         self.assertEqual(refined["provider_used"], "azure_phi")
         self.assertEqual(refined["phi_status"], "success")
+
+    def test_epic_refinement_rejects_phi_features_too_close_to_epic(self) -> None:
+        provider = HealthyPhiProvider(
+            {
+                "business_goal": "Provide utility operators with immediate visibility into LineDefender fault events.",
+                "recommended_features": [
+                    {"title": "Fault Event Monitoring", "description": "Too close to the epic."},
+                    {"title": "Fault Monitoring Dashboard", "description": "Generic dashboard output."},
+                    {
+                        "title": "Critical Fault Detection",
+                        "capability": "Monitoring",
+                        "business_outcome": "Faster fault detection.",
+                        "user_problem": "critical events are not visible early enough",
+                        "primary_users": ["Operations User"],
+                        "impacted_modules": ["Fault Monitoring", "Telemetry"],
+                        "impacted_flows": ["Fault Event Review Flow"],
+                    },
+                ],
+            }
+        )
+        profile = {
+            "project_description": "LineDefender fault monitoring platform.",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Asset Health", "Reporting"],
+                "flows": ["Fault Event Review Flow", "Outage Investigation Flow"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            refined = ProjectIntelligenceService().refine_epic({"title": "Real-Time Fault Event Monitoring"}, profile)
+
+        titles = [feature["title"] for feature in refined["recommended_features"]]
+        self.assertIn("Critical Fault Detection", titles)
+        self.assertNotIn("Fault Event Monitoring", titles)
+        self.assertNotIn("Fault Monitoring Dashboard", titles)
+        rejected = refined["capability_diagnostics"]["rejected_similar_features"]
+        self.assertTrue(any(item["title"] == "Fault Event Monitoring" for item in rejected))
 
     def test_project_intelligence_phi_can_be_disabled_explicitly(self) -> None:
         provider = HealthyPhiProvider()
@@ -1093,10 +1219,12 @@ Architecture Notes: Backend telemetry APIs publish events to the operations port
 
         titles = [feature["title"] for feature in refined["recommended_features"]]
         self.assertGreaterEqual(len(titles), 5)
-        self.assertIn("Fault Event Timeline", titles)
-        self.assertIn("Event Severity Classification", titles)
-        self.assertIn("Outage Investigation Support", titles)
+        self.assertIn("Critical Fault Detection", titles)
+        self.assertIn("Operator Alerting", titles)
+        self.assertIn("Device Health Correlation", titles)
+        self.assertIn("Outage Investigation Workspace", titles)
         self.assertNotIn("Feature Slice 1", titles)
+        self.assertNotIn("Fault Event Monitoring", titles)
 
 
 if __name__ == "__main__":

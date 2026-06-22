@@ -38,10 +38,20 @@ KNOWN_REPOSITORY_DOCUMENTS = [
 
 DEFAULT_PROFILE: dict[str, Any] = {
     "onboarding_completed": False,
+    "project_id": "",
     "project_name": "",
     "domain": "",
     "project_type": "",
     "project_description": "",
+    "connectors": {
+        "azure_devops": {
+            "organization_url": "",
+            "ado_project": "",
+            "repository_id": "",
+            "repository_name": "",
+            "branch": "main",
+        },
+    },
     "repository_connection": {
         "repository_id": "",
         "repository_name": "",
@@ -104,8 +114,11 @@ DEFAULT_PROFILE: dict[str, Any] = {
 class ProjectIntelligenceService:
     def __init__(self) -> None:
         data_dir = Path(os.getenv("AI_GEN_DATA_DIR", str(Path(__file__).parent.parent / "data")))
-        self._profile_path = data_dir / "project_intelligence" / "profile.json"
+        self._profile_dir = data_dir / "project_intelligence"
+        self._profile_path = self._profile_dir / "profile.json"
+        self._profiles_dir = self._profile_dir / "profiles"
         self._profile_path.parent.mkdir(parents=True, exist_ok=True)
+        self._profiles_dir.mkdir(parents=True, exist_ok=True)
 
     def get_profile(self) -> dict[str, Any]:
         if not self._profile_path.exists():
@@ -119,7 +132,46 @@ class ProjectIntelligenceService:
         normalized = _normalize_profile(profile)
         normalized["onboarding_completed"] = True
         self._profile_path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
+        if normalized.get("project_id"):
+            profile_path = self._profiles_dir / f"{_safe_profile_id(normalized['project_id'])}.json"
+            profile_path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
         return normalized
+
+    def get_connector_mapping(self, project_id: str = "") -> dict[str, Any]:
+        return self._load_profile_for_project(project_id)["connectors"]["azure_devops"]
+
+    def save_connector_mapping(self, mapping: dict[str, Any], project_id: str = "") -> dict[str, Any]:
+        profile = self._load_profile_for_project(project_id)
+        if project_id and not profile.get("project_id"):
+            profile["project_id"] = project_id
+        normalized_mapping = _normalize_azure_devops_connector(mapping, profile["repository_connection"])
+        profile["connectors"]["azure_devops"] = normalized_mapping
+        profile["repository_connection"] = _repository_connection_from_connector(normalized_mapping, profile["repository_connection"])
+        self.save_profile(profile)
+        return normalized_mapping
+
+    def resolve_connector_mapping(
+        self,
+        explicit_mapping: dict[str, Any] | None = None,
+        profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _normalize_profile(profile or self.get_profile())
+        if explicit_mapping:
+            return _normalize_azure_devops_connector(explicit_mapping, active_profile["repository_connection"])
+        saved = active_profile["connectors"]["azure_devops"]
+        if saved.get("ado_project") or saved.get("repository_id") or saved.get("repository_name"):
+            return saved
+        return _legacy_azure_devops_connector(active_profile["repository_connection"])
+
+    def _load_profile_for_project(self, project_id: str = "") -> dict[str, Any]:
+        if project_id:
+            profile_path = self._profiles_dir / f"{_safe_profile_id(project_id)}.json"
+            if profile_path.exists():
+                try:
+                    return _normalize_profile(json.loads(profile_path.read_text(encoding="utf-8")))
+                except (OSError, json.JSONDecodeError):
+                    pass
+        return self.get_profile()
 
     def analyze_description(self, description: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         base = self.get_profile()
@@ -279,9 +331,11 @@ class ProjectIntelligenceService:
         repository: dict[str, Any] | None = None,
         profile: dict[str, Any] | None = None,
         selected_files: list[str] | None = None,
+        connector_mapping: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _normalize_profile(profile or self.get_profile())
         repository = repository or {}
+        resolved_mapping = self.resolve_connector_mapping(connector_mapping or repository.get("connector_mapping"), active_profile)
         documents = {
             _clean_path(path): content
             for path, content in (documents or {}).items()
@@ -293,15 +347,25 @@ class ProjectIntelligenceService:
         registry = _merge_knowledge_registry(active_profile["knowledge_registry"], analysis)
         repository_connection = {
             **active_profile["repository_connection"],
-            "repository_id": _clean_text(repository.get("repository_id")) or _clean_text(repository.get("id")) or active_profile["repository_connection"]["repository_id"],
-            "repository_name": _clean_text(repository.get("repository_name")) or _clean_text(repository.get("name")) or active_profile["repository_connection"]["repository_name"],
-            "branch": _clean_text(repository.get("branch")) or active_profile["repository_connection"]["branch"],
+            "repository_id": _clean_text(repository.get("repository_id")) or _clean_text(repository.get("id")) or resolved_mapping["repository_id"] or active_profile["repository_connection"]["repository_id"],
+            "repository_name": _clean_text(repository.get("repository_name")) or _clean_text(repository.get("name")) or resolved_mapping["repository_name"] or active_profile["repository_connection"]["repository_name"],
+            "branch": _clean_text(repository.get("branch")) or resolved_mapping["branch"] or active_profile["repository_connection"]["branch"],
             "status": "Repository documents analyzed" if documents else active_profile["repository_connection"]["status"],
             "readme_path": active_profile["repository_connection"]["readme_path"] or "/README.md",
         }
+        azure_devops_connector = _normalize_azure_devops_connector(
+            {
+                **resolved_mapping,
+                "repository_id": repository_connection["repository_id"],
+                "repository_name": repository_connection["repository_name"],
+                "branch": repository_connection["branch"],
+            },
+            repository_connection,
+        )
         next_profile = {
             **active_profile,
             "repository_connection": repository_connection,
+            "connectors": {**active_profile["connectors"], "azure_devops": azure_devops_connector},
             "project_description": active_profile["project_description"] or analysis["readme_summary"],
             "readme_analysis": {
                 **active_profile["readme_analysis"],
@@ -367,20 +431,35 @@ class ProjectIntelligenceService:
         title = _clean_text(epic.get("title")) or "Untitled epic"
         description = _clean_text(epic.get("description"))
         keywords = _context_keywords(title, description, active_profile)
-        features = _recommended_features(keywords, active_profile)
+        business_goal = _sentence(f"Improve {title}", description or active_profile["project_description"])
+        capability_plan = _capability_decomposition(title, business_goal, keywords, active_profile)
+        features = capability_plan["recommended_features"]
         deterministic = {
-            "business_goal": _sentence(f"Improve {title}", description or active_profile["project_description"]),
+            "business_goal": business_goal,
             "business_outcomes": _business_outcomes(keywords, active_profile),
             "users": _users_for_profile(active_profile),
+            "user_problems": capability_plan["user_problems"],
+            "capability_categories": capability_plan["capability_categories"],
             "applications": _application_names(active_profile),
             "constraints": _constraints_for_profile(active_profile),
             "risks": _risks_for_profile(active_profile, keywords),
             "dependencies": _dependencies_for_profile(active_profile),
             "recommended_features": features,
+            "capability_diagnostics": capability_plan["diagnostics"],
         }
         phi = _project_phi_json("refine_epic", active_profile, epic, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
-            return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
+            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
+            merged["recommended_features"] = _validate_capability_features(
+                merged.get("recommended_features"),
+                title,
+                merged.get("business_goal") or business_goal,
+                keywords,
+                active_profile,
+                fallback_features=features,
+                diagnostics=merged.get("capability_diagnostics"),
+            )
+            return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
@@ -723,13 +802,17 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     ui = profile.get("ui_guidelines") if isinstance(profile.get("ui_guidelines"), dict) else {}
     standards = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
     preview = profile.get("knowledge_profile_preview") if isinstance(profile.get("knowledge_profile_preview"), dict) else {}
+    repository_connection = _normalize_repository_connection(profile.get("repository_connection"))
+    connectors = _normalize_connectors(profile.get("connectors"), repository_connection)
     normalized = {
         "onboarding_completed": bool(profile.get("onboarding_completed")),
+        "project_id": _clean_text(profile.get("project_id")),
         "project_name": _clean_text(profile.get("project_name")),
         "domain": _clean_text(profile.get("domain")),
         "project_type": _clean_text(profile.get("project_type")),
         "project_description": _clean_text(profile.get("project_description")),
-        "repository_connection": _normalize_repository_connection(profile.get("repository_connection")),
+        "connectors": connectors,
+        "repository_connection": _repository_connection_from_connector(connectors["azure_devops"], repository_connection),
         "readme_analysis": _normalize_readme_analysis(profile.get("readme_analysis")),
         "knowledge_registry": _normalize_knowledge_registry(profile.get("knowledge_registry")),
         "applications": _normalize_applications(profile.get("applications")),
@@ -789,6 +872,48 @@ def _normalize_repository_connection(value: Any) -> dict[str, str]:
         "status": _clean_text(connection.get("status")) or "Not connected",
         "readme_path": _clean_text(connection.get("readme_path")) or "/README.md",
     }
+
+
+def _normalize_connectors(value: Any, repository_connection: dict[str, str] | None = None) -> dict[str, Any]:
+    connectors = value if isinstance(value, dict) else {}
+    return {
+        "azure_devops": _normalize_azure_devops_connector(
+            connectors.get("azure_devops") if isinstance(connectors.get("azure_devops"), dict) else {},
+            repository_connection,
+        )
+    }
+
+
+def _normalize_azure_devops_connector(value: Any, repository_connection: dict[str, str] | None = None) -> dict[str, str]:
+    connector = value if isinstance(value, dict) else {}
+    repository_connection = repository_connection or {}
+    return {
+        "organization_url": _clean_text(connector.get("organization_url")) or os.getenv("ADO_ORG_URL", "").rstrip("/"),
+        "ado_project": _clean_text(connector.get("ado_project")) or os.getenv("ADO_PROJECT", ""),
+        "repository_id": _clean_text(connector.get("repository_id")) or _clean_text(repository_connection.get("repository_id")),
+        "repository_name": _clean_text(connector.get("repository_name")) or _clean_text(repository_connection.get("repository_name")),
+        "branch": _clean_text(connector.get("branch")) or _clean_text(repository_connection.get("branch")) or "main",
+    }
+
+
+def _repository_connection_from_connector(connector: dict[str, str], current: dict[str, str] | None = None) -> dict[str, str]:
+    current = current or {}
+    return {
+        "repository_id": _clean_text(connector.get("repository_id")) or _clean_text(current.get("repository_id")),
+        "repository_name": _clean_text(connector.get("repository_name")) or _clean_text(current.get("repository_name")),
+        "branch": _clean_text(connector.get("branch")) or _clean_text(current.get("branch")) or "main",
+        "status": _clean_text(current.get("status")) or ("Repository connected" if connector.get("repository_id") else "Not connected"),
+        "readme_path": _clean_text(current.get("readme_path")) or "/README.md",
+    }
+
+
+def _legacy_azure_devops_connector(repository_connection: dict[str, str] | None = None) -> dict[str, str]:
+    return _normalize_azure_devops_connector({}, repository_connection)
+
+
+def _safe_profile_id(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(value).strip())
+    return safe or "default"
 
 
 def _normalize_readme_analysis(value: Any) -> dict[str, Any]:
@@ -1944,69 +2069,374 @@ def _context_keywords(title: str, description: str, profile: dict[str, Any]) -> 
     return _unique(keywords)
 
 
-def _recommended_features(keywords: list[str], profile: dict[str, Any]) -> list[dict[str, str]]:
-    names: list[str] = []
-    if {"fault", "event"} & set(keywords):
-        names.extend([
-            "Fault Event Monitoring",
-            "Fault Event Timeline",
-            "Event Severity Classification",
-            "Fault Event Notifications",
-            "Historical Fault Analysis",
-            "Event Search and Filtering",
+CAPABILITY_TAXONOMY = [
+    "Monitoring",
+    "Alerting",
+    "Investigation",
+    "Analytics",
+    "Reporting",
+    "Maintenance",
+    "Configuration",
+    "Commissioning",
+    "Notifications",
+    "Asset Health",
+    "Compliance",
+    "Telemetry",
+    "Device Management",
+    "Firmware Management",
+    "Diagnostics",
+    "Operational Awareness",
+    "Outage Response",
+    "Field Operations",
+]
+
+
+def _capability_decomposition(epic_title: str, business_goal: str, keywords: list[str], profile: dict[str, Any]) -> dict[str, Any]:
+    users = _users_for_profile(profile)
+    problems = _user_problems_for_epic(keywords, profile)
+    capabilities = _capabilities_for_epic(keywords, profile)
+    rejected: list[dict[str, Any]] = []
+    feature_candidates = [_feature_from_capability(capability, keywords, users, profile) for capability in capabilities]
+    features = _validate_capability_features(
+        feature_candidates,
+        epic_title,
+        business_goal,
+        keywords,
+        profile,
+        fallback_features=[],
+        diagnostics={"rejected_similar_features": rejected},
+    )
+    if len(features) < 5:
+        supplement = [_feature_from_capability(capability, keywords, users, profile) for capability in CAPABILITY_TAXONOMY if capability not in capabilities]
+        features = _validate_capability_features(
+            [*features, *supplement],
+            epic_title,
+            business_goal,
+            keywords,
+            profile,
+            fallback_features=features,
+            diagnostics={"rejected_similar_features": rejected},
+        )
+    return {
+        "user_problems": problems,
+        "capability_categories": [feature["capability"] for feature in features],
+        "recommended_features": features[:10],
+        "diagnostics": {
+            "capability_categories_identified": [feature["capability"] for feature in features[:10]],
+            "user_problems_identified": problems,
+            "rejected_similar_features": rejected,
+            "final_feature_count": min(len(features), 10),
+        },
+    }
+
+
+def _capabilities_for_epic(keywords: list[str], profile: dict[str, Any]) -> list[str]:
+    selected: list[str] = []
+    keyword_set = set(keywords)
+    modules_text = " ".join(profile["knowledge_registry"]["modules"]).lower()
+    flows_text = " ".join(profile["knowledge_registry"]["flows"]).lower()
+    corpus = " ".join([*keywords, modules_text, flows_text])
+    if {"fault", "event", "monitoring"} & keyword_set or "fault" in corpus:
+        selected.extend(["Monitoring", "Alerting", "Investigation", "Analytics", "Operational Awareness"])
+    if "outage" in corpus:
+        selected.extend(["Outage Response", "Field Operations", "Investigation"])
+    if {"telemetry", "device"} & keyword_set or "telemetry" in corpus:
+        selected.extend(["Telemetry", "Asset Health", "Diagnostics"])
+    if {"firmware", "upgrade"} & keyword_set or "firmware" in corpus:
+        selected.extend(["Firmware Management", "Maintenance", "Compliance"])
+    if "report" in corpus or "analytics" in corpus:
+        selected.extend(["Reporting", "Analytics"])
+    if "configuration" in corpus or "settings" in corpus:
+        selected.extend(["Configuration"])
+    if "commission" in corpus or "onboard" in corpus:
+        selected.extend(["Commissioning"])
+    if not selected:
+        selected.extend(["Operational Awareness", "Configuration", "Reporting", "Notifications", "Analytics"])
+    return [capability for capability in _unique(selected) if capability in CAPABILITY_TAXONOMY][:10]
+
+
+def _user_problems_for_epic(keywords: list[str], profile: dict[str, Any]) -> list[str]:
+    problems: list[str] = []
+    keyword_set = set(keywords)
+    if {"fault", "event", "outage"} & keyword_set:
+        problems.extend([
+            "Operators need to detect critical events before they become outages.",
+            "Field teams need enough event context to respond without manual investigation delays.",
+            "Managers need reliability trends to prioritize operational improvements.",
         ])
-    if "outage" in keywords:
-        names.append("Outage Investigation Support")
-    if {"telemetry", "health", "device", "monitoring"} & set(keywords):
-        names.extend(["Telemetry Health Dashboard", "Device Health Dashboard", "Device Health Monitoring"])
-    if {"firmware", "upgrade"} & set(keywords):
-        names.append("Firmware Upgrade Visibility")
-    if "analytics" in keywords:
-        names.append("Reliability Metrics Dashboard" if "fault" in keywords else "Operational Analytics")
-    for module in profile["knowledge_registry"]["modules"]:
-        if len(names) >= 10:
-            break
-        candidate = _feature_name_from_item(module)
-        if candidate:
-            names.append(candidate)
-    for flow in profile["knowledge_registry"]["flows"]:
-        if len(names) >= 10:
-            break
-        candidate = _feature_name_from_item(flow)
-        if candidate:
-            names.append(candidate)
-    if not names:
-        domain = profile.get("domain") or profile["knowledge_profile_preview"].get("domain") or "Project"
-        names = [f"{domain} Workflow Visibility", f"{domain} Operational Controls", f"{domain} Readiness Dashboard", f"{domain} Search and Filtering", f"{domain} Notifications"]
-    selected = _remove_generic_names(_unique(names))[:10]
-    if len(selected) < 5:
-        selected = _unique([*selected, "Operational Search and Filtering", "Operational Notifications", "Historical Analysis"])[:5]
-    return [{"title": name, "description": _feature_description(name, profile)} for name in selected]
+    if {"telemetry", "health", "device"} & keyword_set:
+        problems.append("Operators need device health signals correlated with operational events.")
+    if {"firmware", "upgrade"} & keyword_set:
+        problems.append("Teams need firmware rollout visibility and exception handling.")
+    if not problems:
+        domain = profile.get("domain") or "the product"
+        problems.extend([
+            f"Users need clearer operational visibility across {domain}.",
+            "Teams need independently deliverable capabilities instead of one large ambiguous initiative.",
+        ])
+    return _unique(problems)
 
 
-def _feature_name_from_item(item: str) -> str:
-    cleaned = _clean_title(item)
-    if not cleaned:
-        return ""
-    lowered = cleaned.lower()
-    if "auth" in lowered:
-        return "Authentication Access Control"
-    if "telemetry" in lowered:
-        return "Telemetry Health Dashboard"
-    if "firmware" in lowered:
-        return "Firmware Upgrade Visibility"
-    if "fault" in lowered or "outage" in lowered:
-        return "Outage Investigation Support" if "outage" in lowered else "Fault Event Monitoring"
-    if "analytics" in lowered:
-        return "Operational Analytics"
-    if any(word in lowered for word in ["monitor", "health"]):
-        return f"{cleaned} Visibility"
-    return cleaned if any(word in lowered for word in ["dashboard", "monitoring", "visibility", "analytics"]) else f"{cleaned} Management"
+def _feature_from_capability(capability: str, keywords: list[str], users: list[str], profile: dict[str, Any]) -> dict[str, Any]:
+    title = _capability_feature_title(capability, keywords, profile)
+    modules = _modules_for_capability(capability, keywords, profile)
+    flows = _flows_for_capability(capability, keywords, profile)
+    outcome = _business_outcome_for_capability(capability, keywords)
+    user_problem = _user_problem_for_capability(capability, keywords)
+    primary_users = _users_for_capability(capability, users)
+    return {
+        "title": title,
+        "description": _feature_description(title, capability, outcome, primary_users, modules, flows, profile),
+        "capability": capability,
+        "business_outcome": outcome,
+        "user_problem": user_problem,
+        "primary_users": primary_users,
+        "impacted_modules": modules,
+        "impacted_flows": flows,
+        "reasoning": f"{title} is a separate {capability.lower()} capability because it solves '{user_problem}' and can be delivered independently against {', '.join(modules) or 'the affected modules'}.",
+    }
 
 
-def _feature_description(name: str, profile: dict[str, Any]) -> str:
+def _capability_feature_title(capability: str, keywords: list[str], profile: dict[str, Any]) -> str:
+    corpus = " ".join([*keywords, *profile["knowledge_registry"]["modules"], *profile["knowledge_registry"]["flows"]]).lower()
+    fault_context = "fault" in corpus or "outage" in corpus
+    titles = {
+        "Monitoring": "Critical Fault Detection" if fault_context else "Operational Signal Detection",
+        "Alerting": "Operator Alerting" if fault_context else "Operational Alerting",
+        "Investigation": "Outage Investigation Workspace" if "outage" in corpus or fault_context else "Issue Investigation Workspace",
+        "Analytics": "Reliability Trend Analytics" if fault_context or "asset" in corpus else "Operational Trend Analytics",
+        "Reporting": "Reliability Reporting" if fault_context else "Operational Reporting",
+        "Maintenance": "Maintenance Exception Handling",
+        "Configuration": "Operational Rule Configuration",
+        "Commissioning": "Device Commissioning Readiness",
+        "Notifications": "Escalation Notifications" if fault_context else "Workflow Notifications",
+        "Asset Health": "Device Health Correlation",
+        "Compliance": "Operational Compliance Evidence",
+        "Telemetry": "Telemetry Quality Assurance",
+        "Device Management": "Device State Control",
+        "Firmware Management": "Firmware Rollout Visibility",
+        "Diagnostics": "Remote Diagnostic Support",
+        "Operational Awareness": "Live Operations Awareness",
+        "Outage Response": "Field Response Support",
+        "Field Operations": "Field Response Coordination",
+    }
+    return titles.get(capability, f"{capability} Capability")
+
+
+def _modules_for_capability(capability: str, keywords: list[str], profile: dict[str, Any]) -> list[str]:
+    modules = profile["knowledge_registry"]["modules"]
+    lowered = {module.lower(): module for module in modules}
+    preferred: dict[str, list[str]] = {
+        "Monitoring": ["fault", "telemetry"],
+        "Alerting": ["fault", "telemetry", "notification"],
+        "Investigation": ["fault", "report", "event"],
+        "Analytics": ["report", "asset", "telemetry"],
+        "Reporting": ["report", "analytics"],
+        "Asset Health": ["asset", "telemetry", "health"],
+        "Telemetry": ["telemetry"],
+        "Device Management": ["device"],
+        "Firmware Management": ["firmware"],
+        "Diagnostics": ["diagnostic", "telemetry", "device"],
+        "Outage Response": ["fault", "device", "report"],
+        "Field Operations": ["device", "fault"],
+    }
+    selected = []
+    for token in preferred.get(capability, []):
+        selected.extend(value for key, value in lowered.items() if token in key)
+    if not selected:
+        selected = modules[:2]
+    return _unique(selected)[:3]
+
+
+def _flows_for_capability(capability: str, keywords: list[str], profile: dict[str, Any]) -> list[str]:
+    flows = profile["knowledge_registry"]["flows"]
+    lowered = {flow.lower(): flow for flow in flows}
+    preferred: dict[str, list[str]] = {
+        "Monitoring": ["fault", "review", "event"],
+        "Alerting": ["fault", "outage"],
+        "Investigation": ["investigation", "fault", "review"],
+        "Analytics": ["health", "review", "analytics"],
+        "Asset Health": ["health", "device"],
+        "Telemetry": ["telemetry", "health"],
+        "Firmware Management": ["firmware", "upgrade"],
+        "Outage Response": ["outage", "investigation"],
+        "Field Operations": ["field", "outage"],
+    }
+    selected = []
+    for token in preferred.get(capability, []):
+        selected.extend(value for key, value in lowered.items() if token in key)
+    if not selected:
+        selected = flows[:2]
+    return _unique(selected)[:3]
+
+
+def _business_outcome_for_capability(capability: str, keywords: list[str]) -> str:
+    outcomes = {
+        "Monitoring": "Faster detection of critical operating conditions.",
+        "Alerting": "Reduced response time through actionable operator notifications.",
+        "Investigation": "Faster root-cause analysis and outage triage.",
+        "Analytics": "Better prioritization through reliability trends and operational insight.",
+        "Reporting": "Clearer stakeholder visibility into reliability and service outcomes.",
+        "Asset Health": "Improved operational decisions through correlated device health.",
+        "Telemetry": "Higher confidence in operational decisions through trusted telemetry quality.",
+        "Firmware Management": "Safer rollout operations with visible upgrade status and exceptions.",
+        "Field Operations": "Better field execution through focused response context.",
+    }
+    return outcomes.get(capability, f"Improved {capability.lower()} outcomes for the business.")
+
+
+def _user_problem_for_capability(capability: str, keywords: list[str]) -> str:
+    problems = {
+        "Monitoring": "critical events are not visible early enough",
+        "Alerting": "operators do not know which events require immediate action",
+        "Investigation": "teams lose time correlating event context during outages",
+        "Analytics": "leaders lack trend evidence for prioritization",
+        "Reporting": "stakeholders lack clear operational evidence",
+        "Asset Health": "device health is disconnected from event review",
+        "Telemetry": "telemetry quality issues reduce trust in decisions",
+        "Firmware Management": "firmware rollout exceptions are hard to track",
+        "Field Operations": "field teams lack response-ready context",
+    }
+    return problems.get(capability, f"{capability.lower()} work is not structured as an independent capability")
+
+
+def _users_for_capability(capability: str, users: list[str]) -> list[str]:
+    defaults = {
+        "Alerting": ["Operations User", "Field Technician"],
+        "Investigation": ["Operations User", "Field Technician"],
+        "Analytics": ["Operations Manager"],
+        "Reporting": ["Operations Manager"],
+        "Field Operations": ["Field Technician"],
+        "Outage Response": ["Operations User", "Field Technician"],
+    }
+    return defaults.get(capability, users[:1] or ["Operations User"])
+
+
+def _feature_description(name: str, capability: str, outcome: str, users: list[str], modules: list[str], flows: list[str], profile: dict[str, Any]) -> str:
     apps = _format_applications(profile["applications"]) or "the affected applications"
-    return f"Deliver {name.lower()} across {apps} with traceable outcomes, dependencies, and validation coverage."
+    return (
+        f"Deliver {name} as a {capability.lower()} capability for {', '.join(users) or 'users'} across {apps}. "
+        f"Outcome: {outcome} Modules: {', '.join(modules) or 'confirm modules'}. Flows: {', '.join(flows) or 'confirm flows'}."
+    )
+
+
+def _validate_capability_features(
+    features: Any,
+    epic_title: str,
+    business_goal: str,
+    keywords: list[str],
+    profile: dict[str, Any],
+    fallback_features: list[dict[str, Any]] | None = None,
+    diagnostics: Any = None,
+) -> list[dict[str, Any]]:
+    rejected = diagnostics.get("rejected_similar_features") if isinstance(diagnostics, dict) else None
+    if rejected is None:
+        rejected = []
+    normalized: list[dict[str, Any]] = []
+    for raw in features if isinstance(features, list) else []:
+        feature = _normalize_capability_feature(raw, keywords, profile)
+        title = feature.get("title", "")
+        reason = _feature_rejection_reason(feature, epic_title, business_goal)
+        if reason:
+            rejected.append({"title": title, "reason": reason, "similarity": round(_max_feature_similarity(title, epic_title, business_goal), 3)})
+            continue
+        if title and title not in [item["title"] for item in normalized]:
+            normalized.append(feature)
+        if len(normalized) >= 10:
+            break
+    if len(normalized) < 5 and fallback_features:
+        for feature in fallback_features:
+            enriched = _normalize_capability_feature(feature, keywords, profile)
+            if not _feature_rejection_reason(enriched, epic_title, business_goal) and enriched["title"] not in [item["title"] for item in normalized]:
+                normalized.append(enriched)
+            if len(normalized) >= 5:
+                break
+    return normalized[:10]
+
+
+def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[str, Any]) -> dict[str, Any]:
+    item = raw if isinstance(raw, dict) else {"title": _clean_text(raw)}
+    capability = _clean_text(item.get("capability"))
+    if capability not in CAPABILITY_TAXONOMY:
+        capability = _infer_capability_from_title(_clean_text(item.get("title")), keywords)
+    users = _string_list(item.get("primary_users") or item.get("users")) or _users_for_capability(capability, _users_for_profile(profile))
+    modules = _string_list(item.get("impacted_modules") or item.get("modules")) or _modules_for_capability(capability, keywords, profile)
+    flows = _string_list(item.get("impacted_flows") or item.get("flows")) or _flows_for_capability(capability, keywords, profile)
+    outcome = _clean_text(item.get("business_outcome")) or _business_outcome_for_capability(capability, keywords)
+    title = _clean_title(_clean_text(item.get("title")) or _capability_feature_title(capability, keywords, profile))
+    return {
+        "title": title,
+        "description": _clean_text(item.get("description")) or _feature_description(title, capability, outcome, users, modules, flows, profile),
+        "capability": capability,
+        "business_outcome": outcome,
+        "user_problem": _clean_text(item.get("user_problem")) or _user_problem_for_capability(capability, keywords),
+        "primary_users": users,
+        "impacted_modules": modules,
+        "impacted_flows": flows,
+        "reasoning": _clean_text(item.get("reasoning")) or f"{title} is independently deliverable as a {capability.lower()} capability.",
+    }
+
+
+def _infer_capability_from_title(title: str, keywords: list[str]) -> str:
+    lowered = title.lower()
+    if "alert" in lowered or "notification" in lowered:
+        return "Alerting"
+    if "investigation" in lowered or "workspace" in lowered:
+        return "Investigation"
+    if "analytics" in lowered or "trend" in lowered or "classification" in lowered or "prioritization" in lowered:
+        return "Analytics"
+    if "health" in lowered:
+        return "Asset Health"
+    if "telemetry" in lowered:
+        return "Telemetry"
+    if "firmware" in lowered:
+        return "Firmware Management"
+    if "field" in lowered or "response" in lowered:
+        return "Field Operations"
+    if "report" in lowered:
+        return "Reporting"
+    return "Monitoring" if "fault" in " ".join(keywords).lower() else "Operational Awareness"
+
+
+def _feature_rejection_reason(feature: dict[str, Any], epic_title: str, business_goal: str) -> str:
+    title = feature.get("title", "")
+    lowered = title.lower()
+    if not title:
+        return "missing feature title"
+    if _max_feature_similarity(title, epic_title, business_goal) >= 0.58:
+        return "too similar to epic or business goal"
+    if lowered.endswith("dashboard") and not any(word in lowered for word in ["analytics", "health", "reporting"]):
+        return "generic dashboard-only feature"
+    for key in ["user_problem", "business_outcome", "capability"]:
+        if not feature.get(key):
+            return f"missing {key}"
+    if not feature.get("impacted_modules"):
+        return "missing impacted modules"
+    if not feature.get("impacted_flows"):
+        return "missing impacted flows"
+    return ""
+
+
+def _max_feature_similarity(title: str, epic_title: str, business_goal: str) -> float:
+    return max(_token_similarity(title, epic_title), _token_similarity(title, business_goal))
+
+
+def _token_similarity(left: str, right: str) -> float:
+    left_tokens = set(_meaningful_tokens(left))
+    right_tokens = set(_meaningful_tokens(right))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
+def _meaningful_tokens(value: str) -> list[str]:
+    stopwords = {"the", "and", "or", "for", "with", "into", "from", "real", "time", "improve", "provide", "visibility", "dashboard"}
+    return [token for token in _split_words(value.lower()) if token and token not in stopwords]
+
+
+def _split_words(value: str) -> list[str]:
+    chars = [ch.lower() if ch.isalnum() else " " for ch in value]
+    return [part for part in "".join(chars).split() if part]
 
 
 def _recommended_stories(feature_title: str, modules: list[str], flows: list[str], profile: dict[str, Any]) -> list[dict[str, str]]:

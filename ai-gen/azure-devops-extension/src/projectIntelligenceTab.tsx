@@ -125,10 +125,14 @@ type ProviderMetadata = {
 
 type ProjectProfile = {
   onboarding_completed?: boolean;
+  project_id?: string;
   project_name: string;
   domain: string;
   project_type: string;
   project_description: string;
+  connectors?: {
+    azure_devops?: AzureDevOpsConnectorMapping;
+  };
   repository_connection: {
     repository_id: string;
     repository_name: string;
@@ -174,6 +178,21 @@ type ProjectProfile = {
     repository_status: string;
     readiness: string;
   };
+};
+
+type AdoProject = {
+  id: string;
+  name: string;
+  state?: string;
+  visibility?: string;
+};
+
+type AzureDevOpsConnectorMapping = {
+  organization_url?: string;
+  ado_project: string;
+  repository_id: string;
+  repository_name: string;
+  branch: string;
 };
 
 type PromptResult = ProviderMetadata & {
@@ -329,10 +348,20 @@ const EMPTY_STANDARDS: DevelopmentStandards = {
 
 const EMPTY_PROFILE: ProjectProfile = {
   onboarding_completed: false,
+  project_id: '',
   project_name: '',
   domain: '',
   project_type: '',
   project_description: '',
+  connectors: {
+    azure_devops: {
+      organization_url: '',
+      ado_project: '',
+      repository_id: '',
+      repository_name: '',
+      branch: 'main',
+    },
+  },
   repository_connection: {
     repository_id: '',
     repository_name: '',
@@ -404,6 +433,7 @@ function ProjectIntelligenceTab() {
   const [currentWorkItem, setCurrentWorkItem] = useState<AdoWorkItem | undefined>();
   const [childDrafts, setChildDrafts] = useState<ChildDraft[]>([]);
   const [creationLog, setCreationLog] = useState<string[]>([]);
+  const [adoProjects, setAdoProjects] = useState<AdoProject[]>([]);
   const [repositories, setRepositories] = useState<GitRepository[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [repositoryLoadMessage, setRepositoryLoadMessage] = useState('');
@@ -435,7 +465,7 @@ function ProjectIntelligenceTab() {
           setCurrentWorkItem(workItem);
           seedPlannerFromWorkItem(workItem);
         }
-        void loadRepositories();
+        void loadAdoProjects(loaded);
         setError('');
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load project profile.');
@@ -761,24 +791,51 @@ function ProjectIntelligenceTab() {
     }
   }
 
-  async function loadRepositories() {
-    setRepositoryLoadMessage('Loading Azure DevOps repositories...');
+  async function loadAdoProjects(sourceProfile: ProjectProfile = profile) {
+    setRepositoryLoadMessage('Loading Azure DevOps projects...');
     try {
-      const repos = await fetchAdoRepositories();
+      const projects = await fetchAdoProjects();
+      setAdoProjects(projects);
+      const selectedProject = getAdoMapping(sourceProfile).ado_project || projects[0]?.name || '';
+      if (selectedProject) {
+        if (!getAdoMapping(sourceProfile).ado_project) {
+          setProfile(applyAdoMapping(sourceProfile, { ado_project: selectedProject }));
+        }
+        await loadRepositories(selectedProject, sourceProfile);
+      } else {
+        setRepositories([]);
+        setBranches([]);
+        setRepositoryLoadMessage('No Azure DevOps projects were returned. Check backend ADO_ORG_URL/ADO_PAT.');
+      }
+    } catch (loadError) {
+      const detail = loadError instanceof Error ? loadError.message : String(loadError);
+      setAdoProjects([]);
+      setRepositories([]);
+      setBranches([]);
+      setRepositoryLoadMessage(`Could not load Azure DevOps projects from backend connector. ${detail}`);
+      setError('Could not load Azure DevOps projects. Check backend ADO_ORG_URL/ADO_PAT and Project permissions.');
+    }
+  }
+
+  async function loadRepositories(adoProject = getAdoMapping(profile).ado_project, sourceProfile: ProjectProfile = profile) {
+    setRepositoryLoadMessage('Loading Azure DevOps repositories...');
+    if (!adoProject) {
+      setRepositories([]);
+      setBranches([]);
+      setRepositoryLoadMessage('Select an Azure DevOps project first.');
+      return;
+    }
+    try {
+      const repos = await fetchAdoRepositories(adoProject);
       const visibleRepos = (repos || []).filter((repo) => repo.id && repo.name);
       setRepositories(visibleRepos);
       if (
-        profile.repository_connection.repository_id
-        && !visibleRepos.some((repo) => repo.id === profile.repository_connection.repository_id)
+        sourceProfile.repository_connection.repository_id
+        && !visibleRepos.some((repo) => repo.id === sourceProfile.repository_connection.repository_id)
       ) {
         setProfile((current) => ({
-          ...current,
-          repository_connection: {
-            ...current.repository_connection,
-            repository_id: '',
-            repository_name: '',
-            status: 'Not connected',
-          },
+          ...applyAdoMapping(current, { ado_project: adoProject, repository_id: '', repository_name: '', branch: '' }),
+          repository_connection: { ...current.repository_connection, repository_id: '', repository_name: '', branch: '', status: 'Not connected' },
         }));
         setBranches([]);
       }
@@ -790,8 +847,24 @@ function ProjectIntelligenceTab() {
     } catch (loadError) {
       const detail = loadError instanceof Error ? loadError.message : String(loadError);
       setRepositories([]);
-      setRepositoryLoadMessage(`Could not load repositories from Azure DevOps. Check Code read permission and retry. ${detail}`);
-      setError('Could not load Azure DevOps repositories. Repository must be selected from the Azure DevOps dropdown.');
+      setRepositoryLoadMessage(`Could not load repositories from Azure DevOps backend connector. ${detail}`);
+      setError('Could not load Azure DevOps repositories. Select a valid ADO project and check backend PAT Code read permission.');
+    }
+  }
+
+  async function selectAdoProject(adoProject: string) {
+    const nextProfile = applyAdoMapping(profile, {
+      ado_project: adoProject,
+      repository_id: '',
+      repository_name: '',
+      branch: '',
+    });
+    setProfile(nextProfile);
+    setRepositories([]);
+    setBranches([]);
+    await saveAdoMapping(nextProfile);
+    if (adoProject) {
+      await loadRepositories(adoProject, nextProfile);
     }
   }
 
@@ -801,7 +874,7 @@ function ProjectIntelligenceTab() {
       setError('Select a repository from the Azure DevOps dropdown. Manual repository values are not supported.');
       return;
     }
-    const nextProfile = {
+    const nextProfile = applyAdoMapping({
       ...profile,
       repository_connection: {
         ...profile.repository_connection,
@@ -809,28 +882,33 @@ function ProjectIntelligenceTab() {
         repository_name: selected?.name || '',
         status: selected ? 'Repository selected' : 'Not connected',
       },
-    };
+    }, {
+      repository_id: selected?.id || '',
+      repository_name: selected?.name || '',
+    });
     setProfile(nextProfile);
     setBranches([]);
     if (!selected?.id) {
       return;
     }
     try {
-      const branchNames = await fetchAdoBranches(selected.id);
+      const branchNames = await fetchAdoBranches(getAdoMapping(nextProfile).ado_project, selected.id);
       setBranches(branchNames);
       const defaultBranch = normalizeBranchName(selected.defaultBranch || '') || branchNames[0] || '';
-      setProfile({
+      const mappedProfile = applyAdoMapping({
         ...nextProfile,
         repository_connection: {
           ...nextProfile.repository_connection,
           branch: defaultBranch,
           status: 'Repository connected',
         },
-      });
+      }, { branch: defaultBranch });
+      setProfile(mappedProfile);
+      await saveAdoMapping(mappedProfile);
     } catch (branchError) {
       const detail = branchError instanceof Error ? branchError.message : String(branchError);
-      setRepositoryLoadMessage(`Repository selected, but branches could not be loaded. Type the branch name manually. ${detail}`);
-      setError('Repository selected, but branches could not be loaded. Type the branch name manually.');
+      setRepositoryLoadMessage(`Repository selected, but branches could not be loaded. ${detail}`);
+      setError('Repository selected, but branches could not be loaded from backend connector.');
     }
   }
 
@@ -843,13 +921,14 @@ function ProjectIntelligenceTab() {
     const analyzed = await withLoading('Loading and analyzing README...', async () => {
       const readmePath = profile.repository_connection.readme_path || '/README.md';
       const branch = profile.repository_connection.branch || 'main';
-      const readmeContent = await fetchAdoRepositoryFileContent(selectedRepo, readmePath, branch);
+      const readmeContent = await fetchAdoRepositoryFileContent(getAdoMapping(profile, { branch }), readmePath);
       return postJson<ProjectProfile>('/analyze-readme', {
         profile,
         readme_content: readmeContent,
         repository: {
           id: selectedRepo,
           name: profile.repository_connection.repository_name,
+          ado_project: getAdoMapping(profile).ado_project,
           branch,
           readme_path: readmePath,
         },
@@ -872,7 +951,7 @@ function ProjectIntelligenceTab() {
       const nextDocuments: Record<string, string> = {};
       const discoveredFiles = await Promise.all(REPOSITORY_DOCUMENTS.map(async (path) => {
         try {
-          const content = await fetchAdoRepositoryFileContent(selectedRepo, path, branch);
+          const content = await fetchAdoRepositoryFileContent(getAdoMapping(profile, { branch }), path);
           return { path, status: 'available' as const, content };
         } catch {
           return { path, status: 'missing' as const, content: '' };
@@ -906,7 +985,7 @@ function ProjectIntelligenceTab() {
       const nextStatus: Record<string, 'available' | 'missing' | 'unknown'> = {};
       const fetchedFiles = await Promise.all(selectedFiles.map(async (path) => {
         try {
-          const content = await fetchAdoRepositoryFileContent(selectedRepo, path, branch);
+          const content = await fetchAdoRepositoryFileContent(getAdoMapping(sourceProfile, { branch }), path);
           return { path, status: 'available' as const, content };
         } catch {
           return { path, status: 'missing' as const, content: '' };
@@ -933,9 +1012,10 @@ function ProjectIntelligenceTab() {
     }
     return postJson<ProjectProfile>('/repository/analyze', {
       profile: sourceProfile,
+      connector_mapping: getAdoMapping(sourceProfile),
       repository: {
         provider: 'azure_devops',
-        project: await getProjectName(),
+        project: getAdoMapping(sourceProfile).ado_project,
         repository_id: selectedRepo,
         repository_name: sourceProfile.repository_connection.repository_name,
         branch: sourceProfile.repository_connection.branch || 'main',
@@ -997,13 +1077,15 @@ function ProjectIntelligenceTab() {
           {showQuickStart ? (
             <QuickStartSetup
               profile={profile}
+              adoProjects={adoProjects}
               repositories={repositories}
               branches={branches}
               repositoryLoadMessage={repositoryLoadMessage}
               loading={loading}
               onProfileChange={setProfile}
+              onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
               onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
-              onReloadRepositories={() => void loadRepositories()}
+              onReloadRepositories={() => void loadAdoProjects()}
               onAnalyzeProject={() => void analyzeProject()}
             />
           ) : null}
@@ -1012,6 +1094,7 @@ function ProjectIntelligenceTab() {
           ) : null}
           <RepositoryIntelligenceCard
             profile={profile}
+            adoProjects={adoProjects}
             repositories={repositories}
             branches={branches}
             repositoryLoadMessage={repositoryLoadMessage}
@@ -1020,8 +1103,9 @@ function ProjectIntelligenceTab() {
             selectedFiles={selectedRepositoryFiles}
             loading={loading}
             showConnectionControls={!showQuickStart}
+            onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
             onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
-            onReloadRepositories={() => void loadRepositories()}
+            onReloadRepositories={() => void loadAdoProjects()}
             onProfileChange={setProfile}
             onRepositoryDocumentsChange={setRepositoryDocuments}
             onFileStatusChange={setRepositoryFileStatus}
@@ -1549,25 +1633,30 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
 
 function QuickStartSetup({
   profile,
+  adoProjects,
   repositories,
   branches,
   repositoryLoadMessage,
   loading,
   onProfileChange,
+  onSelectAdoProject,
   onSelectRepository,
   onReloadRepositories,
   onAnalyzeProject,
 }: {
   profile: ProjectProfile;
+  adoProjects: AdoProject[];
   repositories: GitRepository[];
   branches: string[];
   repositoryLoadMessage: string;
   loading: boolean;
   onProfileChange: (profile: ProjectProfile) => void;
+  onSelectAdoProject: (adoProject: string) => void;
   onSelectRepository: (repositoryId: string) => void;
   onReloadRepositories: () => void;
   onAnalyzeProject: () => void;
 }) {
+  const mapping = getAdoMapping(profile);
   return (
     <section className="planner-card planner-quick-start">
       <div>
@@ -1585,6 +1674,16 @@ function QuickStartSetup({
       </div>
       <div className="planner-grid">
         <div>
+          <div className="planner-label">ADO Project optional</div>
+          <select className="planner-input" value={mapping.ado_project} onChange={(event) => onSelectAdoProject(event.target.value)} disabled={!adoProjects.length}>
+            <option value="">{adoProjects.length ? 'Select Azure DevOps project' : 'No projects loaded'}</option>
+            {adoProjects.map((project) => <option key={project.id || project.name} value={project.name}>{project.name}</option>)}
+            {mapping.ado_project && !adoProjects.some((project) => project.name === mapping.ado_project) ? (
+              <option value={mapping.ado_project}>{mapping.ado_project}</option>
+            ) : null}
+          </select>
+        </div>
+        <div>
           <div className="planner-label">Repository optional</div>
           <select className="planner-input" value={repositories.some((repo) => repo.id === profile.repository_connection.repository_id) ? profile.repository_connection.repository_id : ''} onChange={(event) => onSelectRepository(event.target.value)} disabled={!repositories.length}>
             <option value="">{repositories.length ? 'No repository selected' : 'No repositories loaded'}</option>
@@ -1601,10 +1700,10 @@ function QuickStartSetup({
             <select
               className="planner-input"
               value={profile.repository_connection.branch}
-              onChange={(event) => onProfileChange({
+              onChange={(event) => onProfileChange(applyAdoMapping({
                 ...profile,
                 repository_connection: { ...profile.repository_connection, branch: event.target.value, status: profile.repository_connection.repository_id ? 'Repository connected' : profile.repository_connection.status },
-              })}
+              }, { branch: event.target.value }))}
             >
               <option value="">Default branch</option>
               {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
@@ -1616,10 +1715,10 @@ function QuickStartSetup({
             <input
               className="planner-input"
               value={profile.repository_connection.branch}
-              onChange={(event) => onProfileChange({
+              onChange={(event) => onProfileChange(applyAdoMapping({
                 ...profile,
                 repository_connection: { ...profile.repository_connection, branch: event.target.value, status: profile.repository_connection.repository_id ? 'Repository connected' : profile.repository_connection.status },
-              })}
+              }, { branch: event.target.value }))}
               placeholder="main"
             />
           )}
@@ -1986,6 +2085,7 @@ function RegistryComponentCard({ components }: { components: ComponentDetail[] }
 
 function RepositoryIntelligenceCard({
   profile,
+  adoProjects,
   repositories,
   branches,
   repositoryLoadMessage,
@@ -1994,6 +2094,7 @@ function RepositoryIntelligenceCard({
   selectedFiles,
   loading,
   showConnectionControls,
+  onSelectAdoProject,
   onSelectRepository,
   onReloadRepositories,
   onProfileChange,
@@ -2005,6 +2106,7 @@ function RepositoryIntelligenceCard({
   onAnalyzeDocuments,
 }: {
   profile: ProjectProfile;
+  adoProjects: AdoProject[];
   repositories: GitRepository[];
   branches: string[];
   repositoryLoadMessage: string;
@@ -2013,6 +2115,7 @@ function RepositoryIntelligenceCard({
   selectedFiles: string[];
   loading: boolean;
   showConnectionControls: boolean;
+  onSelectAdoProject: (adoProject: string) => void;
   onSelectRepository: (repositoryId: string) => void;
   onReloadRepositories: () => void;
   onProfileChange: (profile: ProjectProfile) => void;
@@ -2024,6 +2127,7 @@ function RepositoryIntelligenceCard({
   onAnalyzeDocuments: () => void;
 }) {
   const selectedRepositoryLoaded = repositories.some((repo) => repo.id === profile.repository_connection.repository_id);
+  const mapping = getAdoMapping(profile);
   return (
     <section className="planner-card">
       <div className="planner-label">Repository Intelligence</div>
@@ -2035,6 +2139,13 @@ function RepositoryIntelligenceCard({
       {showConnectionControls ? (
         <>
           <div className="planner-grid">
+            <select className="planner-input" value={mapping.ado_project} onChange={(event) => onSelectAdoProject(event.target.value)} disabled={!adoProjects.length}>
+              <option value="">{adoProjects.length ? 'Select ADO project' : 'No projects loaded'}</option>
+              {adoProjects.map((project) => <option key={project.id || project.name} value={project.name}>{project.name}</option>)}
+              {mapping.ado_project && !adoProjects.some((project) => project.name === mapping.ado_project) ? (
+                <option value={mapping.ado_project}>{mapping.ado_project}</option>
+              ) : null}
+            </select>
             <select className="planner-input" value={repositories.some((repo) => repo.id === profile.repository_connection.repository_id) ? profile.repository_connection.repository_id : ''} onChange={(event) => onSelectRepository(event.target.value)} disabled={!repositories.length}>
               <option value="">{repositories.length ? 'Select Azure DevOps repository' : 'No repositories loaded'}</option>
               {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
@@ -2043,10 +2154,10 @@ function RepositoryIntelligenceCard({
               <select
                 className="planner-input"
                 value={profile.repository_connection.branch}
-                onChange={(event) => onProfileChange({
+                onChange={(event) => onProfileChange(applyAdoMapping({
                   ...profile,
                   repository_connection: { ...profile.repository_connection, branch: event.target.value, status: 'Repository connected' },
-                })}
+                }, { branch: event.target.value }))}
               >
                 <option value="">Select branch</option>
                 {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
@@ -2058,10 +2169,10 @@ function RepositoryIntelligenceCard({
               <input
                 className="planner-input"
                 value={profile.repository_connection.branch}
-                onChange={(event) => onProfileChange({
+                onChange={(event) => onProfileChange(applyAdoMapping({
                   ...profile,
                   repository_connection: { ...profile.repository_connection, branch: event.target.value, status: profile.repository_connection.repository_id ? 'Repository connected' : profile.repository_connection.status },
-                })}
+                }, { branch: event.target.value }))}
                 placeholder="main"
               />
             )}
@@ -2083,6 +2194,7 @@ function RepositoryIntelligenceCard({
       ) : null}
       {!showConnectionControls ? (
         <div className="planner-status-grid">
+          <Row label="ADO Project" value={mapping.ado_project || 'No project selected'} />
           <Row label="Repository" value={profile.repository_connection.repository_name || 'No repository selected'} />
           <Row label="Branch" value={profile.repository_connection.branch || 'Default branch'} />
         </div>
@@ -2648,56 +2760,52 @@ async function getProfile(): Promise<ProjectProfile> {
   return response.json() as Promise<ProjectProfile>;
 }
 
-async function fetchAdoRepositories(): Promise<GitRepository[]> {
-  const projectName = await getProjectIdentifier();
-  const response = await fetchAdoRest<{ value?: Array<{ id?: string; name?: string; defaultBranch?: string; remoteUrl?: string; webUrl?: string }> }>(
-    `${encodeURIComponent(projectName)}/_apis/git/repositories?api-version=7.1`,
-    REPOSITORY_SDK_TIMEOUT_MS,
-    'Azure DevOps repository list timed out.',
-  );
-  return (response.value || [])
-    .filter((repo) => repo.id && repo.name)
-    .map((repo) => ({
-      id: repo.id,
-      name: repo.name,
-      defaultBranch: repo.defaultBranch,
-      remoteUrl: repo.remoteUrl,
-      webUrl: repo.webUrl,
-    } as GitRepository));
+async function fetchAdoProjects(): Promise<AdoProject[]> {
+  const response = await getJson<{ projects?: AdoProject[]; error?: string }>('/connectors/azure-devops/projects');
+  return response.projects || [];
 }
 
-async function fetchAdoBranches(repositoryId: string): Promise<string[]> {
-  const projectName = await getProjectIdentifier();
-  const response = await fetchAdoRest<{ value?: Array<{ name?: string }> }>(
-    `${encodeURIComponent(projectName)}/_apis/git/repositories/${encodeURIComponent(repositoryId)}/refs?filter=heads/&api-version=7.1`,
-    REPOSITORY_SDK_TIMEOUT_MS,
-    'Azure DevOps branch list timed out.',
-  );
-  return (response.value || [])
-    .map((branch) => normalizeBranchName(String(branch.name || '')))
-    .filter(Boolean);
+async function fetchAdoRepositories(adoProject: string): Promise<GitRepository[]> {
+  const params = new URLSearchParams({ ado_project: adoProject });
+  const response = await getJson<{ repositories?: GitRepository[]; error?: string }>(`/connectors/azure-devops/repositories?${params.toString()}`);
+  return response.repositories || [];
 }
 
-async function fetchAdoRepositoryFileContent(repositoryId: string, path: string, branch: string): Promise<string> {
-  const projectName = await getProjectIdentifier();
+async function fetchAdoBranches(adoProject: string, repositoryId: string): Promise<string[]> {
+  const params = new URLSearchParams({ ado_project: adoProject, repository_id: repositoryId });
+  const response = await getJson<{ branches?: string[]; error?: string }>(`/connectors/azure-devops/branches?${params.toString()}`);
+  return (response.branches || []).map((branch) => normalizeBranchName(branch)).filter(Boolean);
+}
+
+async function fetchAdoRepositoryFileContent(mapping: AzureDevOpsConnectorMapping, path: string): Promise<string> {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const params = new URLSearchParams({
+  const response = await postJson<{ content?: string }>('/connectors/azure-devops/file', {
+    connector_mapping: mapping,
     path: normalizedPath,
-    includeContent: 'true',
-    resolveLfs: 'true',
-    'versionDescriptor.version': branch || 'main',
-    'versionDescriptor.versionType': 'branch',
-    'api-version': '7.1',
   });
-  const response = await fetchAdoRest<{ content?: string }>(
-    `${encodeURIComponent(projectName)}/_apis/git/repositories/${encodeURIComponent(repositoryId)}/items?${params.toString()}`,
-    REPOSITORY_FILE_TIMEOUT_MS,
-    `Timed out loading ${normalizedPath} from Azure DevOps.`,
-  );
   if (!response.content) {
     throw new Error(`${normalizedPath} did not contain readable text content.`);
   }
   return response.content;
+}
+
+async function saveAdoMapping(profile: ProjectProfile): Promise<void> {
+  await postJson<{ mapping?: AzureDevOpsConnectorMapping }>('/connectors/azure-devops/mapping', {
+    project_id: profile.project_id || '',
+    mapping: getAdoMapping(profile),
+  });
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${BASE_URL}${path}`);
+  if (!response.ok) {
+    throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  if (payload && typeof payload === 'object' && typeof payload.error === 'string' && payload.error.trim()) {
+    throw new Error(payload.error);
+  }
+  return payload as T;
 }
 
 async function fetchAdoRest<T>(relativePath: string, timeoutMs: number, timeoutMessage: string): Promise<T> {
@@ -2956,6 +3064,35 @@ function splitLines(value: string): string[] {
 
 function splitTags(value: string): string[] {
   return value.split(/[;,]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function getAdoMapping(profile: ProjectProfile, overrides: Partial<AzureDevOpsConnectorMapping> = {}): AzureDevOpsConnectorMapping {
+  const current = profile.connectors?.azure_devops;
+  return {
+    organization_url: current?.organization_url || '',
+    ado_project: overrides.ado_project ?? current?.ado_project ?? '',
+    repository_id: overrides.repository_id ?? current?.repository_id ?? profile.repository_connection.repository_id ?? '',
+    repository_name: overrides.repository_name ?? current?.repository_name ?? profile.repository_connection.repository_name ?? '',
+    branch: overrides.branch ?? current?.branch ?? profile.repository_connection.branch ?? 'main',
+  };
+}
+
+function applyAdoMapping(profile: ProjectProfile, updates: Partial<AzureDevOpsConnectorMapping>): ProjectProfile {
+  const mapping = getAdoMapping(profile, updates);
+  return {
+    ...profile,
+    connectors: {
+      ...(profile.connectors || {}),
+      azure_devops: mapping,
+    },
+    repository_connection: {
+      ...profile.repository_connection,
+      repository_id: mapping.repository_id,
+      repository_name: mapping.repository_name,
+      branch: mapping.branch,
+      status: mapping.repository_id ? 'Repository connected' : profile.repository_connection.status,
+    },
+  };
 }
 
 function extractWorkItemId(url?: string): number {

@@ -324,6 +324,7 @@ class ProjectIntelligenceReadmeRequest(BaseModel):
 class ProjectIntelligenceRepositoryAnalyzeRequest(BaseModel):
     profile: dict[str, Any] = Field(default_factory=dict)
     repository: dict[str, Any] = Field(default_factory=dict)
+    connector_mapping: dict[str, Any] = Field(default_factory=dict)
     selected_files: list[str] = Field(default_factory=list)
     documents: dict[str, str] = Field(default_factory=dict)
 
@@ -354,6 +355,16 @@ class ProjectIntelligenceProviderProbeRequest(BaseModel):
     force_provider: str = ""
     allow_fallback: bool = False
     mode: str = ""
+
+
+class ProjectIntelligenceConnectorMappingRequest(BaseModel):
+    project_id: str = ""
+    mapping: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceRepositoryFileRequest(BaseModel):
+    connector_mapping: dict[str, Any] = Field(default_factory=dict)
+    path: str = "/README.md"
 
 
 @app.get("/health")
@@ -409,6 +420,7 @@ def analyze_project_repository_documents(request: ProjectIntelligenceRepositoryA
         request.repository,
         request.profile,
         request.selected_files,
+        request.connector_mapping,
     )
 
 
@@ -502,12 +514,91 @@ def project_intelligence_provider_probe(request: ProjectIntelligenceProviderProb
     return project_intelligence_service.provider_probe(request.prompt, _project_intelligence_options(request))
 
 
+@app.get("/project-intelligence/connectors/azure-devops/projects")
+def project_intelligence_ado_projects() -> dict:
+    client = AdoClient()
+    if not client.is_platform_configured:
+        return {"projects": [], "configured": False, "missing_env": _ado_missing_platform_env()}
+    try:
+        return {"projects": client.list_projects(), "configured": True, "missing_env": []}
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"projects": [], "configured": True, "error": str(exc), "missing_env": []},
+        )
+
+
+@app.get("/project-intelligence/connectors/azure-devops/repositories")
+def project_intelligence_ado_repositories(ado_project: str = "") -> dict:
+    client = AdoClient()
+    if not client.is_platform_configured:
+        return {"repositories": [], "configured": False, "missing_env": _ado_missing_platform_env()}
+    project = ado_project or os.getenv("ADO_PROJECT", "")
+    if not project:
+        return JSONResponse(status_code=400, content={"repositories": [], "error": "ado_project is required."})
+    try:
+        return {"repositories": client.list_repositories(project), "configured": True, "ado_project": project}
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"repositories": [], "configured": True, "ado_project": project, "error": str(exc)},
+        )
+
+
+@app.get("/project-intelligence/connectors/azure-devops/branches")
+def project_intelligence_ado_branches(ado_project: str = "", repository_id: str = "") -> dict:
+    client = AdoClient()
+    if not client.is_platform_configured:
+        return {"branches": [], "configured": False, "missing_env": _ado_missing_platform_env()}
+    project = ado_project or os.getenv("ADO_PROJECT", "")
+    if not project or not repository_id:
+        return JSONResponse(status_code=400, content={"branches": [], "error": "ado_project and repository_id are required."})
+    try:
+        return {"branches": client.list_branches(project, repository_id), "configured": True, "ado_project": project}
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"branches": [], "configured": True, "ado_project": project, "error": str(exc)},
+        )
+
+
+@app.get("/project-intelligence/connectors/azure-devops/mapping")
+def project_intelligence_ado_get_mapping(project_id: str = "") -> dict:
+    return {"mapping": project_intelligence_service.get_connector_mapping(project_id)}
+
+
+@app.post("/project-intelligence/connectors/azure-devops/mapping")
+def project_intelligence_ado_save_mapping(request: ProjectIntelligenceConnectorMappingRequest) -> dict:
+    return {"mapping": project_intelligence_service.save_connector_mapping(request.mapping, request.project_id)}
+
+
+@app.post("/project-intelligence/connectors/azure-devops/file")
+def project_intelligence_ado_file(request: ProjectIntelligenceRepositoryFileRequest) -> dict:
+    mapping = project_intelligence_service.resolve_connector_mapping(request.connector_mapping)
+    client = AdoClient()
+    if not client.is_platform_configured:
+        return JSONResponse(status_code=400, content={"content": "", "error": "ADO_ORG_URL and ADO_PAT must be configured."})
+    if not mapping.get("ado_project") or not mapping.get("repository_id"):
+        return JSONResponse(status_code=400, content={"content": "", "error": "ado_project and repository_id are required."})
+    try:
+        return {
+            "path": request.path,
+            "content": client.get_file_content(mapping["ado_project"], mapping["repository_id"], request.path, mapping.get("branch") or "main"),
+        }
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"content": "", "path": request.path, "error": str(exc)})
+
+
 def _project_intelligence_options(request: Any) -> dict[str, Any]:
     return {
         "force_provider": getattr(request, "force_provider", ""),
         "allow_fallback": bool(getattr(request, "allow_fallback", False)),
         "mode": getattr(request, "mode", ""),
     }
+
+
+def _ado_missing_platform_env() -> list[str]:
+    return [name for name in ["ADO_ORG_URL", "ADO_PAT"] if not os.getenv(name)]
 
 
 @app.post("/story-planner/sessions")

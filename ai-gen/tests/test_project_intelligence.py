@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from backend.project_intelligence import ProjectIntelligenceService, _project_phi_prompt, _project_phi_prompt_with_diagnostics
+from backend.project_intelligence import ProjectIntelligenceService, _context_budget_tokens, _project_phi_prompt, _project_phi_prompt_with_diagnostics
 
 
 class HealthyPhiProvider:
@@ -69,6 +69,19 @@ class RecordingPhiProvider(HealthyPhiProvider):
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         return super().probe_json(system_prompt, user_prompt, **kwargs)
+
+
+class SequencePhiProvider(RecordingPhiProvider):
+    def __init__(self, responses: list[dict]) -> None:
+        super().__init__()
+        self.responses = responses
+
+    def probe_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        self.calls += 1
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        index = min(self.calls - 1, len(self.responses) - 1)
+        return self.responses[index]
 
 
 class UnhealthyPhiProvider(HealthyPhiProvider):
@@ -893,6 +906,17 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertNotIn("Responsibility 19", prompt)
         self.assertNotIn("docs/file-40.md", prompt)
 
+    def test_project_context_budget_defaults_to_600(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AI_GEN_PROJECT_CONTEXT_BUDGET_TOKENS", None)
+            self.assertEqual(_context_budget_tokens(), 600)
+
+    def test_project_context_budget_clamps_to_min_and_max(self) -> None:
+        with patch.dict(os.environ, {"AI_GEN_PROJECT_CONTEXT_BUDGET_TOKENS": "100"}, clear=False):
+            self.assertEqual(_context_budget_tokens(), 300)
+        with patch.dict(os.environ, {"AI_GEN_PROJECT_CONTEXT_BUDGET_TOKENS": "1200"}, clear=False):
+            self.assertEqual(_context_budget_tokens(), 800)
+
     def test_context_budget_manager_summarizes_before_phi(self) -> None:
         large_profile = {
             "project_name": "LineDefender",
@@ -941,10 +965,80 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertLessEqual(diagnostics["compression_ratio"], 1)
         self.assertLessEqual(diagnostics["final_prompt_tokens"], diagnostics["model_context_limit"])
         self.assertIn("largest_context_sections", diagnostics)
+        self.assertIn("context_section_tokens", diagnostics)
+        self.assertIn("reserved_tokens", diagnostics)
         self.assertIn("project_summary", prompt)
         self.assertIn("Fault Monitoring", prompt)
         self.assertIn("Fault Event Review", prompt)
         self.assertNotIn("Module 79", prompt)
+
+    def test_project_summary_mode_activates_below_450_tokens(self) -> None:
+        large_profile = {
+            "project_name": "LineDefender",
+            "domain": "Utility Grid Management",
+            "project_description": "LineDefender monitors grid assets and fault workflows. " * 100,
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Operations Portal", "type": "Web Portal"}],
+            "development_standards": {"coding_guidelines": [f"Guideline {index}" for index in range(40)]},
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", *[f"Module {index}" for index in range(40)]],
+                "flows": ["Fault Event Review", "Outage Investigation", *[f"Flow {index}" for index in range(40)]],
+                "architecture_notes": ["Architecture note. " * 80],
+                "standards": [f"Standard {index}" for index in range(40)],
+            },
+        }
+
+        with patch.dict(os.environ, {"AI_GEN_PROJECT_CONTEXT_BUDGET_TOKENS": "450"}, clear=False):
+            _prompt, diagnostics = _project_phi_prompt_with_diagnostics(
+                "refine_epic",
+                large_profile,
+                {"title": "Improve Fault Event Monitoring"},
+                {"business_goal": "Draft", "recommended_features": []},
+                ["business_goal", "recommended_features"],
+            )
+
+        self.assertGreaterEqual(diagnostics["context_compression_level"], 4)
+        self.assertTrue(diagnostics["project_summary_mode"])
+        self.assertIn("Fault Monitoring", diagnostics["final_prompt_preview"])
+        self.assertIn("Fault Event Review", diagnostics["final_prompt_preview"])
+
+    def test_provider_prompt_too_long_retries_with_smaller_context_before_success(self) -> None:
+        provider = SequencePhiProvider(
+            [
+                {
+                    "status": "prompt_too_long",
+                    "failure_reason": "prompt_too_long",
+                    "failure_message": "Prompt too long.",
+                    "parsed_json": {},
+                    "elapsed_ms": 10,
+                    "raw_content": "",
+                },
+                {
+                    "status": "success",
+                    "parsed_json": {"story_summary": "Phi story", "acceptance_criteria": ["AC 1"]},
+                    "elapsed_ms": 12,
+                    "raw_content": '{"story_summary":"Phi story"}',
+                },
+            ]
+        )
+        profile = {
+            "project_description": "Fault monitoring platform. " * 80,
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", *[f"Module {index}" for index in range(70)]],
+                "flows": ["Fault Event Review", *[f"Flow {index}" for index in range(70)]],
+                "architecture_notes": ["Architecture note. " * 80],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            refined = ProjectIntelligenceService().refine_story({"title": "Display Fault Event Details"}, profile)
+
+        self.assertEqual(provider.calls, 2)
+        self.assertEqual(refined["provider_used"], "azure_phi")
+        self.assertEqual(refined["phi_status"], "success")
+        self.assertFalse(refined["fallback_used"])
 
     def test_project_phi_metadata_includes_context_diagnostics(self) -> None:
         provider = HealthyPhiProvider({"story_summary": "Phi story", "acceptance_criteria": ["AC 1"]})

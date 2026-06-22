@@ -116,9 +116,16 @@ type ProviderMetadata = {
   output_schema_tokens?: number;
   final_prompt_tokens?: number;
   model_context_limit?: number;
+  reserved_tokens?: number;
+  project_context_tokens?: number;
+  context_budget_used?: number;
+  retry_attempt?: number;
+  compression_level?: number;
+  project_summary_mode?: boolean;
   configured_budget_tokens?: number;
   compression_applied?: boolean;
   largest_context_sections?: Array<{ section?: string; tokens?: number }>;
+  context_section_tokens?: Record<string, number>;
   final_prompt_preview?: string;
   prompt_too_long_stage?: string;
 };
@@ -2382,10 +2389,18 @@ function ProjectIntelligenceProviderDiagnostics({ metadata }: { metadata?: Provi
         <Row label="Context Size" value={formatNumber(metadata?.context_size)} />
         <Row label="Context After Compression" value={formatNumber(metadata?.context_after_compression)} />
         <Row label="Tokens Sent" value={metadata?.tokens_sent ? `${metadata.tokens_sent} / ${metadata.context_budget_tokens || 2500}` : 'n/a'} />
+        <Row label="Model Limit" value={formatNumber(metadata?.model_context_limit)} />
+        <Row label="Reserved Tokens" value={formatNumber(metadata?.reserved_tokens)} />
         <Row label="Compression Ratio" value={metadata?.compression_ratio !== undefined ? `${Math.round(metadata.compression_ratio * 100)}%` : 'n/a'} />
         <Row label="Final Prompt Tokens" value={metadata?.final_prompt_tokens ? `${metadata.final_prompt_tokens} / ${metadata.model_context_limit || 'n/a'}` : 'n/a'} />
+        <Row label="Project Context Tokens" value={formatNumber(metadata?.project_context_tokens || metadata?.compressed_context_tokens)} />
+        <Row label="Context Budget Used" value={formatNumber(metadata?.context_budget_used)} />
+        <Row label="Compression Level" value={formatNumber(metadata?.compression_level || metadata?.context_compression_level)} />
+        <Row label="Retry Attempt" value={formatNumber(metadata?.retry_attempt)} />
+        <Row label="Project Summary Mode" value={metadata?.project_summary_mode === undefined ? 'n/a' : metadata.project_summary_mode ? 'Yes' : 'No'} />
         <Row label="System Prompt Tokens" value={formatNumber(metadata?.system_prompt_tokens)} />
         <Row label="User Prompt Tokens" value={formatNumber(metadata?.user_prompt_tokens)} />
+        <Row label="Schema Tokens" value={formatNumber(metadata?.output_schema_tokens)} />
         <Row label="Compression Applied" value={metadata?.compression_applied === undefined ? 'n/a' : metadata.compression_applied ? 'Yes' : 'No'} />
         <Row label="Largest Sections" value={formatLargestSections(metadata?.largest_context_sections)} />
         <Row label="Prompt Too Long Stage" value={metadata?.prompt_too_long_stage || 'n/a'} />

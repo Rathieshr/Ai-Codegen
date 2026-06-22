@@ -2369,6 +2369,20 @@ def _feature_description(name: str, capability: str, outcome: str, users: list[s
     )
 
 
+def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modules: list[str], flows: list[str]) -> list[str]:
+    module_text = ", ".join(modules[:2]) or "the confirmed modules"
+    flow_text = ", ".join(flows[:2]) or "the confirmed flows"
+    capability_text = capability.lower()
+    return _unique(
+        [
+            f"{name} has a reviewable user workflow for the {capability_text} capability.",
+            f"{flow_text} are covered by the feature behavior.",
+            f"{module_text} integrations are validated for the approved outcome.",
+            f"Business stakeholders can confirm: {outcome}",
+        ]
+    )
+
+
 def _validate_capability_features(
     features: Any,
     epic_title: str,
@@ -2422,6 +2436,7 @@ def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[s
         "primary_users": users,
         "impacted_modules": modules,
         "impacted_flows": flows,
+        "acceptance_criteria": _feature_acceptance_criteria(title, capability, outcome, modules, flows),
         "reasoning": _clean_text(item.get("reasoning")) or f"{title} is independently deliverable as a {capability.lower()} capability.",
     }
 

@@ -264,7 +264,7 @@ type EpicRefinement = ProviderMetadata & {
   constraints: string[];
   risks: string[];
   dependencies: string[];
-  recommended_features: Array<{ title: string; description: string }>;
+  recommended_features: Array<{ title: string; description: string; acceptance_criteria?: string[] }>;
 };
 
 type FeatureRefinement = ProviderMetadata & {
@@ -3061,7 +3061,7 @@ function featureDraftsFromEpic(result: EpicRefinement): ChildDraft[] {
     type: 'Feature',
     title: feature.title,
     description: feature.description,
-    acceptanceCriteria: result.business_outcomes.length ? result.business_outcomes : ['Feature supports the approved epic outcome.'],
+    acceptanceCriteria: feature.acceptance_criteria?.length ? feature.acceptance_criteria : ['Feature supports the approved epic outcome.'],
     selected: true,
     status: 'preview',
   }));

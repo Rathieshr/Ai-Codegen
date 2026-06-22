@@ -416,6 +416,9 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             self.assertTrue(feature["primary_users"])
             self.assertTrue(feature["impacted_modules"])
             self.assertTrue(feature["impacted_flows"])
+            self.assertTrue(feature["acceptance_criteria"])
+        first_criteria = {tuple(feature["acceptance_criteria"]) for feature in refined["recommended_features"]}
+        self.assertGreater(len(first_criteria), 1)
 
     def test_epic_feature_descriptions_dedupe_applications_and_avoid_template_copy(self) -> None:
         profile = {
@@ -444,11 +447,14 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             options={"force_provider": "deterministic_fallback"},
         )
         descriptions = "\n".join(feature["description"] for feature in refined["recommended_features"])
+        criteria = "\n".join("\n".join(feature["acceptance_criteria"]) for feature in refined["recommended_features"])
 
         self.assertNotIn("Deliver Critical Fault Detection as a", descriptions)
         self.assertIn("Business outcome:", descriptions)
         self.assertNotIn("Mobile App (Mobile), Backend (Backend)", descriptions)
         self.assertNotIn("Analytics Platform (Analytics), Mobile App (Mobile), Backend (Backend), Firmware (Firmware), Analytics (Analytics)", descriptions)
+        self.assertIn("Critical Fault Detection has a reviewable user workflow", criteria)
+        self.assertIn("Operator Alerting has a reviewable user workflow", criteria)
 
     def test_feature_story_generation_avoids_generic_fallback_phrases(self) -> None:
         profile = {

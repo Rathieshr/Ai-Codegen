@@ -290,7 +290,13 @@ type FeatureRefinement = ProviderMetadata & {
   affected_flows: string[];
   dependencies: string[];
   risks: string[];
-  recommended_stories: Array<{ title: string; description: string; acceptance_criteria?: string[] }>;
+  recommended_stories: Array<{ title: string; description: string; acceptance_criteria?: string[]; coverage_area?: string }>;
+  story_generation_diagnostics?: {
+    capability_count?: number;
+    action_count?: number;
+    generated_story_count?: number;
+    story_coverage_areas?: string[];
+  };
 };
 
 type StoryRefinement = ProviderMetadata & {
@@ -2687,10 +2693,15 @@ function EpicRefinementResult({ result }: { result: EpicRefinement }) {
 }
 
 function FeatureRefinementResult({ result }: { result: FeatureRefinement }) {
+  const diagnostics = result.story_generation_diagnostics || {};
   return (
     <div className="planner-status-grid">
       <SourceBadge metadata={result} />
       <Row label="Feature Summary" value={result.feature_summary} />
+      <Row label="Capability Count" value={formatNumber(diagnostics.capability_count)} />
+      <Row label="Action Count" value={formatNumber(diagnostics.action_count)} />
+      <Row label="Generated Story Count" value={formatNumber(diagnostics.generated_story_count)} />
+      <ListBlock title="Story Coverage Areas" items={diagnostics.story_coverage_areas || []} />
       <ListBlock title="Affected Modules" items={result.affected_modules} />
       <ListBlock title="Affected Flows" items={result.affected_flows} />
       <ListBlock title="Dependencies" items={result.dependencies} />

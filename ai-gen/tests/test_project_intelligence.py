@@ -495,8 +495,20 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         story_titles = [story["title"] for story in refined["recommended_stories"]]
         self.assertFalse(any("Configure operating rules" in title for title in story_titles))
         self.assertFalse(any("Validate user outcomes" in title for title in story_titles))
+        self.assertFalse(any("representative" in title.lower() for title in story_titles))
         self.assertGreaterEqual(len(refined["recommended_stories"]), 5)
         self.assertLessEqual(len(refined["recommended_stories"]), 10)
+        diagnostics = refined["story_generation_diagnostics"]
+        self.assertGreaterEqual(diagnostics["generated_story_count"], 4)
+        self.assertGreaterEqual(diagnostics["action_count"], diagnostics["generated_story_count"])
+        self.assertGreaterEqual(diagnostics["capability_count"], 4)
+        self.assertIn("View", diagnostics["story_coverage_areas"])
+        self.assertIn("Details", diagnostics["story_coverage_areas"])
+        self.assertIn("Search", diagnostics["story_coverage_areas"])
+        self.assertIn("Filter", diagnostics["story_coverage_areas"])
+        self.assertIn("Notifications", diagnostics["story_coverage_areas"])
+        self.assertIn("Empty states", diagnostics["story_coverage_areas"])
+        self.assertIn("Audit requirements", diagnostics["story_coverage_areas"])
         rejected_terms = ["workflow", "integration", "repository", "service", "api", "module", "fault monitoring", "telemetry"]
         for story in refined["recommended_stories"]:
             story_text = f"{story['title']} {story['description']}".lower()
@@ -507,6 +519,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             self.assertTrue(story["persona"])
             self.assertTrue(story["user_goal"])
             self.assertTrue(story["user_action"])
+            self.assertTrue(story["coverage_area"])
             self.assertFalse(any(term in story_text for term in rejected_terms), story_text)
         self.assertIn("provider_used", refined)
 

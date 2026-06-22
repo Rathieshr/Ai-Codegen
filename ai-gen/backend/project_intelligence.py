@@ -478,13 +478,15 @@ class ProjectIntelligenceService:
         description = _clean_text(feature.get("description"))
         modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
         flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
+        story_plan = _story_decomposition(title, modules, flows, active_profile, feature)
         deterministic = {
             "feature_summary": _sentence(title, description or f"Deliver {title} using project-aware modules and flows."),
             "affected_modules": modules,
             "affected_flows": flows,
             "dependencies": _dependencies_for_profile(active_profile),
             "risks": _risks_for_profile(active_profile, _context_keywords(title, description, active_profile)),
-            "recommended_stories": _recommended_stories(title, modules, flows, active_profile),
+            "recommended_stories": story_plan["recommended_stories"],
+            "story_generation_diagnostics": story_plan["diagnostics"],
         }
         phi = _project_phi_json("refine_feature", active_profile, feature, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
@@ -2689,6 +2691,10 @@ def _split_words(value: str) -> list[str]:
 
 
 def _recommended_stories(feature_title: str, modules: list[str], flows: list[str], profile: dict[str, Any]) -> list[dict[str, Any]]:
+    return _story_decomposition(feature_title, modules, flows, profile, {})["recommended_stories"]
+
+
+def _story_decomposition(feature_title: str, modules: list[str], flows: list[str], profile: dict[str, Any], feature: dict[str, Any]) -> dict[str, Any]:
     capability = _infer_capability_from_title(feature_title, _context_keywords(feature_title, "", profile))
     actions = _story_actions_for_capability(capability, feature_title)
     personas = _users_for_capability(capability, _users_for_profile(profile))
@@ -2702,6 +2708,7 @@ def _recommended_stories(feature_title: str, modules: list[str], flows: list[str
             "persona": persona,
             "user_goal": action["goal"],
             "user_action": action["want"],
+            "coverage_area": action["coverage_area"],
             "acceptance_criteria": _story_acceptance_for_action(action, persona),
             "supporting_context": {
                 "modules": modules[:3],
@@ -2710,50 +2717,82 @@ def _recommended_stories(feature_title: str, modules: list[str], flows: list[str
         }
         if not _story_contains_rejected_terms(story):
             stories.append(story)
-    return stories[:10]
+    is_small = _is_small_feature(feature)
+    if len(stories) < 4 and not is_small:
+        raise ValueError(f"Story decomposition produced {len(stories)} stories for {feature_title}; minimum is 4.")
+    coverage = _unique([story["coverage_area"] for story in stories])
+    return {
+        "recommended_stories": stories[:10],
+        "diagnostics": {
+            "capability_count": len(_unique([story["user_goal"] for story in stories])),
+            "action_count": len(actions),
+            "generated_story_count": len(stories[:10]),
+            "story_coverage_areas": coverage,
+            "minimum_story_count": 1 if is_small else 4,
+            "small_feature": is_small,
+        },
+    }
 
 
 def _story_actions_for_capability(capability: str, feature_title: str) -> list[dict[str, str]]:
     actions = {
         "Monitoring": [
-            {"title": "View Active Critical Fault Events", "want": "to view active critical fault events", "benefit": "I can identify issues that need immediate attention", "goal": "Detect critical events"},
-            {"title": "Open Critical Fault Event Details", "want": "to open detailed information for a critical fault event", "benefit": "I can understand the device, severity, timing, and current status", "goal": "Review event details"},
-            {"title": "Filter Critical Events by Severity and Status", "want": "to filter critical events by severity and status", "benefit": "I can focus on the highest priority events first", "goal": "Prioritize event review"},
-            {"title": "See Newly Arrived Critical Events Quickly", "want": "new critical events to appear quickly", "benefit": "I can respond without waiting for manual refresh or delayed reports", "goal": "Maintain live awareness"},
-            {"title": "Recognize Unavailable Event Data", "want": "to see a clear message when event data is unavailable", "benefit": "I know when the system cannot provide complete information", "goal": "Handle data gaps"},
+            {"title": "View Active Critical Fault Events", "want": "to view active critical fault events", "benefit": "I can identify issues that need immediate attention", "goal": "Detect critical events", "coverage_area": "View"},
+            {"title": "Open Critical Fault Event Details", "want": "to open detailed information for a critical fault event", "benefit": "I can understand the device, severity, timing, and current status", "goal": "Review event details", "coverage_area": "Details"},
+            {"title": "Search Critical Events by Device", "want": "to search critical events by device or event identifier", "benefit": "I can quickly find the event I need to review", "goal": "Find event", "coverage_area": "Search"},
+            {"title": "Filter Critical Events by Severity and Status", "want": "to filter critical events by severity and status", "benefit": "I can focus on the highest priority events first", "goal": "Prioritize event review", "coverage_area": "Filter"},
+            {"title": "See Newly Arrived Critical Events Quickly", "want": "new critical events to appear quickly", "benefit": "I can respond without waiting for manual refresh or delayed reports", "goal": "Maintain live awareness", "coverage_area": "Notifications"},
+            {"title": "Recognize Unavailable Event Data", "want": "to see a clear message when event data is unavailable", "benefit": "I know when the system cannot provide complete information", "goal": "Handle data gaps", "coverage_area": "Empty states"},
+            {"title": "Review Critical Event Access History", "want": "to know when critical event details were accessed", "benefit": "I can support audit and operational traceability", "goal": "Audit event access", "coverage_area": "Audit requirements"},
         ],
         "Alerting": [
-            {"title": "Receive Critical Fault Alerts", "want": "to receive alerts for critical fault events", "benefit": "I can respond before an issue escalates", "goal": "Get notified"},
-            {"title": "Review Alert Details Before Acting", "want": "to review alert details before taking action", "benefit": "I can decide the right response with enough context", "goal": "Understand alert context"},
-            {"title": "Acknowledge Assigned Alerts", "want": "to acknowledge alerts assigned to me", "benefit": "the team can see that response is underway", "goal": "Confirm ownership"},
-            {"title": "Identify Alerts Requiring Field Response", "want": "to see which alerts require field response", "benefit": "I can prepare field action without extra coordination", "goal": "Plan field response"},
-            {"title": "Avoid Duplicate Alert Noise", "want": "related duplicate alerts to be grouped", "benefit": "I can focus on the actual event instead of repeated notifications", "goal": "Reduce alert noise"},
+            {"title": "Receive Critical Fault Alerts", "want": "to receive alerts for critical fault events", "benefit": "I can respond before an issue escalates", "goal": "Get notified", "coverage_area": "Notifications"},
+            {"title": "Review Alert Details Before Acting", "want": "to review alert details before taking action", "benefit": "I can decide the right response with enough context", "goal": "Understand alert context", "coverage_area": "Details"},
+            {"title": "Search Assigned Alerts", "want": "to search alerts assigned to me", "benefit": "I can find a specific alert quickly", "goal": "Find alert", "coverage_area": "Search"},
+            {"title": "Filter Alerts by Severity and Owner", "want": "to filter alerts by severity and owner", "benefit": "I can focus on alerts that need my response", "goal": "Prioritize alerts", "coverage_area": "Filter"},
+            {"title": "Acknowledge Assigned Alerts", "want": "to acknowledge alerts assigned to me", "benefit": "the team can see that response is underway", "goal": "Confirm ownership", "coverage_area": "Audit requirements"},
+            {"title": "Avoid Duplicate Alert Noise", "want": "related duplicate alerts to be grouped", "benefit": "I can focus on the actual event instead of repeated notifications", "goal": "Reduce alert noise", "coverage_area": "Error handling"},
         ],
         "Investigation": [
-            {"title": "Start an Outage Investigation", "want": "to start an outage investigation from a fault event", "benefit": "I can begin triage from the event that triggered concern", "goal": "Begin investigation"},
-            {"title": "Review Event Timeline", "want": "to review the timeline of related events", "benefit": "I can understand what happened before and after the outage", "goal": "Understand sequence"},
-            {"title": "Filter Investigation Evidence", "want": "to filter investigation evidence by severity, device, and time", "benefit": "I can find relevant evidence quickly", "goal": "Narrow evidence"},
-            {"title": "Add Investigation Notes", "want": "to add notes during the investigation", "benefit": "the team has a shared record of findings", "goal": "Capture findings"},
-            {"title": "Review Missing or Stale Data", "want": "to see when investigation data is missing or stale", "benefit": "I can avoid drawing conclusions from incomplete information", "goal": "Assess data quality"},
+            {"title": "Start an Outage Investigation", "want": "to start an outage investigation from a fault event", "benefit": "I can begin triage from the event that triggered concern", "goal": "Begin investigation", "coverage_area": "View"},
+            {"title": "Review Event Timeline", "want": "to review the timeline of related events", "benefit": "I can understand what happened before and after the outage", "goal": "Understand sequence", "coverage_area": "Details"},
+            {"title": "Search Investigation Evidence", "want": "to search investigation evidence by device or event", "benefit": "I can locate the information needed for triage", "goal": "Find evidence", "coverage_area": "Search"},
+            {"title": "Filter Investigation Evidence", "want": "to filter investigation evidence by severity, device, and time", "benefit": "I can find relevant evidence quickly", "goal": "Narrow evidence", "coverage_area": "Filter"},
+            {"title": "Add Investigation Notes", "want": "to add notes during the investigation", "benefit": "the team has a shared record of findings", "goal": "Capture findings", "coverage_area": "Audit requirements"},
+            {"title": "Review Missing or Stale Data", "want": "to see when investigation data is missing or stale", "benefit": "I can avoid drawing conclusions from incomplete information", "goal": "Assess data quality", "coverage_area": "Empty states"},
         ],
         "Analytics": [
-            {"title": "View Reliability Trends", "want": "to view reliability trends over time", "benefit": "I can identify recurring operational issues", "goal": "Analyze trends"},
-            {"title": "Compare Current and Previous Periods", "want": "to compare current reliability against previous periods", "benefit": "I can see whether reliability is improving or declining", "goal": "Compare performance"},
-            {"title": "Filter Trends by Asset Group", "want": "to filter reliability trends by asset group", "benefit": "I can focus on the areas with highest operational impact", "goal": "Focus analysis"},
-            {"title": "Review Severity Distribution", "want": "to review the distribution of event severity", "benefit": "I can prioritize improvement work based on impact", "goal": "Prioritize improvements"},
-            {"title": "Identify Incomplete Trend Data", "want": "to see when trend data is incomplete", "benefit": "I can trust the analysis before using it for decisions", "goal": "Validate analytics quality"},
+            {"title": "View Reliability Trends", "want": "to view reliability trends over time", "benefit": "I can identify recurring operational issues", "goal": "Analyze trends", "coverage_area": "View"},
+            {"title": "Review Trend Details", "want": "to review details behind a reliability trend", "benefit": "I can understand what contributed to the trend", "goal": "Review details", "coverage_area": "Details"},
+            {"title": "Search Reliability Results", "want": "to search reliability results by asset or event type", "benefit": "I can locate the trends relevant to my decision", "goal": "Find results", "coverage_area": "Search"},
+            {"title": "Filter Trends by Asset Group", "want": "to filter reliability trends by asset group", "benefit": "I can focus on the areas with highest operational impact", "goal": "Focus analysis", "coverage_area": "Filter"},
+            {"title": "Compare Current and Previous Periods", "want": "to compare current reliability against previous periods", "benefit": "I can see whether reliability is improving or declining", "goal": "Compare performance", "coverage_area": "Details"},
+            {"title": "Identify Incomplete Trend Data", "want": "to see when trend data is incomplete", "benefit": "I can trust the analysis before using it for decisions", "goal": "Validate analytics quality", "coverage_area": "Empty states"},
         ],
     }
     return actions.get(
         capability,
         [
-            {"title": f"Use {feature_title}", "want": f"to use {feature_title.lower()} for my daily work", "benefit": "I can complete the intended outcome reliably", "goal": "Complete user outcome"},
-            {"title": f"Review {feature_title} Details", "want": f"to review {feature_title.lower()} details", "benefit": "I can make an informed decision", "goal": "Review details"},
-            {"title": f"Handle {feature_title} Exceptions", "want": f"to understand when {feature_title.lower()} data is unavailable", "benefit": "I can recover without confusion", "goal": "Handle exceptions"},
-            {"title": f"Track {feature_title} Status", "want": f"to track {feature_title.lower()} status", "benefit": "I know what has changed and what needs attention", "goal": "Track status"},
-            {"title": f"Confirm {feature_title} Outcome", "want": f"to confirm the outcome of {feature_title.lower()}", "benefit": "I know the capability worked as expected", "goal": "Confirm outcome"},
+            {"title": f"Use {feature_title}", "want": f"to use {feature_title.lower()} for my daily work", "benefit": "I can complete the intended outcome reliably", "goal": "Complete user outcome", "coverage_area": "View"},
+            {"title": f"Review {feature_title} Details", "want": f"to review {feature_title.lower()} details", "benefit": "I can make an informed decision", "goal": "Review details", "coverage_area": "Details"},
+            {"title": f"Search {feature_title} Records", "want": f"to search {feature_title.lower()} records", "benefit": "I can find the item I need quickly", "goal": "Find records", "coverage_area": "Search"},
+            {"title": f"Filter {feature_title} Results", "want": f"to filter {feature_title.lower()} results", "benefit": "I can focus on the most relevant items", "goal": "Narrow results", "coverage_area": "Filter"},
+            {"title": f"Handle {feature_title} Exceptions", "want": f"to understand when {feature_title.lower()} data is unavailable", "benefit": "I can recover without confusion", "goal": "Handle exceptions", "coverage_area": "Error handling"},
+            {"title": f"Confirm {feature_title} Outcome", "want": f"to confirm the outcome of {feature_title.lower()}", "benefit": "I know the capability worked as expected", "goal": "Confirm outcome", "coverage_area": "Audit requirements"},
         ],
     )
+
+
+def _is_small_feature(feature: dict[str, Any]) -> bool:
+    markers = [
+        feature.get("size"),
+        feature.get("story_size"),
+        feature.get("complexity"),
+        feature.get("scope"),
+    ]
+    tags = feature.get("tags") if isinstance(feature.get("tags"), list) else []
+    text = " ".join(str(value).lower() for value in [*markers, *tags] if value)
+    return "small" in text or "xs" in text
 
 
 def _story_acceptance_for_action(action: dict[str, str], persona: str) -> list[str]:

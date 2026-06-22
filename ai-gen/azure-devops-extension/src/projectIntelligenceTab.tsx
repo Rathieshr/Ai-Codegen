@@ -2931,7 +2931,15 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
     if (!response.ok) {
       throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
     }
-    return response.json() as Promise<T>;
+    const payload = await response.json();
+    if (payload && typeof payload === 'object' && typeof payload.error === 'string' && payload.error.trim()) {
+      const phiStatus = typeof payload.phi_status === 'string' && payload.phi_status ? ` (${payload.phi_status})` : '';
+      const fallbackReason = typeof payload.fallback_reason === 'string' && payload.fallback_reason && payload.fallback_reason !== payload.error
+        ? `: ${payload.fallback_reason}`
+        : '';
+      throw new Error(`${payload.error}${phiStatus}${fallbackReason}`);
+    }
+    return payload as T;
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error(`Timed out contacting Project Intelligence backend after ${Math.round(API_TIMEOUT_MS / 1000)} seconds.`);

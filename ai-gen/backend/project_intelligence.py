@@ -161,7 +161,7 @@ class ProjectIntelligenceService:
                 phi["metadata"],
             )
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def generate_story_prompts(
@@ -231,7 +231,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["ui_prompt", "dev_prompt", "qa_prompt"])}, phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def analyze_readme(
@@ -382,7 +382,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def refine_feature(
@@ -409,7 +409,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def refine_story(
@@ -441,7 +441,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def analyze_story_impact(
@@ -561,7 +561,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def build_dev_prompt(
@@ -572,7 +572,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         deterministic = {
             "prompt": _execution_prompt(
@@ -593,7 +593,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def build_ui_prompt(
@@ -604,7 +604,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         ui = context["ui_guidelines"]
         deterministic = {
@@ -625,7 +625,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def build_qa_prompt(
@@ -636,7 +636,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         impact = _normalize_story_impact(impact_analysis or self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"]))
         deterministic = {
@@ -657,7 +657,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def build_copilot_context(
@@ -668,7 +668,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, options)
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         lines = [
             "Project Awareness Context",
@@ -703,7 +703,7 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["context"])}, phi["metadata"])
         if phi["blocked"]:
-            return _with_provider_metadata({"error": phi["metadata"]["fallback_reason"], **deterministic}, phi["metadata"])
+            return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
     def provider_probe(self, prompt: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2352,7 +2352,7 @@ def _project_phi_probe(
 ) -> dict[str, Any]:
     options = options or {}
     force_provider = _clean_text(options.get("force_provider"))
-    allow_fallback = bool(options.get("allow_fallback", True))
+    allow_fallback = bool(options.get("allow_fallback", False))
     deterministic_only = _clean_text(options.get("mode")) == "deterministic_only" or force_provider == "deterministic_fallback"
     if deterministic_only:
         return {
@@ -2370,15 +2370,12 @@ def _project_phi_probe(
         }
     use_phi = force_provider == "azure_phi" or _project_phi_enabled_by_default()
     if not use_phi:
-        return {
-            "used": False,
-            "blocked": False,
-            "parsed": {},
-            "metadata": _with_context_diagnostics(
-                _fallback_metadata("domain_fallback", "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI disabled Project Intelligence Phi calls."),
-                context_diagnostics,
-            ),
-        }
+        metadata = _with_context_diagnostics(
+            _fallback_metadata("domain_fallback", "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI disabled Project Intelligence Phi calls."),
+            context_diagnostics,
+        )
+        metadata["phi_status"] = "skipped"
+        return _fallback_or_block(metadata, force_provider, allow_fallback)
     provider = get_refinement_provider()
     if provider is None or not provider.is_enabled():
         metadata = _fallback_metadata("deterministic_fallback", "Azure Phi provider is not configured.")
@@ -2476,7 +2473,7 @@ def _project_phi_enabled_by_default() -> bool:
 
 
 def _fallback_or_block(metadata: dict[str, Any], force_provider: str, allow_fallback: bool) -> dict[str, Any]:
-    blocked = force_provider == "azure_phi" and not allow_fallback
+    blocked = not allow_fallback or (force_provider == "azure_phi" and not allow_fallback)
     if blocked:
         metadata["fallback_used"] = False
         metadata["provider_used"] = "azure_phi"
@@ -2955,6 +2952,17 @@ def _with_context_diagnostics(metadata: dict[str, Any], diagnostics: dict[str, A
 
 def _with_provider_metadata(payload: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
     return {**payload, **metadata}
+
+
+def _phi_error_response(phi: dict[str, Any]) -> dict[str, Any]:
+    metadata = phi.get("metadata", {})
+    return _with_provider_metadata(
+        {
+            "error": metadata.get("fallback_reason") or "Azure Phi did not return usable output.",
+            "message": "Phi output is required. Fallback generation is disabled for Project Intelligence.",
+        },
+        metadata,
+    )
 
 
 def _merge_known_fields(base: dict[str, Any], incoming: dict[str, Any], keys: Any) -> dict[str, Any]:

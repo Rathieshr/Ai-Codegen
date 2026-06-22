@@ -303,7 +303,7 @@ class ProjectIntelligenceProfileRequest(BaseModel):
 class ProjectIntelligenceDescriptionRequest(BaseModel):
     description: str = ""
     force_provider: str = ""
-    allow_fallback: bool = True
+    allow_fallback: bool = False
     mode: str = ""
 
 
@@ -311,7 +311,7 @@ class ProjectIntelligencePromptRequest(BaseModel):
     story: dict[str, Any] = Field(default_factory=dict)
     profile: Optional[dict[str, Any]] = None
     force_provider: str = ""
-    allow_fallback: bool = True
+    allow_fallback: bool = False
     mode: str = ""
 
 
@@ -335,7 +335,7 @@ class ProjectIntelligenceRefinementRequest(BaseModel):
     feature: dict[str, Any] = Field(default_factory=dict)
     story: dict[str, Any] = Field(default_factory=dict)
     force_provider: str = ""
-    allow_fallback: bool = True
+    allow_fallback: bool = False
     mode: str = ""
 
 
@@ -345,14 +345,14 @@ class ProjectIntelligenceExecutionRequest(BaseModel):
     story: dict[str, Any] = Field(default_factory=dict)
     impact_analysis: dict[str, Any] = Field(default_factory=dict)
     force_provider: str = ""
-    allow_fallback: bool = True
+    allow_fallback: bool = False
     mode: str = ""
 
 
 class ProjectIntelligenceProviderProbeRequest(BaseModel):
     prompt: str = ""
     force_provider: str = ""
-    allow_fallback: bool = True
+    allow_fallback: bool = False
     mode: str = ""
 
 
@@ -505,7 +505,7 @@ def project_intelligence_provider_probe(request: ProjectIntelligenceProviderProb
 def _project_intelligence_options(request: Any) -> dict[str, Any]:
     return {
         "force_provider": getattr(request, "force_provider", ""),
-        "allow_fallback": bool(getattr(request, "allow_fallback", True)),
+        "allow_fallback": bool(getattr(request, "allow_fallback", False)),
         "mode": getattr(request, "mode", ""),
     }
 

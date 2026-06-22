@@ -117,7 +117,10 @@ class ProjectIntelligenceTests(unittest.TestCase):
     def test_analyze_description_infers_preview_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            analyzed = service.analyze_description("iOS and Android mobile commerce app with backend APIs, checkout, payment and order analytics.")
+            analyzed = service.analyze_description(
+                "iOS and Android mobile commerce app with backend APIs, checkout, payment and order analytics.",
+                options={"force_provider": "deterministic_fallback"},
+            )
 
         self.assertEqual(analyzed["knowledge_profile_preview"]["domain"], "E-commerce")
         self.assertIn({"name": "Mobile App", "type": "Mobile"}, analyzed["applications"])
@@ -147,6 +150,7 @@ class ProjectIntelligenceTests(unittest.TestCase):
                     "ui_guidelines": {"component_library": "Design System"},
                     "repository_sources": ["README.md"],
                 },
+                options={"force_provider": "deterministic_fallback"},
             )
 
         self.assertIn("UI Prompt", prompts["ui_prompt"])
@@ -184,7 +188,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
                 {"id": "repo-1", "name": "meter-platform", "branch": "main", "readme_path": "/README.md"},
                 {"project_description": "Smart meter project", "technology_stack": {"mobile": ["Kotlin"], "backend": ["FastAPI"]}},
             )
-            prompts = service.generate_story_prompts({"title": "Meter onboarding"}, profile)
+            prompts = service.generate_story_prompts({"title": "Meter onboarding"}, profile, options={"force_provider": "deterministic_fallback"})
 
         self.assertEqual(profile["repository_connection"]["status"], "README analyzed")
         self.assertIn("Meter Inventory", profile["knowledge_registry"]["modules"])
@@ -279,7 +283,11 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            refined = service.refine_epic({"title": "Improve Device Monitoring", "description": "Improve telemetry, fault and firmware visibility."}, profile)
+            refined = service.refine_epic(
+                {"title": "Improve Device Monitoring", "description": "Improve telemetry, fault and firmware visibility."},
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
 
         feature_titles = [feature["title"] for feature in refined["recommended_features"]]
         self.assertIn("Fault Event Monitoring", feature_titles)
@@ -299,7 +307,11 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            refined = service.refine_epic({"title": "Real-Time Fault Event Monitoring"}, profile)
+            refined = service.refine_epic(
+                {"title": "Real-Time Fault Event Monitoring"},
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
 
         titles = [feature["title"] for feature in refined["recommended_features"]]
         self.assertIn("Fault Event Monitoring", titles)
@@ -317,7 +329,11 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            refined = service.refine_feature({"title": "Fault Event Monitoring"}, profile)
+            refined = service.refine_feature(
+                {"title": "Fault Event Monitoring"},
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
 
         story_titles = [story["title"] for story in refined["recommended_stories"]]
         self.assertFalse(any("Configure operating rules" in title for title in story_titles))
@@ -341,7 +357,11 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            refined = service.refine_story({"title": "View device telemetry health state"}, profile)
+            refined = service.refine_story(
+                {"title": "View device telemetry health state"},
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
 
         self.assertIn("Operations Portal", refined["affected_applications"])
         self.assertIn("Telemetry", refined["affected_modules"])
@@ -439,7 +459,11 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            prompts = service.generate_story_prompts({"title": "Display Fault Event Details", "acceptance_criteria": ["Fault details are visible."]}, profile)
+            prompts = service.generate_story_prompts(
+                {"title": "Display Fault Event Details", "acceptance_criteria": ["Fault details are visible."]},
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
 
         self.assertIn("Affected Applications: Mobile App, Backend API", prompts["ui_prompt"])
         self.assertIn("Fault Event Review", prompts["ui_prompt"])
@@ -476,7 +500,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            context = service.build_execution_context(story, profile)
+            context = service.build_execution_context(story, profile, options={"force_provider": "deterministic_fallback"})
 
         self.assertIn("Mobile App", context["affected_applications"])
         self.assertIn("Backend API", context["affected_applications"])
@@ -528,10 +552,10 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         story = {"title": "Display Fault Event Details", "acceptance_criteria": ["Fault details include timestamp and severity."]}
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
-            dev_prompt = service.build_dev_prompt(story, profile)["prompt"]
-            ui_prompt = service.build_ui_prompt(story, profile)["prompt"]
-            qa_prompt = service.build_qa_prompt(story, profile)["prompt"]
-            copilot_context = service.build_copilot_context(story, profile)["context"]
+            dev_prompt = service.build_dev_prompt(story, profile, options={"force_provider": "deterministic_fallback"})["prompt"]
+            ui_prompt = service.build_ui_prompt(story, profile, options={"force_provider": "deterministic_fallback"})["prompt"]
+            qa_prompt = service.build_qa_prompt(story, profile, options={"force_provider": "deterministic_fallback"})["prompt"]
+            copilot_context = service.build_copilot_context(story, profile, options={"force_provider": "deterministic_fallback"})["context"]
 
         self.assertIn("Technology Stack: mobile: MAUI; backend: .NET", dev_prompt)
         self.assertIn("Coding Standards: MVVM; Repository Pattern; Unit Tests Required", dev_prompt)
@@ -594,8 +618,10 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             refined = service.refine_epic({"title": "Improve Device Monitoring"}, {"project_description": "Fault monitoring platform."})
 
         self.assertEqual(provider.calls, 0)
-        self.assertEqual(refined["provider_used"], "domain_fallback")
+        self.assertEqual(refined["provider_used"], "azure_phi")
         self.assertEqual(refined["phi_status"], "skipped")
+        self.assertFalse(refined["fallback_used"])
+        self.assertIn("error", refined)
         self.assertIn("disabled", refined["fallback_reason"])
 
     def test_execution_package_builders_use_phi_when_available(self) -> None:
@@ -617,7 +643,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(prompt["phi_status"], "success")
         self.assertEqual(prompt["prompt"], "Phi generated UI prompt")
 
-    def test_refine_epic_falls_back_when_phi_unhealthy(self) -> None:
+    def test_refine_epic_blocks_when_phi_unhealthy_by_default(self) -> None:
         provider = UnhealthyPhiProvider()
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             os.environ,
@@ -628,8 +654,9 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             refined = service.refine_epic({"title": "Improve Device Monitoring"}, {"project_description": "Fault monitoring platform."})
 
         self.assertEqual(provider.calls, 0)
-        self.assertEqual(refined["provider_used"], "domain_fallback")
-        self.assertTrue(refined["fallback_used"])
+        self.assertEqual(refined["provider_used"], "azure_phi")
+        self.assertFalse(refined["fallback_used"])
+        self.assertIn("error", refined)
         self.assertIn("Azure Phi health is unhealthy", refined["fallback_reason"])
 
     def test_force_phi_failure_is_visible_without_fallback(self) -> None:
@@ -653,8 +680,13 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(refined["phi_status"], "provider_timeout")
         self.assertIn("Azure Phi request timed out", refined["fallback_reason"])
 
-    def test_provider_metadata_is_present_on_fallback_outputs(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+    def test_provider_metadata_is_present_on_phi_error_and_deterministic_impact(self) -> None:
+        provider = FailingPhiProvider()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
             service = ProjectIntelligenceService()
             refined = service.refine_story({"title": "Display Fault Event Details"}, {"project_description": "Fault monitoring platform."})
             impact = service.analyze_story_impact({"title": "Display Fault Event Details"}, {"project_description": "Fault monitoring platform."})
@@ -668,6 +700,8 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             self.assertIn("phi_raw_response_preview", payload)
             self.assertIn("phi_parsed_response_preview", payload)
         self.assertEqual(impact["provider_used"], "deterministic_fallback")
+        self.assertEqual(refined["provider_used"], "azure_phi")
+        self.assertIn("error", refined)
 
     def test_provider_probe_returns_phi_diagnostics(self) -> None:
         provider = HealthyPhiProvider({"features": ["Fault Monitoring"]})
@@ -1051,7 +1085,11 @@ Architecture Notes: Backend telemetry APIs publish events to the operations port
             },
         }
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "0"}, clear=False):
-            refined = ProjectIntelligenceService().refine_epic({"title": "Improve Fault Event Monitoring", "description": "Improve fault event and outage visibility."}, profile)
+            refined = ProjectIntelligenceService().refine_epic(
+                {"title": "Improve Fault Event Monitoring", "description": "Improve fault event and outage visibility."},
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
 
         titles = [feature["title"] for feature in refined["recommended_features"]]
         self.assertGreaterEqual(len(titles), 5)

@@ -495,6 +495,19 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         story_titles = [story["title"] for story in refined["recommended_stories"]]
         self.assertFalse(any("Configure operating rules" in title for title in story_titles))
         self.assertFalse(any("Validate user outcomes" in title for title in story_titles))
+        self.assertGreaterEqual(len(refined["recommended_stories"]), 5)
+        self.assertLessEqual(len(refined["recommended_stories"]), 10)
+        rejected_terms = ["workflow", "integration", "repository", "service", "api", "module", "fault monitoring", "telemetry"]
+        for story in refined["recommended_stories"]:
+            story_text = f"{story['title']} {story['description']}".lower()
+            self.assertIn("As a ", story["description"])
+            self.assertIn(" I want ", story["description"])
+            self.assertIn(" so that ", story["description"])
+            self.assertTrue(story["acceptance_criteria"])
+            self.assertTrue(story["persona"])
+            self.assertTrue(story["user_goal"])
+            self.assertTrue(story["user_action"])
+            self.assertFalse(any(term in story_text for term in rejected_terms), story_text)
         self.assertIn("provider_used", refined)
 
     def test_story_refinement_uses_modules_flows_and_considerations(self) -> None:

@@ -290,7 +290,7 @@ type FeatureRefinement = ProviderMetadata & {
   affected_flows: string[];
   dependencies: string[];
   risks: string[];
-  recommended_stories: Array<{ title: string; description: string }>;
+  recommended_stories: Array<{ title: string; description: string; acceptance_criteria?: string[] }>;
 };
 
 type StoryRefinement = ProviderMetadata & {
@@ -3156,10 +3156,7 @@ function storyDraftsFromFeature(result: FeatureRefinement): ChildDraft[] {
     type: 'User Story',
     title: story.title,
     description: story.description,
-    acceptanceCriteria: [
-      `${story.title} is visible and testable.`,
-      ...result.affected_flows.slice(0, 3).map((flow) => `${flow} flow is covered end to end.`),
-    ],
+    acceptanceCriteria: story.acceptance_criteria?.length ? story.acceptance_criteria : [`${story.title} is visible, independently testable, and supports the approved user outcome.`],
     selected: true,
     status: 'preview',
   }));

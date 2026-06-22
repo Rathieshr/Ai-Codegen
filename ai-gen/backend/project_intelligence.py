@@ -1239,10 +1239,10 @@ def _application_canonical_key(name: str, app_type: str) -> str:
     text = f"{name} {app_type}".lower()
     if "mobile" in text:
         return "mobile"
-    if "backend" in text or "api" in text:
-        return "backend"
     if "dashboard" in text or "portal" in text or "web" in text:
         return "portal"
+    if "backend" in text or "api" in text:
+        return "backend"
     if "analytics" in text:
         return "analytics"
     if "firmware" in text:
@@ -2356,31 +2356,201 @@ def _users_for_capability(capability: str, users: list[str]) -> list[str]:
     return defaults.get(capability, users[:1] or ["Operations User"])
 
 
+def _relevant_applications_for_capability(capability: str, profile: dict[str, Any], threshold: int = 50) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    apps = _dedupe_applications(profile["applications"] or profile["knowledge_registry"]["applications"])
+    if not apps:
+        apps = _default_applications_for_profile(profile)
+    scored = []
+    for app in apps:
+        score = _application_relevance_score(capability, app)
+        if score >= threshold:
+            scored.append({**app, "score": score})
+    if not scored and apps:
+        scored = [{**apps[0], "score": _application_relevance_score(capability, apps[0])}]
+    return [{"name": item["name"], "type": item["type"]} for item in scored], scored
+
+
+def _default_applications_for_profile(profile: dict[str, Any]) -> list[dict[str, str]]:
+    domain_text = _clean_text(profile.get("domain") or profile.get("project_description")).lower()
+    if any(token in domain_text for token in ["utility", "grid", "meter", "fault", "telemetry", "field"]):
+        return [
+            {"name": "Operations Dashboard", "type": "Web Portal"},
+            {"name": "Mobile Application", "type": "Mobile"},
+            {"name": "Backend API", "type": "Backend"},
+            {"name": "Analytics Platform", "type": "Analytics"},
+            {"name": "Firmware", "type": "Firmware"},
+        ]
+    return [
+        {"name": "Web Application", "type": "Web Portal"},
+        {"name": "Backend API", "type": "Backend"},
+    ]
+
+
+def _application_relevance_score(capability: str, app: dict[str, str]) -> int:
+    text = f"{app.get('name', '')} {app.get('type', '')}".lower()
+    if "dashboard" in text or "portal" in text or "web" in text:
+        category = "dashboard"
+    elif "backend" in text or "api" in text:
+        category = "backend"
+    elif "mobile" in text:
+        category = "mobile"
+    elif "analytics" in text:
+        category = "analytics"
+    elif "firmware" in text:
+        category = "firmware"
+    else:
+        category = "other"
+    scores = {
+        "Monitoring": {"dashboard": 100, "mobile": 85, "backend": 90, "analytics": 55, "firmware": 20, "other": 45},
+        "Alerting": {"dashboard": 100, "mobile": 95, "backend": 90, "analytics": 40, "firmware": 10, "other": 40},
+        "Investigation": {"dashboard": 100, "mobile": 75, "backend": 90, "analytics": 70, "firmware": 10, "other": 40},
+        "Analytics": {"analytics": 100, "dashboard": 90, "backend": 80, "mobile": 40, "firmware": 10, "other": 35},
+        "Operational Awareness": {"dashboard": 95, "mobile": 80, "backend": 80, "analytics": 60, "firmware": 10, "other": 45},
+        "Outage Response": {"mobile": 90, "dashboard": 85, "backend": 85, "analytics": 50, "firmware": 15, "other": 45},
+        "Firmware Management": {"firmware": 100, "backend": 85, "dashboard": 70, "mobile": 45, "analytics": 30, "other": 35},
+    }
+    return scores.get(capability, {"dashboard": 75, "mobile": 65, "backend": 70, "analytics": 55, "firmware": 40, "other": 45}).get(category, 45)
+
+
+def _relevance_scores_for_items(capability: str, items: list[str], kind: str) -> list[dict[str, Any]]:
+    return [{"name": item, "score": _item_relevance_score(capability, item, kind)} for item in items]
+
+
+def _item_relevance_score(capability: str, item: str, kind: str) -> int:
+    text = item.lower()
+    preferred = {
+        "Monitoring": ["fault", "event", "telemetry", "health", "review"],
+        "Alerting": ["alert", "notification", "fault", "outage", "event"],
+        "Investigation": ["investigation", "outage", "fault", "event", "review"],
+        "Analytics": ["analytics", "trend", "report", "health", "telemetry"],
+        "Operational Awareness": ["live", "status", "operation", "event", "device"],
+        "Outage Response": ["outage", "field", "response", "fault", "device"],
+        "Asset Health": ["asset", "health", "device", "telemetry"],
+        "Telemetry": ["telemetry", "ingestion", "quality", "device"],
+        "Firmware Management": ["firmware", "upgrade", "rollout", "device"],
+    }
+    tokens = preferred.get(capability, [])
+    score = 25
+    for token in tokens:
+        if token in text:
+            score += 30 if kind == "flow" else 25
+    return min(score, 100)
+
+
 def _feature_description(name: str, capability: str, outcome: str, users: list[str], modules: list[str], flows: list[str], profile: dict[str, Any]) -> str:
-    apps = _format_applications(profile["applications"]) or "the affected applications"
-    users_text = ", ".join(_clean_title(user) for user in users if user) or "Operations users"
-    modules_text = ", ".join(modules[:3]) or "the confirmed modules"
-    flows_text = ", ".join(flows[:3]) or "the confirmed flows"
-    problem = _user_problem_for_capability(capability, [])
-    return (
-        f"{name} gives {users_text} a focused way to address when {problem}. "
-        f"It should connect {modules_text} through {flows_text}, with touchpoints in {apps}. "
-        f"Business outcome: {outcome}"
+    return "\n".join(
+        [
+            f"Business Goal: {_feature_business_goal(name, capability)}",
+            f"User Problem: {_user_problem_for_capability(capability, [])}.",
+            f"Business Value: {outcome}",
+        ]
     )
+
+
+def _feature_business_goal(name: str, capability: str) -> str:
+    goals = {
+        "Monitoring": "Allow operators to identify critical LineDefender fault events immediately after occurrence.",
+        "Alerting": "Ensure operators and field technicians receive actionable notifications for events requiring response.",
+        "Investigation": "Help operations teams investigate outages with correlated event, device, and status context.",
+        "Analytics": "Give operations managers reliability trends that support prioritization and planning.",
+        "Reporting": "Provide clear operational evidence for reliability and service reporting.",
+        "Asset Health": "Correlate device health signals with operational events for better triage.",
+        "Telemetry": "Expose telemetry quality and freshness so users can trust operational decisions.",
+        "Firmware Management": "Make firmware rollout status and exceptions visible before they affect operations.",
+        "Operational Awareness": "Provide a shared live view of operational events, assets, and response status.",
+        "Outage Response": "Coordinate outage response from detection through field action.",
+        "Field Operations": "Give field teams response-ready context before they act on an issue.",
+    }
+    return goals.get(capability, f"Define an independently deliverable capability for {name}.")
 
 
 def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modules: list[str], flows: list[str]) -> list[str]:
-    module_text = ", ".join(modules[:2]) or "the confirmed modules"
-    flow_text = ", ".join(flows[:2]) or "the confirmed flows"
-    capability_text = capability.lower()
-    return _unique(
-        [
-            f"{name} has a reviewable user workflow for the {capability_text} capability.",
-            f"{flow_text} are covered by the feature behavior.",
-            f"{module_text} integrations are validated for the approved outcome.",
-            f"Business stakeholders can confirm: {outcome}",
-        ]
-    )
+    criteria_by_capability = {
+        "Monitoring": [
+            "Operator can view all active critical fault events in a single list.",
+            "Event list displays Device ID, Fault Type, Severity, Event Time, and Current Status.",
+            "Critical events are visually differentiated from warning and informational events.",
+            "Newly ingested critical events appear in the event list within 60 seconds.",
+            "Operator can open detailed event information from the event list.",
+            "System displays a clear unavailable-data message when event data cannot be loaded.",
+            "All event list and event detail access actions are audit logged.",
+        ],
+        "Alerting": [
+            "Operator receives an alert when a critical fault event is created.",
+            "Alert displays Device ID, Fault Type, Severity, Event Time, and Recommended Action.",
+            "Operator can acknowledge an alert and the acknowledgement is timestamped.",
+            "Escalation status changes are visible within 60 seconds of update.",
+            "Field technician can identify alerts assigned for field response.",
+            "Duplicate alerts for the same active event are suppressed or grouped.",
+        ],
+        "Investigation": [
+            "Operator can open an outage investigation workspace from a fault event.",
+            "Workspace shows related device, telemetry, event timeline, and current status.",
+            "Operator can filter investigation events by severity, device, and time range.",
+            "Workspace highlights missing telemetry or stale device status data.",
+            "Investigation notes are saved with user and timestamp.",
+            "Workspace preserves the investigation trail for audit review.",
+        ],
+        "Analytics": [
+            "Operations manager can view reliability trends by device, fault type, and time period.",
+            "Dashboard shows event counts, severity distribution, and response-time trends.",
+            "User can compare current reliability trends against the previous period.",
+            "Trend data can be filtered by module, flow, or impacted asset group.",
+            "Dashboard indicates when analytics data is incomplete or delayed.",
+        ],
+        "Operational Awareness": [
+            "Operator can view live operational status across active events and affected assets.",
+            "Live view separates critical, warning, and normal operating states.",
+            "Status updates refresh within 60 seconds of source data change.",
+            "Operator can navigate from live status to related event details.",
+            "Unavailable or stale status data is clearly identified.",
+        ],
+        "Outage Response": [
+            "Operator can identify outage events requiring coordinated response.",
+            "Response view shows impacted devices, current event status, and assigned owner.",
+            "Field technician can see response instructions for assigned outage work.",
+            "Status changes are captured with timestamp and user identity.",
+            "Response history remains available after the outage is resolved.",
+        ],
+    }
+    default_criteria = [
+        f"User can complete the primary {name} workflow without manual data lookup.",
+        f"Screen or API response displays the required fields for {', '.join(flows[:2]) or 'the selected flows'}.",
+        f"System handles unavailable data with a clear user-facing message.",
+        f"Relevant actions are saved with user identity and timestamp.",
+        f"Feature behavior is testable against {', '.join(modules[:2]) or 'the affected modules'}.",
+    ]
+    return _unique(criteria_by_capability.get(capability, default_criteria))
+
+
+def _feature_dependencies(capability: str, modules: list[str], flows: list[str]) -> list[str]:
+    dependencies = {
+        "Monitoring": ["Telemetry Service", "Event Repository", "Severity Classification Rules", "Audit Logging Service"],
+        "Alerting": ["Notification Service", "Event Repository", "User Assignment Service", "Audit Logging Service"],
+        "Investigation": ["Event Timeline Service", "Telemetry Service", "Device State Service", "Investigation Notes Store"],
+        "Analytics": ["Analytics Data Mart", "Reporting Pipeline", "Telemetry Aggregation Service"],
+        "Operational Awareness": ["Live Status Service", "Event Repository", "Device State Service"],
+        "Outage Response": ["Outage Coordination Service", "Field Assignment Service", "Device Communication Layer"],
+        "Asset Health": ["Asset Health Service", "Telemetry Service", "Device Registry"],
+        "Telemetry": ["Telemetry Ingestion Service", "Telemetry Quality Rules", "Device Communication Layer"],
+        "Firmware Management": ["Firmware Registry", "Device Communication Layer", "Rollout Tracking Service"],
+    }
+    return dependencies.get(capability, ["Authentication Service", "Audit Logging Service", "Project Data Service"])
+
+
+def _feature_risks(capability: str) -> list[str]:
+    risks = {
+        "Monitoring": ["Delayed telemetry ingestion", "Duplicate fault events", "Incorrect severity classification", "Event processing latency"],
+        "Alerting": ["Alert fatigue from noisy rules", "Duplicate notifications", "Delayed escalation delivery", "Incorrect owner assignment"],
+        "Investigation": ["Missing event correlation", "Stale device status", "Incomplete outage timeline", "Manual notes becoming inconsistent"],
+        "Analytics": ["Incomplete historical data", "Delayed aggregation jobs", "Misleading trend interpretation", "Unclear metric definitions"],
+        "Operational Awareness": ["Stale live status", "Disconnected source systems", "Permission gaps across operational views"],
+        "Outage Response": ["Delayed field updates", "Unclear ownership", "Connectivity interruptions during response"],
+        "Asset Health": ["Conflicting health signals", "Missing telemetry history", "False positive degradation signals"],
+        "Telemetry": ["Telemetry gaps", "Clock drift between devices", "Ingestion backlog"],
+        "Firmware Management": ["Interrupted rollout", "Version mismatch", "Device communication failure"],
+    }
+    return risks.get(capability, ["Dependency readiness risk", "Incomplete operational validation", "Adoption risk"])
 
 
 def _validate_capability_features(
@@ -2427,15 +2597,30 @@ def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[s
     flows = _string_list(item.get("impacted_flows") or item.get("flows")) or _flows_for_capability(capability, keywords, profile)
     outcome = _clean_text(item.get("business_outcome")) or _business_outcome_for_capability(capability, keywords)
     title = _clean_title(_clean_text(item.get("title")) or _capability_feature_title(capability, keywords, profile))
+    applications, application_relevance = _relevant_applications_for_capability(capability, profile)
+    module_relevance = _relevance_scores_for_items(capability, modules, "module")
+    flow_relevance = _relevance_scores_for_items(capability, flows, "flow")
+    user_problem = _clean_text(item.get("user_problem")) or _user_problem_for_capability(capability, keywords)
+    business_goal = _clean_text(item.get("business_goal")) or _feature_business_goal(title, capability)
     return {
         "title": title,
         "description": _feature_description(title, capability, outcome, users, modules, flows, profile),
+        "business_goal": business_goal,
         "capability": capability,
+        "capability_category": capability,
         "business_outcome": outcome,
-        "user_problem": _clean_text(item.get("user_problem")) or _user_problem_for_capability(capability, keywords),
+        "business_value": outcome,
+        "user_problem": user_problem,
         "primary_users": users,
+        "primary_personas": users,
+        "impacted_applications": [f"{app['name']} ({app['type']})" for app in applications],
+        "application_relevance": application_relevance,
         "impacted_modules": modules,
+        "module_relevance": module_relevance,
         "impacted_flows": flows,
+        "flow_relevance": flow_relevance,
+        "dependencies": _feature_dependencies(capability, modules, flows),
+        "risks": _feature_risks(capability),
         "acceptance_criteria": _feature_acceptance_criteria(title, capability, outcome, modules, flows),
         "reasoning": _clean_text(item.get("reasoning")) or f"{title} is independently deliverable as a {capability.lower()} capability.",
     }

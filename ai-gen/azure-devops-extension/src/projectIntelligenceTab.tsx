@@ -268,10 +268,19 @@ type EpicRefinement = ProviderMetadata & {
     title: string;
     description: string;
     acceptance_criteria?: string[] | string;
+    business_goal?: string;
+    user_problem?: string;
     business_outcome?: string;
+    business_value?: string;
     capability?: string;
+    capability_category?: string;
+    primary_personas?: string[];
+    primary_users?: string[];
+    impacted_applications?: string[];
     impacted_modules?: string[];
     impacted_flows?: string[];
+    dependencies?: string[];
+    risks?: string[];
   }>;
 };
 
@@ -357,6 +366,16 @@ type ChildDraft = {
   title: string;
   description: string;
   acceptanceCriteria: string[];
+  businessGoal?: string;
+  userProblem?: string;
+  businessValue?: string;
+  capabilityCategory?: string;
+  primaryPersonas?: string[];
+  impactedApplications?: string[];
+  impactedModules?: string[];
+  impactedFlows?: string[];
+  dependencies?: string[];
+  risks?: string[];
   selected: boolean;
   status: 'preview' | 'creating' | 'created' | 'failed' | 'skipped';
   azureId?: number;
@@ -1526,6 +1545,7 @@ function GeneratedChildWorkItems({
             <strong>{draft.type}: {draft.title}</strong>
           </label>
           <span>{draft.description}</span>
+          <FeatureEnrichmentDetails draft={draft} />
           <ListBlock title="Acceptance Criteria" items={draft.acceptanceCriteria} />
           <div className="planner-subtle">
             Status: {draft.status}
@@ -1548,6 +1568,26 @@ function GeneratedChildWorkItems({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function FeatureEnrichmentDetails({ draft }: { draft: ChildDraft }) {
+  if (draft.type !== 'Feature') {
+    return null;
+  }
+  return (
+    <div className="planner-status-grid">
+      <Row label="Business Goal" value={draft.businessGoal || 'Not identified yet'} />
+      <Row label="User Problem" value={draft.userProblem || 'Not identified yet'} />
+      <Row label="Business Value" value={draft.businessValue || 'Not identified yet'} />
+      <Row label="Capability Category" value={draft.capabilityCategory || 'Not identified yet'} />
+      <ListBlock title="Primary Personas" items={draft.primaryPersonas || []} />
+      <ListBlock title="Impacted Applications" items={draft.impactedApplications || []} />
+      <ListBlock title="Impacted Modules" items={draft.impactedModules || []} />
+      <ListBlock title="Impacted Flows" items={draft.impactedFlows || []} />
+      <ListBlock title="Dependencies" items={draft.dependencies || []} />
+      <ListBlock title="Risks" items={draft.risks || []} />
+    </div>
   );
 }
 
@@ -3071,6 +3111,16 @@ function featureDraftsFromEpic(result: EpicRefinement): ChildDraft[] {
     title: feature.title,
     description: feature.description,
     acceptanceCriteria: acceptanceCriteriaForFeatureDraft(feature, result.business_outcomes),
+    businessGoal: feature.business_goal,
+    userProblem: feature.user_problem,
+    businessValue: feature.business_value || feature.business_outcome,
+    capabilityCategory: feature.capability_category || feature.capability,
+    primaryPersonas: feature.primary_personas || feature.primary_users || [],
+    impactedApplications: feature.impacted_applications || [],
+    impactedModules: feature.impacted_modules || [],
+    impactedFlows: feature.impacted_flows || [],
+    dependencies: feature.dependencies || [],
+    risks: feature.risks || [],
     selected: true,
     status: 'preview',
   }));

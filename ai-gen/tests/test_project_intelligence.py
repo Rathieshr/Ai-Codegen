@@ -412,13 +412,30 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertNotIn("Generic Feature", titles)
         for feature in refined["recommended_features"]:
             self.assertTrue(feature["capability"])
+            self.assertTrue(feature["business_goal"])
+            self.assertTrue(feature["business_value"])
+            self.assertTrue(feature["user_problem"])
             self.assertTrue(feature["business_outcome"])
             self.assertTrue(feature["primary_users"])
+            self.assertTrue(feature["primary_personas"])
+            self.assertTrue(feature["impacted_applications"])
             self.assertTrue(feature["impacted_modules"])
             self.assertTrue(feature["impacted_flows"])
+            self.assertTrue(feature["dependencies"])
+            self.assertTrue(feature["risks"])
             self.assertTrue(feature["acceptance_criteria"])
+            criteria_text = " ".join(feature["acceptance_criteria"]).lower()
+            self.assertNotIn("workflow is covered", criteria_text)
+            self.assertNotIn("integrations are validated", criteria_text)
+            self.assertNotIn("stakeholders can confirm", criteria_text)
         first_criteria = {tuple(feature["acceptance_criteria"]) for feature in refined["recommended_features"]}
         self.assertGreater(len(first_criteria), 1)
+        critical = next(feature for feature in refined["recommended_features"] if feature["title"] == "Critical Fault Detection")
+        self.assertIn("Telemetry Service", critical["dependencies"])
+        self.assertNotIn("Fault Monitoring", critical["dependencies"])
+        self.assertIn("Delayed telemetry ingestion", critical["risks"])
+        self.assertTrue(any("60 seconds" in criterion for criterion in critical["acceptance_criteria"]))
+        self.assertNotIn("Firmware (Firmware)", critical["impacted_applications"])
 
     def test_epic_feature_descriptions_dedupe_applications_and_avoid_template_copy(self) -> None:
         profile = {
@@ -450,11 +467,13 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         criteria = "\n".join("\n".join(feature["acceptance_criteria"]) for feature in refined["recommended_features"])
 
         self.assertNotIn("Deliver Critical Fault Detection as a", descriptions)
-        self.assertIn("Business outcome:", descriptions)
+        self.assertNotIn("gives Operations User a focused way", descriptions)
+        self.assertIn("Business Goal:", descriptions)
+        self.assertIn("Business Value:", descriptions)
         self.assertNotIn("Mobile App (Mobile), Backend (Backend)", descriptions)
         self.assertNotIn("Analytics Platform (Analytics), Mobile App (Mobile), Backend (Backend), Firmware (Firmware), Analytics (Analytics)", descriptions)
-        self.assertIn("Critical Fault Detection has a reviewable user workflow", criteria)
-        self.assertIn("Operator Alerting has a reviewable user workflow", criteria)
+        self.assertIn("Operator can view all active critical fault events", criteria)
+        self.assertIn("Operator receives an alert when a critical fault event is created", criteria)
 
     def test_feature_story_generation_avoids_generic_fallback_phrases(self) -> None:
         profile = {

@@ -832,8 +832,10 @@ function ProjectIntelligenceTab() {
       const selectedProject = getAdoMapping(sourceProfile).ado_project || projects[0]?.name || '';
       if (selectedProject) {
         const selectedAdoProject = projects.find((project) => project.name === selectedProject);
+        let profileWithProject = sourceProfile;
         if (!getAdoMapping(sourceProfile).ado_project) {
-          setProfile(applyAdoMapping(sourceProfile, { ado_project: selectedProject }));
+          profileWithProject = applyAdoMapping(sourceProfile, { ado_project: selectedProject });
+          setProfile(profileWithProject);
         }
         if (selectedAdoProject && (!sourceProfile.project_name.trim() || !sourceProfile.project_description.trim())) {
           setProfile((current) => seedProfileFromAzureProject(current, {
@@ -845,7 +847,7 @@ function ProjectIntelligenceTab() {
         if (projectResponse.warnings?.length) {
           setRepositoryLoadMessage(projectResponse.warnings.join(' '));
         }
-        await loadRepositories(selectedProject, sourceProfile);
+        await loadRepositories(selectedProject, profileWithProject);
       } else {
         setRepositories([]);
         setBranches([]);

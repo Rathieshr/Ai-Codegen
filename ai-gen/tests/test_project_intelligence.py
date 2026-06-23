@@ -611,6 +611,81 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("reset all filters", filter_ac)
         self.assertIn("provider_used", refined)
 
+    def test_qa_intelligence_generates_structured_utility_test_suite(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Event Repository"],
+                "flows": ["Fault Event Review Flow", "Outage Investigation Flow"],
+            },
+        }
+        story = {
+            "title": "Open Critical Fault Event Details",
+            "description": "As an operator, I want to open a critical fault event so that I can review device and outage context.",
+            "acceptance_criteria": [
+                "Operator can open a critical fault event from the event list.",
+                "Event details display Device ID, Fault Type, Severity, Event Timestamp, Current Status, Location, and Connectivity Status.",
+                "Missing fields are labeled as unavailable without hiding remaining details.",
+                "Access follows role-based permissions for event detail views.",
+            ],
+        }
+
+        suite = ProjectIntelligenceService().generate_qa_test_cases(story, profile)
+        cases = suite["test_suite"]["test_cases"]
+        categories = {case["category"] for case in cases}
+        titles = " ".join(case["title"] for case in cases)
+
+        self.assertIn("Positive Tests", categories)
+        self.assertIn("Negative Tests", categories)
+        self.assertIn("Boundary Tests", categories)
+        self.assertIn("Permission Tests", categories)
+        self.assertIn("Error Handling Tests", categories)
+        self.assertIn("Regression Candidates", categories)
+        self.assertIn("Open valid open critical fault event details", titles)
+        self.assertIn("Reject invalid Event ID", titles)
+        self.assertIn("Handle missing device data", titles)
+        self.assertIn("Operator access is allowed", titles)
+        self.assertIn("Unauthorized user access is restricted", titles)
+        self.assertIn("Telemetry timeout", titles)
+        self.assertGreaterEqual(suite["coverage_score"], 85)
+        self.assertEqual(suite["coverage_summary"]["coverage_percent"], 100)
+        self.assertEqual(suite["coverage_gaps"], [])
+        for case in cases:
+            self.assertTrue(case["test_id"].startswith("TC"))
+            self.assertTrue(case["preconditions"])
+            self.assertTrue(case["steps"])
+            self.assertTrue(case["expected_result"])
+            self.assertTrue(case["priority"])
+            self.assertTrue(case["risk_level"])
+
+    def test_qa_intelligence_identifies_acceptance_coverage_gaps(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring"],
+                "flows": ["Fault Event Review Flow"],
+            },
+        }
+        story = {
+            "title": "Review Fault Event",
+            "acceptance_criteria": [
+                "Operator can view a fault event.",
+                "Audit export contains immutable evidence package for compliance review.",
+                "External regulator receives a signed report within one business day.",
+                "Access follows role-based permissions for event detail views.",
+                "System displays a clear message when event data cannot be loaded.",
+                "Manual supervisor override is captured with approval reason.",
+            ],
+        }
+
+        suite = ProjectIntelligenceService().generate_qa_test_cases(story, profile)
+
+        self.assertLess(suite["coverage_summary"]["coverage_percent"], 100)
+        self.assertTrue(suite["coverage_gaps"])
+        self.assertIn("External regulator receives a signed report", " ".join(suite["coverage_gaps"]))
+
     def test_story_refinement_uses_modules_flows_and_considerations(self) -> None:
         profile = {
             "project_name": "LineDefender Smart Monitoring Platform",

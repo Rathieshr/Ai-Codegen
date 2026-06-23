@@ -349,6 +349,50 @@ type StoryTask = {
   task_quality_score?: number;
 };
 
+type QATestCase = {
+  test_id: string;
+  category: string;
+  title: string;
+  preconditions: string[];
+  steps: string[];
+  expected_result: string;
+  priority: string;
+  risk_level: string;
+  covers_acceptance_criteria?: number[];
+};
+
+type QATestSuiteResult = ProviderMetadata & {
+  test_suite: {
+    title: string;
+    domain: string;
+    story: { title: string; description: string };
+    modules: string[];
+    flows: string[];
+    dependencies: string[];
+    test_cases: QATestCase[];
+  };
+  coverage_summary: {
+    acceptance_criteria_count: number;
+    covered_acceptance_criteria_count: number;
+    coverage_percent: number;
+    covered_acceptance_criteria: string[];
+    uncovered_acceptance_criteria: string[];
+  };
+  coverage_score: number;
+  coverage_breakdown: {
+    positive_coverage: number;
+    negative_coverage: number;
+    boundary_coverage: number;
+    permission_coverage: number;
+    error_coverage: number;
+    regression_coverage: number;
+    category_counts?: Record<string, number>;
+    acceptance_criteria_count?: number;
+  };
+  generated_test_count: number;
+  coverage_gaps: string[];
+};
+
 type StoryImpact = ProviderMetadata & {
   affected_applications: string[];
   affected_modules: string[];
@@ -502,7 +546,7 @@ const EMPTY_PROFILE: ProjectProfile = {
 };
 
 function ProjectIntelligenceTab() {
-  const [activeTab, setActiveTab] = useState<'project' | 'planner' | 'developer'>('project');
+  const [activeTab, setActiveTab] = useState<'overview' | 'planning' | 'execution' | 'qa'>('overview');
   const [selectedItemType, setSelectedItemType] = useState<'Epic' | 'Feature' | 'Story' | 'Task'>('Epic');
   const [profile, setProfile] = useState<ProjectProfile>(EMPTY_PROFILE);
   const [storyTitle, setStoryTitle] = useState('');
@@ -520,6 +564,7 @@ function ProjectIntelligenceTab() {
   const [epicResult, setEpicResult] = useState<EpicRefinement | undefined>();
   const [featureResult, setFeatureResult] = useState<FeatureRefinement | undefined>();
   const [storyResult, setStoryResult] = useState<StoryRefinement | undefined>();
+  const [qaTestSuite, setQaTestSuite] = useState<QATestSuiteResult | undefined>();
   const [epicImpactInput, setEpicImpactInput] = useState({ title: '', description: '' });
   const [featureImpactInput, setFeatureImpactInput] = useState({ title: '', description: '' });
   const [storyImpactInput, setStoryImpactInput] = useState({ title: '', description: '' });
@@ -544,7 +589,7 @@ function ProjectIntelligenceTab() {
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'error'>('saved');
   const initializedRef = useRef(false);
   const lastSavedProfileRef = useRef('');
-  const latestProvider = latestProviderMetadata([copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
+  const latestProvider = latestProviderMetadata([qaTestSuite, copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
@@ -677,7 +722,7 @@ function ProjectIntelligenceTab() {
       setSaveStatus('saved');
       setEditingProfile(false);
       setShowQuickStart(false);
-      setActiveTab('planner');
+      setActiveTab('planning');
     }
   }
 
@@ -728,6 +773,19 @@ function ProjectIntelligenceTab() {
     }
   }
 
+  async function generateQATestCases() {
+    const story = currentStoryPayload();
+    const result = await withLoading('Generating QA test cases...', () => postJson<QATestSuiteResult>('/generate-qa-test-cases', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      story,
+      impact_analysis: storyImpact || {},
+    }));
+    if (result) {
+      setQaTestSuite(result);
+    }
+  }
+
   async function buildExecutionPackage() {
     const story = currentStoryPayload();
     const packageResult = await withLoading('Generating execution package...', async () => {
@@ -750,7 +808,7 @@ function ProjectIntelligenceTab() {
       setUiPrompt(packageResult.ui);
       setQaPrompt(packageResult.qa);
       setCopilotContext(packageResult.copilot);
-      setActiveTab('developer');
+      setActiveTab('execution');
     }
   }
 
@@ -1174,14 +1232,18 @@ function ProjectIntelligenceTab() {
   return (
     <main className="planner-shell">
       <header className="planner-header">
-        <div>
-          <div className="planner-title">Project Intelligence Preview</div>
-          <div className="planner-subtitle">
-            {editingProfile
-              ? 'Start with a project name and repository. Project Intelligence can fill in the rest.'
-              : 'Project-aware context is ready for backlog refinement and story execution prompts.'}
+        <div className="planner-header-brand">
+          <img className="planner-header-logo" src="static/hei-logo.png" alt="Hubbell Engineering Intelligence" />
+          <div className="planner-header-copy">
+            <div className="planner-eyebrow">Hubbell Planning & Engineering Intelligence Platform</div>
+            <div className="planner-title">Project Intelligence</div>
+            <div className="planner-subtitle">
+              {editingProfile
+                ? 'Connect the project once. The platform turns repository knowledge into planning, execution, and QA context.'
+                : 'Project-aware planning, execution packages, and QA coverage for enterprise delivery teams.'}
+            </div>
+            <div className={`planner-save-status ${saveStatus}`}>{saveStatusLabel(saveStatus)}</div>
           </div>
-          <div className={`planner-save-status ${saveStatus}`}>{saveStatusLabel(saveStatus)}</div>
         </div>
         <button
           className="planner-button secondary"
@@ -1201,10 +1263,10 @@ function ProjectIntelligenceTab() {
 
       <WorkflowTabs activeTab={activeTab} onChange={setActiveTab} />
 
-      {activeTab === 'project' ? (
+      {activeTab === 'overview' ? (
         <>
-          <ProjectHealthDashboard profile={profile} />
-          <ProjectProfileCompletion profile={profile} />
+          <ProductIdentityCard profile={profile} />
+          <EnterpriseReadinessCard profile={profile} qaReady={Boolean(qaTestSuite)} executionReady={Boolean(executionContext)} />
           {showQuickStart ? (
             <QuickStartSetup
               profile={profile}
@@ -1220,31 +1282,31 @@ function ProjectIntelligenceTab() {
               onAnalyzeProject={() => void analyzeProject()}
             />
           ) : null}
-          {!editingProfile && profile.project_name.trim() ? (
-            <ProjectProfileSummary profile={profile} />
-          ) : null}
-          <RepositoryIntelligenceCard
-            profile={profile}
-            adoProjects={adoProjects}
-            repositories={repositories}
-            branches={branches}
-            repositoryLoadMessage={repositoryLoadMessage}
-            repositoryDocuments={repositoryDocuments}
-            fileStatus={repositoryFileStatus}
-            selectedFiles={selectedRepositoryFiles}
-            loading={loading}
-            showConnectionControls={!showQuickStart}
-            onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
-            onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
-            onReloadRepositories={() => void loadAdoProjects()}
-            onProfileChange={setProfile}
-            onRepositoryDocumentsChange={setRepositoryDocuments}
-            onFileStatusChange={setRepositoryFileStatus}
-            onSelectedFilesChange={setSelectedRepositoryFiles}
-            onAnalyzeReadme={() => void analyzeReadme()}
-            onDiscoverDocuments={() => void discoverRepositoryDocuments()}
-            onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
-          />
+          <div className="planner-two-column">
+            <RepositoryIntelligenceCard
+              profile={profile}
+              adoProjects={adoProjects}
+              repositories={repositories}
+              branches={branches}
+              repositoryLoadMessage={repositoryLoadMessage}
+              repositoryDocuments={repositoryDocuments}
+              fileStatus={repositoryFileStatus}
+              selectedFiles={selectedRepositoryFiles}
+              loading={loading}
+              showConnectionControls={!showQuickStart}
+              onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
+              onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+              onReloadRepositories={() => void loadAdoProjects()}
+              onProfileChange={setProfile}
+              onRepositoryDocumentsChange={setRepositoryDocuments}
+              onFileStatusChange={setRepositoryFileStatus}
+              onSelectedFilesChange={setSelectedRepositoryFiles}
+              onAnalyzeReadme={() => void analyzeReadme()}
+              onDiscoverDocuments={() => void discoverRepositoryDocuments()}
+              onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
+            />
+            <KnowledgeProfilePreview profile={profile} />
+          </div>
           <details className="planner-card">
             <summary className="planner-label">Advanced Manual Profile Fields</summary>
             <div className="planner-subtle">Optional fallback fields. Repository intelligence should be the preferred source for modules, flows, architecture notes, and standards.</div>
@@ -1256,14 +1318,14 @@ function ProjectIntelligenceTab() {
               onSave={() => void saveProfile()}
             />
           </details>
-          <KnowledgeProfilePreview profile={profile} />
           <StandardsAndGuidelinesSummary profile={profile} />
-          <ProjectIntelligenceProviderDiagnostics metadata={latestProvider} />
+          <RecentActivityCard currentWorkItem={currentWorkItem} profile={profile} hasQa={Boolean(qaTestSuite)} hasExecution={Boolean(executionContext)} />
           <RoadmapCard />
+          <ProjectIntelligenceProviderDiagnostics metadata={latestProvider} />
         </>
       ) : null}
 
-      {activeTab === 'planner' ? (
+      {activeTab === 'planning' ? (
         <AIPlannerWorkspace
           profile={profile}
           loading={loading}
@@ -1291,10 +1353,12 @@ function ProjectIntelligenceTab() {
           updateDraftSelection={updateDraftSelection}
           createSelectedChildren={() => void createSelectedChildWorkItems()}
           buildExecutionPackage={() => void buildExecutionPackage()}
+          generateQATestCases={() => void generateQATestCases()}
+          qaTestSuite={qaTestSuite}
         />
       ) : null}
 
-      {activeTab === 'developer' ? (
+      {activeTab === 'execution' ? (
         <DeveloperWorkspace
           executionContext={executionContext}
           devPrompt={devPrompt}
@@ -1305,6 +1369,18 @@ function ProjectIntelligenceTab() {
           loading={loading}
         />
       ) : null}
+
+      {activeTab === 'qa' ? (
+        <QAWorkspace
+          loading={loading}
+          storyInput={storyInput}
+          acceptanceCriteria={acceptanceCriteria}
+          setStoryInput={setStoryInput}
+          setAcceptanceCriteria={setAcceptanceCriteria}
+          qaTestSuite={qaTestSuite}
+          generateQATestCases={() => void generateQATestCases()}
+        />
+      ) : null}
     </main>
   );
 }
@@ -1313,13 +1389,14 @@ function WorkflowTabs({
   activeTab,
   onChange,
 }: {
-  activeTab: 'project' | 'planner' | 'developer';
-  onChange: (tab: 'project' | 'planner' | 'developer') => void;
+  activeTab: 'overview' | 'planning' | 'execution' | 'qa';
+  onChange: (tab: 'overview' | 'planning' | 'execution' | 'qa') => void;
 }) {
-  const tabs: Array<{ id: 'project' | 'planner' | 'developer'; label: string; subtitle: string }> = [
-    { id: 'project', label: 'Project Intelligence', subtitle: 'Setup and knowledge' },
-    { id: 'planner', label: 'AI Planner', subtitle: 'Epic to task flow' },
-    { id: 'developer', label: 'Developer Workspace', subtitle: 'Execution prompts' },
+  const tabs: Array<{ id: 'overview' | 'planning' | 'execution' | 'qa'; label: string; subtitle: string }> = [
+    { id: 'overview', label: 'Overview', subtitle: 'Readiness and knowledge' },
+    { id: 'planning', label: 'Planning', subtitle: 'Epic to task workflow' },
+    { id: 'execution', label: 'Execution', subtitle: 'Developer packages' },
+    { id: 'qa', label: 'QA', subtitle: 'Coverage and test cases' },
   ];
   return (
     <nav className="planner-tabs" aria-label="Project Intelligence workspace tabs">
@@ -1338,18 +1415,73 @@ function WorkflowTabs({
   );
 }
 
+function ProductIdentityCard({ profile }: { profile: ProjectProfile }) {
+  const name = profile.project_name || 'Project Intelligence';
+  const domain = profile.domain || profile.knowledge_profile_preview.domain || 'Enterprise Planning';
+  const tagline = generatedTagline(profile);
+  const readiness = enterpriseReadiness(profile, false, false);
+  return (
+    <section className="planner-card planner-identity-card">
+      <div className="planner-logo-frame">
+        <img src="static/hei-logo.png" alt="Hubbell Engineering Intelligence" />
+      </div>
+      <div className="planner-identity-copy">
+        <div className="planner-eyebrow">Product Identity</div>
+        <h1>{name}</h1>
+        <div className="planner-subtitle">{domain}</div>
+        <p>{tagline}</p>
+      </div>
+      <div className="planner-readiness-badge">
+        <strong>{readiness.score}%</strong>
+        <span>Ready</span>
+      </div>
+    </section>
+  );
+}
+
+function EnterpriseReadinessCard({ profile, qaReady, executionReady }: { profile: ProjectProfile; qaReady: boolean; executionReady: boolean }) {
+  const readiness = enterpriseReadiness(profile, qaReady, executionReady);
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Engineering Readiness</div>
+          <div className="planner-subtle">One enterprise view of whether this project is ready for planning, execution, and QA.</div>
+        </div>
+        <strong>{readiness.score}%</strong>
+      </div>
+      <div className="planner-completion-row">
+        <div className="planner-completion-bar"><span style={{ width: `${readiness.score}%` }} /></div>
+      </div>
+      <div className="planner-health-grid compact">
+        {readiness.checks.map((check) => (
+          <HealthCard key={check.title} title={check.title} status={check.status} detail={check.detail} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecentActivityCard({ currentWorkItem, profile, hasQa, hasExecution }: { currentWorkItem?: AdoWorkItem; profile: ProjectProfile; hasQa: boolean; hasExecution: boolean }) {
+  const activity = [
+    currentWorkItem ? `Work item loaded: ${currentWorkItem.type} #${currentWorkItem.id}` : 'Open from an Azure Boards work item to load context.',
+    profile.repository_connection.repository_name ? `Repository connected: ${profile.repository_connection.repository_name}` : 'Repository connection pending.',
+    profile.knowledge_registry.source_files.length ? `Documentation analyzed: ${profile.knowledge_registry.source_files.slice(0, 3).join(', ')}` : 'Documentation analysis pending.',
+    hasExecution ? 'Execution package generated.' : 'Execution package not generated yet.',
+    hasQa ? 'QA test suite generated.' : 'QA coverage not generated yet.',
+  ];
+  return <ListBlock title="Recent Activity" items={activity} />;
+}
+
 function StandardsAndGuidelinesSummary({ profile }: { profile: ProjectProfile }) {
   return (
     <section className="planner-card">
-      <div className="planner-label">Development Standards & UI Guidelines</div>
-      <div className="planner-grid">
-        <ListBlock title="Architecture Patterns" items={profile.development_standards.architecture_patterns} />
-        <ListBlock title="Coding Guidelines" items={profile.development_standards.coding_guidelines} />
-        <ListBlock title="Security Requirements" items={profile.development_standards.security_requirements} />
-        <ListBlock title="Testing Requirements" items={profile.development_standards.testing_requirements} />
-      </div>
-      <div className="planner-status-grid">
-        <Row label="UI Guidelines" value={summarizeUiGuidelines(profile)} />
+      <div className="planner-label">Standards Summary</div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Security" value={profile.development_standards.security_requirements.length ? `${profile.development_standards.security_requirements.length} rules` : 'Not captured'} />
+        <SummaryTile title="Development" value={profile.development_standards.coding_guidelines.length || profile.development_standards.architecture_patterns.length ? 'Captured' : 'Not captured'} />
+        <SummaryTile title="Testing" value={profile.development_standards.testing_requirements.length ? `${profile.development_standards.testing_requirements.length} requirements` : 'Not captured'} />
+        <SummaryTile title="UI Guidelines" value={summarizeUiGuidelines(profile)} />
       </div>
     </section>
   );
@@ -1371,6 +1503,7 @@ function AIPlannerWorkspace({
   epicResult,
   featureResult,
   storyResult,
+  qaTestSuite,
   setEpicInput,
   setFeatureInput,
   setStoryInput,
@@ -1382,6 +1515,7 @@ function AIPlannerWorkspace({
   updateDraftSelection,
   createSelectedChildren,
   buildExecutionPackage,
+  generateQATestCases,
 }: {
   profile: ProjectProfile;
   loading: boolean;
@@ -1398,6 +1532,7 @@ function AIPlannerWorkspace({
   epicResult?: EpicRefinement;
   featureResult?: FeatureRefinement;
   storyResult?: StoryRefinement;
+  qaTestSuite?: QATestSuiteResult;
   setEpicInput: (value: { title: string; description: string }) => void;
   setFeatureInput: (value: { title: string; description: string }) => void;
   setStoryInput: (value: { title: string; description: string }) => void;
@@ -1409,13 +1544,14 @@ function AIPlannerWorkspace({
   updateDraftSelection: (draftId: string, selected: boolean) => void;
   createSelectedChildren: () => void;
   buildExecutionPackage: () => void;
+  generateQATestCases: () => void;
 }) {
   const readOnly = currentWorkItem?.state.toLowerCase() === 'closed';
   return (
     <>
       <WorkItemContextCard workItem={currentWorkItem} />
       <section className="planner-card">
-        <div className="planner-label">AI Planner</div>
+        <div className="planner-label">Planning Workflow</div>
         <div className="planner-subtle">Work through planning in delivery order: Epic, Feature, Story, then Task execution.</div>
         <KnowledgeRegistryNotice profile={profile} />
         {profileCompletion(profile).percent < 70 ? (
@@ -1487,6 +1623,7 @@ function AIPlannerWorkspace({
           <div className="planner-actions">
             <button className="planner-button secondary" onClick={refineStory} disabled={loading || !storyInput.title.trim()}>Refine Story</button>
             <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Tasks</button>
+            <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || !storyInput.title.trim()}>Generate Test Cases</button>
             <button className="planner-button secondary" onClick={buildExecutionPackage} disabled={loading || !storyInput.title.trim()}>Generate Execution Package</button>
           </div>
           {storyResult ? (
@@ -1495,6 +1632,7 @@ function AIPlannerWorkspace({
               <GeneratedTasksPreview story={storyResult} />
             </div>
           ) : null}
+          {qaTestSuite ? <QAIntelligencePanel result={qaTestSuite} /> : null}
         </section>
       ) : null}
 
@@ -1655,6 +1793,49 @@ function GeneratedTasksPreview({ story }: { story: StoryRefinement }) {
   );
 }
 
+function QAIntelligencePanel({ result }: { result: QATestSuiteResult }) {
+  const cases = result.test_suite?.test_cases || [];
+  const categories = Array.from(new Set(cases.map((test) => test.category)));
+  return (
+    <section className="planner-card">
+      <div className="planner-label">QA Intelligence</div>
+      <div className="planner-subtle">Generated structured test cases from the story, acceptance criteria, modules, flows, dependencies, and domain.</div>
+      <SourceBadge metadata={result} />
+      <div className="planner-status-grid">
+        <Row label="Test Suite" value={result.test_suite?.title || 'QA Test Suite'} />
+        <Row label="Coverage Score" value={formatNumber(result.coverage_score)} />
+        <Row label="Coverage %" value={`${formatNumber(result.coverage_summary?.coverage_percent)}%`} />
+        <Row label="Generated Test Count" value={formatNumber(result.generated_test_count || cases.length)} />
+        <Row label="Covered Acceptance Criteria" value={`${formatNumber(result.coverage_summary?.covered_acceptance_criteria_count)} / ${formatNumber(result.coverage_summary?.acceptance_criteria_count)}`} />
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Positive Tests" value={formatNumber(result.coverage_breakdown?.positive_coverage)} />
+        <Row label="Negative Tests" value={formatNumber(result.coverage_breakdown?.negative_coverage)} />
+        <Row label="Boundary Tests" value={formatNumber(result.coverage_breakdown?.boundary_coverage)} />
+        <Row label="Permission Tests" value={formatNumber(result.coverage_breakdown?.permission_coverage)} />
+        <Row label="Error Tests" value={formatNumber(result.coverage_breakdown?.error_coverage)} />
+        <Row label="Regression Candidates" value={formatNumber(result.coverage_breakdown?.regression_coverage)} />
+      </div>
+      <ListBlock title="Coverage Gaps" items={result.coverage_gaps || []} />
+      {categories.map((category) => (
+        <div className="planner-task" key={category}>
+          <div className="planner-label">{category}</div>
+          {cases.filter((test) => test.category === category).map((test) => (
+            <div className="planner-task" key={test.test_id}>
+              <strong>{test.test_id}: {test.title}</strong>
+              <Row label="Priority" value={test.priority} />
+              <Row label="Risk Level" value={test.risk_level} />
+              <ListBlock title="Preconditions" items={test.preconditions || []} />
+              <ListBlock title="Steps" items={test.steps || []} />
+              <Row label="Expected Result" value={test.expected_result} />
+            </div>
+          ))}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function StructuredTaskList({ tasks }: { tasks: StoryTask[] }) {
   return (
     <>
@@ -1772,6 +1953,57 @@ function DeveloperWorkspace({
           <pre className="planner-prompt">{copilotContext.context}</pre>
         </div>
       ) : null}
+    </>
+  );
+}
+
+function QAWorkspace({
+  loading,
+  storyInput,
+  acceptanceCriteria,
+  setStoryInput,
+  setAcceptanceCriteria,
+  qaTestSuite,
+  generateQATestCases,
+}: {
+  loading: boolean;
+  storyInput: { title: string; description: string };
+  acceptanceCriteria: string;
+  setStoryInput: (value: { title: string; description: string }) => void;
+  setAcceptanceCriteria: (value: string) => void;
+  qaTestSuite?: QATestSuiteResult;
+  generateQATestCases: () => void;
+}) {
+  return (
+    <>
+      <section className="planner-card">
+        <div className="planner-section-header">
+          <div>
+            <div className="planner-label">QA Workspace</div>
+            <div className="planner-subtle">Generate structured test cases, coverage analysis, regression scope, and QA readiness from an approved story.</div>
+          </div>
+          <button className="planner-button" onClick={generateQATestCases} disabled={loading || !storyInput.title.trim()}>Generate Test Cases</button>
+        </div>
+        <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Story description or outcome for QA validation." />
+        <textarea
+          className="planner-textarea compact"
+          value={acceptanceCriteria}
+          onChange={(event) => setAcceptanceCriteria(event.target.value)}
+          placeholder="Acceptance criteria, one per line"
+        />
+      </section>
+      {qaTestSuite ? <QAIntelligencePanel result={qaTestSuite} /> : (
+        <section className="planner-card">
+          <div className="planner-label">QA Readiness</div>
+          <div className="planner-subtle">No test suite generated yet. Add or load a story, then generate test cases.</div>
+          <div className="planner-summary-grid">
+            <SummaryTile title="Test Case Generator" value="Ready" />
+            <SummaryTile title="Coverage Analysis" value="Ready" />
+            <SummaryTile title="Regression Scope" value="Ready" />
+            <SummaryTile title="Defect Radar" value="Coming next" />
+          </div>
+        </section>
+      )}
     </>
   );
 }
@@ -2214,29 +2446,46 @@ function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
   const architecture = profile.knowledge_registry.architecture_notes.length
     ? profile.knowledge_registry.architecture_notes
     : profile.readme_analysis.architecture_notes;
-  const standards = profile.knowledge_registry.standards.length
-    ? profile.knowledge_registry.standards
-    : profile.knowledge_profile_preview.standards;
   return (
     <section className="planner-card">
-      <div className="planner-label">Knowledge Profile Preview</div>
-      <div className="planner-status-grid">
-        <Row label="Project Name" value={profile.project_name || 'Not captured yet'} />
-        <Row label="Domain" value={profile.domain || profile.knowledge_profile_preview.domain || 'Not analyzed yet'} />
-        <Row label="Project Type" value={profile.project_type || 'Not captured yet'} />
-        <Row label="Applications" value={formatApplications(profile.applications) || 'Not captured yet'} />
-        <Row label="Technology Summary" value={technologySummary(profile) || 'Not captured yet'} />
-        <Row label="Source Files" value={profile.knowledge_registry.source_files.join(', ') || profile.repository_sources.join(', ') || 'Pending repository analysis'} />
-        <Row label="Repository Status" value={profile.knowledge_profile_preview.repository_status} />
-        <Row label="Project Intelligence Readiness" value={profile.knowledge_profile_preview.readiness || readiness(profile)} />
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Knowledge Summary</div>
+          <div className="planner-subtle">Repository intelligence condensed into delivery-ready project knowledge.</div>
+        </div>
       </div>
-      <div className="planner-grid">
-        <RegistryModuleCard modules={modules} />
-        <RegistryFlowCard flows={flows} />
-        <RegistryComponentCard components={components} />
-        <ListBlock title="Architecture" items={architecture.length ? architecture : ['Pending repository analysis']} />
-        <ListBlock title="Standards" items={standards.length ? standards : ['Pending repository analysis']} />
+      <div className="planner-summary-grid">
+        <SummaryTile title="Modules" value={`${modules.length || profile.knowledge_registry.modules.length} captured`} />
+        <SummaryTile title="Flows" value={`${flows.length || profile.knowledge_registry.flows.length} captured`} />
+        <SummaryTile title="Components" value={`${components.length || profile.knowledge_registry.components.length} captured`} />
+        <SummaryTile title="Architecture" value={architecture.length ? 'Detected' : 'Pending'} />
       </div>
+      <details className="planner-accordion">
+        <summary>View Modules</summary>
+        <ChipList items={(modules.length ? modules.map((module) => module.name) : profile.knowledge_registry.modules).slice(0, 12)} />
+        {modules.slice(0, 6).map((module) => (
+          <details className="planner-nested" key={module.name}>
+            <summary>{module.name}</summary>
+            <ListBlock title="Responsibilities" items={module.responsibilities?.length ? module.responsibilities : ['Not captured']} />
+            <ListBlock title="Dependencies" items={module.dependencies?.length ? module.dependencies : ['Not captured']} />
+          </details>
+        ))}
+      </details>
+      <details className="planner-accordion">
+        <summary>View Flows</summary>
+        <ChipList items={(flows.length ? flows.map((flow) => flow.name) : profile.knowledge_registry.flows).slice(0, 12)} />
+        {flows.slice(0, 6).map((flow) => (
+          <details className="planner-nested" key={flow.name}>
+            <summary>{flow.name}</summary>
+            {flow.steps?.length ? <ListBlock title="Steps" items={flow.steps} /> : <div className="planner-subtle">Steps not captured yet.</div>}
+          </details>
+        ))}
+      </details>
+      <details className="planner-accordion">
+        <summary>View Components</summary>
+        <ChipList items={(components.length ? components.map((component) => `${component.name}${component.type ? ` (${component.type})` : ''}`) : profile.knowledge_registry.components).slice(0, 12)} />
+      </details>
+      <ArchitectureDiagram notes={architecture} />
     </section>
   );
 }
@@ -2328,16 +2577,22 @@ function RepositoryIntelligenceCard({
 }) {
   const selectedRepositoryLoaded = repositories.some((repo) => repo.id === profile.repository_connection.repository_id);
   const mapping = getAdoMapping(profile);
+  const documents = repositoryDocumentSummary(fileStatus, profile.knowledge_registry.source_files);
   return (
     <section className="planner-card">
-      <div className="planner-label">Repository Intelligence</div>
-      <div className="planner-subtle">
-        {showConnectionControls
-          ? 'Connect Azure Repos and analyze known documentation files.'
-          : 'Repository selection lives in Quick Start. Use this area only for README/docs discovery and manual fallback.'}
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Repository Summary</div>
+          <div className="planner-subtle">Connect documentation once. The platform converts it into planning and engineering knowledge.</div>
+        </div>
       </div>
       {showConnectionControls ? (
         <>
+          <div className="planner-step-row">
+            <span>1 Connect Repository</span>
+            <span>2 Discover Documentation</span>
+            <span>3 Analyze Repository</span>
+          </div>
           <div className="planner-grid">
             <select className="planner-input" value={mapping.ado_project} onChange={(event) => onSelectAdoProject(event.target.value)} disabled={!adoProjects.length}>
               <option value="">{adoProjects.length ? 'Select ADO project' : 'No projects loaded'}</option>
@@ -2400,55 +2655,69 @@ function RepositoryIntelligenceCard({
         </div>
       ) : null}
       <div className="planner-actions">
-        <button className="planner-button" onClick={onAnalyzeReadme} disabled={loading || !selectedRepositoryLoaded}>
-          Analyze README
-        </button>
         <button className="planner-button secondary" onClick={onDiscoverDocuments} disabled={loading || !selectedRepositoryLoaded}>
-          Discover Documents
+          Discover Documentation
         </button>
         <button className="planner-button" onClick={onAnalyzeDocuments} disabled={loading || (!selectedRepositoryLoaded && !Object.values(repositoryDocuments).some((content) => content.trim()))}>
-          Analyze Documents
+          Analyze Repository
+        </button>
+        <button className="planner-button secondary" onClick={onAnalyzeReadme} disabled={loading || !selectedRepositoryLoaded}>
+          Analyze README Only
         </button>
       </div>
       <div className="planner-task">
-        <div className="planner-label">Known Documentation Files</div>
-        <div className="planner-checkbox-grid">
-          {REPOSITORY_DOCUMENTS.map((path) => (
-            <label key={path} className="planner-checkbox">
-              <input
-                type="checkbox"
-                checked={selectedFiles.includes(path)}
-                onChange={(event) => {
-                  const next = event.target.checked
-                    ? [...selectedFiles, path]
-                    : selectedFiles.filter((file) => file !== path);
-                  onSelectedFilesChange(Array.from(new Set(next)));
-                }}
-              />
-              <span>{path}</span>
-              <span className={`planner-file-status ${fileStatus[path] || 'unknown'}`}>{fileStatus[path] || 'unknown'}</span>
-            </label>
+        <div className="planner-label">Repository Documents</div>
+        <div className="planner-document-list">
+          {documents.map((doc) => (
+            <div className="planner-document-row" key={doc.label}>
+              <span className={`planner-document-state ${doc.status}`}>{doc.status === 'available' ? '✓' : '⚠'}</span>
+              <div>
+                <strong>{doc.label}</strong>
+                <small>{doc.path || 'Not Found'}</small>
+              </div>
+            </div>
           ))}
         </div>
-        <div className="planner-actions">
-          <button
-            className="planner-button secondary"
-            onClick={() => onSelectedFilesChange(Object.entries(fileStatus).filter(([, status]) => status === 'available').map(([path]) => path))}
-            disabled={loading || !Object.values(fileStatus).includes('available')}
-          >
-            Select Discovered
-          </button>
-          <button
-            className="planner-button secondary"
-            onClick={() => {
-              onFileStatusChange({});
-              onSelectedFilesChange(['README.md', 'architecture.md', 'modules.md', 'flows.md']);
-            }}
-            disabled={loading}
-          >
-            Reset Discovery
-          </button>
-        </div>
+        <details className="planner-accordion">
+          <summary>Choose Documentation Files</summary>
+          <div className="planner-checkbox-grid">
+            {REPOSITORY_DOCUMENTS.map((path) => (
+              <label key={path} className="planner-checkbox">
+                <input
+                  type="checkbox"
+                  checked={selectedFiles.includes(path)}
+                  onChange={(event) => {
+                    const next = event.target.checked
+                      ? [...selectedFiles, path]
+                      : selectedFiles.filter((file) => file !== path);
+                    onSelectedFilesChange(Array.from(new Set(next)));
+                  }}
+                />
+                <span>{path}</span>
+                <span className={`planner-file-status ${fileStatus[path] || 'unknown'}`}>{fileStatus[path] || 'unknown'}</span>
+              </label>
+            ))}
+          </div>
+          <div className="planner-actions">
+            <button
+              className="planner-button secondary"
+              onClick={() => onSelectedFilesChange(Object.entries(fileStatus).filter(([, status]) => status === 'available').map(([path]) => path))}
+              disabled={loading || !Object.values(fileStatus).includes('available')}
+            >
+              Select Discovered
+            </button>
+            <button
+              className="planner-button secondary"
+              onClick={() => {
+                onFileStatusChange({});
+                onSelectedFilesChange(['README.md', 'architecture.md', 'modules.md', 'flows.md']);
+              }}
+              disabled={loading}
+            >
+              Reset Discovery
+            </button>
+          </div>
+        </details>
       </div>
       <details className="planner-task">
         <summary className="planner-label">Manual Document Paste Fallback</summary>
@@ -2470,13 +2739,9 @@ function RepositoryIntelligenceCard({
         <Row label="Repository" value={profile.repository_connection.repository_name || 'Not connected'} />
         <Row label="Branch" value={profile.repository_connection.branch || 'Not selected'} />
         <Row label="Status" value={profile.repository_connection.status || 'Not connected'} />
-        <Row label="README Analysis" value={profile.readme_analysis.summary || 'Pending'} />
-        <Row label="Architecture Discovery" value={(profile.knowledge_registry.architecture_notes || profile.readme_analysis.architecture_notes).join(', ') || 'Pending'} />
-        <Row label="Flow Discovery" value={profile.knowledge_registry.flows.join(', ') || 'Pending'} />
-        <Row label="Module Discovery" value={profile.knowledge_registry.modules.join(', ') || 'Pending'} />
-        <Row label="Source Files" value={profile.knowledge_registry.source_files.join(', ') || profile.repository_sources.join(', ') || 'Pending'} />
+        <Row label="Knowledge Captured" value={registrySummary(profile)} />
       </div>
-      <div className="planner-subtle">Only known documentation ingestion is enabled in this preview. Full repository scans are intentionally not included.</div>
+      <div className="planner-subtle">Repository README scan and known documentation ingestion are enabled. Full repository scans are intentionally not included.</div>
     </section>
   );
 }
@@ -2895,31 +3160,70 @@ function StoryPromptGeneration({
 function RoadmapCard() {
   return (
     <section className="planner-card">
-      <div className="planner-label">Roadmap</div>
+      <div className="planner-label">Current Capabilities</div>
       <div className="planner-grid">
         <div>
           <div className="planner-label">Completed</div>
           <ul className="planner-list">
-            <li>Project Profile</li>
-            <li>Project Intelligence</li>
-            <li>Repository Intelligence</li>
-            <li>Knowledge Registry</li>
-            <li>AI Planner Workflow</li>
-            <li>Developer Workspace</li>
+            <li>Planning</li>
+            <li>Story Generation</li>
+            <li>Task Generation</li>
+            <li>Execution Packages</li>
+            <li>QA Intelligence</li>
+            <li>Coverage Analysis</li>
           </ul>
         </div>
         <div>
           <div className="planner-label">Coming Next</div>
           <ul className="planner-list">
-            <li>Copilot Deep Integration</li>
             <li>PR Validation</li>
-            <li>Story Coverage Validation</li>
             <li>Teams Agent</li>
             <li>Autonomous Planning Agent</li>
+            <li>Defect Radar</li>
+            <li>Metrics Export</li>
           </ul>
         </div>
       </div>
     </section>
+  );
+}
+
+function SummaryTile({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="planner-summary-tile">
+      <span>{title}</span>
+      <strong>{value || 'Pending'}</strong>
+    </div>
+  );
+}
+
+function ChipList({ items }: { items: string[] }) {
+  const values = items.length ? items : ['Pending repository analysis'];
+  return (
+    <div className="planner-chip-row">
+      {values.map((item) => <span className="planner-chip" key={item}>{item}</span>)}
+    </div>
+  );
+}
+
+function ArchitectureDiagram({ notes }: { notes: string[] }) {
+  const layers = architectureLayers(notes);
+  return (
+    <details className="planner-accordion" open>
+      <summary>Architecture Summary</summary>
+      <div className="planner-architecture">
+        {layers.map((layer, index) => (
+          <React.Fragment key={layer}>
+            <span>{layer}</span>
+            {index < layers.length - 1 ? <b>↓</b> : null}
+          </React.Fragment>
+        ))}
+      </div>
+      <details className="planner-nested">
+        <summary>View Architecture Details</summary>
+        <ListBlock title="Architecture Notes" items={notes.length ? notes : ['Pending repository analysis']} />
+      </details>
+    </details>
   );
 }
 
@@ -3537,6 +3841,95 @@ function readinessSection(checks: Array<{ label: string; ready: boolean }>): { p
     missing: checks.filter((check) => !check.ready).map((check) => check.label),
     status: readyCount === checks.length ? 'Ready' : readyCount > 0 ? 'Partial' : 'Missing',
   };
+}
+
+function enterpriseReadiness(profile: ProjectProfile, qaReady: boolean, executionReady: boolean): { score: number; checks: Array<{ title: string; status: 'Missing' | 'Partial' | 'Ready'; detail: string }> } {
+  const checks = [
+    {
+      title: 'Repository Connected',
+      status: profile.repository_connection.repository_id || profile.repository_connection.repository_name ? 'Ready' as const : 'Missing' as const,
+      detail: profile.repository_connection.repository_name || 'Connect Azure Repos',
+    },
+    {
+      title: 'Knowledge Captured',
+      status: knowledgeRegistryStatus(profile),
+      detail: registrySummary(profile),
+    },
+    {
+      title: 'Standards Captured',
+      status: hasDevelopmentStandards(profile) ? 'Ready' as const : 'Missing' as const,
+      detail: hasDevelopmentStandards(profile) ? 'Development, testing, or security rules available' : 'Add standards or analyze docs',
+    },
+    {
+      title: 'Planning Ready',
+      status: profile.project_name || profile.project_description ? 'Ready' as const : 'Partial' as const,
+      detail: profile.project_name || 'Add project identity',
+    },
+    {
+      title: 'Execution Ready',
+      status: executionReady ? 'Ready' as const : knowledgeRegistryStatus(profile) === 'Ready' ? 'Partial' as const : 'Missing' as const,
+      detail: executionReady ? 'Execution package generated' : 'Generate from a Story or Task',
+    },
+    {
+      title: 'QA Ready',
+      status: qaReady ? 'Ready' as const : 'Partial' as const,
+      detail: qaReady ? 'Test suite generated' : 'Generate coverage from a Story',
+    },
+  ];
+  const score = Math.round(checks.reduce((total, check) => total + (check.status === 'Ready' ? 100 : check.status === 'Partial' ? 50 : 0), 0) / checks.length);
+  return { score, checks };
+}
+
+function generatedTagline(profile: ProjectProfile): string {
+  const domain = (profile.domain || profile.knowledge_profile_preview.domain || '').toLowerCase();
+  const name = profile.project_name || 'Project Intelligence';
+  if (domain.includes('utility') || domain.includes('grid')) {
+    return 'Real-time fault intelligence for utility distribution networks.';
+  }
+  if (domain.includes('meter')) {
+    return 'Connected metering intelligence for field, operations, and analytics teams.';
+  }
+  if (domain.includes('property') || domain.includes('hospitality')) {
+    return 'Operational planning intelligence for service-focused property experiences.';
+  }
+  if (profile.project_description) {
+    return `${name} planning context for product, engineering, and QA alignment.`;
+  }
+  return 'Enterprise planning intelligence for product delivery teams.';
+}
+
+function repositoryDocumentSummary(
+  fileStatus: Record<string, 'available' | 'missing' | 'unknown'>,
+  sourceFiles: string[],
+): Array<{ label: string; path: string; status: 'available' | 'missing' | 'unknown' }> {
+  const groups = [
+    { label: 'README', paths: ['README.md', 'docs/README.md'] },
+    { label: 'Architecture', paths: ['architecture.md', 'docs/architecture.md'] },
+    { label: 'Modules', paths: ['modules.md', 'docs/modules.md'] },
+    { label: 'Flows', paths: ['flows.md', 'docs/flows.md'] },
+    { label: 'UI Guidelines', paths: ['ui-guidelines.md', 'docs/ui-guidelines.md'] },
+    { label: 'Coding Standards', paths: ['coding-standards.md', 'docs/coding-standards.md'] },
+  ];
+  const normalizedSources = sourceFiles.map((path) => path.replace(/^\/+/, ''));
+  return groups.map((group) => {
+    const discoveredPath = group.paths.find((path) => fileStatus[path] === 'available' || normalizedSources.includes(path));
+    if (discoveredPath) {
+      return { label: group.label, path: `/${discoveredPath}`, status: 'available' as const };
+    }
+    const known = group.paths.find((path) => fileStatus[path] === 'missing' || fileStatus[path] === 'unknown');
+    return { label: group.label, path: '', status: known ? fileStatus[known] || 'unknown' : 'unknown' };
+  });
+}
+
+function architectureLayers(notes: string[]): string[] {
+  const text = notes.join(' ').toLowerCase();
+  const layers = [];
+  if (text.includes('mobile') || text.includes('app')) layers.push('Mobile App');
+  if (text.includes('backend') || text.includes('api')) layers.push('Backend API');
+  if (text.includes('telemetry')) layers.push('Telemetry Services');
+  if (text.includes('analytics')) layers.push('Analytics Platform');
+  if (text.includes('dashboard') || text.includes('portal')) layers.push('Operations Dashboard');
+  return layers.length ? Array.from(new Set(layers)) : ['Mobile App', 'Backend API', 'Telemetry Services', 'Analytics Platform', 'Operations Dashboard'];
 }
 
 function knowledgeRegistryStatus(profile: ProjectProfile): 'Missing' | 'Partial' | 'Ready' {

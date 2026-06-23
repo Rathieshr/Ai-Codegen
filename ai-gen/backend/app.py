@@ -439,6 +439,16 @@ def refine_project_story(request: ProjectIntelligenceRefinementRequest) -> dict:
     return project_intelligence_service.refine_story(request.story, request.profile, request.knowledge_profile, _project_intelligence_options(request))
 
 
+@app.post("/project-intelligence/generate-qa-test-cases")
+def generate_project_qa_test_cases(request: ProjectIntelligenceExecutionRequest) -> dict:
+    return project_intelligence_service.generate_qa_test_cases(
+        request.story,
+        request.profile,
+        request.knowledge_profile,
+        request.impact_analysis,
+    )
+
+
 @app.post("/project-intelligence/analyze-story-impact")
 def analyze_project_story_impact(request: ProjectIntelligenceRefinementRequest) -> dict:
     return project_intelligence_service.analyze_story_impact(request.story, request.profile, request.knowledge_profile)

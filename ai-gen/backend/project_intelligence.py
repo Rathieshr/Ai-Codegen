@@ -560,6 +560,30 @@ class ProjectIntelligenceService:
             return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
+    def generate_qa_test_cases(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+        impact_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        title = _clean_text(story.get("title")) or "Untitled story"
+        description = _clean_text(story.get("description"))
+        keywords = _context_keywords(title, description, active_profile)
+        impact = _normalize_story_impact(
+            impact_analysis or self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"])
+        )
+        modules = _string_list(story.get("modules")) or _string_list(story.get("affected_modules")) or impact["affected_modules"]
+        flows = _string_list(story.get("flows")) or _string_list(story.get("affected_flows")) or impact["affected_flows"]
+        dependencies = _string_list(story.get("dependencies")) or impact["dependencies"] or _impact_dependencies(active_profile, keywords, modules, flows)
+        acceptance = _string_list(story.get("acceptance_criteria")) or _acceptance_criteria(title, flows, modules)
+        suite = _qa_test_suite(title, description, acceptance, modules, flows, dependencies, active_profile, keywords)
+        return _with_provider_metadata(
+            suite,
+            _fallback_metadata("deterministic_fallback", "QA test case generation uses deterministic coverage mapping in this preview."),
+        )
+
     def analyze_story_impact(
         self,
         story: dict[str, Any],
@@ -3324,6 +3348,352 @@ def _qa_considerations(profile: dict[str, Any], flows: list[str]) -> list[str]:
     considerations.extend(testing)
     considerations.extend(f"Validate positive, negative, and regression paths for {flow}" for flow in flows[:3])
     return _unique(considerations) or ["Create positive, negative, and regression coverage"]
+
+
+QA_TEST_CATEGORIES = [
+    "Positive Tests",
+    "Negative Tests",
+    "Boundary Tests",
+    "Permission Tests",
+    "Error Handling Tests",
+    "Regression Candidates",
+]
+
+
+def _qa_test_suite(
+    title: str,
+    description: str,
+    acceptance: list[str],
+    modules: list[str],
+    flows: list[str],
+    dependencies: list[str],
+    profile: dict[str, Any],
+    keywords: list[str],
+) -> dict[str, Any]:
+    domain = _clean_text(profile.get("domain")) or profile["knowledge_profile_preview"].get("domain") or "Project domain"
+    acceptance = _unique(acceptance)
+    modules = _unique(modules)[:5]
+    flows = _unique(flows)[:5]
+    dependencies = _unique(dependencies)[:6]
+    tests: list[dict[str, Any]] = []
+    next_id = 1
+    for test in [
+        _qa_positive_test(title, acceptance, flows, modules),
+        *_qa_negative_tests(title, modules, keywords),
+        *_qa_boundary_tests(title, keywords),
+        *_qa_permission_tests(title),
+        *_qa_error_tests(title, dependencies, keywords),
+        *_qa_regression_tests(title, modules, flows, dependencies),
+    ]:
+        test["test_id"] = f"TC{next_id:03d}"
+        tests.append(test)
+        next_id += 1
+    coverage = _qa_coverage_summary(acceptance, tests)
+    breakdown = _qa_coverage_breakdown(tests, acceptance)
+    return {
+        "test_suite": {
+            "title": f"{title} QA Test Suite",
+            "domain": domain,
+            "story": {"title": title, "description": description},
+            "modules": modules,
+            "flows": flows,
+            "dependencies": dependencies,
+            "test_cases": tests,
+        },
+        "coverage_summary": coverage,
+        "coverage_score": _qa_coverage_score(breakdown, coverage),
+        "coverage_breakdown": breakdown,
+        "generated_test_count": len(tests),
+        "coverage_gaps": coverage["uncovered_acceptance_criteria"],
+    }
+
+
+def _qa_positive_test(title: str, acceptance: list[str], flows: list[str], modules: list[str]) -> dict[str, Any]:
+    expected = acceptance[0] if acceptance else f"{title} completes successfully."
+    flow = flows[0] if flows else "approved user flow"
+    module = modules[0] if modules else "affected module"
+    return _qa_case(
+        "Positive Tests",
+        f"Open valid {title.lower()}",
+        [f"User has permission for {flow}.", f"{module} data is available."],
+        [
+            f"Navigate to the {flow} entry point.",
+            f"Select a valid record for {title}.",
+            "Review the displayed result.",
+        ],
+        expected,
+        "High",
+        "Medium",
+        [0],
+    )
+
+
+def _qa_negative_tests(title: str, modules: list[str], keywords: list[str]) -> list[dict[str, Any]]:
+    record_name = "Event ID" if any(word in keywords for word in ["fault", "event"]) else "Record ID"
+    tests = [
+        _qa_case(
+            "Negative Tests",
+            f"Reject invalid {record_name}",
+            ["User is signed in.", f"No active data exists for the invalid {record_name}."],
+            [f"Enter an invalid {record_name}.", f"Attempt to open {title}."],
+            "System displays a clear not-found or invalid-data message without showing stale data.",
+            "High",
+            "High",
+            [1],
+        ),
+        _qa_case(
+            "Negative Tests",
+            f"Handle deleted {title.lower()} record",
+            ["A previously available record has been deleted or archived."],
+            ["Open the deleted or archived record from a saved link.", "Refresh the result."],
+            "System explains that the record is no longer available and does not expose partial data.",
+            "Medium",
+            "Medium",
+            [2],
+        ),
+    ]
+    if any("device" in module.lower() or "telemetry" in module.lower() for module in modules):
+        tests.append(
+            _qa_case(
+                "Negative Tests",
+                "Handle missing device data",
+                ["The selected device has incomplete or missing telemetry data."],
+                [f"Open {title} for the affected device.", "Review the displayed fields."],
+                "Available fields remain visible and missing device data is labeled as unavailable.",
+                "High",
+                "High",
+                [3],
+            )
+        )
+    return tests
+
+
+def _qa_boundary_tests(title: str, keywords: list[str]) -> list[dict[str, Any]]:
+    subject = "fault events" if any(word in keywords for word in ["fault", "event"]) else "records"
+    return [
+        _qa_case(
+            "Boundary Tests",
+            f"Display first and last {subject}",
+            [f"At least two {subject} exist in the data set."],
+            ["Open the list view.", "Select the first record.", "Return and select the last record."],
+            "First and last records open successfully with the correct details.",
+            "Medium",
+            "Medium",
+            [0, 1],
+        ),
+        _qa_case(
+            "Boundary Tests",
+            "Support long identifiers and maximum result set",
+            ["Data includes a long identifier and the maximum supported result count."],
+            ["Load the result list.", "Search or filter for the long identifier.", "Review pagination or result limits."],
+            "Long identifiers remain readable and maximum results are handled without truncating required fields.",
+            "Medium",
+            "Medium",
+            [1],
+        ),
+    ]
+
+
+def _qa_permission_tests(title: str) -> list[dict[str, Any]]:
+    return [
+        _qa_case(
+            "Permission Tests",
+            "Operator access is allowed",
+            ["User has Operator role."],
+            [f"Open {title}.", "Perform the primary view action."],
+            "Operator can complete the permitted action and see authorized data.",
+            "High",
+            "Medium",
+            [0],
+        ),
+        _qa_case(
+            "Permission Tests",
+            "Unauthorized user access is restricted",
+            ["User has no permission for the story scope."],
+            [f"Attempt to open {title}.", "Review the response."],
+            "User sees an access-restricted message and no protected data is displayed.",
+            "High",
+            "High",
+            [2],
+        ),
+    ]
+
+
+def _qa_error_tests(title: str, dependencies: list[str], keywords: list[str]) -> list[dict[str, Any]]:
+    primary_dependency = dependencies[0] if dependencies else "Backend service"
+    timeout_name = "Telemetry timeout" if "telemetry" in keywords else "Backend timeout"
+    return [
+        _qa_case(
+            "Error Handling Tests",
+            f"Recover from {primary_dependency} failure",
+            [f"{primary_dependency} is unavailable or returns an error."],
+            [f"Open {title}.", "Trigger a refresh or load action."],
+            "System displays a recoverable error message and preserves the user's current context.",
+            "High",
+            "High",
+            [3],
+        ),
+        _qa_case(
+            "Error Handling Tests",
+            timeout_name,
+            ["The request exceeds the expected response threshold."],
+            [f"Open {title} while the dependency is delayed.", "Wait for timeout handling."],
+            "System shows a timeout message and offers retry when retry is safe.",
+            "High",
+            "High",
+            [3],
+        ),
+        _qa_case(
+            "Error Handling Tests",
+            "Network error during refresh",
+            ["Network connectivity is interrupted."],
+            ["Open the story view.", "Refresh while network is unavailable."],
+            "System shows a network error without losing previously loaded safe data.",
+            "Medium",
+            "Medium",
+            [3],
+        ),
+    ]
+
+
+def _qa_regression_tests(title: str, modules: list[str], flows: list[str], dependencies: list[str]) -> list[dict[str, Any]]:
+    areas = _unique([*modules[:3], *flows[:3], *dependencies[:2]])
+    if not areas:
+        areas = ["Primary user flow"]
+    tests = []
+    for area in areas[:5]:
+        tests.append(
+            _qa_case(
+                "Regression Candidates",
+                f"Regression check for {area}",
+                [f"{area} exists in the approved project scope."],
+                [f"Execute the existing regression path for {area}.", f"Verify {title} did not change expected behavior."],
+                f"{area} remains stable after the story change.",
+                "Medium",
+                "Medium",
+                [],
+            )
+        )
+    return tests
+
+
+def _qa_case(
+    category: str,
+    title: str,
+    preconditions: list[str],
+    steps: list[str],
+    expected: str,
+    priority: str,
+    risk_level: str,
+    covers: list[int],
+) -> dict[str, Any]:
+    return {
+        "test_id": "",
+        "category": category,
+        "title": title,
+        "preconditions": preconditions,
+        "steps": steps,
+        "expected_result": expected,
+        "priority": priority,
+        "risk_level": risk_level,
+        "covers_acceptance_criteria": covers,
+    }
+
+
+def _qa_coverage_summary(acceptance: list[str], tests: list[dict[str, Any]]) -> dict[str, Any]:
+    covered_indexes = []
+    for index, criterion in enumerate(acceptance):
+        if any(_qa_test_covers_criterion(test, criterion) for test in tests):
+            covered_indexes.append(index)
+    uncovered = [criterion for index, criterion in enumerate(acceptance) if index not in covered_indexes]
+    percent = int(round((len(covered_indexes) / len(acceptance)) * 100)) if acceptance else 100
+    return {
+        "acceptance_criteria_count": len(acceptance),
+        "covered_acceptance_criteria_count": len(covered_indexes),
+        "coverage_percent": percent,
+        "covered_acceptance_criteria": [acceptance[index] for index in covered_indexes],
+        "uncovered_acceptance_criteria": uncovered,
+    }
+
+
+def _qa_test_covers_criterion(test: dict[str, Any], criterion: str) -> bool:
+    criterion_lower = criterion.lower()
+    test_text = " ".join(
+        [
+            str(test.get("title") or ""),
+            str(test.get("expected_result") or ""),
+            " ".join(_string_list(test.get("preconditions"))),
+            " ".join(_string_list(test.get("steps"))),
+        ]
+    ).lower()
+    if any(token in criterion_lower for token in ["permission", "role", "unauthorized", "access"]):
+        return any(token in test_text for token in ["permission", "operator", "unauthorized", "access-restricted", "authorized"])
+    if any(token in criterion_lower for token in ["missing", "unavailable", "error", "timeout", "network", "retry"]):
+        return any(token in test_text for token in ["missing", "unavailable", "error", "timeout", "network", "retry"])
+    if any(token in criterion_lower for token in ["display", "device id", "fault type", "severity", "timestamp", "status", "location"]):
+        return any(token in test_text for token in ["display", "device", "fault", "severity", "identifier", "details", "record"])
+    if any(token in criterion_lower for token in ["open", "view", "select", "refresh"]):
+        return any(token in test_text for token in ["open", "view", "select", "refresh", "valid"])
+    criterion_terms = _qa_coverage_terms(criterion_lower)
+    test_terms = _qa_coverage_terms(test_text)
+    if not criterion_terms:
+        return False
+    overlap = criterion_terms & test_terms
+    return len(overlap) >= min(3, len(criterion_terms))
+
+
+def _qa_coverage_terms(text: str) -> set[str]:
+    stop_words = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "when",
+        "from",
+        "this",
+        "into",
+        "user",
+        "can",
+        "are",
+        "is",
+        "a",
+        "an",
+        "of",
+        "to",
+    }
+    return {word.strip(".,:;()[]{}").lower() for word in text.split() if len(word.strip(".,:;()[]{}")) > 3 and word.lower() not in stop_words}
+
+
+def _qa_coverage_breakdown(tests: list[dict[str, Any]], acceptance: list[str]) -> dict[str, Any]:
+    counts = {category: sum(1 for test in tests if test["category"] == category) for category in QA_TEST_CATEGORIES}
+    return {
+        "positive_coverage": counts["Positive Tests"],
+        "negative_coverage": counts["Negative Tests"],
+        "boundary_coverage": counts["Boundary Tests"],
+        "permission_coverage": counts["Permission Tests"],
+        "error_coverage": counts["Error Handling Tests"],
+        "regression_coverage": counts["Regression Candidates"],
+        "category_counts": counts,
+        "acceptance_criteria_count": len(acceptance),
+    }
+
+
+def _qa_coverage_score(breakdown: dict[str, Any], summary: dict[str, Any]) -> int:
+    score = 0
+    if breakdown["positive_coverage"] >= 1:
+        score += 20
+    if breakdown["negative_coverage"] >= 2:
+        score += 20
+    if breakdown["permission_coverage"] >= 2:
+        score += 15
+    if breakdown["error_coverage"] >= 2:
+        score += 20
+    if breakdown["regression_coverage"] >= 2:
+        score += 15
+    if int(summary.get("coverage_percent") or 0) >= 80:
+        score += 10
+    return min(score, 100)
 
 
 def _sentence(title: str, detail: str) -> str:

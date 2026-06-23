@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from backend.project_intelligence import ProjectIntelligenceService, _context_budget_tokens, _project_phi_prompt, _project_phi_prompt_with_diagnostics
+from backend.project_intelligence import ProjectIntelligenceService, _context_budget_tokens, _project_phi_prompt, _project_phi_prompt_attempts, _project_phi_prompt_with_diagnostics
 
 
 class HealthyPhiProvider:
@@ -580,6 +580,60 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Device monitoring", refined["affected_flows"])
         self.assertIn("LineDefender UI", " ".join(refined["ui_considerations"]))
         self.assertIn("Unit tests required", refined["qa_considerations"])
+
+    def test_story_refinement_generates_meaningful_task_intelligence(self) -> None:
+        profile = {
+            "project_name": "LineDefender Mobile Platform",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "applications": [
+                {"name": "Mobile App", "type": "Mobile"},
+                {"name": "Backend API", "type": "Backend"},
+                {"name": "Analytics Platform", "type": "Analytics"},
+            ],
+            "ui_guidelines": {"component_library": "LineDefender Design System"},
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Event Repository"],
+                "flows": ["Fault Event Review", "Device Health Review"],
+            },
+        }
+        story = {
+            "title": "Display Fault Event Details",
+            "description": "As a field operator, I want to view critical fault event details so that I can triage outage impact.",
+            "acceptance_criteria": [
+                "Device ID, Fault Type, Severity, Timestamp, and Status are visible.",
+                "Telemetry context and event history are shown when available.",
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            refined = ProjectIntelligenceService().refine_story(story, profile, options={"force_provider": "deterministic_fallback"})
+
+        tasks = refined["proposed_tasks"]
+        self.assertGreaterEqual(len(tasks), 3)
+        self.assertLessEqual(len(tasks), 8)
+        work_areas = {task["work_area"] for task in tasks}
+        self.assertIn("UI Work", work_areas)
+        self.assertIn("Backend Work", work_areas)
+        self.assertIn("Data Work", work_areas)
+        self.assertIn("Analytics Work", work_areas)
+        self.assertIn("QA Work", work_areas)
+        rejected_titles = {
+            "implement display fault event details",
+            "design display fault event details",
+            "test display fault event details",
+        }
+        for task in tasks:
+            title = task["title"].lower()
+            self.assertNotIn(title, rejected_titles)
+            self.assertFalse(title.startswith("implement display fault event details"))
+            self.assertFalse(title.startswith("design display fault event details"))
+            self.assertFalse(title.startswith("test display fault event details"))
+            self.assertGreaterEqual(len(task["acceptance_criteria"]), 3)
+            self.assertTrue(task["description"])
+        diagnostics = refined["task_intelligence_diagnostics"]
+        self.assertEqual(diagnostics["generated_task_count"], len(tasks))
+        self.assertGreaterEqual(diagnostics["acceptance_criteria_count"], len(tasks) * 3)
+        self.assertIn("Implement <story>", diagnostics["rejected_task_patterns"])
 
     def test_story_impact_identifies_otp_dependencies(self) -> None:
         profile = {
@@ -1231,6 +1285,118 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertLessEqual(len(provider.system_prompt) + len(provider.user_prompt), 4800)
         self.assertIn("final_prompt_tokens", result)
         self.assertNotEqual(result["phi_status"], "prompt_too_long")
+
+    def test_build_execution_context_compresses_oversized_draft(self) -> None:
+        large_prompt = "# Dev Prompt\n" + ("Previously generated implementation prompt must not recurse. " * 120)
+        profile = {
+            "project_description": "LineDefender platform. " * 80,
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", *[f"Module {index}" for index in range(40)]],
+                "flows": ["Fault Event Review", *[f"Flow {index}" for index in range(40)]],
+                "architecture_notes": ["Architecture note. " * 80],
+            },
+        }
+        story = {
+            "type": "User Story",
+            "title": "Display Fault Event Details",
+            "description": ("As an operator, I want fault details. " * 90) + large_prompt,
+            "acceptance_criteria": [f"Acceptance criterion {index} with detailed validation wording." for index in range(12)],
+            "dev_prompt": large_prompt,
+            "ui_prompt": "Previous UI prompt should not be included.",
+            "qa_prompt": "Previous QA prompt should not be included.",
+            "copilot_context": "Previous Copilot context should not be included.",
+        }
+
+        prompt, diagnostics = _project_phi_prompt_with_diagnostics(
+            "build_execution_context",
+            profile,
+            story,
+            {
+                "story_summary": story["description"],
+                "acceptance_criteria": story["acceptance_criteria"],
+                "affected_modules": ["Fault Monitoring", "Telemetry", "Event Repository", "Analytics"],
+                "affected_flows": ["Fault Event Review", "Device Health Review", "Outage Investigation"],
+                "dependencies": ["Telemetry Service", "Event Repository", "Notification Gateway", "Reporting Store"],
+                "dev_prompt": large_prompt,
+                "ui_prompt": story["ui_prompt"],
+                "qa_prompt": story["qa_prompt"],
+                "context": story["copilot_context"],
+                "proposed_tasks": [{"title": f"Task {index}", "description": "Task detail. " * 20} for index in range(20)],
+            },
+            ["story_summary", "proposed_tasks"],
+        )
+
+        self.assertLessEqual(diagnostics["draft_tokens_after"], 220)
+        self.assertLess(diagnostics["draft_tokens_after"], diagnostics["draft_tokens_before"])
+        self.assertTrue(diagnostics["draft_compression_applied"])
+        self.assertLess(diagnostics["draft_compression_ratio"], 1)
+        self.assertLessEqual(diagnostics["final_prompt_tokens"], diagnostics["model_context_limit"])
+        self.assertIn("previous_generated_prompts", diagnostics["removed_sections"])
+        self.assertNotIn("Previously generated implementation prompt", prompt)
+        self.assertNotIn("Previous UI prompt", prompt)
+        self.assertNotIn("Previous QA prompt", prompt)
+        self.assertNotIn("Previous Copilot context", prompt)
+        self.assertIn('"target_output":"execution_context"', prompt)
+
+    def test_execution_prompt_retry_reduces_draft_and_project_context(self) -> None:
+        profile = {
+            "project_description": "LineDefender monitors grid assets and fault workflows. " * 160,
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", *[f"Module {index}" for index in range(80)]],
+                "flows": ["Fault Event Review", *[f"Flow {index}" for index in range(80)]],
+                "architecture_notes": ["Architecture note. " * 120],
+                "standards": [f"Standard {index}" for index in range(50)],
+            },
+        }
+        story = {
+            "title": "Display Fault Event Details",
+            "description": "As an operator, I want details. " * 120,
+            "acceptance_criteria": [f"Detailed acceptance criterion {index}." for index in range(15)],
+        }
+        attempts = []
+        for _prompt, diagnostics in _project_phi_prompt_attempts(
+            "build_execution_context",
+            profile,
+            story,
+            {"story_summary": story["description"], "acceptance_criteria": story["acceptance_criteria"], "dependencies": [f"Dependency {index}" for index in range(10)]},
+            ["story_summary", "proposed_tasks"],
+        ):
+            attempts.append(diagnostics)
+
+        self.assertEqual([item["draft_budget_tokens"] for item in attempts], [220, 160, 120])
+        self.assertEqual([item["context_budget_tokens"] for item in attempts], [350, 250, 180])
+        self.assertGreaterEqual(attempts[0]["draft_tokens_after"], attempts[-1]["draft_tokens_after"])
+        self.assertGreaterEqual(attempts[0]["project_context_tokens"], attempts[-1]["project_context_tokens"])
+
+    def test_execution_context_phi_uses_compressed_prompt_without_fallback(self) -> None:
+        provider = RecordingPhiProvider({"story_summary": "Phi execution story", "implementation_tasks": ["Coordinate fault details"]})
+        profile = {
+            "project_description": "LineDefender platform. " * 120,
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", *[f"Module {index}" for index in range(70)]],
+                "flows": ["Fault Event Review", *[f"Flow {index}" for index in range(70)]],
+                "architecture_notes": ["Architecture note. " * 100],
+            },
+        }
+        story = {
+            "title": "Display Fault Event Details",
+            "description": "As an operator, I want details. " * 100,
+            "acceptance_criteria": [f"Acceptance criterion {index}." for index in range(12)],
+            "dev_prompt": "Do not include this previous dev prompt. " * 80,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            result = ProjectIntelligenceService().build_execution_context(story, profile)
+
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(result["phi_status"], "success")
+        self.assertFalse(result["fallback_used"])
+        self.assertLessEqual(result["final_prompt_tokens"], result["model_context_limit"])
+        self.assertLessEqual(result["draft_tokens_after"], 220)
+        self.assertNotIn("Do not include this previous dev prompt", provider.user_prompt)
 
     def test_budget_guard_blocks_before_provider_when_final_prompt_exceeds_limit(self) -> None:
         provider = RecordingPhiProvider({"story_summary": "Should not be called"})

@@ -238,6 +238,14 @@ type ExecutionContextResult = ProviderMetadata & {
   development_standards: DevelopmentStandards;
   recommended_files: string[];
   acceptance_criteria_mapping: Array<{ acceptance_criterion: string; implementation_task: string }>;
+  proposed_tasks?: StoryTask[];
+  task_intelligence_diagnostics?: {
+    work_areas?: string[];
+    generated_task_count?: number;
+    acceptance_criteria_count?: number;
+    rejected_task_patterns?: string[];
+    recommended_file_count?: number;
+  };
   implementation_tasks: string[];
   testing_tasks: string[];
   documentation_tasks: string[];
@@ -315,6 +323,21 @@ type StoryRefinement = ProviderMetadata & {
   ui_considerations: string[];
   technical_considerations: string[];
   qa_considerations: string[];
+  proposed_tasks?: StoryTask[];
+  task_intelligence_diagnostics?: {
+    work_areas?: string[];
+    generated_task_count?: number;
+    acceptance_criteria_count?: number;
+    rejected_task_patterns?: string[];
+    recommended_file_count?: number;
+  };
+};
+
+type StoryTask = {
+  work_area?: string;
+  title: string;
+  description: string;
+  acceptance_criteria?: string[];
 };
 
 type StoryImpact = ProviderMetadata & {
@@ -1603,31 +1626,69 @@ function FeatureEnrichmentDetails({ draft }: { draft: ChildDraft }) {
 }
 
 function GeneratedTasksPreview({ story }: { story: StoryRefinement }) {
-  const tasks = [
-    {
-      title: 'UI Task',
-      description: story.ui_considerations.join(' ') || 'Confirm UI behavior, states, accessibility, and validation copy for the approved story.',
-    },
-    {
-      title: 'Dev Task',
-      description: story.technical_considerations.join(' ') || 'Implement the approved story inside the affected modules and flows.',
-    },
-    {
-      title: 'QA Task',
-      description: story.qa_considerations.join(' ') || 'Prepare manual and regression checks for the approved acceptance criteria.',
-    },
-  ];
+  const tasks = story.proposed_tasks?.length ? story.proposed_tasks : fallbackStoryTasks(story);
+  const diagnostics = story.task_intelligence_diagnostics || {};
   return (
     <div className="planner-task">
       <div className="planner-label">Generated Tasks</div>
-      {tasks.map((task) => (
-        <div className="planner-task" key={task.title}>
-          <strong>{task.title}</strong>
-          <span>{task.description}</span>
-        </div>
-      ))}
+      <div className="planner-status-grid">
+        <Row label="Generated Task Count" value={formatNumber(diagnostics.generated_task_count || tasks.length)} />
+        <Row label="Acceptance Criteria Count" value={formatNumber(diagnostics.acceptance_criteria_count || tasks.reduce((count, task) => count + (task.acceptance_criteria?.length || 0), 0))} />
+      </div>
+      <ListBlock title="Work Areas" items={diagnostics.work_areas || Array.from(new Set(tasks.map((task) => task.work_area || '').filter(Boolean)))} />
+      <StructuredTaskList tasks={tasks} />
     </div>
   );
+}
+
+function StructuredTaskList({ tasks }: { tasks: StoryTask[] }) {
+  return (
+    <>
+      {tasks.map((task) => (
+        <div className="planner-task" key={task.title}>
+          <strong>{task.work_area ? `${task.work_area}: ` : ''}{task.title}</strong>
+          <span>{task.description}</span>
+          <ListBlock title="Task Acceptance Criteria" items={task.acceptance_criteria || []} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function fallbackStoryTasks(story: StoryRefinement): StoryTask[] {
+  const summary = story.story_summary || 'Approved story';
+  return [
+    {
+      work_area: 'UI Work',
+      title: `Shape ${summary} user interface states`,
+      description: story.ui_considerations.join(' ') || 'Prepare UI behavior, states, accessibility, and validation copy for the approved story.',
+      acceptance_criteria: [
+        'Primary screen states cover loading, populated, empty, validation, and error outcomes.',
+        'Visible fields and actions map to the approved acceptance criteria.',
+        'Accessibility behavior is defined for the affected UI.',
+      ],
+    },
+    {
+      work_area: 'Backend Work',
+      title: `Connect ${summary} service behavior`,
+      description: story.technical_considerations.join(' ') || 'Define backend behavior inside the affected modules and flows.',
+      acceptance_criteria: [
+        'Backend behavior supports the approved acceptance criteria.',
+        'Validation, authorization, and failure handling are defined.',
+        'No unrelated behavior is changed.',
+      ],
+    },
+    {
+      work_area: 'QA Work',
+      title: `Validate ${summary} acceptance and regression coverage`,
+      description: story.qa_considerations.join(' ') || 'Prepare manual and regression checks for the approved acceptance criteria.',
+      acceptance_criteria: [
+        'Each acceptance criterion has at least one validation step.',
+        'Happy path, empty state, error state, and permission behavior are covered.',
+        'Regression scope includes affected flows and modules.',
+      ],
+    },
+  ];
 }
 
 function KnowledgeRegistryNotice({ profile }: { profile: ProjectProfile }) {
@@ -1723,6 +1784,12 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
         <ListBlock title="Documentation Tasks" items={context.documentation_tasks || []} />
         <ListBlock title="Implementation Notes" items={context.implementation_notes || []} />
       </div>
+      {context.proposed_tasks?.length ? (
+        <div className="planner-task">
+          <div className="planner-label">Task Intelligence</div>
+          <StructuredTaskList tasks={context.proposed_tasks} />
+        </div>
+      ) : null}
       <div className="planner-task">
         <div className="planner-label">Acceptance Criteria Mapping</div>
         {(context.acceptance_criteria_mapping || []).length ? (
@@ -3184,17 +3251,13 @@ function storyDraftsFromFeature(result: FeatureRefinement): ChildDraft[] {
 }
 
 function taskDraftsFromStory(result: StoryRefinement): ChildDraft[] {
-  const tasks = [
-    { title: `Design ${result.story_summary}`, description: result.ui_considerations.join(' ') || 'Confirm UI states and interaction behavior.' },
-    { title: `Implement ${result.story_summary}`, description: result.technical_considerations.join(' ') || 'Implement the approved behavior in the affected modules.' },
-    { title: `Test ${result.story_summary}`, description: result.qa_considerations.join(' ') || 'Validate acceptance criteria and regression coverage.' },
-  ];
+  const tasks = result.proposed_tasks?.length ? result.proposed_tasks : fallbackStoryTasks(result);
   return tasks.map((task, index) => ({
     id: `task_${index + 1}`,
     type: 'Task',
-    title: cleanGeneratedTitle(task.title),
+    title: cleanGeneratedTitle(`${task.work_area ? `${task.work_area}: ` : ''}${task.title}`),
     description: task.description,
-    acceptanceCriteria: result.acceptance_criteria,
+    acceptanceCriteria: task.acceptance_criteria?.length ? task.acceptance_criteria : result.acceptance_criteria,
     selected: true,
     status: 'preview',
   }));

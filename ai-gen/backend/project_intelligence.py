@@ -18,6 +18,21 @@ PROJECT_CONTEXT_MAX_TOKENS = 800
 PROJECT_CONTEXT_DEFAULT_TOKENS = 600
 PROJECT_CONTEXT_RETRY_BUDGETS = [600, 450, 300]
 PROJECT_CONTEXT_RESERVED_TOKENS = 150
+PROJECT_EXECUTION_OPERATIONS = {
+    "build_execution_context",
+    "build_dev_prompt",
+    "build_ui_prompt",
+    "build_qa_prompt",
+    "build_copilot_context",
+}
+PROJECT_EXECUTION_BUDGET_ATTEMPTS = [
+    {"draft_budget": 220, "context_budget": 350},
+    {"draft_budget": 160, "context_budget": 250},
+    {"draft_budget": 120, "context_budget": 180},
+]
+PROJECT_EXECUTION_DRAFT_DEFAULT_TOKENS = 200
+PROJECT_EXECUTION_DRAFT_MAX_TOKENS = 300
+PROJECT_EXECUTION_SCHEMA_BUDGET_TOKENS = 100
 PROJECT_PHI_SYSTEM_PROMPT = "Return strict JSON only."
 PROJECT_PHI_INSTRUCTION = "Use the compact project context. Return only the requested JSON keys."
 PROJECT_PROVIDER_PROMPT_CHAR_LIMIT = 4800
@@ -511,9 +526,12 @@ class ProjectIntelligenceService:
         modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
         flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
         applications = _application_names(active_profile)
+        impact = _normalize_story_impact(self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"]))
+        acceptance = _acceptance_criteria(title, flows, modules)
+        task_plan = _task_intelligence(title, description, acceptance, impact, active_profile)
         deterministic = {
             "story_summary": _sentence(title, description or f"Implement {title} within the approved project context."),
-            "acceptance_criteria": _acceptance_criteria(title, flows, modules),
+            "acceptance_criteria": acceptance,
             "affected_applications": applications,
             "affected_modules": modules,
             "affected_flows": flows,
@@ -522,10 +540,15 @@ class ProjectIntelligenceService:
             "ui_considerations": _ui_considerations(active_profile, flows),
             "technical_considerations": _technical_considerations(active_profile, modules),
             "qa_considerations": _qa_considerations(active_profile, flows),
+            "proposed_tasks": task_plan["tasks"],
+            "task_intelligence_diagnostics": task_plan["diagnostics"],
         }
         phi = _project_phi_json("refine_story", active_profile, story, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
-            return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
+            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
+            merged["proposed_tasks"] = task_plan["tasks"]
+            merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
+            return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
@@ -618,8 +641,10 @@ class ProjectIntelligenceService:
         has_impact = any(impact[key] for key in ["affected_applications", "affected_modules", "affected_flows", "dependencies", "risks"])
         readiness = _execution_readiness_score(active_profile, has_impact)
         recommended_files = _recommended_files(active_profile, impact, title)
-        implementation_tasks = _implementation_tasks(title, acceptance, impact, recommended_files)
-        testing_tasks = _testing_tasks(title, acceptance, impact)
+        task_plan = _task_intelligence(title, description, acceptance, impact, active_profile, recommended_files)
+        generated_tasks = task_plan["tasks"]
+        implementation_tasks = _tasks_for_areas(generated_tasks, ["UI Work", "Backend Work", "Data Work", "Analytics Work"])
+        testing_tasks = _tasks_for_areas(generated_tasks, ["QA Work"])
         documentation_tasks = _documentation_tasks(title, active_profile, impact)
         deterministic = {
             "story_summary": _sentence(title, description or refined_story["story_summary"]),
@@ -634,6 +659,8 @@ class ProjectIntelligenceService:
             "development_standards": active_profile["development_standards"],
             "recommended_files": recommended_files,
             "acceptance_criteria_mapping": _acceptance_criteria_mapping(acceptance, implementation_tasks),
+            "proposed_tasks": generated_tasks,
+            "task_intelligence_diagnostics": task_plan["diagnostics"],
             "implementation_tasks": implementation_tasks,
             "testing_tasks": testing_tasks,
             "documentation_tasks": documentation_tasks,
@@ -645,7 +672,12 @@ class ProjectIntelligenceService:
         }
         phi = _project_phi_json("build_execution_context", active_profile, story, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
-            return _with_provider_metadata(_merge_known_fields(deterministic, phi["parsed"], deterministic.keys()), phi["metadata"])
+            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
+            merged["proposed_tasks"] = generated_tasks
+            merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
+            merged["implementation_tasks"] = implementation_tasks
+            merged["testing_tasks"] = testing_tasks
+            return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
@@ -3496,7 +3528,9 @@ def _project_phi_prompt_attempts(
     expected_keys: list[str],
 ) -> list[tuple[str, dict[str, Any]]]:
     attempts: list[tuple[str, dict[str, Any]]] = []
-    for attempt_number, budget_tokens in enumerate(_adaptive_context_budgets(), start=1):
+    for attempt_number, budget_profile in enumerate(_adaptive_budget_profiles(operation), start=1):
+        budget_tokens = int(budget_profile["context_budget"])
+        draft_budget_tokens = int(budget_profile.get("draft_budget") or _draft_budget_tokens())
         level = _compression_level_for_budget(budget_tokens)
         prompt, diagnostics = _build_project_phi_prompt(
             operation,
@@ -3506,6 +3540,7 @@ def _project_phi_prompt_attempts(
             expected_keys,
             compression_level=level,
             budget_tokens=budget_tokens,
+            draft_budget_tokens=draft_budget_tokens,
             retry_attempt=attempt_number,
         )
         attempts.append((prompt, diagnostics))
@@ -3534,13 +3569,22 @@ def _build_project_phi_prompt(
     expected_keys: list[str],
     compression_level: int,
     budget_tokens: int,
+    draft_budget_tokens: int,
     retry_attempt: int,
 ) -> tuple[str, dict[str, Any]]:
     raw_context = _project_summary_context(operation, profile, item, compression_level=0)
     raw_context_tokens = _estimate_tokens(json.dumps(raw_context, ensure_ascii=True, separators=(",", ":")))
     project_context = _project_summary_context(operation, profile, item, compression_level=compression_level)
     project_context = _fit_project_context_to_budget(operation, profile, item, project_context, compression_level, budget_tokens)
-    payload = _project_phi_payload(operation, expected_keys, project_context, item, deterministic, compression_level=compression_level)
+    payload, draft_diagnostics = _project_phi_payload(
+        operation,
+        expected_keys,
+        project_context,
+        item,
+        deterministic,
+        compression_level=compression_level,
+        draft_budget_tokens=draft_budget_tokens,
+    )
     prompt = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
     context_tokens = _estimate_tokens(json.dumps(project_context, ensure_ascii=True, separators=(",", ":")))
     diagnostics = {
@@ -3554,6 +3598,7 @@ def _build_project_phi_prompt(
         "configured_budget_tokens": _context_budget_tokens(),
         "context_budget_tokens": budget_tokens,
         "context_budget_used": context_tokens,
+        "draft_budget_tokens": draft_budget_tokens,
         "compression_applied": compression_level > 1 or context_tokens < raw_context_tokens,
         "compression_ratio": round(context_tokens / max(raw_context_tokens, 1), 3),
         "context_compression_level": compression_level,
@@ -3562,6 +3607,7 @@ def _build_project_phi_prompt(
         "project_summary_mode": compression_level >= 4 or budget_tokens < 450,
         "reserved_tokens": PROJECT_CONTEXT_RESERVED_TOKENS,
     }
+    diagnostics.update(draft_diagnostics)
     diagnostics.update(_section_diagnostics(payload))
     diagnostics = _with_final_prompt_diagnostics(PROJECT_PHI_SYSTEM_PROMPT, prompt, diagnostics)
     return prompt, diagnostics
@@ -3574,15 +3620,31 @@ def _project_phi_payload(
     item: dict[str, Any],
     deterministic: dict[str, Any],
     compression_level: int = 0,
-) -> dict[str, Any]:
-    return {
+    draft_budget_tokens: int | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if _is_execution_operation(operation):
+        draft, draft_diagnostics = _compact_execution_draft(operation, item, deterministic, draft_budget_tokens or _draft_budget_tokens())
+    else:
+        raw_draft = _compact_deterministic_draft(deterministic, compression_level)
+        draft = raw_draft
+        draft_tokens = _estimate_tokens(json.dumps(raw_draft, ensure_ascii=True, separators=(",", ":")))
+        draft_diagnostics = {
+            "draft_tokens_before": draft_tokens,
+            "draft_tokens_after": draft_tokens,
+            "draft_compression_applied": False,
+            "draft_compression_ratio": 1,
+            "removed_sections": [],
+        }
+    input_payload = _compact_execution_input_item(item) if _is_execution_operation(operation) else _compact_input_item(item)
+    payload = {
         "operation": operation,
         "expected_json_keys": expected_keys,
         "project_context": project_context,
-        "input": _compact_input_item(item),
-        "draft": _compact_deterministic_draft(deterministic, compression_level),
+        "input": input_payload,
+        "draft": draft,
         "instruction": PROJECT_PHI_INSTRUCTION,
     }
+    return payload, draft_diagnostics
 
 
 def _compact_input_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -3596,6 +3658,117 @@ def _compact_input_item(item: dict[str, Any]) -> dict[str, Any]:
         elif value not in (None, "", [], {}):
             compacted[key] = value
     return compacted
+
+
+def _compact_execution_input_item(item: dict[str, Any]) -> dict[str, Any]:
+    compacted: dict[str, Any] = {}
+    for key in ["id", "type", "title", "state"]:
+        value = item.get(key)
+        if value not in (None, "", [], {}):
+            compacted[key] = _truncate_text(value, 220) if isinstance(value, str) else value
+    tags = _string_list(item.get("tags"))[:3]
+    if tags:
+        compacted["tags"] = tags
+    return compacted
+
+
+def _is_execution_operation(operation: str) -> bool:
+    return operation in PROJECT_EXECUTION_OPERATIONS
+
+
+def _compact_execution_draft(
+    operation: str,
+    item: dict[str, Any],
+    deterministic: dict[str, Any],
+    draft_budget_tokens: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    removed_sections: list[str] = []
+    raw_tokens = _estimate_tokens(json.dumps(deterministic, ensure_ascii=True, separators=(",", ":")))
+    title = _clean_text(item.get("title")) or _clean_text(deterministic.get("story_summary")) or "Untitled work item"
+    description = _clean_text(item.get("description")) or _clean_text(deterministic.get("story_summary"))
+    acceptance = _string_list(item.get("acceptance_criteria")) or _string_list(deterministic.get("acceptance_criteria"))
+    dependencies = _string_list(deterministic.get("dependencies"))
+    modules = _string_list(deterministic.get("affected_modules"))
+    flows = _string_list(deterministic.get("affected_flows"))
+    if not description and deterministic.get("prompt"):
+        removed_sections.append("previous_generated_prompt")
+    if deterministic.get("ui_prompt") or deterministic.get("dev_prompt") or deterministic.get("qa_prompt") or deterministic.get("context"):
+        removed_sections.append("previous_generated_prompts")
+    target_output = {
+        "build_execution_context": "execution_context",
+        "build_dev_prompt": "dev_prompt",
+        "build_ui_prompt": "ui_prompt",
+        "build_qa_prompt": "qa_prompt",
+        "build_copilot_context": "copilot_context",
+    }.get(operation, operation)
+    compact: dict[str, Any] = {
+        "work_item_type": _clean_text(item.get("type")) or "User Story",
+        "title": title,
+        "user_story": _summarize_story_description(title, description),
+        "acceptance_criteria": acceptance[:5],
+        "affected_modules": modules[:5],
+        "affected_flows": flows[:5],
+        "dependencies": dependencies[:3],
+        "target_output": target_output,
+    }
+    compact = {key: value for key, value in compact.items() if value not in ("", [], {}, None)}
+    compact = _fit_execution_draft_to_budget(compact, draft_budget_tokens, removed_sections)
+    final_tokens = _estimate_tokens(json.dumps(compact, ensure_ascii=True, separators=(",", ":")))
+    return compact, {
+        "draft_tokens_before": raw_tokens,
+        "draft_tokens_after": final_tokens,
+        "draft_compression_applied": final_tokens < raw_tokens,
+        "draft_compression_ratio": round(final_tokens / max(raw_tokens, 1), 3),
+        "removed_sections": _unique(removed_sections),
+    }
+
+
+def _summarize_story_description(title: str, description: str) -> str:
+    text = _clean_text(description)
+    if not text:
+        return _truncate_text(title, 180)
+    blocked_phrases = ["dev_prompt", "ui_prompt", "qa_prompt", "copilot_context", "execution_context"]
+    if any(phrase in text.lower() for phrase in blocked_phrases):
+        return _truncate_text(title, 180)
+    sentences = [segment.strip() for segment in text.replace("\n", " ").split(".") if segment.strip()]
+    if not sentences:
+        return _truncate_text(text, 220)
+    return _truncate_text(". ".join(sentences[:2]), 220)
+
+
+def _fit_execution_draft_to_budget(draft: dict[str, Any], budget_tokens: int, removed_sections: list[str]) -> dict[str, Any]:
+    budget = min(PROJECT_EXECUTION_DRAFT_MAX_TOKENS, max(1, int(budget_tokens or PROJECT_EXECUTION_DRAFT_DEFAULT_TOKENS)))
+    compact = json.loads(json.dumps(draft))
+    if _draft_token_count(compact) <= budget:
+        return compact
+    compact["user_story"] = _truncate_text(compact.get("user_story"), 160)
+    compact["acceptance_criteria"] = _string_list(compact.get("acceptance_criteria"))[:4]
+    compact["affected_modules"] = _string_list(compact.get("affected_modules"))[:3]
+    compact["affected_flows"] = _string_list(compact.get("affected_flows"))[:3]
+    compact["dependencies"] = _string_list(compact.get("dependencies"))[:2]
+    removed_sections.append("low_priority_draft_details")
+    if _draft_token_count(compact) <= budget:
+        return compact
+    compact["acceptance_criteria"] = [_truncate_text(item, 120) for item in _string_list(compact.get("acceptance_criteria"))[:3]]
+    compact["user_story"] = _truncate_text(compact.get("user_story"), 120)
+    removed_sections.append("long_acceptance_criteria")
+    if _draft_token_count(compact) <= budget:
+        return compact
+    compact["dependencies"] = _string_list(compact.get("dependencies"))[:1]
+    compact["affected_modules"] = _string_list(compact.get("affected_modules"))[:2]
+    compact["affected_flows"] = _string_list(compact.get("affected_flows"))[:2]
+    removed_sections.append("extra_modules_flows_dependencies")
+    if _draft_token_count(compact) <= budget:
+        return compact
+    compact.pop("dependencies", None)
+    compact["acceptance_criteria"] = [_truncate_text(item, 90) for item in _string_list(compact.get("acceptance_criteria"))[:2]]
+    compact["user_story"] = _truncate_text(compact.get("user_story"), 90)
+    removed_sections.append("dependency_context")
+    return compact
+
+
+def _draft_token_count(draft: dict[str, Any]) -> int:
+    return _estimate_tokens(json.dumps(draft, ensure_ascii=True, separators=(",", ":")))
 
 
 def _compact_deterministic_draft(deterministic: dict[str, Any], compression_level: int = 0) -> dict[str, Any]:
@@ -3654,6 +3827,20 @@ def _adaptive_context_budgets() -> list[int]:
         if budget not in normalized:
             normalized.append(budget)
     return normalized
+
+
+def _adaptive_budget_profiles(operation: str) -> list[dict[str, int]]:
+    if _is_execution_operation(operation):
+        return [dict(profile) for profile in PROJECT_EXECUTION_BUDGET_ATTEMPTS]
+    return [{"context_budget": budget, "draft_budget": _draft_budget_tokens()} for budget in _adaptive_context_budgets()]
+
+
+def _draft_budget_tokens() -> int:
+    try:
+        configured = int(os.getenv("AI_GEN_PROJECT_DRAFT_BUDGET_TOKENS", str(PROJECT_EXECUTION_DRAFT_DEFAULT_TOKENS)))
+    except ValueError:
+        configured = PROJECT_EXECUTION_DRAFT_DEFAULT_TOKENS
+    return min(PROJECT_EXECUTION_DRAFT_MAX_TOKENS, max(1, configured))
 
 
 def _compression_level_for_budget(budget_tokens: int) -> int:
@@ -4159,10 +4346,241 @@ def _file_slug(value: str) -> str:
     return "".join(word[:1].upper() + word[1:] for word in words)
 
 
+TASK_WORK_AREAS = ["UI Work", "Backend Work", "Data Work", "Analytics Work", "QA Work"]
+REJECTED_TASK_PATTERNS = ("implement", "design", "test")
+
+
+def _task_intelligence(
+    title: str,
+    description: str,
+    acceptance: list[str],
+    impact: dict[str, list[str]],
+    profile: dict[str, Any],
+    recommended_files: list[str] | None = None,
+) -> dict[str, Any]:
+    story_title = _clean_text(title) or "approved story"
+    lowered_context = " ".join(
+        [
+            story_title,
+            description,
+            " ".join(acceptance),
+            " ".join(impact.get("affected_modules", [])),
+            " ".join(impact.get("affected_flows", [])),
+        ]
+    ).lower()
+    apps = profile.get("applications") or []
+    app_types = {str(app.get("type") or "") for app in apps if isinstance(app, dict)}
+    modules = impact.get("affected_modules", [])
+    flows = impact.get("affected_flows", [])
+    files = recommended_files or _recommended_files(profile, impact, story_title)
+    tasks: list[dict[str, Any]] = []
+
+    if app_types.intersection({"Mobile", "Web Portal", "Desktop"}) or profile.get("ui_guidelines"):
+        tasks.append(
+            _task_candidate(
+                "UI Work",
+                f"Shape {story_title} user interface states",
+                "Prepare the screen behavior, user states, validation copy, and accessibility expectations for the approved story.",
+                [
+                    "Primary screen states cover loading, populated, empty, validation, and error outcomes.",
+                    "Visible fields and actions map to the approved acceptance criteria.",
+                    "Accessibility labels, keyboard behavior, and readable error copy are defined for the affected UI.",
+                    "UI handoff identifies affected screens or components before development begins.",
+                ],
+            )
+        )
+    if app_types.intersection({"Backend", "API"}) or modules or flows:
+        tasks.append(
+            _task_candidate(
+                "Backend Work",
+                f"Connect {story_title} service behavior",
+                f"Define backend behavior across {', '.join(modules[:3]) or 'the affected modules'} for the approved user outcome.",
+                [
+                    "Backend behavior supports each approved acceptance criterion without changing unrelated flows.",
+                    f"Affected modules are handled explicitly: {', '.join(modules[:3]) or 'confirm during implementation'}.",
+                    "Validation, authorization, and failure responses are defined for the story path.",
+                    "Backend response data includes the fields required by the user-facing outcome.",
+                ],
+            )
+        )
+    tasks.append(
+        _task_candidate(
+            "Data Work",
+            f"Map {story_title} data fields and persistence",
+            "Identify the data fields, persistence behavior, and state transitions needed by the story.",
+            [
+                "Required data fields are mapped from source to display, API, or storage boundaries.",
+                "Missing, stale, duplicate, and unavailable data cases have defined handling.",
+                "State changes are persisted or rejected according to the approved acceptance criteria.",
+                "Data behavior is traceable to the affected modules or flows.",
+            ],
+        )
+    )
+    if "analytics" in lowered_context or "telemetry" in lowered_context or app_types.intersection({"Analytics"}):
+        tasks.append(
+            _task_candidate(
+                "Analytics Work",
+                f"Instrument {story_title} operational signals",
+                "Capture the telemetry, reporting, or measurement signals needed to observe the story outcome.",
+                [
+                    "Relevant user actions, status changes, and failure outcomes are captured as events or metrics.",
+                    "Event names and payload fields are documented for analytics or operations review.",
+                    "Analytics behavior avoids collecting sensitive data beyond the approved need.",
+                    "Signal quality can be verified during QA without production-only access.",
+                ],
+            )
+        )
+    tasks.append(
+        _task_candidate(
+            "QA Work",
+            f"Validate {story_title} acceptance and regression coverage",
+            f"Prepare validation for {', '.join(flows[:3]) or 'the approved story flow'} and adjacent regression risks.",
+            [
+                "Manual checks cover happy path, empty state, error state, permission behavior, and regression risk.",
+                "Each acceptance criterion has at least one linked validation step.",
+                "Test data covers normal, boundary, and unavailable-data scenarios.",
+                "Regression scope includes affected flows and modules before release approval.",
+            ],
+        )
+    )
+
+    if len(tasks) < 3:
+        tasks.append(
+            _task_candidate(
+                "Backend Work",
+                f"Coordinate {story_title} cross-system behavior",
+                "Clarify cross-system responsibilities and contracts for the approved story.",
+                [
+                    "Owned behavior is separated from dependent system behavior.",
+                    "Integration assumptions are listed with verification steps.",
+                    "Failure behavior is defined for unavailable dependencies.",
+                    "Implementation scope remains limited to the approved story.",
+                ],
+            )
+        )
+    cleaned = [_normalize_task_candidate(task, story_title) for task in tasks]
+    cleaned = [task for task in cleaned if not _task_is_rejected(task, story_title)]
+    if len(cleaned) < 3:
+        cleaned.extend(_fallback_task_candidates(story_title, modules, flows))
+    cleaned = _dedupe_tasks(cleaned)[:8]
+    work_areas = _unique([task["work_area"] for task in cleaned])
+    return {
+        "tasks": cleaned,
+        "diagnostics": {
+            "work_areas": work_areas,
+            "generated_task_count": len(cleaned),
+            "acceptance_criteria_count": sum(len(task.get("acceptance_criteria") or []) for task in cleaned),
+            "rejected_task_patterns": [f"{word.title()} <story>" for word in REJECTED_TASK_PATTERNS],
+            "recommended_file_count": len(files),
+        },
+    }
+
+
+def _task_candidate(work_area: str, title: str, description: str, acceptance_criteria: list[str]) -> dict[str, Any]:
+    return {
+        "work_area": work_area,
+        "title": title,
+        "description": description,
+        "acceptance_criteria": acceptance_criteria,
+    }
+
+
+def _normalize_task_candidate(task: dict[str, Any], story_title: str) -> dict[str, Any]:
+    work_area = _clean_text(task.get("work_area")) or "Backend Work"
+    if work_area not in TASK_WORK_AREAS:
+        work_area = "Backend Work"
+    title = _clean_text(task.get("title")) or f"Coordinate {story_title} delivery behavior"
+    description = _clean_text(task.get("description")) or f"Complete the {work_area.lower()} needed for {story_title}."
+    criteria = _string_list(task.get("acceptance_criteria"))
+    if len(criteria) < 3:
+        criteria.extend(
+            [
+                f"{work_area} scope is traceable to the approved story.",
+                "Expected success and failure behavior is documented.",
+                "Validation evidence can be reviewed before the task is closed.",
+            ]
+        )
+    return {
+        "work_area": work_area,
+        "title": title,
+        "description": description,
+        "acceptance_criteria": criteria[:6],
+    }
+
+
+def _task_is_rejected(task: dict[str, Any], story_title: str) -> bool:
+    title = _clean_text(task.get("title")).lower()
+    normalized_story = _clean_text(story_title).lower()
+    if not title or not any(title.startswith(verb) for verb in ("shape", "connect", "map", "instrument", "validate", "coordinate", "prepare", "wire", "define", "capture", "verify")):
+        return True
+    return any(title == f"{verb} {normalized_story}" or title.startswith(f"{verb} {normalized_story} ") for verb in REJECTED_TASK_PATTERNS)
+
+
+def _fallback_task_candidates(story_title: str, modules: list[str], flows: list[str]) -> list[dict[str, Any]]:
+    return [
+        _normalize_task_candidate(
+            _task_candidate(
+                "UI Work",
+                f"Shape {story_title} interaction states",
+                "Define the user interaction states needed for the approved story.",
+                [
+                    "Primary interaction states are listed with expected user-visible behavior.",
+                    "Validation and error messages are defined before development starts.",
+                    "UI behavior maps to the approved acceptance criteria.",
+                ],
+            ),
+            story_title,
+        ),
+        _normalize_task_candidate(
+            _task_candidate(
+                "Backend Work",
+                f"Connect {story_title} module behavior",
+                f"Clarify backend responsibilities for {', '.join(modules[:2]) or 'the affected modules'}.",
+                [
+                    "Backend responsibilities are mapped to affected modules.",
+                    "Authorization, validation, and failure handling are defined.",
+                    "No unrelated backend behavior is changed.",
+                ],
+            ),
+            story_title,
+        ),
+        _normalize_task_candidate(
+            _task_candidate(
+                "QA Work",
+                f"Validate {story_title} flow coverage",
+                f"Prepare validation for {', '.join(flows[:2]) or 'the approved flow'}.",
+                [
+                    "Acceptance criteria are covered by explicit validation steps.",
+                    "Happy path, empty state, error state, and permission behavior are checked.",
+                    "Regression coverage is identified for affected flows.",
+                ],
+            ),
+            story_title,
+        ),
+    ]
+
+
+def _dedupe_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for task in tasks:
+        key = _clean_text(task.get("title")).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(task)
+    return deduped
+
+
+def _tasks_for_areas(tasks: list[dict[str, Any]], areas: list[str]) -> list[str]:
+    selected = [task["title"] for task in tasks if task.get("work_area") in areas]
+    return _unique(selected)
+
+
 def _acceptance_criteria_mapping(acceptance: list[str], implementation_tasks: list[str]) -> list[dict[str, str]]:
     if not acceptance:
         return []
-    fallback_task = implementation_tasks[0] if implementation_tasks else "Implement approved behavior"
+    fallback_task = implementation_tasks[0] if implementation_tasks else "Coordinate approved behavior"
     return [
         {
             "acceptance_criterion": criterion,

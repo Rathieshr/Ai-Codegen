@@ -255,6 +255,12 @@ type PermissionState = {
   azure_groups: string[];
   status: 'resolved' | 'fallback';
   warning?: string;
+  diagnostics?: {
+    matched_groups: string[];
+    matched_roles: AIGenRole[];
+    selected_role: AIGenRole;
+    precedence_rule: string;
+  };
 };
 
 type PromptResult = ProviderMetadata & {
@@ -4210,6 +4216,7 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
       azure_groups: groupNames,
       status: 'resolved',
       warning: groupNames.length ? undefined : 'No Azure DevOps security groups were visible. Viewer access is applied.',
+      diagnostics: mapping.diagnostics,
     };
   } catch (error) {
     return {
@@ -4259,18 +4266,60 @@ async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDe
   return uniqueStrings(groupNames);
 }
 
-function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role: AIGenRole; group: string } {
+function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role: AIGenRole; group: string; diagnostics: PermissionState['diagnostics'] } {
   const normalized = groupNames.map((group) => normalizeGroupName(group, projectName));
-  if (normalized.some((group) => group.includes('project administrators'))) {
-    return { role: 'admin', group: 'Project Administrators' };
+
+  // Collect all matched roles instead of returning on first match
+  const matchedRoles: { role: AIGenRole; groups: string[] }[] = [];
+
+  const adminGroups = normalized
+    .map((group, i) => ({ group, index: i, normalized: group }))
+    .filter(({ normalized }) => normalized.includes('project administrators'))
+    .map(({ index }) => groupNames[index]);
+
+  const contributorGroups = normalized
+    .map((group, i) => ({ group, index: i, normalized: group }))
+    .filter(({ normalized }) => normalized.includes('contributors'))
+    .map(({ index }) => groupNames[index]);
+
+  const readerGroups = normalized
+    .map((group, i) => ({ group, index: i, normalized: group }))
+    .filter(({ normalized }) => normalized.includes('readers'))
+    .map(({ index }) => groupNames[index]);
+
+  if (adminGroups.length > 0) {
+    matchedRoles.push({ role: 'admin', groups: adminGroups });
   }
-  if (normalized.some((group) => group.includes('contributors'))) {
-    return { role: 'contributor', group: 'Contributors' };
+  if (contributorGroups.length > 0) {
+    matchedRoles.push({ role: 'contributor', groups: contributorGroups });
   }
-  if (normalized.some((group) => group.includes('readers'))) {
-    return { role: 'viewer', group: 'Readers' };
+  if (readerGroups.length > 0) {
+    matchedRoles.push({ role: 'viewer', groups: readerGroups });
   }
-  return { role: 'viewer', group: 'Readers' };
+
+  // Determine highest role by precedence: admin > contributor > viewer
+  let selectedRole: AIGenRole = 'viewer';
+  let selectedGroup = 'Readers';
+  let precedenceRule = 'default_viewer';
+
+  if (matchedRoles.some(m => m.role === 'admin')) {
+    selectedRole = 'admin';
+    selectedGroup = 'Project Administrators';
+    precedenceRule = 'admin_takes_precedence';
+  } else if (matchedRoles.some(m => m.role === 'contributor')) {
+    selectedRole = 'contributor';
+    selectedGroup = 'Contributors';
+    precedenceRule = 'contributor_takes_precedence_over_viewer';
+  }
+
+  const diagnostics = {
+    matched_groups: groupNames,
+    matched_roles: matchedRoles.map(m => m.role),
+    selected_role: selectedRole,
+    precedence_rule: precedenceRule,
+  };
+
+  return { role: selectedRole, group: selectedGroup, diagnostics };
 }
 
 function normalizeGroupName(groupName: string, projectName: string): string {

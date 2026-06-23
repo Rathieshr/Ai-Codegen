@@ -53,6 +53,7 @@ const REPOSITORY_DOCUMENTS = [
   'docs/coding-standards.md',
 ];
 const PROJECT_SESSION_STORAGE_KEY = 'ai-gen-project-intelligence:last-session';
+const AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED = false;
 
 type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'admin';
 type AIGenRole = 'admin' | 'contributor' | 'viewer';
@@ -650,7 +651,7 @@ function ProjectIntelligenceTab() {
   const [showResumePanel, setShowResumePanel] = useState(false);
   const [lastAnalysisTimestamp, setLastAnalysisTimestamp] = useState('');
   const [permissionState, setPermissionState] = useState<PermissionState>(defaultPermissionState());
-  const [knowledgeGovernance, setKnowledgeGovernance] = useState<KnowledgeGovernance>(() => defaultKnowledgeGovernance(EMPTY_PROFILE, false));
+  const [knowledgeGovernance, setKnowledgeGovernance] = useState<KnowledgeGovernance>(() => defaultKnowledgeGovernance(EMPTY_PROFILE, true));
   const [editingProfile, setEditingProfile] = useState(false);
   const [showQuickStart, setShowQuickStart] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -4210,18 +4211,41 @@ function saveStatusLabel(status: 'saved' | 'saving' | 'unsaved' | 'error'): stri
 
 function defaultPermissionState(): PermissionState {
   return {
-    role: 'viewer',
+    role: 'admin',
     user_display_name: '',
     user_name: '',
-    mapped_group: 'Readers',
+    mapped_group: 'Permission Mapping Paused',
     azure_groups: [],
     status: 'fallback',
-    warning: 'Azure DevOps group membership has not been resolved yet.',
+    warning: 'Azure DevOps permission mapping is paused. Project Intelligence access is temporarily open while group resolution is stabilized.',
+    diagnostics: {
+      matched_groups: [],
+      matched_roles: ['admin'],
+      selected_role: 'admin',
+      precedence_rule: 'permission_mapping_paused',
+    },
   };
 }
 
 async function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
   const user = getCurrentAzureDevOpsUserIdentity();
+  if (!AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED) {
+    return {
+      role: 'admin',
+      user_display_name: user.displayName || user.name || '',
+      user_name: user.uniqueName || user.email || user.name || '',
+      mapped_group: 'Permission Mapping Paused',
+      azure_groups: [],
+      status: 'fallback',
+      warning: 'Azure DevOps permission mapping is paused. Project Intelligence access is temporarily open while group resolution is stabilized.',
+      diagnostics: {
+        matched_groups: [],
+        matched_roles: ['admin'],
+        selected_role: 'admin',
+        precedence_rule: 'permission_mapping_paused',
+      },
+    };
+  }
   try {
     const graphClient = getClient(GraphRestClient);
     const descriptor = await resolveUserGraphDescriptor(graphClient, user);

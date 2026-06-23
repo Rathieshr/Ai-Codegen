@@ -4234,6 +4234,21 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
     }
     if (groupNames.length) {
       const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
+      const ownerFallback = inferProjectOwnerPermission(user);
+      if (mapping.role === 'viewer' && ownerFallback) {
+        return {
+          ...ownerFallback,
+          azure_groups: uniqueStrings([...groupNames, ...ownerFallback.azure_groups]),
+          status: 'resolved',
+          warning: 'Azure DevOps only exposed a Readers mapping, so organization owner context was used for AI Gen Admin access.',
+          diagnostics: {
+            matched_groups: uniqueStrings([...groupNames, ...ownerFallback.azure_groups]),
+            matched_roles: uniqueStrings([...(mapping.diagnostics?.matched_roles || []), 'admin']) as AIGenRole[],
+            selected_role: 'admin',
+            precedence_rule: 'organization_owner_over_readers',
+          },
+        };
+      }
       return {
         role: mapping.role,
         user_display_name: user.displayName || user.name || '',
@@ -4387,9 +4402,11 @@ async function getGraphSubjectViaRestApi(descriptor: string): Promise<{ displayN
 }
 
 function inferProjectOwnerPermission(user: { name?: string; uniqueName?: string; email?: string }): PermissionState | undefined {
-  const accountName = String(SDK.getHost()?.name || '').toLowerCase();
+  const accountNames = getAzureDevOpsAccountNames();
   const identifiers = [user.uniqueName, user.email, user.name].map((value) => String(value || '').toLowerCase());
-  const ownsOrganization = Boolean(accountName && identifiers.some((identifier) => identifier.startsWith(`${accountName}@`) || identifier === accountName));
+  const ownsOrganization = accountNames.some((accountName) => (
+    accountName && identifiers.some((identifier) => identifier.startsWith(`${accountName}@`) || identifier === accountName)
+  ));
   if (!ownsOrganization) {
     return undefined;
   }
@@ -4408,6 +4425,49 @@ function inferProjectOwnerPermission(user: { name?: string; uniqueName?: string;
       precedence_rule: 'organization_owner_fallback',
     },
   };
+}
+
+function getAzureDevOpsAccountNames(): string[] {
+  const names: string[] = [];
+  try {
+    const host = SDK.getHost() as unknown as { name?: string };
+    if (host?.name) {
+      names.push(host.name);
+    }
+  } catch {
+    // Continue with web/page context.
+  }
+  try {
+    const context = SDK.getWebContext() as unknown as {
+      account?: { name?: string };
+      host?: { name?: string };
+      collection?: { name?: string };
+    };
+    [context.account?.name, context.host?.name, context.collection?.name].forEach((name) => {
+      if (name) {
+        names.push(name);
+      }
+    });
+  } catch {
+    // Continue with page context.
+  }
+  try {
+    const pageContext = SDK.getPageContext() as unknown as {
+      webContext?: {
+        account?: { name?: string };
+        host?: { name?: string };
+        collection?: { name?: string };
+      };
+    };
+    [pageContext.webContext?.account?.name, pageContext.webContext?.host?.name, pageContext.webContext?.collection?.name].forEach((name) => {
+      if (name) {
+        names.push(name);
+      }
+    });
+  } catch {
+    // Ignore missing host context.
+  }
+  return uniqueStrings(names.map((name) => String(name).toLowerCase()).filter(Boolean));
 }
 
 
@@ -4456,7 +4516,10 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
   const adminGroups = normalized
     .map((group, i) => ({ group, index: i, normalized: group }))
     .filter(({ normalized }) => {
-      const match = normalized.includes('project administrators');
+      const match = normalized.includes('project administrators')
+        || normalized.includes('project collection administrators')
+        || normalized.includes('collection administrators')
+        || normalized.includes('team foundation administrators');
       return match;
     })
     .map(({ index }) => groupNames[index]);

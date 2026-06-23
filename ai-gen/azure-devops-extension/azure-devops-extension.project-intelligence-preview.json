@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "ai-gen-project-intelligence-preview",
   "publisher": "AiIntelliCodegen",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "name": "AI Gen Project Intelligence Preview",
   "description": "Project-aware planning and story execution context for Azure DevOps.",
   "public": false,

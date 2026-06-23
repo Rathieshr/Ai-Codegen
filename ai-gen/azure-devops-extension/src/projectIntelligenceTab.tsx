@@ -4404,8 +4404,14 @@ async function getGraphSubjectViaRestApi(descriptor: string): Promise<{ displayN
 function inferProjectOwnerPermission(user: { name?: string; uniqueName?: string; email?: string }): PermissionState | undefined {
   const accountNames = getAzureDevOpsAccountNames();
   const identifiers = [user.uniqueName, user.email, user.name].map((value) => String(value || '').toLowerCase());
+  const identifierPrefixes = identifiers
+    .map((identifier) => identifier.split('@')[0])
+    .filter(Boolean);
   const ownsOrganization = accountNames.some((accountName) => (
-    accountName && identifiers.some((identifier) => identifier.startsWith(`${accountName}@`) || identifier === accountName)
+    accountName && (
+      identifiers.some((identifier) => identifier.startsWith(`${accountName}@`) || identifier === accountName)
+      || identifierPrefixes.includes(accountName)
+    )
   ));
   if (!ownsOrganization) {
     return undefined;
@@ -4419,7 +4425,7 @@ function inferProjectOwnerPermission(user: { name?: string; uniqueName?: string;
     status: 'fallback',
     warning: 'Azure DevOps Graph group lookup was unavailable, so organization owner context was mapped to AI Gen Admin.',
     diagnostics: {
-      matched_groups: ['Project Administrators'],
+      matched_groups: uniqueStrings(['Project Administrators', ...accountNames.map((name) => `account:${name}`)]),
       matched_roles: ['admin'],
       selected_role: 'admin',
       precedence_rule: 'organization_owner_fallback',
@@ -4429,45 +4435,115 @@ function inferProjectOwnerPermission(user: { name?: string; uniqueName?: string;
 
 function getAzureDevOpsAccountNames(): string[] {
   const names: string[] = [];
+  const addName = (value?: string) => {
+    const cleaned = String(value || '').trim();
+    if (cleaned) {
+      names.push(cleaned);
+    }
+  };
+  const addUrl = (value?: string) => {
+    const org = extractAzureDevOpsOrgName(value || '');
+    if (org) {
+      names.push(org);
+    }
+  };
   try {
     const host = SDK.getHost() as unknown as { name?: string };
-    if (host?.name) {
-      names.push(host.name);
-    }
+    addName(host?.name);
   } catch {
     // Continue with web/page context.
   }
   try {
     const context = SDK.getWebContext() as unknown as {
-      account?: { name?: string };
-      host?: { name?: string };
-      collection?: { name?: string };
+      account?: { name?: string; uri?: string };
+      host?: { name?: string; uri?: string };
+      collection?: { name?: string; uri?: string };
     };
-    [context.account?.name, context.host?.name, context.collection?.name].forEach((name) => {
-      if (name) {
-        names.push(name);
-      }
-    });
+    [context.account?.name, context.host?.name, context.collection?.name].forEach(addName);
+    [context.account?.uri, context.host?.uri, context.collection?.uri].forEach(addUrl);
   } catch {
     // Continue with page context.
   }
   try {
     const pageContext = SDK.getPageContext() as unknown as {
       webContext?: {
-        account?: { name?: string };
-        host?: { name?: string };
-        collection?: { name?: string };
+        account?: { name?: string; uri?: string };
+        host?: { name?: string; uri?: string };
+        collection?: { name?: string; uri?: string };
       };
     };
-    [pageContext.webContext?.account?.name, pageContext.webContext?.host?.name, pageContext.webContext?.collection?.name].forEach((name) => {
-      if (name) {
-        names.push(name);
-      }
-    });
+    [pageContext.webContext?.account?.name, pageContext.webContext?.host?.name, pageContext.webContext?.collection?.name].forEach(addName);
+    [pageContext.webContext?.account?.uri, pageContext.webContext?.host?.uri, pageContext.webContext?.collection?.uri].forEach(addUrl);
+    collectAzureDevOpsNamesFromObject(pageContext).forEach(addName);
   } catch {
     // Ignore missing host context.
   }
+  try {
+    addUrl(getCollectionUri());
+  } catch {
+    // Ignore missing collection URI.
+  }
+  [window.location.href, document.referrer].forEach(addUrl);
   return uniqueStrings(names.map((name) => String(name).toLowerCase()).filter(Boolean));
+}
+
+function collectAzureDevOpsNamesFromObject(value: unknown): string[] {
+  const names: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (node: unknown, depth: number) => {
+    if (!node || depth > 5 || seen.has(node)) {
+      return;
+    }
+    if (typeof node === 'string') {
+      const org = extractAzureDevOpsOrgName(node);
+      if (org) {
+        names.push(org);
+      }
+      return;
+    }
+    if (typeof node !== 'object') {
+      return;
+    }
+    seen.add(node);
+    Object.entries(node as Record<string, unknown>).forEach(([key, item]) => {
+      if ((key === 'uri' || key === 'relativeUri') && typeof item === 'string') {
+        const org = extractAzureDevOpsOrgName(item);
+        if (org) {
+          names.push(org);
+        }
+      }
+      if (key === 'name' && typeof item === 'string') {
+        names.push(item);
+      }
+      visit(item, depth + 1);
+    });
+  };
+  visit(value, 0);
+  return uniqueStrings(names);
+}
+
+function extractAzureDevOpsOrgName(value: string): string {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  try {
+    const parsed = new URL(text, window.location.origin);
+    if (parsed.hostname.toLowerCase() === 'dev.azure.com') {
+      return parsed.pathname.split('/').filter(Boolean)[0] || '';
+    }
+    if (parsed.hostname.toLowerCase().endsWith('.visualstudio.com')) {
+      return parsed.hostname.split('.')[0] || '';
+    }
+  } catch {
+    // Try simple path parsing below.
+  }
+  const devAzureMatch = text.match(/dev\.azure\.com\/([^/?#]+)/i);
+  if (devAzureMatch?.[1]) {
+    return devAzureMatch[1];
+  }
+  const relativeMatch = text.match(/^\/([^/?#]+)(?:\/|$)/);
+  return relativeMatch?.[1] || '';
 }
 
 

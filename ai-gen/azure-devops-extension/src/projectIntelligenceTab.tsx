@@ -1,5 +1,8 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import { CommonServiceIds, IProjectPageService } from 'azure-devops-extension-api/Common/CommonServices';
+import { getClient } from 'azure-devops-extension-api/Common/Client';
+import { GraphRestClient } from 'azure-devops-extension-api/Graph/GraphClient';
+import { GraphTraversalDirection } from 'azure-devops-extension-api/Graph/Graph';
 import { GitRepository } from 'azure-devops-extension-api/Git/Git';
 import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
 import React, { useEffect, useRef, useState } from 'react';
@@ -49,6 +52,10 @@ const REPOSITORY_DOCUMENTS = [
   'coding-standards.md',
   'docs/coding-standards.md',
 ];
+const PROJECT_SESSION_STORAGE_KEY = 'ai-gen-project-intelligence:last-session';
+
+type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'admin';
+type AIGenRole = 'admin' | 'contributor' | 'viewer';
 
 type ApplicationProfile = {
   name: string;
@@ -217,6 +224,37 @@ type AzureProjectContext = {
   id: string;
   name: string;
   description: string;
+};
+
+type ProjectSessionSnapshot = {
+  profile: ProjectProfile;
+  active_project: string;
+  repository_name: string;
+  repository_id: string;
+  branch: string;
+  knowledge_version: string;
+  last_analysis_timestamp: string;
+  last_active_tab: PlannerTab;
+  knowledge_governance?: KnowledgeGovernance;
+  saved_at: string;
+};
+
+type KnowledgeGovernance = {
+  registry_status: 'pending' | 'read_only';
+  editability: 'editable' | 'read_only';
+  knowledge_version: string;
+  last_refreshed_by: string;
+  last_refreshed_on: string;
+};
+
+type PermissionState = {
+  role: AIGenRole;
+  user_display_name: string;
+  user_name: string;
+  mapped_group: string;
+  azure_groups: string[];
+  status: 'resolved' | 'fallback';
+  warning?: string;
 };
 
 type PromptResult = ProviderMetadata & {
@@ -546,7 +584,7 @@ const EMPTY_PROFILE: ProjectProfile = {
 };
 
 function ProjectIntelligenceTab() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'planning' | 'execution' | 'qa'>('overview');
+  const [activeTab, setActiveTab] = useState<PlannerTab>('overview');
   const [selectedItemType, setSelectedItemType] = useState<'Epic' | 'Feature' | 'Story' | 'Task'>('Epic');
   const [profile, setProfile] = useState<ProjectProfile>(EMPTY_PROFILE);
   const [storyTitle, setStoryTitle] = useState('');
@@ -581,6 +619,11 @@ function ProjectIntelligenceTab() {
   const [repositoryDocuments, setRepositoryDocuments] = useState<Record<string, string>>({});
   const [selectedRepositoryFiles, setSelectedRepositoryFiles] = useState<string[]>(['README.md', 'architecture.md', 'modules.md', 'flows.md']);
   const [repositoryFileStatus, setRepositoryFileStatus] = useState<Record<string, 'available' | 'missing' | 'unknown'>>({});
+  const [resumeSession, setResumeSession] = useState<ProjectSessionSnapshot | undefined>();
+  const [showResumePanel, setShowResumePanel] = useState(false);
+  const [lastAnalysisTimestamp, setLastAnalysisTimestamp] = useState('');
+  const [permissionState, setPermissionState] = useState<PermissionState>(defaultPermissionState());
+  const [knowledgeGovernance, setKnowledgeGovernance] = useState<KnowledgeGovernance>(() => defaultKnowledgeGovernance(EMPTY_PROFILE, false));
   const [editingProfile, setEditingProfile] = useState(false);
   const [showQuickStart, setShowQuickStart] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -590,17 +633,31 @@ function ProjectIntelligenceTab() {
   const initializedRef = useRef(false);
   const lastSavedProfileRef = useRef('');
   const latestProvider = latestProviderMetadata([qaTestSuite, copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
+  const canAdmin = permissionState.role === 'admin';
+  const canContribute = permissionState.role === 'admin' || permissionState.role === 'contributor';
+  const isViewer = permissionState.role === 'viewer';
 
   useEffect(() => {
     SDK.init({ loaded: false, applyTheme: true });
     SDK.ready().then(async () => {
       SDK.notifyLoadSucceeded();
       try {
+        const storedSession = readProjectSession();
+        if (storedSession) {
+          setResumeSession(storedSession);
+          setLastAnalysisTimestamp(storedSession.last_analysis_timestamp);
+          setKnowledgeGovernance(storedSession.knowledge_governance || defaultKnowledgeGovernance(storedSession.profile, false));
+        }
         const loaded = await getProfile();
         const projectContext = await loadAzureProjectContext();
-        const seeded = seedProfileFromAzureProject(loaded, projectContext);
+        const permissions = await resolveCurrentUserPermission(projectContext);
+        setPermissionState(permissions);
+        const seeded = storedSession?.profile?.project_name ? storedSession.profile : seedProfileFromAzureProject(loaded, projectContext);
+        if (!storedSession?.knowledge_governance) {
+          setKnowledgeGovernance(defaultKnowledgeGovernance(seeded, permissions.role === 'admin'));
+        }
         const seededChanged = JSON.stringify(seeded) !== JSON.stringify(loaded);
-        if (seededChanged) {
+        if (!storedSession && seededChanged) {
           try {
             const saved = await postJson<ProjectProfile>('/profile', { profile: seeded });
             setProfile(saved);
@@ -614,14 +671,22 @@ function ProjectIntelligenceTab() {
           setProfile(seeded);
           lastSavedProfileRef.current = JSON.stringify(seeded);
         }
-        setEditingProfile(!seeded.project_name.trim());
-        setShowQuickStart(!seeded.project_name.trim() && !seeded.project_description.trim());
+        if (storedSession?.last_active_tab) {
+          setActiveTab(storedSession.last_active_tab === 'admin' && permissions.role !== 'admin' ? 'overview' : storedSession.last_active_tab);
+          setShowResumePanel(true);
+        }
+        setEditingProfile(permissions.role === 'admin' && !seeded.project_name.trim());
+        setShowQuickStart(permissions.role === 'admin' && !seeded.project_name.trim() && !seeded.project_description.trim());
         const workItem = await loadCurrentWorkItem();
         if (workItem) {
           setCurrentWorkItem(workItem);
           seedPlannerFromWorkItem(workItem);
         }
-        void loadAdoProjects(seeded);
+        if (storedSession?.profile?.project_name) {
+          setRepositoryLoadMessage('Loaded saved project session. Continue without reanalysis, or refresh analysis when you need updated repository knowledge.');
+        } else {
+          void loadAdoProjects(seeded);
+        }
         setError('');
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load project profile.');
@@ -644,6 +709,13 @@ function ProjectIntelligenceTab() {
     if (!initializedRef.current) {
       return undefined;
     }
+    const nextGovernance = normalizeKnowledgeGovernance(profile, knowledgeGovernance, canAdmin);
+    if (JSON.stringify(nextGovernance) !== JSON.stringify(knowledgeGovernance)) {
+      setKnowledgeGovernance(nextGovernance);
+    }
+    const session = buildProjectSession(profile, activeTab, lastAnalysisTimestamp, nextGovernance);
+    writeProjectSession(session);
+    setResumeSession(session);
     const serialized = JSON.stringify(profile);
     if (serialized === lastSavedProfileRef.current) {
       setSaveStatus('saved');
@@ -663,7 +735,7 @@ function ProjectIntelligenceTab() {
       }
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [profile]);
+  }, [profile, activeTab, lastAnalysisTimestamp, knowledgeGovernance, canAdmin]);
 
   async function withLoading<T>(nextMessage: string, action: () => Promise<T>): Promise<T | undefined> {
     setLoading(true);
@@ -681,6 +753,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function analyzeDescription() {
+    if (!canAdmin) {
+      setError('Project profile refinement is restricted to AI Gen Admins.');
+      return;
+    }
     const analyzed = await withLoading('Analyzing project description...', () => postJson<ProjectProfile>('/analyze-description', {
       description: profile.project_description,
     }));
@@ -690,6 +766,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function saveProfile() {
+    if (!canAdmin) {
+      setError('Project profile updates are restricted to AI Gen Admins.');
+      return;
+    }
     const saved = await withLoading('Saving project profile...', () => postJson<ProjectProfile>('/profile', { profile }));
     if (saved) {
       setProfile(saved);
@@ -700,6 +780,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function analyzeProject() {
+    if (!canAdmin) {
+      setError('Project analysis is restricted to AI Gen Admins.');
+      return;
+    }
     const analyzed = await withLoading('Analyzing project...', async () => {
       let workingProfile = profile;
       if (workingProfile.project_description.trim()) {
@@ -718,6 +802,8 @@ function ProjectIntelligenceTab() {
     });
     if (analyzed) {
       setProfile(analyzed);
+      setLastAnalysisTimestamp(new Date().toISOString());
+      markKnowledgeRefreshed(analyzed);
       lastSavedProfileRef.current = JSON.stringify(analyzed);
       setSaveStatus('saved');
       setEditingProfile(false);
@@ -726,7 +812,77 @@ function ProjectIntelligenceTab() {
     }
   }
 
+  function continueProjectSession() {
+    if (resumeSession?.last_active_tab) {
+      setActiveTab(resumeSession.last_active_tab);
+    }
+    if (resumeSession?.profile) {
+      setProfile(resumeSession.profile);
+    }
+    setShowResumePanel(false);
+    setEditingProfile(false);
+    setShowQuickStart(false);
+    setRepositoryLoadMessage('Continuing saved project session. Repository analysis was not rerun.');
+  }
+
+  async function refreshProjectAnalysis() {
+    if (!canAdmin) {
+      setError('Knowledge refresh is restricted to AI Gen Admins.');
+      return;
+    }
+    setShowResumePanel(false);
+    await loadAdoProjects(profile);
+    const refreshed = await withLoading('Refreshing project knowledge...', async () => {
+      let workingProfile = profile;
+      if (workingProfile.project_description.trim()) {
+        const descriptionProfile = await postJson<ProjectProfile>('/analyze-description', {
+          description: workingProfile.project_description,
+        });
+        workingProfile = mergeProfile(workingProfile, descriptionProfile);
+      }
+      if (workingProfile.repository_connection.repository_id || Object.values(repositoryDocuments).some((content) => content.trim())) {
+        const repositoryProfile = await analyzeRepositoryDocumentsForProfile(workingProfile);
+        if (repositoryProfile) {
+          workingProfile = repositoryProfile;
+        }
+      }
+      return workingProfile;
+    });
+    if (refreshed) {
+      setProfile(refreshed);
+      setLastAnalysisTimestamp(new Date().toISOString());
+      markKnowledgeRefreshed(refreshed);
+      setActiveTab('overview');
+    }
+  }
+
+  function markKnowledgeRefreshed(nextProfile: ProjectProfile) {
+    const refreshedOn = new Date().toISOString();
+    setKnowledgeGovernance({
+      registry_status: hasKnowledgeRegistry(nextProfile) ? 'read_only' : 'pending',
+      editability: canAdmin ? 'editable' : 'read_only',
+      knowledge_version: knowledgeVersion(nextProfile),
+      last_refreshed_by: permissionState.user_display_name || permissionState.user_name || 'AI Gen Admin',
+      last_refreshed_on: refreshedOn,
+    });
+    setLastAnalysisTimestamp(refreshedOn);
+  }
+
+  async function refreshPermissions() {
+    const permissions = await withLoading('Refreshing Azure DevOps permissions...', async () => {
+      const projectContext = await loadAzureProjectContext();
+      return resolveCurrentUserPermission(projectContext);
+    });
+    if (permissions) {
+      setPermissionState(permissions);
+    }
+  }
+
   async function generatePrompts() {
+    if (!canContribute) {
+      setError('Prompt generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const generated = await withLoading('Generating story prompts...', () => postJson<PromptResult>('/generate-story-prompts', {
       profile,
       story: {
@@ -741,6 +897,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function refineEpic() {
+    if (!canContribute) {
+      setError('Planning refinement is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const result = await withLoading('Refining epic with Project Intelligence...', () => postJson<EpicRefinement>('/refine-epic', {
       profile,
       knowledge_profile: profile.knowledge_registry,
@@ -752,6 +912,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function refineFeature() {
+    if (!canContribute) {
+      setError('Planning refinement is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const result = await withLoading('Refining feature with Project Intelligence...', () => postJson<FeatureRefinement>('/refine-feature', {
       profile,
       knowledge_profile: profile.knowledge_registry,
@@ -763,6 +927,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function refineStory() {
+    if (!canContribute) {
+      setError('Planning refinement is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const result = await withLoading('Refining story with Project Intelligence...', () => postJson<StoryRefinement>('/refine-story', {
       profile,
       knowledge_profile: profile.knowledge_registry,
@@ -774,6 +942,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function generateQATestCases() {
+    if (!canContribute) {
+      setError('QA generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const story = currentStoryPayload();
     const result = await withLoading('Generating QA test cases...', () => postJson<QATestSuiteResult>('/generate-qa-test-cases', {
       profile,
@@ -787,6 +959,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function buildExecutionPackage() {
+    if (!canContribute) {
+      setError('Execution package generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const story = currentStoryPayload();
     const packageResult = await withLoading('Generating execution package...', async () => {
       const basePayload = {
@@ -838,6 +1014,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function generateChildrenForCurrentType() {
+    if (!canContribute) {
+      setError('Planning generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     if (currentWorkItem?.state.toLowerCase() === 'closed') {
       setError('This work item is Closed. AI Planner is read-only for closed items.');
       return;
@@ -879,6 +1059,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function createSelectedChildWorkItems() {
+    if (!canContribute) {
+      setError('Azure DevOps work item creation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     if (!currentWorkItem) {
       setError('Current Azure DevOps work item is not loaded.');
       return;
@@ -928,6 +1112,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function analyzeEpicImpact() {
+    if (!canContribute) {
+      setError('Impact analysis is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const result = await withLoading('Analyzing epic impact...', () => postJson<EpicImpact>('/analyze-epic-impact', {
       profile,
       knowledge_profile: profile.knowledge_registry,
@@ -939,6 +1127,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function analyzeFeatureImpact() {
+    if (!canContribute) {
+      setError('Impact analysis is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const result = await withLoading('Analyzing feature impact...', () => postJson<FeatureImpact>('/analyze-feature-impact', {
       profile,
       knowledge_profile: profile.knowledge_registry,
@@ -950,6 +1142,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function analyzeStoryImpact() {
+    if (!canContribute) {
+      setError('Impact analysis is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
     const result = await withLoading('Analyzing story impact...', () => postJson<StoryImpact>('/analyze-story-impact', {
       profile,
       knowledge_profile: profile.knowledge_registry,
@@ -1042,6 +1238,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function selectAdoProject(adoProject: string) {
+    if (!canAdmin) {
+      setError('Repository mapping is restricted to AI Gen Admins.');
+      return;
+    }
     const nextProfile = applyAdoMapping(profile, {
       ado_project: adoProject,
       repository_id: '',
@@ -1058,6 +1258,10 @@ function ProjectIntelligenceTab() {
   }
 
   async function selectRepository(repositoryId: string) {
+    if (!canAdmin) {
+      setError('Repository mapping is restricted to AI Gen Admins.');
+      return;
+    }
     const selected = repositories.find((repo) => repo.id === repositoryId);
     if (repositoryId && !selected) {
       setError('Select a repository from the Azure DevOps dropdown. Manual repository values are not supported.');
@@ -1102,8 +1306,12 @@ function ProjectIntelligenceTab() {
   }
 
   async function analyzeReadme() {
+    if (!canAdmin) {
+      setError('Repository knowledge refresh is restricted to AI Gen Admins.');
+      return;
+    }
     const selectedRepo = profile.repository_connection.repository_id;
-    if (!selectedRepo || !repositories.some((repo) => repo.id === selectedRepo)) {
+    if (!selectedRepo || (!repositories.some((repo) => repo.id === selectedRepo) && !profile.repository_connection.repository_name)) {
       setError('Select a repository from the Azure DevOps dropdown before analyzing README.');
       return;
     }
@@ -1125,12 +1333,18 @@ function ProjectIntelligenceTab() {
     });
     if (analyzed) {
       setProfile(analyzed);
+      setLastAnalysisTimestamp(new Date().toISOString());
+      markKnowledgeRefreshed(analyzed);
     }
   }
 
   async function discoverRepositoryDocuments() {
+    if (!canAdmin) {
+      setError('Repository discovery is restricted to AI Gen Admins.');
+      return;
+    }
     const selectedRepo = profile.repository_connection.repository_id;
-    if (!selectedRepo || !repositories.some((repo) => repo.id === selectedRepo)) {
+    if (!selectedRepo || (!repositories.some((repo) => repo.id === selectedRepo) && !profile.repository_connection.repository_name)) {
       setError('Select a repository from the Azure DevOps dropdown before discovering documentation.');
       return;
     }
@@ -1169,7 +1383,7 @@ function ProjectIntelligenceTab() {
     const selectedRepo = sourceProfile.repository_connection.repository_id;
     const selectedFiles = selectedRepositoryFiles.length ? selectedRepositoryFiles : REPOSITORY_DOCUMENTS;
     const fetchedDocuments: Record<string, string> = {};
-    if (selectedRepo && repositories.some((repo) => repo.id === selectedRepo)) {
+    if (selectedRepo && (repositories.some((repo) => repo.id === selectedRepo) || sourceProfile.repository_connection.repository_name)) {
       const branch = sourceProfile.repository_connection.branch || 'main';
       const nextStatus: Record<string, 'available' | 'missing' | 'unknown'> = {};
       const fetchedFiles = await Promise.all(selectedFiles.map(async (path) => {
@@ -1215,7 +1429,11 @@ function ProjectIntelligenceTab() {
   }
 
   async function analyzeRepositoryDocuments() {
-    if (profile.repository_connection.repository_id && !repositories.some((repo) => repo.id === profile.repository_connection.repository_id)) {
+    if (!canAdmin) {
+      setError('Repository knowledge refresh is restricted to AI Gen Admins.');
+      return;
+    }
+    if (profile.repository_connection.repository_id && !repositories.some((repo) => repo.id === profile.repository_connection.repository_id) && !profile.repository_connection.repository_name) {
       setError('Select a repository from the Azure DevOps dropdown, or paste document content in Manual Document Paste Fallback.');
       return;
     }
@@ -1226,6 +1444,8 @@ function ProjectIntelligenceTab() {
     const analyzed = await withLoading('Analyzing repository documents...', () => analyzeRepositoryDocumentsForProfile(profile));
     if (analyzed) {
       setProfile(analyzed);
+      setLastAnalysisTimestamp(new Date().toISOString());
+      markKnowledgeRefreshed(analyzed);
     }
   }
 
@@ -1245,29 +1465,45 @@ function ProjectIntelligenceTab() {
             <div className={`planner-save-status ${saveStatus}`}>{saveStatusLabel(saveStatus)}</div>
           </div>
         </div>
-        <button
-          className="planner-button secondary"
-          onClick={() => {
-            const next = !(editingProfile || showQuickStart);
-            setEditingProfile(next);
-            setShowQuickStart(next);
-          }}
-          disabled={loading}
-        >
-          {editingProfile || showQuickStart ? 'Hide Setup' : 'Edit Project Profile'}
-        </button>
+        <div className="planner-header-actions">
+          <RoleBadge permission={permissionState} />
+          {canAdmin ? (
+            <button
+              className="planner-button secondary"
+              onClick={() => {
+                const next = !(editingProfile || showQuickStart);
+                setEditingProfile(next);
+                setShowQuickStart(next);
+              }}
+              disabled={loading}
+            >
+              {editingProfile || showQuickStart ? 'Hide Setup' : 'Edit Project Profile'}
+            </button>
+          ) : null}
+        </div>
       </header>
+
+      {showResumePanel && resumeSession ? (
+        <ProjectSessionResumeCard
+          session={resumeSession}
+          onContinue={continueProjectSession}
+          onRefresh={() => void refreshProjectAnalysis()}
+          loading={loading}
+          canRefresh={canAdmin}
+        />
+      ) : null}
 
       {loading ? <div className="planner-banner">{message || 'Working...'}</div> : null}
       {error ? <div className="planner-error">{error}</div> : null}
+      {isViewer ? <div className="planner-banner">Viewer access: Project Intelligence is read-only for your Azure DevOps group.</div> : null}
 
-      <WorkflowTabs activeTab={activeTab} onChange={setActiveTab} />
+      <WorkflowTabs activeTab={activeTab} onChange={setActiveTab} canAdmin={canAdmin} />
 
       {activeTab === 'overview' ? (
         <>
           <ProductIdentityCard profile={profile} />
           <EnterpriseReadinessCard profile={profile} qaReady={Boolean(qaTestSuite)} executionReady={Boolean(executionContext)} />
-          {showQuickStart ? (
+          {showQuickStart && canAdmin ? (
             <QuickStartSetup
               profile={profile}
               adoProjects={adoProjects}
@@ -1283,41 +1519,49 @@ function ProjectIntelligenceTab() {
             />
           ) : null}
           <div className="planner-two-column">
-            <RepositoryIntelligenceCard
-              profile={profile}
-              adoProjects={adoProjects}
-              repositories={repositories}
-              branches={branches}
-              repositoryLoadMessage={repositoryLoadMessage}
-              repositoryDocuments={repositoryDocuments}
-              fileStatus={repositoryFileStatus}
-              selectedFiles={selectedRepositoryFiles}
-              loading={loading}
-              showConnectionControls={!showQuickStart}
-              onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
-              onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
-              onReloadRepositories={() => void loadAdoProjects()}
-              onProfileChange={setProfile}
-              onRepositoryDocumentsChange={setRepositoryDocuments}
-              onFileStatusChange={setRepositoryFileStatus}
-              onSelectedFilesChange={setSelectedRepositoryFiles}
-              onAnalyzeReadme={() => void analyzeReadme()}
-              onDiscoverDocuments={() => void discoverRepositoryDocuments()}
-              onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
-            />
-            <KnowledgeProfilePreview profile={profile} />
+            {canAdmin ? (
+              <RepositoryIntelligenceCard
+                profile={profile}
+                adoProjects={adoProjects}
+                repositories={repositories}
+                branches={branches}
+                repositoryLoadMessage={repositoryLoadMessage}
+                repositoryDocuments={repositoryDocuments}
+                fileStatus={repositoryFileStatus}
+                selectedFiles={selectedRepositoryFiles}
+                loading={loading}
+                showConnectionControls={!showQuickStart}
+                onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
+                onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+                onReloadRepositories={() => void loadAdoProjects()}
+                onProfileChange={setProfile}
+                onRepositoryDocumentsChange={setRepositoryDocuments}
+                onFileStatusChange={setRepositoryFileStatus}
+                onSelectedFilesChange={setSelectedRepositoryFiles}
+                onAnalyzeReadme={() => void analyzeReadme()}
+                onDiscoverDocuments={() => void discoverRepositoryDocuments()}
+                onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
+                governance={knowledgeGovernance}
+              />
+            ) : (
+              <RepositoryReadOnlyCard profile={profile} governance={knowledgeGovernance} />
+            )}
+            <KnowledgeProfilePreview profile={profile} governance={knowledgeGovernance} canAdmin={canAdmin} />
           </div>
-          <details className="planner-card">
-            <summary className="planner-label">Advanced Manual Profile Fields</summary>
-            <div className="planner-subtle">Optional fallback fields. Repository intelligence should be the preferred source for modules, flows, architecture notes, and standards.</div>
-            <OnboardingForm
-              profile={profile}
-              loading={loading}
-              onProfileChange={setProfile}
-              onAnalyze={() => void analyzeDescription()}
-              onSave={() => void saveProfile()}
-            />
-          </details>
+          <KnowledgeGovernanceCard governance={knowledgeGovernance} canAdmin={canAdmin} />
+          {canAdmin ? (
+            <details className="planner-card">
+              <summary className="planner-label">Advanced Manual Profile Fields</summary>
+              <div className="planner-subtle">Optional fallback fields. Repository intelligence should be the preferred source for modules, flows, architecture notes, and standards.</div>
+              <OnboardingForm
+                profile={profile}
+                loading={loading}
+                onProfileChange={setProfile}
+                onAnalyze={() => void analyzeDescription()}
+                onSave={() => void saveProfile()}
+              />
+            </details>
+          ) : null}
           <StandardsAndGuidelinesSummary profile={profile} />
           <RecentActivityCard currentWorkItem={currentWorkItem} profile={profile} hasQa={Boolean(qaTestSuite)} hasExecution={Boolean(executionContext)} />
           <RoadmapCard />
@@ -1333,6 +1577,7 @@ function ProjectIntelligenceTab() {
           childDrafts={childDrafts}
           creationLog={creationLog}
           providerMetadata={latestProvider}
+          canContribute={canContribute}
           selectedItemType={selectedItemType}
           onItemTypeChange={setSelectedItemType}
           epicInput={epicInput}
@@ -1367,6 +1612,7 @@ function ProjectIntelligenceTab() {
           copilotContext={copilotContext}
           onGenerate={() => void buildExecutionPackage()}
           loading={loading}
+          canContribute={canContribute}
         />
       ) : null}
 
@@ -1379,7 +1625,12 @@ function ProjectIntelligenceTab() {
           setAcceptanceCriteria={setAcceptanceCriteria}
           qaTestSuite={qaTestSuite}
           generateQATestCases={() => void generateQATestCases()}
+          canContribute={canContribute}
         />
+      ) : null}
+
+      {activeTab === 'admin' && canAdmin ? (
+        <AdminWorkspace permission={permissionState} profile={profile} governance={knowledgeGovernance} onRefreshPermissions={() => void refreshPermissions()} />
       ) : null}
     </main>
   );
@@ -1388,15 +1639,18 @@ function ProjectIntelligenceTab() {
 function WorkflowTabs({
   activeTab,
   onChange,
+  canAdmin,
 }: {
-  activeTab: 'overview' | 'planning' | 'execution' | 'qa';
-  onChange: (tab: 'overview' | 'planning' | 'execution' | 'qa') => void;
+  activeTab: PlannerTab;
+  onChange: (tab: PlannerTab) => void;
+  canAdmin: boolean;
 }) {
-  const tabs: Array<{ id: 'overview' | 'planning' | 'execution' | 'qa'; label: string; subtitle: string }> = [
+  const tabs: Array<{ id: PlannerTab; label: string; subtitle: string }> = [
     { id: 'overview', label: 'Overview', subtitle: 'Readiness and knowledge' },
     { id: 'planning', label: 'Planning', subtitle: 'Epic to task workflow' },
     { id: 'execution', label: 'Execution', subtitle: 'Developer packages' },
     { id: 'qa', label: 'QA', subtitle: 'Coverage and test cases' },
+    ...(canAdmin ? [{ id: 'admin' as PlannerTab, label: 'Admin', subtitle: 'Permissions and setup' }] : []),
   ];
   return (
     <nav className="planner-tabs" aria-label="Project Intelligence workspace tabs">
@@ -1412,6 +1666,146 @@ function WorkflowTabs({
         </button>
       ))}
     </nav>
+  );
+}
+
+function ProjectSessionResumeCard({
+  session,
+  onContinue,
+  onRefresh,
+  loading,
+  canRefresh,
+}: {
+  session: ProjectSessionSnapshot;
+  onContinue: () => void;
+  onRefresh: () => void;
+  loading: boolean;
+  canRefresh: boolean;
+}) {
+  return (
+    <section className="planner-card planner-session-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Last Active Project</div>
+          <div className="planner-subtle">Resume instantly from saved project intelligence. Refresh only when repository knowledge should be rebuilt.</div>
+        </div>
+        <div className={`planner-session-freshness ${knowledgeFreshness(session.last_analysis_timestamp).toLowerCase()}`}>
+          {knowledgeFreshness(session.last_analysis_timestamp)}
+        </div>
+      </div>
+      <div className="planner-session-grid">
+        <Row label="Project Name" value={session.active_project || 'Not captured yet'} />
+        <Row label="Repository" value={session.repository_name || 'No repository selected'} />
+        <Row label="Repository Branch" value={session.branch || 'Default branch'} />
+        <Row label="Knowledge Version" value={session.knowledge_version} />
+        <Row label="Last Updated" value={formatTimestamp(session.last_analysis_timestamp || session.saved_at)} />
+        <Row label="Last Active Tab" value={titleCase(session.last_active_tab)} />
+      </div>
+      <div className="planner-actions">
+        <button className="planner-button" type="button" onClick={onContinue} disabled={loading}>Continue</button>
+        <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Refresh Analysis</button>
+      </div>
+      {!canRefresh ? <div className="planner-subtle">Knowledge refresh is available to AI Gen Admins only.</div> : null}
+    </section>
+  );
+}
+
+function RoleBadge({ permission }: { permission: PermissionState }) {
+  return (
+    <div className={`planner-role-badge ${permission.role}`}>
+      <span>{roleLabel(permission.role)}</span>
+      <small>{permission.mapped_group || 'Azure DevOps group mapping'}</small>
+    </div>
+  );
+}
+
+function AdminWorkspace({
+  permission,
+  profile,
+  governance,
+  onRefreshPermissions,
+}: {
+  permission: PermissionState;
+  profile: ProjectProfile;
+  governance: KnowledgeGovernance;
+  onRefreshPermissions: () => void;
+}) {
+  return (
+    <>
+      <section className="planner-card">
+        <div className="planner-section-header">
+          <div>
+            <div className="planner-label">Admin Tab</div>
+            <div className="planner-subtle">AI Gen permissions are inherited from Azure DevOps project security groups.</div>
+          </div>
+          <button className="planner-button secondary" type="button" onClick={onRefreshPermissions}>Refresh Permissions</button>
+        </div>
+        <div className="planner-status-grid">
+          <Row label="Current User" value={permission.user_display_name || permission.user_name || 'Unknown'} />
+          <Row label="Current User Role" value={roleLabel(permission.role)} />
+          <Row label="Mapped Azure DevOps Group" value={permission.mapped_group || 'Not resolved'} />
+          <Row label="Resolution Status" value={permission.status === 'resolved' ? 'Resolved from Azure DevOps groups' : 'Fallback / limited group visibility'} />
+          <Row label="Project" value={profile.project_name || getAdoMapping(profile).ado_project || 'Not captured'} />
+          <Row label="Repository Mapping" value={profile.repository_connection.repository_name || 'Not connected'} />
+          <Row label="Knowledge Status" value={knowledgeStatusLabel(governance)} />
+          <Row label="Last Refreshed By" value={governance.last_refreshed_by || 'Not refreshed yet'} />
+          <Row label="Last Refreshed On" value={formatTimestamp(governance.last_refreshed_on)} />
+        </div>
+        {permission.warning ? <div className="planner-banner">{permission.warning}</div> : null}
+      </section>
+      <section className="planner-card">
+        <div className="planner-label">Permissions Mapping</div>
+        <div className="planner-status-grid">
+          <Row label="Project Administrators" value="AI Gen Admin: Project Profile, Repository Mapping, Knowledge Refresh, Standards, Theme Settings" />
+          <Row label="Contributors" value="AI Gen Contributor: Planning, Execution, QA" />
+          <Row label="Readers" value="AI Gen Viewer: Read-only access" />
+        </div>
+      </section>
+      <section className="planner-card">
+        <div className="planner-label">Detected Azure DevOps Groups</div>
+        {permission.azure_groups.length ? <ChipList items={permission.azure_groups} /> : <div className="planner-subtle">No Azure DevOps groups were visible to this extension session.</div>}
+      </section>
+    </>
+  );
+}
+
+function RepositoryReadOnlyCard({ profile, governance }: { profile: ProjectProfile; governance: KnowledgeGovernance }) {
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Repository Mapping</div>
+      <div className="planner-subtle">Repository configuration is managed by AI Gen Admins.</div>
+      <div className="planner-status-grid">
+        <Row label="Repository" value={profile.repository_connection.repository_name || 'Not connected'} />
+        <Row label="Branch" value={profile.repository_connection.branch || 'Not selected'} />
+        <Row label="Knowledge Version" value={knowledgeVersion(profile)} />
+        <Row label="Knowledge Status" value={knowledgeStatusLabel(governance)} />
+        <Row label="Knowledge Captured" value={registrySummary(profile)} />
+      </div>
+    </section>
+  );
+}
+
+function KnowledgeGovernanceCard({ governance, canAdmin }: { governance: KnowledgeGovernance; canAdmin: boolean }) {
+  return (
+    <section className="planner-card planner-governance-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Knowledge Governance</div>
+          <div className="planner-subtle">One person curates repository knowledge. Everyone else consumes the approved registry.</div>
+        </div>
+        <div className={`planner-session-freshness ${governance.registry_status === 'read_only' ? 'fresh' : 'stale'}`}>
+          {knowledgeStatusLabel(governance)}
+        </div>
+      </div>
+      <div className="planner-session-grid">
+        <Row label="Knowledge Status" value={governance.registry_status === 'read_only' ? 'Read Only' : 'Pending Analysis'} />
+        <Row label="Current Access" value={canAdmin ? 'Editable Admin Controls' : 'Read Only'} />
+        <Row label="Knowledge Version" value={governance.knowledge_version} />
+        <Row label="Last Refreshed By" value={governance.last_refreshed_by || 'Not refreshed yet'} />
+        <Row label="Last Refreshed On" value={formatTimestamp(governance.last_refreshed_on)} />
+        <Row label="Governance Rule" value="Admins curate. Contributors and Viewers consume." />
+      </div>
+    </section>
   );
 }
 
@@ -1477,7 +1871,7 @@ function StandardsAndGuidelinesSummary({ profile }: { profile: ProjectProfile })
   return (
     <section className="planner-card">
       <div className="planner-label">Standards Summary</div>
-      <div className="planner-summary-grid">
+      <div className="planner-knowledge-summary-grid">
         <SummaryTile title="Security" value={profile.development_standards.security_requirements.length ? `${profile.development_standards.security_requirements.length} rules` : 'Not captured'} />
         <SummaryTile title="Development" value={profile.development_standards.coding_guidelines.length || profile.development_standards.architecture_patterns.length ? 'Captured' : 'Not captured'} />
         <SummaryTile title="Testing" value={profile.development_standards.testing_requirements.length ? `${profile.development_standards.testing_requirements.length} requirements` : 'Not captured'} />
@@ -1494,6 +1888,7 @@ function AIPlannerWorkspace({
   childDrafts,
   creationLog,
   providerMetadata,
+  canContribute,
   selectedItemType,
   onItemTypeChange,
   epicInput,
@@ -1523,6 +1918,7 @@ function AIPlannerWorkspace({
   childDrafts: ChildDraft[];
   creationLog: string[];
   providerMetadata?: ProviderMetadata;
+  canContribute: boolean;
   selectedItemType: 'Epic' | 'Feature' | 'Story' | 'Task';
   onItemTypeChange: (type: 'Epic' | 'Feature' | 'Story' | 'Task') => void;
   epicInput: { title: string; description: string };
@@ -1546,7 +1942,7 @@ function AIPlannerWorkspace({
   buildExecutionPackage: () => void;
   generateQATestCases: () => void;
 }) {
-  const readOnly = currentWorkItem?.state.toLowerCase() === 'closed';
+  const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
   return (
     <>
       <WorkItemContextCard workItem={currentWorkItem} />
@@ -1579,7 +1975,7 @@ function AIPlannerWorkspace({
           <div className="planner-subtle">Refine the epic goal, then generate project-aware feature recommendations.</div>
           <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
           <div className="planner-actions">
-            <button className="planner-button secondary" onClick={refineEpic} disabled={loading || !epicInput.title.trim()}>Refine Epic</button>
+            <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Refine Epic</button>
             <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !epicInput.title.trim()}>Generate Features</button>
           </div>
           {epicResult ? (
@@ -1597,7 +1993,7 @@ function AIPlannerWorkspace({
           <div className="planner-subtle">Refine the feature and generate meaningful stories from project modules and flows.</div>
           <RefinementInput input={featureInput} setInput={setFeatureInput} titlePlaceholder="Order visibility" descriptionPlaceholder="Describe feature behavior, affected users, and delivery scope." />
           <div className="planner-actions">
-            <button className="planner-button secondary" onClick={refineFeature} disabled={loading || !featureInput.title.trim()}>Refine Feature</button>
+            <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Refine Feature</button>
             <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Stories</button>
           </div>
           {featureResult ? (
@@ -1621,10 +2017,10 @@ function AIPlannerWorkspace({
             placeholder="Acceptance criteria, one per line"
           />
           <div className="planner-actions">
-            <button className="planner-button secondary" onClick={refineStory} disabled={loading || !storyInput.title.trim()}>Refine Story</button>
+            <button className="planner-button secondary" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Refine Story</button>
             <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Tasks</button>
-            <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || !storyInput.title.trim()}>Generate Test Cases</button>
-            <button className="planner-button secondary" onClick={buildExecutionPackage} disabled={loading || !storyInput.title.trim()}>Generate Execution Package</button>
+            <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Test Cases</button>
+            <button className="planner-button secondary" onClick={buildExecutionPackage} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Execution Package</button>
           </div>
           {storyResult ? (
             <div className="planner-status-grid">
@@ -1648,7 +2044,7 @@ function AIPlannerWorkspace({
             placeholder="Acceptance criteria or task validation notes, one per line"
           />
           <div className="planner-actions">
-            <button className="planner-button" onClick={buildExecutionPackage} disabled={loading || !storyInput.title.trim()}>Generate Execution Package</button>
+            <button className="planner-button" onClick={buildExecutionPackage} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Execution Package</button>
           </div>
           {storyResult ? <GeneratedTasksPreview story={storyResult} /> : null}
         </section>
@@ -1658,6 +2054,7 @@ function AIPlannerWorkspace({
         creationLog={creationLog}
         currentWorkItem={currentWorkItem}
         providerMetadata={providerMetadata}
+        readOnly={!canContribute}
         loading={loading}
         onSelectionChange={updateDraftSelection}
         onCreateSelected={createSelectedChildren}
@@ -1695,6 +2092,7 @@ function GeneratedChildWorkItems({
   creationLog,
   currentWorkItem,
   providerMetadata,
+  readOnly,
   loading,
   onSelectionChange,
   onCreateSelected,
@@ -1703,6 +2101,7 @@ function GeneratedChildWorkItems({
   creationLog: string[];
   currentWorkItem?: AdoWorkItem;
   providerMetadata?: ProviderMetadata;
+  readOnly: boolean;
   loading: boolean;
   onSelectionChange: (draftId: string, selected: boolean) => void;
   onCreateSelected: () => void;
@@ -1722,7 +2121,7 @@ function GeneratedChildWorkItems({
             <input
               type="checkbox"
               checked={draft.selected}
-              disabled={draft.status === 'created'}
+              disabled={readOnly || draft.status === 'created'}
               onChange={(event) => onSelectionChange(draft.id, event.target.checked)}
             />
             <strong>{draft.type}: {draft.title}</strong>
@@ -1738,10 +2137,11 @@ function GeneratedChildWorkItems({
         </div>
       ))}
       <div className="planner-actions">
-        <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, true))} disabled={loading}>Select All</button>
-        <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, false))} disabled={loading}>Skip All</button>
-        <button className="planner-button" onClick={onCreateSelected} disabled={loading || !selectedCount}>Create Selected</button>
+        <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, true))} disabled={loading || readOnly}>Select All</button>
+        <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, false))} disabled={loading || readOnly}>Skip All</button>
+        <button className="planner-button" onClick={onCreateSelected} disabled={loading || readOnly || !selectedCount}>Create Selected</button>
       </div>
+      {readOnly ? <div className="planner-subtle">Read-only access: work item creation is disabled for your role.</div> : null}
       {creationLog.length ? (
         <div className="planner-task">
           <div className="planner-label">Creation Activity</div>
@@ -1911,6 +2311,7 @@ function DeveloperWorkspace({
   copilotContext,
   onGenerate,
   loading,
+  canContribute,
 }: {
   executionContext?: ExecutionContextResult;
   devPrompt?: PromptBuilderResult;
@@ -1919,6 +2320,7 @@ function DeveloperWorkspace({
   copilotContext?: CopilotContextResult;
   onGenerate: () => void;
   loading: boolean;
+  canContribute: boolean;
 }) {
   const hasPackage = Boolean(executionContext || devPrompt || uiPrompt || qaPrompt || copilotContext);
   const vsCodeUri = executionContext ? buildVsCodeExecutionPackageUri(executionContext, devPrompt, uiPrompt, qaPrompt, copilotContext) : '';
@@ -1928,7 +2330,7 @@ function DeveloperWorkspace({
         <div className="planner-label">Developer Workspace</div>
         <div className="planner-subtle">Execution-ready context for VS Code, Copilot, or manual implementation.</div>
         <div className="planner-actions">
-          <button className="planner-button" onClick={onGenerate} disabled={loading}>Generate Execution Package</button>
+          <button className="planner-button" onClick={onGenerate} disabled={loading || !canContribute}>Generate Execution Package</button>
           {vsCodeUri ? (
             <button className="planner-button secondary" onClick={() => window.open(vsCodeUri, '_blank')} disabled={loading}>Open in VS Code</button>
           ) : null}
@@ -1965,6 +2367,7 @@ function QAWorkspace({
   setAcceptanceCriteria,
   qaTestSuite,
   generateQATestCases,
+  canContribute,
 }: {
   loading: boolean;
   storyInput: { title: string; description: string };
@@ -1973,6 +2376,7 @@ function QAWorkspace({
   setAcceptanceCriteria: (value: string) => void;
   qaTestSuite?: QATestSuiteResult;
   generateQATestCases: () => void;
+  canContribute: boolean;
 }) {
   return (
     <>
@@ -1982,7 +2386,7 @@ function QAWorkspace({
             <div className="planner-label">QA Workspace</div>
             <div className="planner-subtle">Generate structured test cases, coverage analysis, regression scope, and QA readiness from an approved story.</div>
           </div>
-          <button className="planner-button" onClick={generateQATestCases} disabled={loading || !storyInput.title.trim()}>Generate Test Cases</button>
+          <button className="planner-button" onClick={generateQATestCases} disabled={loading || !canContribute || !storyInput.title.trim()}>Generate Test Cases</button>
         </div>
         <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Story description or outcome for QA validation." />
         <textarea
@@ -2439,7 +2843,7 @@ function ProjectProfileSummary({ profile }: { profile: ProjectProfile }) {
   );
 }
 
-function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
+function KnowledgeProfilePreview({ profile, governance, canAdmin }: { profile: ProjectProfile; governance: KnowledgeGovernance; canAdmin: boolean }) {
   const modules = registryModuleDetails(profile);
   const flows = registryFlowDetails(profile);
   const components = registryComponentDetails(profile);
@@ -2447,18 +2851,20 @@ function KnowledgeProfilePreview({ profile }: { profile: ProjectProfile }) {
     ? profile.knowledge_registry.architecture_notes
     : profile.readme_analysis.architecture_notes;
   return (
-    <section className="planner-card">
+    <section className="planner-card planner-knowledge-card">
       <div className="planner-section-header">
         <div>
           <div className="planner-label">Knowledge Summary</div>
           <div className="planner-subtle">Repository intelligence condensed into delivery-ready project knowledge.</div>
         </div>
       </div>
-      <div className="planner-summary-grid">
+      <div className="planner-knowledge-summary-grid">
         <SummaryTile title="Modules" value={`${modules.length || profile.knowledge_registry.modules.length} captured`} />
         <SummaryTile title="Flows" value={`${flows.length || profile.knowledge_registry.flows.length} captured`} />
         <SummaryTile title="Components" value={`${components.length || profile.knowledge_registry.components.length} captured`} />
         <SummaryTile title="Architecture" value={architecture.length ? 'Detected' : 'Pending'} />
+        <SummaryTile title="Knowledge Status" value={governance.registry_status === 'read_only' ? 'Read Only' : 'Pending'} />
+        <SummaryTile title="Admin Controls" value={canAdmin ? 'Editable' : 'Read Only'} />
       </div>
       <details className="planner-accordion">
         <summary>View Modules</summary>
@@ -2553,6 +2959,7 @@ function RepositoryIntelligenceCard({
   onAnalyzeReadme,
   onDiscoverDocuments,
   onAnalyzeDocuments,
+  governance,
 }: {
   profile: ProjectProfile;
   adoProjects: AdoProject[];
@@ -2574,6 +2981,7 @@ function RepositoryIntelligenceCard({
   onAnalyzeReadme: () => void;
   onDiscoverDocuments: () => void;
   onAnalyzeDocuments: () => void;
+  governance: KnowledgeGovernance;
 }) {
   const selectedRepositoryLoaded = repositories.some((repo) => repo.id === profile.repository_connection.repository_id);
   const mapping = getAdoMapping(profile);
@@ -2739,6 +3147,9 @@ function RepositoryIntelligenceCard({
         <Row label="Repository" value={profile.repository_connection.repository_name || 'Not connected'} />
         <Row label="Branch" value={profile.repository_connection.branch || 'Not selected'} />
         <Row label="Status" value={profile.repository_connection.status || 'Not connected'} />
+        <Row label="Knowledge Status" value={knowledgeStatusLabel(governance)} />
+        <Row label="Last Refreshed By" value={governance.last_refreshed_by || 'Not refreshed yet'} />
+        <Row label="Last Refreshed On" value={formatTimestamp(governance.last_refreshed_on)} />
         <Row label="Knowledge Captured" value={registrySummary(profile)} />
       </div>
       <div className="planner-subtle">Repository README scan and known documentation ingestion are enabled. Full repository scans are intentionally not included.</div>
@@ -3771,6 +4182,248 @@ function saveStatusLabel(status: 'saved' | 'saving' | 'unsaved' | 'error'): stri
   if (status === 'unsaved') return 'Unsaved changes';
   if (status === 'error') return 'Autosave failed';
   return 'Saved';
+}
+
+function defaultPermissionState(): PermissionState {
+  return {
+    role: 'viewer',
+    user_display_name: '',
+    user_name: '',
+    mapped_group: 'Readers',
+    azure_groups: [],
+    status: 'fallback',
+    warning: 'Azure DevOps group membership has not been resolved yet.',
+  };
+}
+
+async function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
+  const user = SDK.getUser();
+  try {
+    const graphClient = getClient(GraphRestClient);
+    const groupNames = await collectAzureDevOpsGroupNames(graphClient, user.descriptor);
+    const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
+    return {
+      role: mapping.role,
+      user_display_name: user.displayName || user.name || '',
+      user_name: user.name || '',
+      mapped_group: mapping.group,
+      azure_groups: groupNames,
+      status: 'resolved',
+      warning: groupNames.length ? undefined : 'No Azure DevOps security groups were visible. Viewer access is applied.',
+    };
+  } catch (error) {
+    return {
+      role: 'viewer',
+      user_display_name: user.displayName || user.name || '',
+      user_name: user.name || '',
+      mapped_group: 'Readers',
+      azure_groups: [],
+      status: 'fallback',
+      warning: `Could not resolve Azure DevOps group membership. Viewer access is applied. ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDescriptor: string): Promise<string[]> {
+  const visited = new Set<string>([userDescriptor]);
+  let frontier = [userDescriptor];
+  const groupNames: string[] = [];
+  for (let depth = 0; depth < 4 && frontier.length; depth += 1) {
+    const memberships = (await Promise.all(frontier.map(async (descriptor) => {
+      try {
+        return await graphClient.listMemberships(descriptor, GraphTraversalDirection.Up, 1);
+      } catch {
+        return [];
+      }
+    }))).flat();
+    const nextDescriptors = uniqueStrings(memberships.map((membership) => membership.containerDescriptor).filter(Boolean))
+      .filter((descriptor) => !visited.has(descriptor));
+    if (!nextDescriptors.length) {
+      break;
+    }
+    nextDescriptors.forEach((descriptor) => visited.add(descriptor));
+    const subjects = await Promise.all(nextDescriptors.map(async (descriptor) => {
+      try {
+        return await graphClient.getSubject(descriptor);
+      } catch {
+        return undefined;
+      }
+    }));
+    subjects.forEach((subject) => {
+      if (subject?.displayName) {
+        groupNames.push(subject.displayName);
+      }
+    });
+    frontier = nextDescriptors;
+  }
+  return uniqueStrings(groupNames);
+}
+
+function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role: AIGenRole; group: string } {
+  const normalized = groupNames.map((group) => normalizeGroupName(group, projectName));
+  if (normalized.some((group) => group.includes('project administrators'))) {
+    return { role: 'admin', group: 'Project Administrators' };
+  }
+  if (normalized.some((group) => group.includes('contributors'))) {
+    return { role: 'contributor', group: 'Contributors' };
+  }
+  if (normalized.some((group) => group.includes('readers'))) {
+    return { role: 'viewer', group: 'Readers' };
+  }
+  return { role: 'viewer', group: 'Readers' };
+}
+
+function normalizeGroupName(groupName: string, projectName: string): string {
+  return groupName
+    .toLowerCase()
+    .replace(projectName.toLowerCase(), '')
+    .replace(/[\[\]\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function roleLabel(role: AIGenRole): string {
+  if (role === 'admin') return 'AI Gen Admin';
+  if (role === 'contributor') return 'AI Gen Contributor';
+  return 'AI Gen Viewer';
+}
+
+function defaultKnowledgeGovernance(profile: ProjectProfile, canAdmin: boolean): KnowledgeGovernance {
+  return {
+    registry_status: hasKnowledgeRegistry(profile) ? 'read_only' : 'pending',
+    editability: canAdmin ? 'editable' : 'read_only',
+    knowledge_version: knowledgeVersion(profile),
+    last_refreshed_by: '',
+    last_refreshed_on: '',
+  };
+}
+
+function normalizeKnowledgeGovernance(profile: ProjectProfile, governance: KnowledgeGovernance, canAdmin: boolean): KnowledgeGovernance {
+  return {
+    ...governance,
+    registry_status: hasKnowledgeRegistry(profile) ? 'read_only' : 'pending',
+    editability: canAdmin ? 'editable' : 'read_only',
+    knowledge_version: knowledgeVersion(profile),
+  };
+}
+
+function hasKnowledgeRegistry(profile: ProjectProfile): boolean {
+  return Boolean(
+    profile.knowledge_registry.modules.length
+    || profile.knowledge_registry.flows.length
+    || profile.knowledge_registry.components.length
+    || profile.knowledge_registry.architecture_notes.length
+    || profile.knowledge_registry.source_files.length
+  );
+}
+
+function knowledgeStatusLabel(governance: KnowledgeGovernance): string {
+  if (governance.registry_status === 'pending') {
+    return governance.editability === 'editable' ? 'Editable' : 'Read Only';
+  }
+  return governance.editability === 'editable' ? 'Read Only / Admin Editable' : 'Read Only';
+}
+
+function readProjectSession(): ProjectSessionSnapshot | undefined {
+  try {
+    const raw = window.localStorage.getItem(PROJECT_SESSION_STORAGE_KEY);
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = JSON.parse(raw) as Partial<ProjectSessionSnapshot>;
+    if (!parsed.profile || typeof parsed.profile !== 'object') {
+      return undefined;
+    }
+    return {
+      profile: parsed.profile as ProjectProfile,
+      active_project: parsed.active_project || (parsed.profile as ProjectProfile).project_name || 'Project Intelligence',
+      repository_name: parsed.repository_name || (parsed.profile as ProjectProfile).repository_connection?.repository_name || '',
+      repository_id: parsed.repository_id || (parsed.profile as ProjectProfile).repository_connection?.repository_id || '',
+      branch: parsed.branch || (parsed.profile as ProjectProfile).repository_connection?.branch || 'main',
+      knowledge_version: parsed.knowledge_version || knowledgeVersion(parsed.profile as ProjectProfile),
+      last_analysis_timestamp: parsed.last_analysis_timestamp || '',
+      last_active_tab: isPlannerTab(parsed.last_active_tab) ? parsed.last_active_tab : 'overview',
+      knowledge_governance: parsed.knowledge_governance,
+      saved_at: parsed.saved_at || new Date().toISOString(),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function writeProjectSession(session: ProjectSessionSnapshot): void {
+  try {
+    window.localStorage.setItem(PROJECT_SESSION_STORAGE_KEY, JSON.stringify(session));
+  } catch {
+    // Local persistence is best-effort; backend autosave still owns profile durability.
+  }
+}
+
+function buildProjectSession(profile: ProjectProfile, activeTab: PlannerTab, lastAnalysisTimestamp: string, governance: KnowledgeGovernance): ProjectSessionSnapshot {
+  const mapping = getAdoMapping(profile);
+  const now = new Date().toISOString();
+  return {
+    profile,
+    active_project: profile.project_name || mapping.ado_project || 'Project Intelligence',
+    repository_name: mapping.repository_name || profile.repository_connection.repository_name || '',
+    repository_id: mapping.repository_id || profile.repository_connection.repository_id || '',
+    branch: mapping.branch || profile.repository_connection.branch || 'main',
+    knowledge_version: knowledgeVersion(profile),
+    last_analysis_timestamp: lastAnalysisTimestamp || inferLastAnalysisTimestamp(profile) || now,
+    last_active_tab: activeTab,
+    knowledge_governance: governance,
+    saved_at: now,
+  };
+}
+
+function isPlannerTab(value: unknown): value is PlannerTab {
+  return value === 'overview' || value === 'planning' || value === 'execution' || value === 'qa';
+}
+
+function knowledgeVersion(profile: ProjectProfile): string {
+  const registry = profile.knowledge_registry;
+  const input = JSON.stringify({
+    project: profile.project_name,
+    repository: profile.repository_connection.repository_id || profile.repository_connection.repository_name,
+    branch: profile.repository_connection.branch,
+    modules: registry.modules,
+    flows: registry.flows,
+    components: registry.components,
+    architecture_notes: registry.architecture_notes,
+    standards: registry.standards,
+    source_files: registry.source_files,
+  });
+  let hash = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = ((hash << 5) - hash + input.charCodeAt(index)) | 0;
+  }
+  return `kv-${Math.abs(hash).toString(36).padStart(6, '0')}`;
+}
+
+function inferLastAnalysisTimestamp(profile: ProjectProfile): string {
+  return profile.knowledge_registry.source_files.length || profile.readme_analysis.summary ? new Date().toISOString() : '';
+}
+
+function knowledgeFreshness(timestamp: string): 'Fresh' | 'Stale' | 'Not analyzed' {
+  if (!timestamp) {
+    return 'Not analyzed';
+  }
+  const ageMs = Date.now() - Date.parse(timestamp);
+  if (!Number.isFinite(ageMs)) {
+    return 'Not analyzed';
+  }
+  return ageMs > 14 * 24 * 60 * 60 * 1000 ? 'Stale' : 'Fresh';
+}
+
+function formatTimestamp(value: string): string {
+  if (!value) {
+    return 'Not analyzed yet';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString();
 }
 
 function profileCompletion(profile: ProjectProfile): { percent: number; missing: string[] } {

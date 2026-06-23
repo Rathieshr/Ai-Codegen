@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "ai-gen-project-intelligence-preview",
   "publisher": "AiIntelliCodegen",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "name": "AI Gen Project Intelligence Preview",
   "description": "Project-aware planning and story execution context for Azure DevOps.",
   "public": false,
@@ -46,6 +46,7 @@
   ],
   "scopes": [
     "vso.work_write",
-    "vso.code"
+    "vso.code",
+    "vso.graph"
   ]
 }

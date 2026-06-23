@@ -4235,6 +4235,7 @@ async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDe
   const visited = new Set<string>([userDescriptor]);
   let frontier = [userDescriptor];
   const groupNames: string[] = [];
+  console.log('[DEBUG] Collecting groups for user:', userDescriptor);
   for (let depth = 0; depth < 4 && frontier.length; depth += 1) {
     const memberships = (await Promise.all(frontier.map(async (descriptor) => {
       try {
@@ -4252,40 +4253,61 @@ async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDe
     const subjects = await Promise.all(nextDescriptors.map(async (descriptor) => {
       try {
         return await graphClient.getSubject(descriptor);
-      } catch {
+      } catch (err) {
+        console.error('[DEBUG] Failed to get subject for descriptor:', descriptor, err);
         return undefined;
       }
     }));
     subjects.forEach((subject) => {
       if (subject?.displayName) {
         groupNames.push(subject.displayName);
+        console.log('[DEBUG] Added group:', subject.displayName);
       }
     });
     frontier = nextDescriptors;
   }
+  console.log('[DEBUG] Final groups collected:', groupNames);
   return uniqueStrings(groupNames);
 }
 
 function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role: AIGenRole; group: string; diagnostics: PermissionState['diagnostics'] } {
+  console.log('[DEBUG] mapGroupsToAIGenRole called with groups:', groupNames, 'project:', projectName);
   const normalized = groupNames.map((group) => normalizeGroupName(group, projectName));
+  console.log('[DEBUG] Normalized groups:', normalized);
 
   // Collect all matched roles instead of returning on first match
   const matchedRoles: { role: AIGenRole; groups: string[] }[] = [];
 
   const adminGroups = normalized
     .map((group, i) => ({ group, index: i, normalized: group }))
-    .filter(({ normalized }) => normalized.includes('project administrators'))
+    .filter(({ normalized }) => {
+      const match = normalized.includes('project administrators');
+      console.log('[DEBUG] Checking admin match:', normalized, '=>', match);
+      return match;
+    })
     .map(({ index }) => groupNames[index]);
 
   const contributorGroups = normalized
     .map((group, i) => ({ group, index: i, normalized: group }))
-    .filter(({ normalized }) => normalized.includes('contributors'))
+    .filter(({ normalized }) => {
+      const match = normalized.includes('contributors');
+      console.log('[DEBUG] Checking contributor match:', normalized, '=>', match);
+      return match;
+    })
     .map(({ index }) => groupNames[index]);
 
   const readerGroups = normalized
     .map((group, i) => ({ group, index: i, normalized: group }))
-    .filter(({ normalized }) => normalized.includes('readers'))
+    .filter(({ normalized }) => {
+      const match = normalized.includes('readers');
+      console.log('[DEBUG] Checking reader match:', normalized, '=>', match);
+      return match;
+    })
     .map(({ index }) => groupNames[index]);
+
+  console.log('[DEBUG] Admin groups:', adminGroups);
+  console.log('[DEBUG] Contributor groups:', contributorGroups);
+  console.log('[DEBUG] Reader groups:', readerGroups);
 
   if (adminGroups.length > 0) {
     matchedRoles.push({ role: 'admin', groups: adminGroups });
@@ -4312,6 +4334,8 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
     precedenceRule = 'contributor_takes_precedence_over_viewer';
   }
 
+  console.log('[DEBUG] Selected role:', selectedRole, 'precedence rule:', precedenceRule);
+
   const diagnostics = {
     matched_groups: groupNames,
     matched_roles: matchedRoles.map(m => m.role),
@@ -4323,12 +4347,14 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
 }
 
 function normalizeGroupName(groupName: string, projectName: string): string {
-  return groupName
+  const result = groupName
     .toLowerCase()
     .replace(projectName.toLowerCase(), '')
     .replace(/[\[\]\\]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  console.log('[DEBUG] normalizeGroupName:', groupName, '+ project:', projectName, '=>', result);
+  return result;
 }
 
 function roleLabel(role: AIGenRole): string {

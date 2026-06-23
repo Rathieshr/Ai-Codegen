@@ -528,10 +528,14 @@ class ProjectIntelligenceService:
         applications = _application_names(active_profile)
         impact = _normalize_story_impact(self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"]))
         acceptance = _acceptance_criteria(title, flows, modules)
+        acceptance_categories = _acceptance_criteria_categories(acceptance)
+        acceptance_quality_score = _acceptance_criteria_quality_score(acceptance)
         task_plan = _task_intelligence(title, description, acceptance, impact, active_profile)
         deterministic = {
             "story_summary": _sentence(title, description or f"Implement {title} within the approved project context."),
             "acceptance_criteria": acceptance,
+            "acceptance_criteria_categories": acceptance_categories,
+            "acceptance_criteria_quality_score": acceptance_quality_score,
             "affected_applications": applications,
             "affected_modules": modules,
             "affected_flows": flows,
@@ -546,6 +550,9 @@ class ProjectIntelligenceService:
         phi = _project_phi_json("refine_story", active_profile, story, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
+            merged["acceptance_criteria"] = acceptance
+            merged["acceptance_criteria_categories"] = acceptance_categories
+            merged["acceptance_criteria_quality_score"] = acceptance_quality_score
             merged["proposed_tasks"] = task_plan["tasks"]
             merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
             return _with_provider_metadata(merged, phi["metadata"])
@@ -2782,6 +2789,7 @@ def _story_decomposition(feature_title: str, modules: list[str], flows: list[str
         raise ValueError(f"Story decomposition produced {len(stories)} stories for {feature_title}; minimum is 4.")
     coverage = _unique([story["coverage_area"] for story in stories])
     quality_scores = [int(story.get("story_quality_score") or 0) for story in stories]
+    ac_quality_scores = [int(story.get("acceptance_criteria_quality_score") or 0) for story in stories]
     average_quality = round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else 0
     return {
         "recommended_stories": stories[:10],
@@ -2793,6 +2801,7 @@ def _story_decomposition(feature_title: str, modules: list[str], flows: list[str
             "generated_story_count": len(stories[:10]),
             "story_coverage_areas": coverage,
             "story_quality_score": average_quality,
+            "acceptance_criteria_quality_score": round(sum(ac_quality_scores) / len(ac_quality_scores), 1) if ac_quality_scores else 0,
             "acceptance_criteria_count": sum(len(story.get("acceptance_criteria") or []) for story in stories[:10]),
             "rejected_generic_criteria": _unique(rejected_generic_criteria),
             "minimum_story_count": 1 if is_small else 4,
@@ -2862,40 +2871,97 @@ def _is_small_feature(feature: dict[str, Any]) -> bool:
     return "small" in text or "xs" in text
 
 
+def _story_action_from_title(title: str, flows: list[str] | None = None, modules: list[str] | None = None) -> dict[str, str]:
+    cleaned_title = _clean_title(title)
+    lowered = cleaned_title.lower()
+    action_word = "Use"
+    if any(token in lowered for token in ["open", "detail", "details", "review"]):
+        coverage = "Details"
+        action_word = "Open"
+    elif "search" in lowered or "find" in lowered:
+        coverage = "Search"
+        action_word = "Search"
+    elif "filter" in lowered:
+        coverage = "Filter"
+        action_word = "Filter"
+    elif any(token in lowered for token in ["list", "view", "display", "show", "see"]):
+        coverage = "View"
+        action_word = "View"
+    elif any(token in lowered for token in ["acknowledge", "audit", "history"]):
+        coverage = "Audit requirements"
+        action_word = "Review"
+    elif any(token in lowered for token in ["notify", "alert"]):
+        coverage = "Notifications"
+        action_word = "Review"
+    else:
+        coverage = "View"
+    subject = _story_domain_subject(cleaned_title, flows or [], modules or [])
+    return {
+        "title": cleaned_title,
+        "want": f"to {action_word.lower()} {subject.lower()}",
+        "benefit": "I can complete the approved operational outcome with the right context",
+        "goal": subject,
+        "coverage_area": coverage,
+        "primary_action": action_word,
+    }
+
+
+def _story_domain_subject(title: str, flows: list[str], modules: list[str]) -> str:
+    lowered = title.lower()
+    if "fault" in lowered and "detail" in lowered:
+        return "Critical Fault Event Details"
+    if "fault" in lowered:
+        return "Critical Fault Events"
+    if "device" in lowered and "health" in lowered:
+        return "Device Health Context"
+    if "telemetry" in lowered:
+        return "Telemetry Context"
+    for value in [*flows, *modules]:
+        cleaned = _clean_title(value)
+        if cleaned:
+            return cleaned
+    return _clean_title(title)
+
+
 def _story_acceptance_for_action(action: dict[str, str], persona: str) -> list[str]:
     coverage = action.get("coverage_area", "")
     if coverage == "View":
         return [
-            f"{persona} can view the relevant records for {action['goal'].lower()}.",
-            "The list displays Device ID, Fault Type, Severity, Timestamp, Status, and Device Health when available.",
-            "Records can be sorted by Severity and Timestamp.",
-            "The list refreshes without duplicating existing records.",
+            f"{persona} can view the relevant records for {action['goal'].lower()} from the approved entry point.",
+            "The list displays Device ID, Fault Type, Severity, Event Timestamp, Current Status, and Device Health when available.",
+            "Records can be sorted by Severity and Timestamp, including Event Timestamp as the time value.",
+            "User can refresh the list without duplicating existing records or losing the current view.",
+            "An empty state explains when no matching records are available.",
             "Users without permission see an access-restricted message instead of the records.",
         ]
     if coverage == "Details":
         return [
-            f"{persona} can open details from the selected record.",
-            "Details display Device ID, Fault Type, Severity, Timestamp, Status, Location, and Telemetry Context.",
-            "Event History and Outage Context are displayed when they exist for the selected record.",
+            f"{persona} can open a critical fault event from the event list.",
+            "Event details display Device ID, Fault Type, Severity, Event Timestamp, Current Status, Location, and Connectivity Status.",
+            "Device Health, Firmware Version, Telemetry Context, Event History, and Outage Context are displayed when available.",
             "Missing fields are labeled as unavailable without hiding the remaining details.",
-            "User can return to the previous result list without losing filters or search text.",
+            "User can return to the previous screen without losing filters or search text.",
+            "Access follows role-based permissions for event detail views.",
+            "Event detail access is audit logged with user identity, timestamp, and event identifier.",
         ]
     if coverage == "Search":
         return [
             "User can enter Device ID or Event ID as search text.",
             "User can execute the search from keyboard or search action.",
-            "Matching critical events are displayed with Device ID, Fault Type, Severity, Timestamp, and Status.",
+            "Matching critical events are displayed with Device ID, Fault Type, Severity, Event Timestamp, and Current Status.",
             "Partial matches are supported for Device ID and Event ID.",
             "Search results are returned within 3 seconds for normal project data volume.",
             "A no-results message is displayed when no matching events are found.",
+            "Users without search permission see an access-restricted message.",
         ]
     if coverage == "Filter":
         return [
             "User can filter results by Severity, Status, and Time Range.",
             "Multiple selected filters are applied together.",
             "User can reset all filters with one action.",
-            "Filtered results display Device ID, Fault Type, Severity, Timestamp, and Status.",
+            "Filtered results display Device ID, Fault Type, Severity, Event Timestamp, and Current Status.",
             "An empty-results message is displayed when filters match no records.",
+            "Filter options only expose values the user is authorized to view.",
         ]
     if coverage == "Notifications":
         return [
@@ -2904,13 +2970,17 @@ def _story_acceptance_for_action(action: dict[str, str], persona: str) -> list[s
             "New notifications appear within 60 seconds of event ingestion.",
             "User can open event details directly from the notification.",
             "Duplicate notifications for the same active event are grouped or suppressed.",
+            "Notification access follows user permission settings.",
+            "User sees an unavailable notification message when event details cannot be loaded.",
         ]
     if coverage == "Empty states":
         return [
             "User sees a clear empty-state message when no records are available.",
+            "Empty state displays the affected Device ID, Status, or Time Range when that context is known.",
             "Empty state explains whether no data exists or data is temporarily unavailable.",
             "User is offered a retry or refresh action when the empty state may be temporary.",
             "Empty state does not display stale records as current data.",
+            "Users without permission see an access-restricted empty state.",
         ]
     if coverage == "Error handling":
         return [
@@ -2926,6 +2996,7 @@ def _story_acceptance_for_action(action: dict[str, str], persona: str) -> list[s
             "Audit entry is created when details are viewed, alerts are acknowledged, notes are added, or status is changed.",
             "Audit history can be reviewed by an authorized operations or support user.",
             "Audit entries remain available after the related event is resolved.",
+            "Unavailable audit history is clearly indicated without hiding the current event details.",
         ]
     return [
         f"{persona} can complete the requested action for {action['goal'].lower()}.",
@@ -2938,17 +3009,23 @@ def _story_acceptance_for_action(action: dict[str, str], persona: str) -> list[s
 def _apply_story_quality_gate(story: dict[str, Any], action: dict[str, str], persona: str) -> tuple[dict[str, Any], list[str]]:
     criteria = [str(item).strip() for item in story.get("acceptance_criteria", []) if str(item).strip()]
     cleaned, rejected = _reject_generic_acceptance_criteria(criteria)
-    if len(cleaned) < 4:
+    categories = _acceptance_criteria_categories(cleaned)
+    if len(cleaned) < 4 or not _has_required_acceptance_categories(categories):
         regenerated, more_rejected = _reject_generic_acceptance_criteria(_story_acceptance_for_action(action, persona))
         cleaned = regenerated
         rejected.extend(more_rejected)
+        categories = _acceptance_criteria_categories(cleaned)
     story["acceptance_criteria"] = cleaned
     story["acceptance_criteria_count"] = len(cleaned)
+    story["acceptance_criteria_categories"] = categories
+    story["acceptance_criteria_quality_score"] = _acceptance_criteria_quality_score(cleaned)
     score = _story_quality_score(story)
     if score < STORY_QUALITY_THRESHOLD:
         regenerated, more_rejected = _reject_generic_acceptance_criteria(_story_acceptance_for_action(action, persona))
         story["acceptance_criteria"] = regenerated
         story["acceptance_criteria_count"] = len(regenerated)
+        story["acceptance_criteria_categories"] = _acceptance_criteria_categories(regenerated)
+        story["acceptance_criteria_quality_score"] = _acceptance_criteria_quality_score(regenerated)
         rejected.extend(more_rejected)
         score = _story_quality_score(story)
     story["story_quality_score"] = score
@@ -2961,10 +3038,13 @@ GENERIC_ACCEPTANCE_PHRASES = [
     "visible and testable",
     "workflow covered",
     "workflow is covered",
+    "flow covered end to end",
+    "covered end to end",
     "integration validated",
     "integrations are validated",
     "stakeholder confirms",
     "stakeholders can confirm",
+    "stakeholder confirmation",
     "end-to-end covered",
     "end to end covered",
     "capability supported",
@@ -2993,12 +3073,57 @@ def _story_quality_score(story: dict[str, Any]) -> int:
         score += 20
     if " so that " in description and len(description.split(" so that ", 1)[-1].strip()) >= 12:
         score += 20
-    if len(criteria) >= 4 and not _reject_generic_acceptance_criteria(criteria)[1]:
+    categories = _acceptance_criteria_categories(criteria)
+    ac_score = int(story.get("acceptance_criteria_quality_score") or _acceptance_criteria_quality_score(criteria))
+    if len(criteria) >= 4 and not _reject_generic_acceptance_criteria(criteria)[1] and _has_required_acceptance_categories(categories):
         score += 25
     if _criteria_are_testable(criteria):
         score += 20
     if coverage:
         score += 15
+    if ac_score >= 80:
+        score += 5
+    return min(score, 100)
+
+
+REQUIRED_ACCEPTANCE_CATEGORIES = ["Functional Behavior", "Data Display", "Error Handling", "Permission/Security"]
+
+
+def _acceptance_criteria_categories(criteria: list[str]) -> list[str]:
+    text = " ".join(criteria).lower()
+    categories: list[str] = []
+    if any(token in text for token in ["can ", "open", "view", "search", "filter", "refresh", "return", "execute", "reset"]):
+        categories.append("Functional Behavior")
+    if any(token in text for token in ["device id", "fault type", "severity", "timestamp", "status", "device health", "location", "telemetry", "event history", "outage", "firmware", "field"]):
+        categories.append("Data Display")
+    if any(token in text for token in ["missing", "unavailable", "empty", "no-results", "error", "invalid", "retry", "stale"]):
+        categories.append("Error Handling")
+    if any(token in text for token in ["permission", "authorization", "authorized", "access-restricted", "role-based", "audit", "logged", "identity"]):
+        categories.append("Permission/Security")
+    return categories
+
+
+def _has_required_acceptance_categories(categories: list[str]) -> bool:
+    return all(category in categories for category in REQUIRED_ACCEPTANCE_CATEGORIES)
+
+
+def _acceptance_criteria_quality_score(criteria: list[str]) -> int:
+    if not criteria:
+        return 0
+    score = 0
+    rejected = _reject_generic_acceptance_criteria(criteria)[1]
+    categories = _acceptance_criteria_categories(criteria)
+    if not rejected:
+        score += 20
+    if len(criteria) >= 4:
+        score += 20
+    if _criteria_are_testable(criteria):
+        score += 20
+    category_score = int((len(set(categories) & set(REQUIRED_ACCEPTANCE_CATEGORIES)) / len(REQUIRED_ACCEPTANCE_CATEGORIES)) * 30)
+    score += category_score
+    measurable_terms = ["within", "seconds", "timestamp", "status", "id", "logged", "returned", "displayed"]
+    if sum(1 for criterion in criteria if any(term in criterion.lower() for term in measurable_terms)) >= 3:
+        score += 10
     return min(score, 100)
 
 
@@ -3120,13 +3245,10 @@ def _dependencies_for_profile(profile: dict[str, Any]) -> list[str]:
 
 
 def _acceptance_criteria(title: str, flows: list[str], modules: list[str]) -> list[str]:
-    criteria = [
-        f"{title} behavior is visible and testable for the intended user.",
-        "Errors, empty states, and permission boundaries are handled clearly.",
-    ]
-    criteria.extend(f"{flow} flow is covered end to end." for flow in flows[:3])
-    criteria.extend(f"{module} integration is validated." for module in modules[:2])
-    return _unique(criteria)
+    action = _story_action_from_title(title, flows, modules)
+    criteria = _story_acceptance_for_action(action, "User")
+    cleaned, _rejected = _reject_generic_acceptance_criteria(criteria)
+    return cleaned
 
 
 def _ui_considerations(profile: dict[str, Any], flows: list[str]) -> list[str]:
@@ -3531,7 +3653,7 @@ def _project_phi_prompt_attempts(
     for attempt_number, budget_profile in enumerate(_adaptive_budget_profiles(operation), start=1):
         budget_tokens = int(budget_profile["context_budget"])
         draft_budget_tokens = int(budget_profile.get("draft_budget") or _draft_budget_tokens())
-        level = _compression_level_for_budget(budget_tokens)
+        level = int(budget_profile.get("compression_level") or _compression_level_for_budget(budget_tokens))
         prompt, diagnostics = _build_project_phi_prompt(
             operation,
             profile,
@@ -3779,10 +3901,10 @@ def _compact_deterministic_draft(deterministic: dict[str, Any], compression_leve
 
 
 def _compact_draft_value(value: Any, compression_level: int = 0) -> Any:
-    string_limits = [900, 900, 650, 420, 260, 120]
-    list_limits = [8, 8, 6, 5, 3, 1]
-    dict_limits = [12, 12, 10, 8, 6, 3]
-    level = min(max(compression_level, 0), 5)
+    string_limits = [900, 900, 650, 420, 260, 120, 80]
+    list_limits = [8, 8, 6, 5, 3, 1, 1]
+    dict_limits = [12, 12, 10, 8, 6, 3, 2]
+    level = min(max(compression_level, 0), 6)
     if isinstance(value, str):
         return _truncate_text(value, string_limits[level])
     if isinstance(value, list):
@@ -3832,7 +3954,10 @@ def _adaptive_context_budgets() -> list[int]:
 def _adaptive_budget_profiles(operation: str) -> list[dict[str, int]]:
     if _is_execution_operation(operation):
         return [dict(profile) for profile in PROJECT_EXECUTION_BUDGET_ATTEMPTS]
-    return [{"context_budget": budget, "draft_budget": _draft_budget_tokens()} for budget in _adaptive_context_budgets()]
+    profiles = [{"context_budget": budget, "draft_budget": _draft_budget_tokens()} for budget in _adaptive_context_budgets()]
+    if profiles:
+        profiles.append({"context_budget": profiles[-1]["context_budget"], "draft_budget": _draft_budget_tokens(), "compression_level": 6})
+    return profiles
 
 
 def _draft_budget_tokens() -> int:
@@ -4346,7 +4471,7 @@ def _file_slug(value: str) -> str:
     return "".join(word[:1].upper() + word[1:] for word in words)
 
 
-TASK_WORK_AREAS = ["UI Work", "Backend Work", "Data Work", "Analytics Work", "QA Work"]
+TASK_WORK_AREAS = ["UI Work", "Frontend Work", "Backend Work", "Data Work", "Analytics Work", "QA Work"]
 REJECTED_TASK_PATTERNS = ("implement", "design", "test")
 
 
@@ -4373,19 +4498,33 @@ def _task_intelligence(
     modules = impact.get("affected_modules", [])
     flows = impact.get("affected_flows", [])
     files = recommended_files or _recommended_files(profile, impact, story_title)
+    subject = _task_subject(story_title)
     tasks: list[dict[str, Any]] = []
 
     if app_types.intersection({"Mobile", "Web Portal", "Desktop"}) or profile.get("ui_guidelines"):
         tasks.append(
             _task_candidate(
                 "UI Work",
-                f"Shape {story_title} user interface states",
-                "Prepare the screen behavior, user states, validation copy, and accessibility expectations for the approved story.",
+                f"Design {subject} Screen",
+                "Define the product screen structure, interaction states, validation copy, and accessibility expectations for the approved story.",
                 [
-                    "Primary screen states cover loading, populated, empty, validation, and error outcomes.",
-                    "Visible fields and actions map to the approved acceptance criteria.",
-                    "Accessibility labels, keyboard behavior, and readable error copy are defined for the affected UI.",
-                    "UI handoff identifies affected screens or components before development begins.",
+                    "Loading state, populated state, empty state, and error state are defined.",
+                    "Required fields and user actions are identified for the screen.",
+                    "Accessibility labels, keyboard behavior, and readable error copy are documented.",
+                    "Screen handoff identifies affected components and navigation entry points.",
+                ],
+            )
+        )
+        tasks.append(
+            _task_candidate(
+                "Frontend Work",
+                f"Implement {subject} View",
+                "Build the user-facing view behavior, state binding, and navigation behavior for the approved story.",
+                [
+                    "View renders the required fields from the approved acceptance criteria.",
+                    "Loading, empty, unavailable-data, and error states are handled in the view.",
+                    "User can navigate back without losing search or filter context.",
+                    "Frontend behavior follows configured UI guidelines and accessibility requirements.",
                 ],
             )
         )
@@ -4393,23 +4532,24 @@ def _task_intelligence(
         tasks.append(
             _task_candidate(
                 "Backend Work",
-                f"Connect {story_title} service behavior",
-                f"Define backend behavior across {', '.join(modules[:3]) or 'the affected modules'} for the approved user outcome.",
+                f"Add {subject} API",
+                f"Add the backend API behavior across {', '.join(modules[:3]) or 'the affected modules'} for the approved user outcome.",
                 [
-                    "Backend behavior supports each approved acceptance criterion without changing unrelated flows.",
-                    f"Affected modules are handled explicitly: {', '.join(modules[:3]) or 'confirm during implementation'}.",
-                    "Validation, authorization, and failure responses are defined for the story path.",
-                    "Backend response data includes the fields required by the user-facing outcome.",
+                    "API returns the approved detail fields for the selected record.",
+                    "API returns related device information when available.",
+                    "Invalid or missing record identifiers return an appropriate error response.",
+                    "Authorization is enforced before returning protected data.",
+                    "API response meets the agreed performance expectation for normal data volume.",
                 ],
             )
         )
     tasks.append(
         _task_candidate(
             "Data Work",
-            f"Map {story_title} data fields and persistence",
+            f"Map {subject} Data Fields",
             "Identify the data fields, persistence behavior, and state transitions needed by the story.",
             [
-                "Required data fields are mapped from source to display, API, or storage boundaries.",
+                "Device ID, Fault Type, Severity, Event Timestamp, Current Status, and Device Health are mapped from source to output.",
                 "Missing, stale, duplicate, and unavailable data cases have defined handling.",
                 "State changes are persisted or rejected according to the approved acceptance criteria.",
                 "Data behavior is traceable to the affected modules or flows.",
@@ -4420,7 +4560,7 @@ def _task_intelligence(
         tasks.append(
             _task_candidate(
                 "Analytics Work",
-                f"Instrument {story_title} operational signals",
+                f"Track {subject} Access Events",
                 "Capture the telemetry, reporting, or measurement signals needed to observe the story outcome.",
                 [
                     "Relevant user actions, status changes, and failure outcomes are captured as events or metrics.",
@@ -4433,7 +4573,7 @@ def _task_intelligence(
     tasks.append(
         _task_candidate(
             "QA Work",
-            f"Validate {story_title} acceptance and regression coverage",
+            f"Validate {subject} Scenarios",
             f"Prepare validation for {', '.join(flows[:3]) or 'the approved story flow'} and adjacent regression risks.",
             [
                 "Manual checks cover happy path, empty state, error state, permission behavior, and regression risk.",
@@ -4464,6 +4604,7 @@ def _task_intelligence(
         cleaned.extend(_fallback_task_candidates(story_title, modules, flows))
     cleaned = _dedupe_tasks(cleaned)[:8]
     work_areas = _unique([task["work_area"] for task in cleaned])
+    task_quality_scores = [int(task.get("task_quality_score") or 0) for task in cleaned]
     return {
         "tasks": cleaned,
         "diagnostics": {
@@ -4472,6 +4613,7 @@ def _task_intelligence(
             "acceptance_criteria_count": sum(len(task.get("acceptance_criteria") or []) for task in cleaned),
             "rejected_task_patterns": [f"{word.title()} <story>" for word in REJECTED_TASK_PATTERNS],
             "recommended_file_count": len(files),
+            "task_quality_score": round(sum(task_quality_scores) / len(task_quality_scores), 1) if task_quality_scores else 0,
         },
     }
 
@@ -4500,20 +4642,56 @@ def _normalize_task_candidate(task: dict[str, Any], story_title: str) -> dict[st
                 "Validation evidence can be reviewed before the task is closed.",
             ]
         )
-    return {
+    normalized = {
         "work_area": work_area,
         "title": title,
         "description": description,
         "acceptance_criteria": criteria[:6],
     }
+    normalized["acceptance_criteria_count"] = len(normalized["acceptance_criteria"])
+    normalized["task_quality_score"] = _task_quality_score(normalized)
+    return normalized
 
 
 def _task_is_rejected(task: dict[str, Any], story_title: str) -> bool:
     title = _clean_text(task.get("title")).lower()
     normalized_story = _clean_text(story_title).lower()
-    if not title or not any(title.startswith(verb) for verb in ("shape", "connect", "map", "instrument", "validate", "coordinate", "prepare", "wire", "define", "capture", "verify")):
+    action_verbs = ("shape", "connect", "map", "instrument", "validate", "coordinate", "prepare", "wire", "define", "capture", "verify", "design", "implement", "add", "track")
+    if not title or not any(title.startswith(verb) for verb in action_verbs):
         return True
-    return any(title == f"{verb} {normalized_story}" or title.startswith(f"{verb} {normalized_story} ") for verb in REJECTED_TASK_PATTERNS)
+    return any(title == f"{verb} {normalized_story}" for verb in REJECTED_TASK_PATTERNS)
+
+
+def _task_subject(story_title: str) -> str:
+    cleaned = _clean_story_title(story_title)
+    lowered = cleaned.lower()
+    if "critical fault event details" in lowered or ("fault" in lowered and "detail" in lowered):
+        return "Critical Fault Event Detail"
+    if "critical fault" in lowered:
+        return "Critical Fault Event"
+    if "device health" in lowered:
+        return "Device Health"
+    if "telemetry" in lowered:
+        return "Telemetry"
+    return cleaned
+
+
+def _task_quality_score(task: dict[str, Any]) -> int:
+    score = 0
+    title = _clean_text(task.get("title"))
+    description = _clean_text(task.get("description"))
+    criteria = _string_list(task.get("acceptance_criteria"))
+    if any(title.lower().startswith(verb) for verb in ["design", "implement", "add", "map", "track", "validate", "connect", "shape"]):
+        score += 30
+    if task.get("work_area") in TASK_WORK_AREAS and any(token in title.lower() for token in ["screen", "view", "api", "data", "event", "scenario", "field"]):
+        score += 30
+    if description and len(description) >= 30:
+        score += 15
+    if len(criteria) >= 3:
+        score += 15
+    if _criteria_are_testable(criteria):
+        score += 10
+    return min(score, 100)
 
 
 def _fallback_task_candidates(story_title: str, modules: list[str], flows: list[str]) -> list[dict[str, Any]]:

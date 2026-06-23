@@ -5,7 +5,17 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from backend.project_intelligence import ProjectIntelligenceService, _context_budget_tokens, _project_phi_prompt, _project_phi_prompt_attempts, _project_phi_prompt_with_diagnostics
+from backend.project_intelligence import (
+    ProjectIntelligenceService,
+    _acceptance_criteria,
+    _acceptance_criteria_categories,
+    _acceptance_criteria_quality_score,
+    _context_budget_tokens,
+    _has_required_acceptance_categories,
+    _project_phi_prompt,
+    _project_phi_prompt_attempts,
+    _project_phi_prompt_with_diagnostics,
+)
 
 
 class HealthyPhiProvider:
@@ -580,6 +590,54 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Device monitoring", refined["affected_flows"])
         self.assertIn("LineDefender UI", " ".join(refined["ui_considerations"]))
         self.assertIn("Unit tests required", refined["qa_considerations"])
+        self.assertGreaterEqual(refined["acceptance_criteria_quality_score"], 80)
+        self.assertIn("Functional Behavior", refined["acceptance_criteria_categories"])
+        self.assertIn("Data Display", refined["acceptance_criteria_categories"])
+        self.assertIn("Error Handling", refined["acceptance_criteria_categories"])
+        self.assertIn("Permission/Security", refined["acceptance_criteria_categories"])
+        ac_text = " ".join(refined["acceptance_criteria"]).lower()
+        self.assertNotIn("visible and testable", ac_text)
+        self.assertNotIn("flow is covered end to end", ac_text)
+        self.assertNotIn("integration is validated", ac_text)
+
+    def test_acceptance_criteria_v2_generates_action_specific_templates(self) -> None:
+        detail = _acceptance_criteria("Open Critical Fault Event Details", ["Fault Event Review"], ["Fault Monitoring"])
+        search = _acceptance_criteria("Search Critical Events by Device", ["Fault Event Review"], ["Fault Monitoring"])
+        filter_ac = _acceptance_criteria("Filter Critical Events by Severity and Status", ["Fault Event Review"], ["Fault Monitoring"])
+        list_ac = _acceptance_criteria("View Active Critical Fault Events", ["Fault Event Review"], ["Fault Monitoring"])
+
+        detail_text = " ".join(detail)
+        self.assertIn("open a critical fault event from the event list", detail_text)
+        self.assertIn("Device ID", detail_text)
+        self.assertIn("Fault Type", detail_text)
+        self.assertIn("Severity", detail_text)
+        self.assertIn("Event Timestamp", detail_text)
+        self.assertIn("Current Status", detail_text)
+        self.assertIn("Device Health", detail_text)
+        self.assertIn("Location", detail_text)
+        self.assertIn("Connectivity Status", detail_text)
+        self.assertIn("Firmware Version", detail_text)
+        self.assertIn("Telemetry Context", detail_text)
+        self.assertIn("Event History", detail_text)
+        self.assertIn("Outage Context", detail_text)
+        self.assertIn("role-based permissions", detail_text)
+        self.assertIn("audit logged", detail_text)
+        for generated in [detail, search, filter_ac, list_ac]:
+            text = " ".join(generated).lower()
+            self.assertNotIn("visible and testable", text)
+            self.assertNotIn("workflow covered", text)
+            self.assertNotIn("flow covered end to end", text)
+            self.assertNotIn("integration validated", text)
+            self.assertGreaterEqual(len(generated), 4)
+            self.assertGreaterEqual(_acceptance_criteria_quality_score(generated), 80)
+            self.assertTrue(_has_required_acceptance_categories(_acceptance_criteria_categories(generated)))
+
+        self.assertIn("Device ID or Event ID", " ".join(search))
+        self.assertIn("within 3 seconds", " ".join(search))
+        self.assertIn("Severity, Status, and Time Range", " ".join(filter_ac))
+        self.assertIn("reset all filters", " ".join(filter_ac))
+        self.assertIn("sorted by Severity and Timestamp", " ".join(list_ac))
+        self.assertIn("Event Timestamp", " ".join(list_ac))
 
     def test_story_refinement_generates_meaningful_task_intelligence(self) -> None:
         profile = {
@@ -613,6 +671,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertLessEqual(len(tasks), 8)
         work_areas = {task["work_area"] for task in tasks}
         self.assertIn("UI Work", work_areas)
+        self.assertIn("Frontend Work", work_areas)
         self.assertIn("Backend Work", work_areas)
         self.assertIn("Data Work", work_areas)
         self.assertIn("Analytics Work", work_areas)
@@ -630,10 +689,26 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             self.assertFalse(title.startswith("test display fault event details"))
             self.assertGreaterEqual(len(task["acceptance_criteria"]), 3)
             self.assertTrue(task["description"])
+            self.assertGreaterEqual(task["task_quality_score"], 80)
+        title_by_area = {task["work_area"]: task["title"] for task in tasks}
+        self.assertEqual(title_by_area["UI Work"], "Design Critical Fault Event Detail Screen")
+        self.assertEqual(title_by_area["Frontend Work"], "Implement Critical Fault Event Detail View")
+        self.assertEqual(title_by_area["Backend Work"], "Add Critical Fault Event Detail API")
+        self.assertEqual(title_by_area["Data Work"], "Map Critical Fault Event Detail Data Fields")
+        self.assertEqual(title_by_area["Analytics Work"], "Track Critical Fault Event Detail Access Events")
+        self.assertEqual(title_by_area["QA Work"], "Validate Critical Fault Event Detail Scenarios")
+        backend_task = next(task for task in tasks if task["work_area"] == "Backend Work")
+        self.assertIn("API returns the approved detail fields", " ".join(backend_task["acceptance_criteria"]))
+        self.assertIn("Authorization is enforced", " ".join(backend_task["acceptance_criteria"]))
+        ui_task = next(task for task in tasks if task["work_area"] == "UI Work")
+        self.assertIn("Loading state", " ".join(ui_task["acceptance_criteria"]))
+        qa_task = next(task for task in tasks if task["work_area"] == "QA Work")
+        self.assertIn("Manual checks cover happy path", " ".join(qa_task["acceptance_criteria"]))
         diagnostics = refined["task_intelligence_diagnostics"]
         self.assertEqual(diagnostics["generated_task_count"], len(tasks))
         self.assertGreaterEqual(diagnostics["acceptance_criteria_count"], len(tasks) * 3)
         self.assertIn("Implement <story>", diagnostics["rejected_task_patterns"])
+        self.assertGreaterEqual(diagnostics["task_quality_score"], 80)
 
     def test_story_impact_identifies_otp_dependencies(self) -> None:
         profile = {

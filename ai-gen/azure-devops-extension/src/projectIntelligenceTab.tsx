@@ -307,6 +307,7 @@ type FeatureRefinement = ProviderMetadata & {
     generated_story_count?: number;
     story_coverage_areas?: string[];
     story_quality_score?: number;
+    acceptance_criteria_quality_score?: number;
     acceptance_criteria_count?: number;
     rejected_generic_criteria?: string[];
   };
@@ -315,6 +316,8 @@ type FeatureRefinement = ProviderMetadata & {
 type StoryRefinement = ProviderMetadata & {
   story_summary: string;
   acceptance_criteria: string[];
+  acceptance_criteria_categories?: string[];
+  acceptance_criteria_quality_score?: number;
   affected_applications: string[];
   affected_modules: string[];
   affected_flows: string[];
@@ -330,6 +333,7 @@ type StoryRefinement = ProviderMetadata & {
     acceptance_criteria_count?: number;
     rejected_task_patterns?: string[];
     recommended_file_count?: number;
+    task_quality_score?: number;
   };
 };
 
@@ -338,6 +342,8 @@ type StoryTask = {
   title: string;
   description: string;
   acceptance_criteria?: string[];
+  acceptance_criteria_count?: number;
+  task_quality_score?: number;
 };
 
 type StoryImpact = ProviderMetadata & {
@@ -1634,6 +1640,7 @@ function GeneratedTasksPreview({ story }: { story: StoryRefinement }) {
       <div className="planner-status-grid">
         <Row label="Generated Task Count" value={formatNumber(diagnostics.generated_task_count || tasks.length)} />
         <Row label="Acceptance Criteria Count" value={formatNumber(diagnostics.acceptance_criteria_count || tasks.reduce((count, task) => count + (task.acceptance_criteria?.length || 0), 0))} />
+        <Row label="Task Quality Score" value={formatNumber(diagnostics.task_quality_score)} />
       </div>
       <ListBlock title="Work Areas" items={diagnostics.work_areas || Array.from(new Set(tasks.map((task) => task.work_area || '').filter(Boolean)))} />
       <StructuredTaskList tasks={tasks} />
@@ -1648,6 +1655,7 @@ function StructuredTaskList({ tasks }: { tasks: StoryTask[] }) {
         <div className="planner-task" key={task.title}>
           <strong>{task.work_area ? `${task.work_area}: ` : ''}{task.title}</strong>
           <span>{task.description}</span>
+          <Row label="Task Quality Score" value={formatNumber(task.task_quality_score)} />
           <ListBlock title="Task Acceptance Criteria" items={task.acceptance_criteria || []} />
         </div>
       ))}
@@ -2774,6 +2782,7 @@ function FeatureRefinementResult({ result }: { result: FeatureRefinement }) {
       <Row label="Action Count" value={formatNumber(diagnostics.action_count)} />
       <Row label="Generated Story Count" value={formatNumber(diagnostics.generated_story_count)} />
       <Row label="Story Quality Score" value={formatNumber(diagnostics.story_quality_score)} />
+      <Row label="Acceptance Criteria Quality Score" value={formatNumber(diagnostics.acceptance_criteria_quality_score)} />
       <Row label="Acceptance Criteria Count" value={formatNumber(diagnostics.acceptance_criteria_count)} />
       <ListBlock title="Story Coverage Areas" items={diagnostics.story_coverage_areas || []} />
       <ListBlock title="Capabilities Identified" items={diagnostics.capabilities_identified || []} />
@@ -2793,6 +2802,8 @@ function StoryRefinementResult({ result }: { result: StoryRefinement }) {
     <div className="planner-status-grid">
       <SourceBadge metadata={result} />
       <Row label="Story Summary" value={result.story_summary} />
+      <Row label="Acceptance Criteria Quality" value={formatNumber(result.acceptance_criteria_quality_score)} />
+      <ListBlock title="Acceptance Criteria Categories" items={result.acceptance_criteria_categories || []} />
       <ListBlock title="Acceptance Criteria" items={result.acceptance_criteria} />
       <ListBlock title="Affected Applications" items={result.affected_applications} />
       <ListBlock title="Affected Modules" items={result.affected_modules} />

@@ -4206,11 +4206,29 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
   const user = SDK.getUser();
   console.log('[DEBUG] resolveCurrentUserPermission started for user:', user.name, 'descriptor:', user.descriptor);
   try {
-    console.log('[DEBUG] Getting GraphRestClient...');
+    console.log('[DEBUG] Attempting GraphRestClient method...');
     const graphClient = getClient(GraphRestClient);
     console.log('[DEBUG] GraphRestClient obtained');
     const groupNames = await collectAzureDevOpsGroupNames(graphClient, user.descriptor);
     console.log('[DEBUG] Group collection completed:', groupNames);
+    if (groupNames.length === 0) {
+      console.log('[DEBUG] No groups found via GraphRestClient, trying REST API fallback...');
+      const fallbackGroups = await collectGroupsViaRestApi();
+      if (fallbackGroups.length > 0) {
+        console.log('[DEBUG] Groups found via REST API:', fallbackGroups);
+        const mapping = mapGroupsToAIGenRole(fallbackGroups, projectContext?.name || '');
+        return {
+          role: mapping.role,
+          user_display_name: user.displayName || user.name || '',
+          user_name: user.name || '',
+          mapped_group: mapping.group,
+          azure_groups: fallbackGroups,
+          status: 'resolved',
+          warning: undefined,
+          diagnostics: mapping.diagnostics,
+        };
+      }
+    }
     const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
     console.log('[DEBUG] Role mapping result:', mapping);
     return {
@@ -4226,6 +4244,26 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
   } catch (error) {
     console.error('[ERROR] Permission resolution failed:', error);
     console.error('[ERROR] Error details:', error instanceof Error ? { message: error.message, stack: error.stack } : String(error));
+    console.log('[DEBUG] Trying REST API fallback...');
+    try {
+      const fallbackGroups = await collectGroupsViaRestApi();
+      if (fallbackGroups.length > 0) {
+        console.log('[DEBUG] Groups found via REST API fallback:', fallbackGroups);
+        const mapping = mapGroupsToAIGenRole(fallbackGroups, projectContext?.name || '');
+        return {
+          role: mapping.role,
+          user_display_name: user.displayName || user.name || '',
+          user_name: user.name || '',
+          mapped_group: mapping.group,
+          azure_groups: fallbackGroups,
+          status: 'resolved',
+          warning: undefined,
+          diagnostics: mapping.diagnostics,
+        };
+      }
+    } catch (fallbackError) {
+      console.error('[ERROR] REST API fallback also failed:', fallbackError);
+    }
     return {
       role: 'viewer',
       user_display_name: user.displayName || user.name || '',
@@ -4237,6 +4275,34 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
     };
   }
 }
+
+async function collectGroupsViaRestApi(): Promise<string[]> {
+  try {
+    const token = await SDK.getAccessToken();
+    const collectionUri = getCollectionUri();
+    const response = await fetch(`${collectionUri}/_apis/graph/memberships?direction=Up&api-version=7.1-preview.1`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      console.error('[ERROR] REST API response not OK:', response.status, response.statusText);
+      return [];
+    }
+    const data = await response.json();
+    console.log('[DEBUG] REST API memberships response:', data);
+    const groupNames = (data.value || [])
+      .map((item: any) => item.displayName || item.principalName)
+      .filter(Boolean);
+    console.log('[DEBUG] Groups from REST API:', groupNames);
+    return groupNames;
+  } catch (error) {
+    console.error('[ERROR] REST API call failed:', error);
+    return [];
+  }
+}
+
 
 async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDescriptor: string): Promise<string[]> {
   const visited = new Set<string>([userDescriptor]);

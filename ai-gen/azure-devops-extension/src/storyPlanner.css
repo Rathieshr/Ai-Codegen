@@ -193,6 +193,10 @@ body {
   color: #1f1f1f;
 }
 
+.planner-ready-text {
+  color: #16a34a;
+}
+
 .planner-save-status {
   display: inline-flex;
   margin-top: 8px;

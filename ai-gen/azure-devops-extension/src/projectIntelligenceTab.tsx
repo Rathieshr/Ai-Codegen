@@ -1207,7 +1207,6 @@ function ProjectIntelligenceTab() {
 
   async function loadRepositories(adoProject = getAdoMapping(profile).ado_project, sourceProfile: ProjectProfile = profile) {
     setRepositoryLoadMessage('Loading Azure DevOps repositories...');
-    console.log('[DEBUG] loadRepositories called:', { adoProject, hasSourceProfile: !!sourceProfile, storedProject: getAdoMapping(profile).ado_project });
     if (!adoProject) {
       setRepositories([]);
       setBranches([]);
@@ -1216,9 +1215,7 @@ function ProjectIntelligenceTab() {
     }
     try {
       const repos = await fetchAdoRepositories(adoProject);
-      console.log('[DEBUG] Fetched repositories:', { count: repos.length, repos });
       const visibleRepos = (repos || []).filter((repo) => repo.id && repo.name);
-      console.log('[DEBUG] Visible repositories after filter:', { count: visibleRepos.length, visibleRepos });
       setRepositories(visibleRepos);
       if (
         sourceProfile.repository_connection.repository_id
@@ -1819,7 +1816,7 @@ function ProductIdentityCard({ profile }: { profile: ProjectProfile }) {
   const name = profile.project_name || 'Project Intelligence';
   const domain = profile.domain || profile.knowledge_profile_preview.domain || 'Enterprise Planning';
   const tagline = generatedTagline(profile);
-  const readiness = enterpriseReadiness(profile, false, false);
+  const setup = projectSetupStatus(profile);
   return (
     <section className="planner-card planner-identity-card">
       <div className="planner-logo-frame">
@@ -1832,8 +1829,8 @@ function ProductIdentityCard({ profile }: { profile: ProjectProfile }) {
         <p>{tagline}</p>
       </div>
       <div className="planner-readiness-badge">
-        <strong>{readiness.score}%</strong>
-        <span>Ready</span>
+        <strong>{setup.complete ? 'Complete' : 'Setup'}</strong>
+        <span>{setup.complete ? 'Project Setup Complete' : 'Needs Attention'}</span>
       </div>
     </section>
   );
@@ -1841,17 +1838,20 @@ function ProductIdentityCard({ profile }: { profile: ProjectProfile }) {
 
 function EnterpriseReadinessCard({ profile, qaReady, executionReady }: { profile: ProjectProfile; qaReady: boolean; executionReady: boolean }) {
   const readiness = enterpriseReadiness(profile, qaReady, executionReady);
+  const setup = projectSetupStatus(profile);
   return (
     <section className="planner-card">
       <div className="planner-section-header">
         <div>
-          <div className="planner-label">Engineering Readiness</div>
-          <div className="planner-subtle">One enterprise view of whether this project is ready for planning, execution, and QA.</div>
+          <div className="planner-label">{setup.complete ? 'Project Setup Complete' : 'Project Setup'}</div>
+          <div className="planner-subtle">Required setup is shown as clear status, not a percentage score.</div>
         </div>
-        <strong>{readiness.score}%</strong>
+        <strong className={setup.complete ? 'planner-ready-text' : ''}>{setup.complete ? 'Ready' : 'Action Needed'}</strong>
       </div>
-      <div className="planner-completion-row">
-        <div className="planner-completion-bar"><span style={{ width: `${readiness.score}%` }} /></div>
+      <div className="planner-health-grid compact">
+        {setup.checks.map((check) => (
+          <HealthCard key={check.title} title={check.title} status={check.status} detail={check.detail} />
+        ))}
       </div>
       <div className="planner-health-grid compact">
         {readiness.checks.map((check) => (
@@ -1956,7 +1956,7 @@ function AIPlannerWorkspace({
         <div className="planner-label">Planning Workflow</div>
         <div className="planner-subtle">Work through planning in delivery order: Epic, Feature, Story, then Task execution.</div>
         <KnowledgeRegistryNotice profile={profile} />
-        {profileCompletion(profile).percent < 70 ? (
+        {!profileCompletion(profile).complete ? (
           <div className="planner-banner">Project profile is incomplete. Results may be less accurate, but you can continue planning.</div>
         ) : null}
         {readOnly ? <div className="planner-error">This work item is Closed. Planning output is read-only.</div> : null}
@@ -2585,13 +2585,13 @@ function QuickStartSetup({
 }
 
 function ProjectProfileCompletion({ profile }: { profile: ProjectProfile }) {
-  const readiness = profileReadinessBreakdown(profile);
+  const setup = projectSetupStatus(profile);
   return (
     <section className="planner-card">
-      <div className="planner-label">Project Intelligence Readiness</div>
+      <div className="planner-label">Project Setup</div>
       <div className="planner-health-grid">
-        {readiness.map((section) => (
-          <HealthCard key={section.title} title={section.title} status={section.status} detail={`${section.percent}%${section.missing.length ? ` missing ${section.missing.join(', ')}` : ' ready'}`} />
+        {setup.checks.map((check) => (
+          <HealthCard key={check.title} title={check.title} status={check.status} detail={check.detail} />
         ))}
       </div>
     </section>
@@ -2608,7 +2608,7 @@ function ProjectHealthDashboard({ profile }: { profile: ProjectProfile }) {
         <HealthCard title="Knowledge Registry" status={knowledgeRegistryStatus(profile)} detail={registrySummary(profile)} />
         <HealthCard title="UI Guidelines" status={summarizeUiGuidelines(profile) === 'Not captured yet' ? 'Missing' : 'Ready'} detail={summarizeUiGuidelines(profile)} />
         <HealthCard title="Development Standards" status={hasDevelopmentStandards(profile) ? 'Ready' : 'Missing'} detail={hasDevelopmentStandards(profile) ? 'Captured' : 'Repository scan can detect this'} />
-        <HealthCard title="Execution Readiness" status={execution.label === 'Ready' ? 'Ready' : execution.score >= 40 ? 'Partial' : 'Missing'} detail={`${execution.score}% ${execution.label}`} />
+        <HealthCard title="Execution Readiness" status={execution.label === 'Ready' ? 'Ready' : execution.label === 'Partially Ready' ? 'Partial' : 'Missing'} detail={execution.label} />
       </div>
     </section>
   );
@@ -3188,7 +3188,7 @@ function RefinementReadinessDashboard({
         <Row label="Feature Intelligence" value={featureResult ? 'Ready' : 'Not run'} />
         <Row label="Story Intelligence" value={storyResult ? 'Ready' : 'Not run'} />
         <Row label="Impact Analysis" value={hasImpact ? 'Ready' : 'Not run'} />
-        <Row label="Execution Readiness Score" value={`${execution.score}% - ${execution.label}`} />
+        <Row label="Execution Readiness" value={execution.label} />
         <Row label="Readiness Breakdown" value={execution.breakdown} />
       </div>
     </section>
@@ -3714,9 +3714,7 @@ async function fetchAdoProjects(): Promise<AdoProjectListResponse> {
 async function fetchAdoRepositories(adoProject: string): Promise<GitRepository[]> {
   const params = new URLSearchParams({ ado_project: adoProject });
   const url = `/connectors/azure-devops/repositories?${params.toString()}`;
-  console.log('[DEBUG] Fetching repositories:', { adoProject, url });
   const response = await getJson<{ repositories?: GitRepository[]; error?: string }>(url);
-  console.log('[DEBUG] Repositories response:', { count: response.repositories?.length || 0, response });
   return response.repositories || [];
 }
 
@@ -4204,71 +4202,57 @@ function defaultPermissionState(): PermissionState {
 
 async function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
   const user = SDK.getUser();
-  console.log('[DEBUG] resolveCurrentUserPermission started for user:', user.name);
-  console.log('[DEBUG] User object:', { id: user.id, name: user.name, descriptor: user.descriptor });
-
+  const userAny = user as typeof user & { subjectId?: string; uniqueName?: string; email?: string };
   try {
-    console.log('[DEBUG] Attempting REST API method (GraphRestClient requires descriptor)...');
-    const fallbackGroups = await collectGroupsViaRestApi();
-    if (fallbackGroups.length > 0) {
-      console.log('[DEBUG] Groups found via REST API:', fallbackGroups);
-      const mapping = mapGroupsToAIGenRole(fallbackGroups, projectContext?.name || '');
+    const graphClient = getClient(GraphRestClient);
+    const descriptor = await resolveUserGraphDescriptor(graphClient, userAny);
+    let groupNames: string[] = [];
+    if (descriptor) {
+      groupNames = await collectAzureDevOpsGroupNames(graphClient, descriptor);
+      if (!groupNames.length) {
+        groupNames = await collectGroupsViaRestApi(descriptor);
+      }
+    }
+    if (groupNames.length) {
+      const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
       return {
         role: mapping.role,
         user_display_name: user.displayName || user.name || '',
-        user_name: user.name || '',
+        user_name: userAny.uniqueName || userAny.email || user.name || '',
         mapped_group: mapping.group,
-        azure_groups: fallbackGroups,
+        azure_groups: groupNames,
         status: 'resolved',
         warning: undefined,
         diagnostics: mapping.diagnostics,
       };
     }
-
-    // If REST API returns no groups, try GraphRestClient if descriptor is available
-    if (user.descriptor) {
-      console.log('[DEBUG] Attempting GraphRestClient method...');
-      const graphClient = getClient(GraphRestClient);
-      console.log('[DEBUG] GraphRestClient obtained');
-      const groupNames = await collectAzureDevOpsGroupNames(graphClient, user.descriptor);
-      console.log('[DEBUG] Group collection completed:', groupNames);
-      if (groupNames.length > 0) {
-        const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
-        console.log('[DEBUG] Role mapping result:', mapping);
-        return {
-          role: mapping.role,
-          user_display_name: user.displayName || user.name || '',
-          user_name: user.name || '',
-          mapped_group: mapping.group,
-          azure_groups: groupNames,
-          status: 'resolved',
-          warning: groupNames.length ? undefined : 'No Azure DevOps security groups were visible. Viewer access is applied.',
-          diagnostics: mapping.diagnostics,
-        };
-      }
-    } else {
-      console.warn('[WARN] User descriptor not available, GraphRestClient method skipped');
+    const ownerFallback = inferProjectOwnerPermission(userAny);
+    if (ownerFallback) {
+      return ownerFallback;
     }
-
-    // If we got here, REST API returned no groups and GraphRestClient either failed or wasn't available
-    console.error('[ERROR] No groups found from any method');
     return {
       role: 'viewer',
       user_display_name: user.displayName || user.name || '',
-      user_name: user.name || '',
+      user_name: userAny.uniqueName || userAny.email || user.name || '',
       mapped_group: 'Readers',
       azure_groups: [],
       status: 'fallback',
-      warning: 'Could not resolve Azure DevOps group membership. Viewer access is applied.',
+      warning: descriptor
+        ? 'Azure DevOps group membership returned no visible groups. Viewer access is applied.'
+        : 'Azure DevOps user descriptor could not be resolved. Viewer access is applied.',
     };
   } catch (error) {
-    console.error('[ERROR] Permission resolution failed:', error);
-    console.error('[ERROR] Error details:', error instanceof Error ? { message: error.message, stack: error.stack } : String(error));
-
+    const ownerFallback = inferProjectOwnerPermission(userAny);
+    if (ownerFallback) {
+      return {
+        ...ownerFallback,
+        warning: `${ownerFallback.warning} Graph lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
     return {
       role: 'viewer',
       user_display_name: user.displayName || user.name || '',
-      user_name: user.name || '',
+      user_name: userAny.uniqueName || userAny.email || user.name || '',
       mapped_group: 'Readers',
       azure_groups: [],
       status: 'fallback',
@@ -4277,39 +4261,126 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
   }
 }
 
-async function collectGroupsViaRestApi(): Promise<string[]> {
+async function resolveUserGraphDescriptor(
+  graphClient: GraphRestClient,
+  user: { id?: string; descriptor?: string; subjectId?: string; name?: string; uniqueName?: string; email?: string },
+): Promise<string> {
+  if (user.descriptor) {
+    return user.descriptor;
+  }
+  const candidates = uniqueStrings([
+    user.id || '',
+    user.subjectId || '',
+  ]);
+  for (const storageKey of candidates) {
+    try {
+      const descriptor = await graphClient.getDescriptor(storageKey);
+      if (descriptor?.value) {
+        return descriptor.value;
+      }
+    } catch {
+      // Try the next candidate.
+    }
+    try {
+      const descriptor = await getDescriptorViaRestApi(storageKey);
+      if (descriptor) {
+        return descriptor;
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return '';
+}
+
+async function getDescriptorViaRestApi(storageKey: string): Promise<string> {
+  const token = await SDK.getAccessToken();
+  const collectionUri = trimTrailingSlash(getCollectionUri());
+  const response = await fetch(`${collectionUri}/_apis/graph/descriptors/${encodeURIComponent(storageKey)}?api-version=7.1-preview.1`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+  if (!response.ok) {
+    return '';
+  }
+  const payload = await response.json();
+  return String(payload.value || '');
+}
+
+async function collectGroupsViaRestApi(userDescriptor: string): Promise<string[]> {
   try {
     const token = await SDK.getAccessToken();
-    const collectionUri = getCollectionUri();
-    const response = await fetch(`${collectionUri}/_apis/graph/memberships?direction=Up&api-version=7.1-preview.1`, {
+    const collectionUri = trimTrailingSlash(getCollectionUri());
+    const url = `${collectionUri}/_apis/graph/memberships/${encodeURIComponent(userDescriptor)}?direction=Up&depth=1&api-version=7.1-preview.1`;
+    const response = await fetch(url, {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
       },
     });
     if (!response.ok) {
-      console.error('[ERROR] REST API response not OK:', response.status, response.statusText);
       return [];
     }
     const data = await response.json();
-    console.log('[DEBUG] REST API memberships response:', data);
-    const groupNames = (data.value || [])
-      .map((item: any) => item.displayName || item.principalName)
-      .filter(Boolean);
-    console.log('[DEBUG] Groups from REST API:', groupNames);
-    return groupNames;
+    const descriptors = uniqueStrings((data.value || []).map((item: { containerDescriptor?: string }) => item.containerDescriptor || '').filter(Boolean));
+    const subjects = await Promise.all(descriptors.map((descriptor) => getGraphSubjectViaRestApi(descriptor)));
+    return uniqueStrings(subjects.map((subject) => subject.displayName || '').filter(Boolean));
   } catch (error) {
-    console.error('[ERROR] REST API call failed:', error);
     return [];
   }
 }
+
+async function getGraphSubjectViaRestApi(descriptor: string): Promise<{ displayName?: string }> {
+  try {
+    const token = await SDK.getAccessToken();
+    const collectionUri = trimTrailingSlash(getCollectionUri());
+    const response = await fetch(`${collectionUri}/_apis/graph/subjects/${encodeURIComponent(descriptor)}?api-version=7.1-preview.1`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) {
+      return {};
+    }
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+function inferProjectOwnerPermission(user: { name?: string; uniqueName?: string; email?: string }): PermissionState | undefined {
+  const accountName = String(SDK.getHost()?.name || '').toLowerCase();
+  const identifiers = [user.uniqueName, user.email, user.name].map((value) => String(value || '').toLowerCase());
+  const ownsOrganization = Boolean(accountName && identifiers.some((identifier) => identifier.startsWith(`${accountName}@`) || identifier === accountName));
+  if (!ownsOrganization) {
+    return undefined;
+  }
+  return {
+    role: 'admin',
+    user_display_name: user.name || user.uniqueName || '',
+    user_name: user.uniqueName || user.email || user.name || '',
+    mapped_group: 'Project Administrators',
+    azure_groups: ['Project Administrators'],
+    status: 'fallback',
+    warning: 'Azure DevOps Graph group lookup was unavailable, so organization owner context was mapped to AI Gen Admin.',
+    diagnostics: {
+      matched_groups: ['Project Administrators'],
+      matched_roles: ['admin'],
+      selected_role: 'admin',
+      precedence_rule: 'organization_owner_fallback',
+    },
+  };
+}
+
 
 
 async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDescriptor: string): Promise<string[]> {
   const visited = new Set<string>([userDescriptor]);
   let frontier = [userDescriptor];
   const groupNames: string[] = [];
-  console.log('[DEBUG] Collecting groups for user:', userDescriptor);
   for (let depth = 0; depth < 4 && frontier.length; depth += 1) {
     const memberships = (await Promise.all(frontier.map(async (descriptor) => {
       try {
@@ -4327,27 +4398,22 @@ async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDe
     const subjects = await Promise.all(nextDescriptors.map(async (descriptor) => {
       try {
         return await graphClient.getSubject(descriptor);
-      } catch (err) {
-        console.error('[DEBUG] Failed to get subject for descriptor:', descriptor, err);
+      } catch {
         return undefined;
       }
     }));
     subjects.forEach((subject) => {
       if (subject?.displayName) {
         groupNames.push(subject.displayName);
-        console.log('[DEBUG] Added group:', subject.displayName);
       }
     });
     frontier = nextDescriptors;
   }
-  console.log('[DEBUG] Final groups collected:', groupNames);
   return uniqueStrings(groupNames);
 }
 
 function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role: AIGenRole; group: string; diagnostics: PermissionState['diagnostics'] } {
-  console.log('[DEBUG] mapGroupsToAIGenRole called with groups:', groupNames, 'project:', projectName);
   const normalized = groupNames.map((group) => normalizeGroupName(group, projectName));
-  console.log('[DEBUG] Normalized groups:', normalized);
 
   // Collect all matched roles instead of returning on first match
   const matchedRoles: { role: AIGenRole; groups: string[] }[] = [];
@@ -4356,7 +4422,6 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
     .map((group, i) => ({ group, index: i, normalized: group }))
     .filter(({ normalized }) => {
       const match = normalized.includes('project administrators');
-      console.log('[DEBUG] Checking admin match:', normalized, '=>', match);
       return match;
     })
     .map(({ index }) => groupNames[index]);
@@ -4365,7 +4430,6 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
     .map((group, i) => ({ group, index: i, normalized: group }))
     .filter(({ normalized }) => {
       const match = normalized.includes('contributors');
-      console.log('[DEBUG] Checking contributor match:', normalized, '=>', match);
       return match;
     })
     .map(({ index }) => groupNames[index]);
@@ -4374,14 +4438,9 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
     .map((group, i) => ({ group, index: i, normalized: group }))
     .filter(({ normalized }) => {
       const match = normalized.includes('readers');
-      console.log('[DEBUG] Checking reader match:', normalized, '=>', match);
       return match;
     })
     .map(({ index }) => groupNames[index]);
-
-  console.log('[DEBUG] Admin groups:', adminGroups);
-  console.log('[DEBUG] Contributor groups:', contributorGroups);
-  console.log('[DEBUG] Reader groups:', readerGroups);
 
   if (adminGroups.length > 0) {
     matchedRoles.push({ role: 'admin', groups: adminGroups });
@@ -4408,8 +4467,6 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
     precedenceRule = 'contributor_takes_precedence_over_viewer';
   }
 
-  console.log('[DEBUG] Selected role:', selectedRole, 'precedence rule:', precedenceRule);
-
   const diagnostics = {
     matched_groups: groupNames,
     matched_roles: matchedRoles.map(m => m.role),
@@ -4421,14 +4478,12 @@ function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role
 }
 
 function normalizeGroupName(groupName: string, projectName: string): string {
-  const result = groupName
+  return groupName
     .toLowerCase()
     .replace(projectName.toLowerCase(), '')
     .replace(/[\[\]\\]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  console.log('[DEBUG] normalizeGroupName:', groupName, '+ project:', projectName, '=>', result);
-  return result;
 }
 
 function roleLabel(role: AIGenRole): string {
@@ -4575,7 +4630,7 @@ function formatTimestamp(value: string): string {
   return date.toLocaleString();
 }
 
-function profileCompletion(profile: ProjectProfile): { percent: number; missing: string[] } {
+function profileCompletion(profile: ProjectProfile): { complete: boolean; missing: string[] } {
   const checks = [
     { label: 'Project Name', ready: Boolean(profile.project_name.trim()) },
     { label: 'Project Description', ready: Boolean(profile.project_description.trim()) },
@@ -4588,7 +4643,7 @@ function profileCompletion(profile: ProjectProfile): { percent: number; missing:
   ];
   const readyCount = checks.filter((check) => check.ready).length;
   return {
-    percent: Math.round((readyCount / checks.length) * 100),
+    complete: readyCount === checks.length,
     missing: checks.filter((check) => !check.ready).map((check) => check.label),
   };
 }
@@ -4645,41 +4700,55 @@ function readinessSection(checks: Array<{ label: string; ready: boolean }>): { p
   };
 }
 
-function enterpriseReadiness(profile: ProjectProfile, qaReady: boolean, executionReady: boolean): { score: number; checks: Array<{ title: string; status: 'Missing' | 'Partial' | 'Ready'; detail: string }> } {
+function projectSetupStatus(profile: ProjectProfile): { complete: boolean; checks: Array<{ title: string; status: 'Missing' | 'Ready'; detail: string }> } {
   const checks = [
     {
+      title: 'Project Profile',
+      status: (profile.project_name || profile.project_description) ? 'Ready' as const : 'Missing' as const,
+      detail: profile.project_name || 'Add project name and description',
+    },
+    {
       title: 'Repository Connected',
-      status: profile.repository_connection.repository_id || profile.repository_connection.repository_name ? 'Ready' as const : 'Missing' as const,
+      status: (profile.repository_connection.repository_id || profile.repository_connection.repository_name) ? 'Ready' as const : 'Missing' as const,
       detail: profile.repository_connection.repository_name || 'Connect Azure Repos',
     },
     {
-      title: 'Knowledge Captured',
-      status: knowledgeRegistryStatus(profile),
-      detail: registrySummary(profile),
+      title: 'Knowledge Generated',
+      status: knowledgeRegistryStatus(profile) === 'Ready' ? 'Ready' as const : 'Missing' as const,
+      detail: knowledgeRegistryStatus(profile) === 'Ready' ? registrySummary(profile) : 'Analyze repository documents',
     },
     {
       title: 'Standards Captured',
       status: hasDevelopmentStandards(profile) ? 'Ready' as const : 'Missing' as const,
-      detail: hasDevelopmentStandards(profile) ? 'Development, testing, or security rules available' : 'Add standards or analyze docs',
+      detail: hasDevelopmentStandards(profile) ? 'Standards available' : 'Add standards or analyze docs',
     },
+  ];
+  return {
+    complete: checks.every((check) => check.status === 'Ready'),
+    checks,
+  };
+}
+
+function enterpriseReadiness(profile: ProjectProfile, qaReady: boolean, executionReady: boolean): { checks: Array<{ title: string; status: 'Missing' | 'Partial' | 'Ready'; detail: string }> } {
+  const setup = projectSetupStatus(profile);
+  const checks = [
     {
       title: 'Planning Ready',
-      status: profile.project_name || profile.project_description ? 'Ready' as const : 'Partial' as const,
-      detail: profile.project_name || 'Add project identity',
+      status: setup.complete ? 'Ready' as const : 'Missing' as const,
+      detail: setup.complete ? 'Backlog planning can use project knowledge' : 'Complete project setup first',
     },
     {
       title: 'Execution Ready',
-      status: executionReady ? 'Ready' as const : knowledgeRegistryStatus(profile) === 'Ready' ? 'Partial' as const : 'Missing' as const,
-      detail: executionReady ? 'Execution package generated' : 'Generate from a Story or Task',
+      status: setup.complete ? 'Ready' as const : 'Missing' as const,
+      detail: setup.complete ? (executionReady ? 'Execution package generated' : 'Ready to generate execution packages') : 'Complete project setup first',
     },
     {
       title: 'QA Ready',
-      status: qaReady ? 'Ready' as const : 'Partial' as const,
-      detail: qaReady ? 'Test suite generated' : 'Generate coverage from a Story',
+      status: setup.complete ? 'Ready' as const : 'Missing' as const,
+      detail: setup.complete ? (qaReady ? 'Test suite generated' : 'Ready to generate QA coverage') : 'Complete project setup first',
     },
   ];
-  const score = Math.round(checks.reduce((total, check) => total + (check.status === 'Ready' ? 100 : check.status === 'Partial' ? 50 : 0), 0) / checks.length);
-  return { score, checks };
+  return { checks };
 }
 
 function generatedTagline(profile: ProjectProfile): string {

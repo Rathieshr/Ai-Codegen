@@ -56,6 +56,27 @@ const PROJECT_SESSION_STORAGE_KEY = 'ai-gen-project-intelligence:last-session';
 
 type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'admin';
 type AIGenRole = 'admin' | 'contributor' | 'viewer';
+type AzureDevOpsUserIdentity = {
+  id?: string;
+  descriptor?: string;
+  subjectId?: string;
+  displayName?: string;
+  name?: string;
+  uniqueName?: string;
+  email?: string;
+};
+
+let sdkInitializationStarted = false;
+
+function ensureAzureDevOpsSdkInitialized() {
+  if (sdkInitializationStarted) {
+    return;
+  }
+  sdkInitializationStarted = true;
+  SDK.init({ loaded: false, applyTheme: true });
+}
+
+ensureAzureDevOpsSdkInitialized();
 
 type ApplicationProfile = {
   name: string;
@@ -644,7 +665,6 @@ function ProjectIntelligenceTab() {
   const isViewer = permissionState.role === 'viewer';
 
   useEffect(() => {
-    SDK.init({ loaded: false, applyTheme: true });
     SDK.ready().then(async () => {
       SDK.notifyLoadSucceeded();
       try {
@@ -4201,11 +4221,10 @@ function defaultPermissionState(): PermissionState {
 }
 
 async function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
-  const user = SDK.getUser();
-  const userAny = user as typeof user & { subjectId?: string; uniqueName?: string; email?: string };
+  const user = getCurrentAzureDevOpsUserIdentity();
   try {
     const graphClient = getClient(GraphRestClient);
-    const descriptor = await resolveUserGraphDescriptor(graphClient, userAny);
+    const descriptor = await resolveUserGraphDescriptor(graphClient, user);
     let groupNames: string[] = [];
     if (descriptor) {
       groupNames = await collectAzureDevOpsGroupNames(graphClient, descriptor);
@@ -4218,7 +4237,7 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
       return {
         role: mapping.role,
         user_display_name: user.displayName || user.name || '',
-        user_name: userAny.uniqueName || userAny.email || user.name || '',
+        user_name: user.uniqueName || user.email || user.name || '',
         mapped_group: mapping.group,
         azure_groups: groupNames,
         status: 'resolved',
@@ -4226,14 +4245,14 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
         diagnostics: mapping.diagnostics,
       };
     }
-    const ownerFallback = inferProjectOwnerPermission(userAny);
+    const ownerFallback = inferProjectOwnerPermission(user);
     if (ownerFallback) {
       return ownerFallback;
     }
     return {
       role: 'viewer',
       user_display_name: user.displayName || user.name || '',
-      user_name: userAny.uniqueName || userAny.email || user.name || '',
+      user_name: user.uniqueName || user.email || user.name || '',
       mapped_group: 'Readers',
       azure_groups: [],
       status: 'fallback',
@@ -4242,7 +4261,7 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
         : 'Azure DevOps user descriptor could not be resolved. Viewer access is applied.',
     };
   } catch (error) {
-    const ownerFallback = inferProjectOwnerPermission(userAny);
+    const ownerFallback = inferProjectOwnerPermission(user);
     if (ownerFallback) {
       return {
         ...ownerFallback,
@@ -4252,7 +4271,7 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
     return {
       role: 'viewer',
       user_display_name: user.displayName || user.name || '',
-      user_name: userAny.uniqueName || userAny.email || user.name || '',
+      user_name: user.uniqueName || user.email || user.name || '',
       mapped_group: 'Readers',
       azure_groups: [],
       status: 'fallback',
@@ -4261,9 +4280,25 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
   }
 }
 
+function getCurrentAzureDevOpsUserIdentity(): AzureDevOpsUserIdentity {
+  const sdkUser = SDK.getUser() as AzureDevOpsUserIdentity;
+  const webUser = (SDK.getWebContext() as unknown as { user?: AzureDevOpsUserIdentity }).user || {};
+  return {
+    ...webUser,
+    ...sdkUser,
+    id: sdkUser.id || webUser.id,
+    descriptor: sdkUser.descriptor || webUser.descriptor,
+    subjectId: sdkUser.subjectId || webUser.subjectId,
+    displayName: sdkUser.displayName || webUser.displayName || sdkUser.name || webUser.name,
+    name: sdkUser.name || webUser.name || sdkUser.displayName || webUser.displayName,
+    uniqueName: sdkUser.uniqueName || webUser.uniqueName || webUser.email || sdkUser.email,
+    email: sdkUser.email || webUser.email || webUser.uniqueName || sdkUser.uniqueName,
+  };
+}
+
 async function resolveUserGraphDescriptor(
   graphClient: GraphRestClient,
-  user: { id?: string; descriptor?: string; subjectId?: string; name?: string; uniqueName?: string; email?: string },
+  user: AzureDevOpsUserIdentity,
 ): Promise<string> {
   if (user.descriptor) {
     return user.descriptor;

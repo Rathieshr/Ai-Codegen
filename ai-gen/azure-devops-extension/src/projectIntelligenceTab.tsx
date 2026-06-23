@@ -289,6 +289,9 @@ type EpicRefinement = ProviderMetadata & {
     impacted_flows?: string[];
     dependencies?: string[];
     risks?: string[];
+    acceptance_criteria_count?: number;
+    acceptance_criteria_quality_score?: number;
+    status?: string;
   }>;
 };
 
@@ -416,6 +419,8 @@ type ChildDraft = {
   impactedFlows?: string[];
   dependencies?: string[];
   risks?: string[];
+  acceptanceCriteriaCount?: number;
+  acceptanceCriteriaQualityScore?: number;
   selected: boolean;
   status: 'preview' | 'creating' | 'created' | 'failed' | 'skipped';
   azureId?: number;
@@ -1627,6 +1632,8 @@ function FeatureEnrichmentDetails({ draft }: { draft: ChildDraft }) {
       <ListBlock title="Impacted Flows" items={draft.impactedFlows || []} />
       <ListBlock title="Dependencies" items={draft.dependencies || []} />
       <ListBlock title="Risks" items={draft.risks || []} />
+      <Row label="Acceptance Criteria Count" value={formatNumber(draft.acceptanceCriteriaCount || draft.acceptanceCriteria?.length || 0)} />
+      <Row label="Acceptance Criteria Quality" value={formatNumber(draft.acceptanceCriteriaQualityScore)} />
     </div>
   );
 }
@@ -3220,6 +3227,8 @@ function featureDraftsFromEpic(result: EpicRefinement): ChildDraft[] {
     impactedFlows: feature.impacted_flows || [],
     dependencies: feature.dependencies || [],
     risks: feature.risks || [],
+    acceptanceCriteriaCount: feature.acceptance_criteria_count,
+    acceptanceCriteriaQualityScore: feature.acceptance_criteria_quality_score,
     selected: true,
     status: 'preview',
   }));
@@ -3234,19 +3243,81 @@ function acceptanceCriteriaForFeatureDraft(
     : typeof feature.acceptance_criteria === 'string'
       ? [feature.acceptance_criteria]
       : [];
-  if (explicit.filter(Boolean).length > 1) {
-    return explicit.filter(Boolean);
+  const cleanExplicit = explicit.filter((item) => item && !isGenericFeatureCriterion(item));
+  if (cleanExplicit.length >= 4) {
+    return cleanExplicit;
   }
-  const modules = feature.impacted_modules?.slice(0, 2).join(', ') || 'affected modules';
-  const flows = feature.impacted_flows?.slice(0, 2).join(', ') || 'affected flows';
-  const capability = feature.capability ? feature.capability.toLowerCase() : 'capability';
-  const outcome = feature.business_outcome || explicit[0] || epicOutcomes[0] || 'approved epic outcome';
+  return uniqueStrings([...cleanExplicit, ...featureCriteriaFallback(feature, epicOutcomes)]).slice(0, 8);
+}
+
+function isGenericFeatureCriterion(value: string): boolean {
+  const lowered = value.toLowerCase();
   return [
-    `${feature.title} has a reviewable user workflow for the ${capability}.`,
-    `${flows} are covered end to end for ${feature.title}.`,
-    `${modules} integrations are validated for ${feature.title}.`,
-    `Business stakeholders can confirm: ${outcome}`,
+    'workflow is covered',
+    'workflow for the',
+    'covered end to end',
+    'integrations are validated',
+    'stakeholders can confirm',
+    'capability supported',
+  ].some((phrase) => lowered.includes(phrase));
+}
+
+function featureCriteriaFallback(
+  feature: EpicRefinement['recommended_features'][number],
+  epicOutcomes: string[],
+): string[] {
+  const title = feature.title || 'Selected feature';
+  const capability = (feature.capability_category || feature.capability || '').toLowerCase();
+  if (capability.includes('alert')) {
+    return [
+      'Operator receives an alert when a critical event is created.',
+      'Alert displays Device ID, Event Type, Severity, Event Time, and Recommended Action.',
+      'Operator can acknowledge the alert and the acknowledgement is timestamped.',
+      'Duplicate alerts for the same active event are suppressed or grouped.',
+      'Escalation status changes are visible within 60 seconds of update.',
+    ];
+  }
+  if (capability.includes('investigation')) {
+    return [
+      'Operator can open an investigation workspace from an event record.',
+      'Workspace shows related device, telemetry, timeline, owner, and current status.',
+      'Operator can filter investigation records by severity, device, and time range.',
+      'Workspace highlights missing telemetry or stale device status data.',
+      'Investigation notes are saved with user identity and timestamp.',
+    ];
+  }
+  if (capability.includes('analytics') || capability.includes('reliability')) {
+    return [
+      'Operations manager can view trends by device, event type, severity, and time period.',
+      'Trend view shows counts, severity distribution, and response-time changes.',
+      'User can compare current trends against the previous period.',
+      'Trend data can be filtered by asset group and time range.',
+      'System identifies incomplete or delayed analytics data.',
+    ];
+  }
+  if (capability.includes('health')) {
+    return [
+      'Operator can view health status for affected assets.',
+      'Health view displays Device ID, Health Score, Last Telemetry Time, Active Event Count, and Current Status.',
+      'Assets with degraded health are visually separated from healthy assets.',
+      'Operator can open health details showing recent telemetry and related events.',
+      'System identifies stale or missing health data with a clear message.',
+    ];
+  }
+  const outcome = feature.business_outcome || feature.business_value || epicOutcomes[0] || 'the approved business outcome';
+  return [
+    `User can view active ${title} records in a single list.`,
+    `${title} list displays identifier, severity, event time, owner, and current status.`,
+    `User can open ${title} details from the list.`,
+    `${title} updates are visible within 60 seconds of source data change.`,
+    `System displays a clear unavailable-data message when ${title} data cannot be loaded.`,
+    `All ${title} access and update actions are audit logged.`,
+    `The feature supports the business outcome: ${outcome}.`,
   ];
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
 }
 
 function storyDraftsFromFeature(result: FeatureRefinement): ChildDraft[] {

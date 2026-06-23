@@ -2460,6 +2460,14 @@ def _relevance_scores_for_items(capability: str, items: list[str], kind: str) ->
     return [{"name": item, "score": _item_relevance_score(capability, item, kind)} for item in items]
 
 
+def _filter_relevant_items(capability: str, items: list[str], kind: str, threshold: int = 50) -> tuple[list[str], list[dict[str, Any]]]:
+    scored = _relevance_scores_for_items(capability, _unique(items), kind)
+    relevant = [item for item in scored if int(item.get("score") or 0) >= threshold]
+    if not relevant and scored:
+        relevant = [max(scored, key=lambda item: int(item.get("score") or 0))]
+    return [str(item["name"]) for item in relevant], relevant
+
+
 def _item_relevance_score(capability: str, item: str, kind: str) -> int:
     text = item.lower()
     preferred = {
@@ -2556,15 +2564,49 @@ def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modul
             "Status changes are captured with timestamp and user identity.",
             "Response history remains available after the outage is resolved.",
         ],
+        "Asset Health": [
+            "Operator can view device health status for affected assets.",
+            "Health view displays Device ID, Health Score, Last Telemetry Time, Active Fault Count, and Current Status.",
+            "Assets with degraded health are visually separated from healthy assets.",
+            "Operator can open health details showing recent telemetry and related fault events.",
+            "System identifies stale or missing health data with a clear message.",
+            "Health status changes are retained with timestamp and source signal.",
+        ],
+        "Telemetry": [
+            "Operator can view telemetry freshness and quality status for affected devices.",
+            "Telemetry view displays Device ID, Last Reading Time, Signal Quality, Missing Reading Count, and Ingestion Status.",
+            "Telemetry gaps older than the configured threshold are highlighted.",
+            "User can filter telemetry quality by device, severity, and time range.",
+            "System displays a clear message when telemetry is delayed or unavailable.",
+            "Telemetry quality checks are logged with timestamp and evaluated rule.",
+        ],
+        "Firmware Management": [
+            "Operator can view firmware rollout status by device and firmware version.",
+            "Rollout view displays Device ID, Current Version, Target Version, Upgrade Status, and Last Attempt Time.",
+            "Failed or stalled upgrades are visually differentiated from successful upgrades.",
+            "Operator can open rollout details for failure reason and retry eligibility.",
+            "System displays unavailable-device messaging when firmware status cannot be refreshed.",
+            "Firmware status changes are audit logged with user or source identity.",
+        ],
+        "Field Operations": [
+            "Field technician can view assigned response work with device, location, severity, and current status.",
+            "Response details display required action, safety notes, and last known telemetry.",
+            "Technician can update response status and add completion notes.",
+            "Status changes are visible to operations users within 60 seconds.",
+            "System handles offline or unavailable response data with a clear message.",
+            "Field updates are saved with user identity, timestamp, and device reference.",
+        ],
     }
     default_criteria = [
-        f"User can complete the primary {name} workflow without manual data lookup.",
-        f"Screen or API response displays the required fields for {', '.join(flows[:2]) or 'the selected flows'}.",
+        f"User can complete the primary {name} action without manual data lookup.",
+        f"Screen response displays identifier, status, timestamp, owner, and latest update for {name}.",
+        f"User can filter {name} records by status, severity, and time range.",
         f"System handles unavailable data with a clear user-facing message.",
-        f"Relevant actions are saved with user identity and timestamp.",
-        f"Feature behavior is testable against {', '.join(modules[:2]) or 'the affected modules'}.",
+        f"Relevant actions are saved with user identity, timestamp, and affected record.",
+        f"{name} updates are visible within 60 seconds of source data change.",
     ]
-    return _unique(criteria_by_capability.get(capability, default_criteria))
+    criteria, _ = _reject_generic_acceptance_criteria(_unique(criteria_by_capability.get(capability, default_criteria)))
+    return criteria
 
 
 def _feature_dependencies(capability: str, modules: list[str], flows: list[str]) -> list[str]:
@@ -2637,15 +2679,16 @@ def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[s
     if capability not in CAPABILITY_TAXONOMY:
         capability = _infer_capability_from_title(_clean_text(item.get("title")), keywords)
     users = _string_list(item.get("primary_users") or item.get("users")) or _users_for_capability(capability, _users_for_profile(profile))
-    modules = _string_list(item.get("impacted_modules") or item.get("modules")) or _modules_for_capability(capability, keywords, profile)
-    flows = _string_list(item.get("impacted_flows") or item.get("flows")) or _flows_for_capability(capability, keywords, profile)
+    raw_modules = _string_list(item.get("impacted_modules") or item.get("modules")) or _modules_for_capability(capability, keywords, profile)
+    raw_flows = _string_list(item.get("impacted_flows") or item.get("flows")) or _flows_for_capability(capability, keywords, profile)
+    modules, module_relevance = _filter_relevant_items(capability, raw_modules, "module")
+    flows, flow_relevance = _filter_relevant_items(capability, raw_flows, "flow")
     outcome = _clean_text(item.get("business_outcome")) or _business_outcome_for_capability(capability, keywords)
     title = _clean_title(_clean_text(item.get("title")) or _capability_feature_title(capability, keywords, profile))
     applications, application_relevance = _relevant_applications_for_capability(capability, profile)
-    module_relevance = _relevance_scores_for_items(capability, modules, "module")
-    flow_relevance = _relevance_scores_for_items(capability, flows, "flow")
     user_problem = _clean_text(item.get("user_problem")) or _user_problem_for_capability(capability, keywords)
     business_goal = _clean_text(item.get("business_goal")) or _feature_business_goal(title, capability)
+    acceptance_criteria = _feature_acceptance_criteria(title, capability, outcome, modules, flows)
     return {
         "title": title,
         "description": _feature_description(title, capability, outcome, users, modules, flows, profile),
@@ -2665,7 +2708,10 @@ def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[s
         "flow_relevance": flow_relevance,
         "dependencies": _feature_dependencies(capability, modules, flows),
         "risks": _feature_risks(capability),
-        "acceptance_criteria": _feature_acceptance_criteria(title, capability, outcome, modules, flows),
+        "acceptance_criteria": acceptance_criteria,
+        "acceptance_criteria_count": len(acceptance_criteria),
+        "acceptance_criteria_quality_score": _acceptance_criteria_quality_score(acceptance_criteria),
+        "status": "preview",
         "reasoning": _clean_text(item.get("reasoning")) or f"{title} is independently deliverable as a {capability.lower()} capability.",
     }
 

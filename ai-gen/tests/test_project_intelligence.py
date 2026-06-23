@@ -446,6 +446,12 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Delayed telemetry ingestion", critical["risks"])
         self.assertTrue(any("60 seconds" in criterion for criterion in critical["acceptance_criteria"]))
         self.assertNotIn("Firmware (Firmware)", critical["impacted_applications"])
+        self.assertGreaterEqual(critical["acceptance_criteria_count"], 5)
+        self.assertGreaterEqual(critical["acceptance_criteria_quality_score"], 80)
+        self.assertEqual(critical["status"], "preview")
+        self.assertTrue(all(item["score"] >= 50 for item in critical["module_relevance"]))
+        self.assertTrue(all(item["score"] >= 50 for item in critical["flow_relevance"]))
+        self.assertFalse(set(critical["dependencies"]).intersection(set(critical["impacted_modules"])))
 
     def test_epic_feature_descriptions_dedupe_applications_and_avoid_template_copy(self) -> None:
         profile = {
@@ -484,6 +490,49 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertNotIn("Analytics Platform (Analytics), Mobile App (Mobile), Backend (Backend), Firmware (Firmware), Analytics (Analytics)", descriptions)
         self.assertIn("Operator can view all active critical fault events", criteria)
         self.assertIn("Operator receives an alert when a critical fault event is created", criteria)
+
+    def test_feature_enrichment_generates_testable_non_generic_sections(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_description": "Monitor critical fault events, device health, telemetry, and outage response.",
+            "applications": [
+                {"name": "Operations Dashboard", "type": "Web Portal"},
+                {"name": "Mobile Application", "type": "Mobile"},
+                {"name": "Firmware", "type": "Firmware"},
+            ],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Authentication", "Device Management"],
+                "flows": ["Fault Event Review Flow", "Device Registration Flow", "Login Flow"],
+            },
+        }
+
+        refined = ProjectIntelligenceService().refine_epic(
+            {"title": "Improve Critical Fault Monitoring"},
+            profile,
+            options={"force_provider": "deterministic_fallback"},
+        )
+        feature = next(item for item in refined["recommended_features"] if item["title"] == "Critical Fault Detection")
+        description = feature["description"].lower()
+        criteria_text = " ".join(feature["acceptance_criteria"]).lower()
+
+        self.assertIn("Business Goal:", feature["description"])
+        self.assertIn("User Problem:", feature["description"])
+        self.assertIn("Business Value:", feature["description"])
+        self.assertNotIn("focused way to address", description)
+        self.assertNotIn("workflow is covered", criteria_text)
+        self.assertNotIn("integrations are validated", criteria_text)
+        self.assertNotIn("stakeholders can confirm", criteria_text)
+        self.assertIn("Device ID", " ".join(feature["acceptance_criteria"]))
+        self.assertIn("Fault Type", " ".join(feature["acceptance_criteria"]))
+        self.assertIn("Severity", " ".join(feature["acceptance_criteria"]))
+        self.assertIn("Event Time", " ".join(feature["acceptance_criteria"]))
+        self.assertIn("Current Status", " ".join(feature["acceptance_criteria"]))
+        self.assertIn("Telemetry Service", feature["dependencies"])
+        self.assertNotIn("Fault Monitoring", feature["dependencies"])
+        self.assertNotIn("Firmware (Firmware)", feature["impacted_applications"])
+        self.assertNotIn("Authentication", feature["impacted_modules"])
+        self.assertNotIn("Device Registration Flow", feature["impacted_flows"])
 
     def test_feature_story_generation_avoids_generic_fallback_phrases(self) -> None:
         profile = {

@@ -4204,10 +4204,15 @@ function defaultPermissionState(): PermissionState {
 
 async function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
   const user = SDK.getUser();
+  console.log('[DEBUG] resolveCurrentUserPermission started for user:', user.name, 'descriptor:', user.descriptor);
   try {
+    console.log('[DEBUG] Getting GraphRestClient...');
     const graphClient = getClient(GraphRestClient);
+    console.log('[DEBUG] GraphRestClient obtained');
     const groupNames = await collectAzureDevOpsGroupNames(graphClient, user.descriptor);
+    console.log('[DEBUG] Group collection completed:', groupNames);
     const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
+    console.log('[DEBUG] Role mapping result:', mapping);
     return {
       role: mapping.role,
       user_display_name: user.displayName || user.name || '',
@@ -4219,6 +4224,8 @@ async function resolveCurrentUserPermission(projectContext?: AzureProjectContext
       diagnostics: mapping.diagnostics,
     };
   } catch (error) {
+    console.error('[ERROR] Permission resolution failed:', error);
+    console.error('[ERROR] Error details:', error instanceof Error ? { message: error.message, stack: error.stack } : String(error));
     return {
       role: 'viewer',
       user_display_name: user.displayName || user.name || '',

@@ -4204,66 +4204,67 @@ function defaultPermissionState(): PermissionState {
 
 async function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
   const user = SDK.getUser();
-  console.log('[DEBUG] resolveCurrentUserPermission started for user:', user.name, 'descriptor:', user.descriptor);
+  console.log('[DEBUG] resolveCurrentUserPermission started for user:', user.name);
+  console.log('[DEBUG] User object:', { id: user.id, name: user.name, descriptor: user.descriptor });
+
   try {
-    console.log('[DEBUG] Attempting GraphRestClient method...');
-    const graphClient = getClient(GraphRestClient);
-    console.log('[DEBUG] GraphRestClient obtained');
-    const groupNames = await collectAzureDevOpsGroupNames(graphClient, user.descriptor);
-    console.log('[DEBUG] Group collection completed:', groupNames);
-    if (groupNames.length === 0) {
-      console.log('[DEBUG] No groups found via GraphRestClient, trying REST API fallback...');
-      const fallbackGroups = await collectGroupsViaRestApi();
-      if (fallbackGroups.length > 0) {
-        console.log('[DEBUG] Groups found via REST API:', fallbackGroups);
-        const mapping = mapGroupsToAIGenRole(fallbackGroups, projectContext?.name || '');
+    console.log('[DEBUG] Attempting REST API method (GraphRestClient requires descriptor)...');
+    const fallbackGroups = await collectGroupsViaRestApi();
+    if (fallbackGroups.length > 0) {
+      console.log('[DEBUG] Groups found via REST API:', fallbackGroups);
+      const mapping = mapGroupsToAIGenRole(fallbackGroups, projectContext?.name || '');
+      return {
+        role: mapping.role,
+        user_display_name: user.displayName || user.name || '',
+        user_name: user.name || '',
+        mapped_group: mapping.group,
+        azure_groups: fallbackGroups,
+        status: 'resolved',
+        warning: undefined,
+        diagnostics: mapping.diagnostics,
+      };
+    }
+
+    // If REST API returns no groups, try GraphRestClient if descriptor is available
+    if (user.descriptor) {
+      console.log('[DEBUG] Attempting GraphRestClient method...');
+      const graphClient = getClient(GraphRestClient);
+      console.log('[DEBUG] GraphRestClient obtained');
+      const groupNames = await collectAzureDevOpsGroupNames(graphClient, user.descriptor);
+      console.log('[DEBUG] Group collection completed:', groupNames);
+      if (groupNames.length > 0) {
+        const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
+        console.log('[DEBUG] Role mapping result:', mapping);
         return {
           role: mapping.role,
           user_display_name: user.displayName || user.name || '',
           user_name: user.name || '',
           mapped_group: mapping.group,
-          azure_groups: fallbackGroups,
+          azure_groups: groupNames,
           status: 'resolved',
-          warning: undefined,
+          warning: groupNames.length ? undefined : 'No Azure DevOps security groups were visible. Viewer access is applied.',
           diagnostics: mapping.diagnostics,
         };
       }
+    } else {
+      console.warn('[WARN] User descriptor not available, GraphRestClient method skipped');
     }
-    const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
-    console.log('[DEBUG] Role mapping result:', mapping);
+
+    // If we got here, REST API returned no groups and GraphRestClient either failed or wasn't available
+    console.error('[ERROR] No groups found from any method');
     return {
-      role: mapping.role,
+      role: 'viewer',
       user_display_name: user.displayName || user.name || '',
       user_name: user.name || '',
-      mapped_group: mapping.group,
-      azure_groups: groupNames,
-      status: 'resolved',
-      warning: groupNames.length ? undefined : 'No Azure DevOps security groups were visible. Viewer access is applied.',
-      diagnostics: mapping.diagnostics,
+      mapped_group: 'Readers',
+      azure_groups: [],
+      status: 'fallback',
+      warning: 'Could not resolve Azure DevOps group membership. Viewer access is applied.',
     };
   } catch (error) {
     console.error('[ERROR] Permission resolution failed:', error);
     console.error('[ERROR] Error details:', error instanceof Error ? { message: error.message, stack: error.stack } : String(error));
-    console.log('[DEBUG] Trying REST API fallback...');
-    try {
-      const fallbackGroups = await collectGroupsViaRestApi();
-      if (fallbackGroups.length > 0) {
-        console.log('[DEBUG] Groups found via REST API fallback:', fallbackGroups);
-        const mapping = mapGroupsToAIGenRole(fallbackGroups, projectContext?.name || '');
-        return {
-          role: mapping.role,
-          user_display_name: user.displayName || user.name || '',
-          user_name: user.name || '',
-          mapped_group: mapping.group,
-          azure_groups: fallbackGroups,
-          status: 'resolved',
-          warning: undefined,
-          diagnostics: mapping.diagnostics,
-        };
-      }
-    } catch (fallbackError) {
-      console.error('[ERROR] REST API fallback also failed:', fallbackError);
-    }
+
     return {
       role: 'viewer',
       user_display_name: user.displayName || user.name || '',

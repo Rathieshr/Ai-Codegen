@@ -16,6 +16,7 @@ from backend.project_intelligence import (
     _project_phi_prompt_attempts,
     _project_phi_prompt_with_diagnostics,
 )
+from backend.project_graph import ProjectKnowledgeGraphService
 
 
 class HealthyPhiProvider:
@@ -227,6 +228,88 @@ class ProjectIntelligenceTests(unittest.TestCase):
 
         self.assertEqual(linedefender["ado_project"], "GridHub")
         self.assertEqual(smart_meter["ado_project"], "Aclara")
+
+    def test_project_session_persists_last_workspace_and_work_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.save_session({
+                "active_project": "LineDefender",
+                "last_active_workspace": "execution",
+                "last_work_item_id": 109,
+                "last_work_item_type": "User Story",
+                "last_repository": "LineDefender",
+                "last_branch": "main",
+                "knowledge_version": "abc123",
+            })
+            loaded = service.get_session()
+
+        self.assertTrue(loaded["exists"])
+        self.assertEqual(loaded["session"]["last_active_workspace"], "execution")
+        self.assertEqual(loaded["session"]["last_work_item_id"], 109)
+        self.assertEqual(loaded["session"]["last_repository"], "LineDefender")
+
+    def test_knowledge_cache_refresh_and_status_ready(self) -> None:
+        documents = {
+            "README.md": "LineDefender utility monitoring platform.",
+            "modules.md": "Modules: Authentication, Telemetry, Fault Monitoring.",
+            "flows.md": "Flows: Fault Event Review, Outage Investigation.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            refreshed = service.refresh_knowledge_cache(
+                documents,
+                repository={"repository_id": "repo-ld", "repository_name": "LineDefender", "branch": "main"},
+                profile={"project_id": "linedefender", "project_name": "LineDefender"},
+            )
+            status = service.knowledge_cache_status(project_id="linedefender", repository_id="repo-ld", branch="main")
+            cache = service.get_knowledge_cache()
+
+        self.assertTrue(refreshed["success"])
+        self.assertEqual(status["knowledge_status"], "ready")
+        self.assertTrue(cache["exists"])
+        self.assertIn("Fault Monitoring", cache["cache"]["modules"])
+        self.assertEqual(cache["repository"], "LineDefender")
+
+    def test_document_hash_change_marks_refresh_available(self) -> None:
+        documents = {"README.md": "LineDefender fault monitoring platform."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.refresh_knowledge_cache(documents, repository={"repository_id": "repo-ld", "repository_name": "LineDefender", "branch": "main"})
+            changed = service.knowledge_cache_status(
+                repository_id="repo-ld",
+                branch="main",
+                document_hashes={"README.md": "different-hash"},
+            )
+
+        self.assertEqual(changed["knowledge_status"], "refresh_available")
+        self.assertEqual(changed["changed_files"], ["README.md"])
+
+    def test_branch_and_repository_change_invalidate_cache(self) -> None:
+        documents = {"README.md": "LineDefender fault monitoring platform."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.refresh_knowledge_cache(documents, repository={"repository_id": "repo-ld", "repository_name": "LineDefender", "branch": "main"})
+            branch_changed = service.knowledge_cache_status(repository_id="repo-ld", branch="release")
+            repo_changed = service.knowledge_cache_status(repository_id="repo-other", branch="main")
+
+        self.assertEqual(branch_changed["knowledge_status"], "stale")
+        self.assertIn("branch changed", branch_changed["invalidation_reasons"])
+        self.assertEqual(repo_changed["knowledge_status"], "stale")
+        self.assertIn("repository changed", repo_changed["invalidation_reasons"])
+
+    def test_refresh_failure_preserves_previous_knowledge_cache(self) -> None:
+        documents = {"README.md": "LineDefender fault monitoring platform."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.refresh_knowledge_cache(documents, repository={"repository_id": "repo-ld", "repository_name": "LineDefender", "branch": "main"})
+            with patch.object(service, "analyze_repository_documents", side_effect=RuntimeError("analysis failed")):
+                failed = service.refresh_knowledge_cache({"README.md": "changed"}, repository={"repository_id": "repo-ld", "repository_name": "LineDefender", "branch": "main"})
+            cache = service.get_knowledge_cache()
+
+        self.assertFalse(failed["success"])
+        self.assertIn("Existing knowledge is still available", failed["message"])
+        self.assertTrue(cache["exists"])
+        self.assertEqual(cache["knowledge_status"], "ready")
 
     def test_generate_story_prompts_returns_ui_dev_and_qa(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
@@ -631,7 +714,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             ],
         }
 
-        suite = ProjectIntelligenceService().generate_qa_test_cases(story, profile)
+        suite = ProjectIntelligenceService().generate_qa_test_cases(story, profile, options={"force_provider": "deterministic_fallback"})
         cases = suite["test_suite"]["test_cases"]
         categories = {case["category"] for case in cases}
         titles = " ".join(case["title"] for case in cases)
@@ -659,6 +742,69 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             self.assertTrue(case["priority"])
             self.assertTrue(case["risk_level"])
 
+    def test_qa_intelligence_uses_phi_when_healthy_and_enabled(self) -> None:
+        provider = HealthyPhiProvider(
+            {
+                "test_suite": {
+                    "title": "Phi QA Suite",
+                    "test_cases": [
+                        {
+                            "category": "Positive Tests",
+                            "title": "Open fault event details from Phi",
+                            "preconditions": ["A critical fault event exists."],
+                            "steps": ["Open the event list.", "Select the critical event."],
+                            "expected_result": "Fault event details are displayed.",
+                            "priority": "High",
+                            "risk_level": "High",
+                        }
+                    ],
+                },
+                "coverage_summary": {
+                    "acceptance_criteria_count": 1,
+                    "covered_acceptance_criteria_count": 1,
+                    "coverage_percent": 100,
+                    "uncovered_acceptance_criteria": [],
+                },
+                "coverage_score": 90,
+                "coverage_breakdown": {
+                    "positive_coverage": 1,
+                    "negative_coverage": 0,
+                    "boundary_coverage": 0,
+                    "permission_coverage": 0,
+                    "error_coverage": 0,
+                    "regression_coverage": 0,
+                },
+                "generated_test_count": 1,
+                "coverage_gaps": [],
+            }
+        )
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review Flow"],
+            },
+        }
+        story = {
+            "title": "Open Critical Fault Event Details",
+            "description": "As an operator, I want to open a critical fault event.",
+            "acceptance_criteria": ["Operator can open a critical fault event from the event list."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            suite = ProjectIntelligenceService().generate_qa_test_cases(story, profile)
+
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(suite["provider_used"], "azure_phi")
+        self.assertEqual(suite["source"], "azure_phi")
+        self.assertEqual(suite["phi_status"], "success")
+        self.assertFalse(suite["fallback_used"])
+        self.assertEqual(suite["test_suite"]["test_cases"][0]["title"], "Open fault event details from Phi")
+
     def test_qa_intelligence_identifies_acceptance_coverage_gaps(self) -> None:
         profile = {
             "project_name": "LineDefender Smart Monitoring Platform",
@@ -680,7 +826,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             ],
         }
 
-        suite = ProjectIntelligenceService().generate_qa_test_cases(story, profile)
+        suite = ProjectIntelligenceService().generate_qa_test_cases(story, profile, options={"force_provider": "deterministic_fallback"})
 
         self.assertLess(suite["coverage_summary"]["coverage_percent"], 100)
         self.assertTrue(suite["coverage_gaps"])
@@ -1797,6 +1943,365 @@ Architecture Notes: Backend telemetry APIs publish events to the operations port
         self.assertIn("Outage Investigation Workspace", titles)
         self.assertNotIn("Feature Slice 1", titles)
         self.assertNotIn("Fault Event Monitoring", titles)
+
+    def test_artifact_lifecycle_saves_approves_and_reuses_locked_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            source_item = {"id": "story-1", "type": "Story", "title": "Display fault details"}
+            artifact = service.save_artifact({
+                "artifact_type": "Execution Package",
+                "title": "Fault details execution package",
+                "payload": {"dev_prompt": "Build the fault details view."},
+                "fingerprint": "fp_story_1",
+                "source_item": source_item,
+                "created_by": "Rathiesh",
+            })
+
+            self.assertEqual(artifact["state"], "draft")
+            reusable_before_approval = service.find_reusable_artifact("Execution Package", "fp_story_1", "story-1")
+            self.assertFalse(reusable_before_approval["reusable"])
+            self.assertEqual(reusable_before_approval["status"], "refresh_required")
+
+            approved = service.approve_artifact(artifact["artifact_id"], "Approver")
+            self.assertEqual(approved["state"], "locked")
+            self.assertEqual(approved["approved_by"], "Approver")
+
+            reusable = service.find_reusable_artifact("Execution Package", "fp_story_1", "story-1")
+            self.assertTrue(reusable["reusable"])
+            self.assertEqual(reusable["artifact"]["artifact_id"], artifact["artifact_id"])
+
+    def test_artifact_fingerprint_change_marks_refresh_required(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            source_item = {"id": "story-2", "type": "Story", "title": "Review outage"}
+            saved = service.save_artifact({
+                "artifact_type": "Test Suite",
+                "title": "Outage test suite",
+                "payload": {"test_cases": []},
+                "fingerprint": "fp_old",
+                "source_item": source_item,
+            })
+            service.approve_artifact(saved["artifact_id"], "QA Lead")
+
+            reusable = service.find_reusable_artifact("Test Suite", "fp_new", "story-2")
+            self.assertFalse(reusable["reusable"])
+            self.assertEqual(reusable["status"], "refresh_required")
+            self.assertEqual(reusable["artifact"]["artifact_id"], saved["artifact_id"])
+
+    def test_archived_artifact_is_not_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            saved = service.save_artifact({
+                "artifact_type": "Dev Prompt",
+                "title": "Telemetry prompt",
+                "payload": {"prompt": "Implement telemetry."},
+                "fingerprint": "fp_prompt",
+                "source_item": {"id": "task-1", "type": "Task", "title": "Telemetry"},
+            })
+            service.approve_artifact(saved["artifact_id"], "Dev Lead")
+            service.archive_artifact(saved["artifact_id"])
+
+            reusable = service.find_reusable_artifact("Dev Prompt", "fp_prompt", "task-1")
+            self.assertFalse(reusable["reusable"])
+            self.assertEqual(reusable["status"], "refresh_required")
+            self.assertEqual(reusable["artifact"]["state"], "archived")
+
+    def test_artifact_versions_increment_per_type_and_source_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            source_item = {"id": "feature-1", "type": "Feature", "title": "Fault monitoring"}
+            first = service.save_artifact({
+                "artifact_type": "Story",
+                "title": "Generated stories v1",
+                "payload": [{"title": "Open fault list"}],
+                "fingerprint": "fp_v1",
+                "source_item": source_item,
+            })
+            second = service.save_artifact({
+                "artifact_type": "Story",
+                "title": "Generated stories v2",
+                "payload": [{"title": "Open critical fault"}],
+                "fingerprint": "fp_v2",
+                "source_item": source_item,
+            })
+
+            self.assertEqual(first["version"], 1)
+            self.assertEqual(second["version"], 2)
+
+    def test_knowledge_graph_persists_epic_feature_story_task_and_test_relationships(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "project": {"id": "line-defender", "title": "LineDefender"},
+                "epic": {"id": "epic-1", "title": "Fault Event Monitoring"},
+                "feature": {"id": "feature-1", "title": "Critical Fault Detection"},
+                "story": {
+                    "id": "story-1",
+                    "title": "Open Critical Fault Event Details",
+                    "acceptance_criteria": [
+                        "Operator can open a critical fault event.",
+                        "Unauthorized users cannot view fault details.",
+                    ],
+                    "affected_modules": ["Fault Monitoring"],
+                    "affected_flows": ["Fault Event Review Flow"],
+                },
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Add fault detail API",
+                        "acceptance_criteria": ["Operator can open a critical fault event."],
+                    }
+                ],
+                "test_cases": [
+                    {
+                        "test_id": "TC001",
+                        "title": "Open valid critical fault event",
+                        "covers_acceptance_criteria": [1],
+                    }
+                ],
+                "execution_package": {"artifact_id": "exec-1", "title": "Execution Package", "version": 3},
+            })
+
+            summary = graph.summary()
+            self.assertEqual(summary["chain"]["epics"], 1)
+            self.assertEqual(summary["chain"]["features"], 1)
+            self.assertEqual(summary["chain"]["stories"], 1)
+            self.assertEqual(summary["chain"]["tasks"], 1)
+            self.assertEqual(summary["chain"]["tests"], 1)
+            self.assertEqual(summary["chain"]["execution_packages"], 1)
+
+            feature_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Feature")
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+            self.assertEqual(graph.query("stories_for_feature", feature_node["id"])["stories"][0]["title"], "Open Critical Fault Event Details")
+            self.assertEqual(graph.query("tasks_for_story", story_node["id"])["tasks"][0]["title"], "Add fault detail API")
+            self.assertEqual(graph.query("tests_for_story", story_node["id"])["test_cases"][0]["title"], "Open valid critical fault event")
+
+    def test_knowledge_graph_calculates_acceptance_criteria_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {
+                    "id": "story-coverage",
+                    "title": "Review outage details",
+                    "acceptance_criteria": [
+                        "Operator can view outage details.",
+                        "Operator can filter outage events.",
+                    ],
+                },
+                "test_cases": [
+                    {"test_id": "TC001", "title": "View outage details", "covers_acceptance_criteria": [1]},
+                ],
+            })
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+
+            coverage = graph.coverage_summary(story_node["id"])
+            uncovered = graph.uncovered_acceptance_criteria(story_node["id"])
+
+            self.assertEqual(coverage["acceptance_criteria_count"], 2)
+            self.assertEqual(coverage["covered_acceptance_criteria_count"], 1)
+            self.assertEqual(coverage["coverage_percent"], 50)
+            self.assertEqual(len(uncovered), 1)
+            self.assertIn("filter outage events", uncovered[0]["title"])
+
+    def test_knowledge_graph_impact_query_uses_persisted_relationships(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {
+                    "id": "story-impact",
+                    "title": "Display fault timeline",
+                    "acceptance_criteria": ["Operator can view the fault event timeline."],
+                },
+                "tasks": [{"id": "task-impact", "title": "Build timeline component"}],
+                "test_cases": [{"test_id": "TC010", "title": "Open fault timeline", "covers_acceptance_criteria": [1]}],
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review Flow"],
+                "components": ["Operations Dashboard"],
+                "execution_package": {"artifact_id": "exec-impact", "title": "Timeline execution package"},
+            })
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+
+            impact = graph.query("impact", story_node["id"])
+            self.assertEqual([item["title"] for item in impact["modules"]], ["Fault Monitoring", "Telemetry"])
+            self.assertEqual(impact["flows"][0]["title"], "Fault Event Review Flow")
+            self.assertEqual(impact["components"][0]["title"], "Operations Dashboard")
+            self.assertEqual(impact["tasks"][0]["title"], "Build timeline component")
+            self.assertEqual(impact["test_cases"][0]["title"], "Open fault timeline")
+            self.assertEqual(impact["execution_packages"][0]["title"], "Timeline execution package")
+
+    def test_knowledge_graph_incremental_updates_do_not_duplicate_relationships(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            payload = {
+                "feature": {"id": "feature-incremental", "title": "Operator Alerting"},
+                "story": {"id": "story-incremental", "title": "Receive urgent fault alert"},
+            }
+            first = graph.ingest(payload)
+            second = graph.ingest(payload)
+
+            self.assertGreater(first["nodes_added"], 0)
+            self.assertEqual(second["relationships_added"], 0)
+            self.assertEqual(graph.summary()["chain"]["features"], 1)
+            self.assertEqual(graph.summary()["chain"]["stories"], 1)
+
+    def test_coverage_report_calculates_acceptance_criteria_task_test_and_execution_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {
+                    "id": "story-score",
+                    "title": "Open fault event details",
+                    "acceptance_criteria": [
+                        "Operator can open a critical fault event.",
+                        "Unauthorized users cannot view fault details.",
+                    ],
+                },
+                "tasks": [
+                    {"id": "task-score-1", "title": "Build detail API", "acceptance_criteria": ["Operator can open a critical fault event."]},
+                    {"id": "task-score-2", "title": "Add authorization guard", "acceptance_criteria": ["Unauthorized users cannot view fault details."]},
+                ],
+                "test_cases": [
+                    {"test_id": "TC001", "title": "Open valid critical fault event", "covers_acceptance_criteria": [1]},
+                    {"test_id": "TC002", "title": "Reject unauthorized user", "covers_acceptance_criteria": [2]},
+                ],
+                "execution_package": {"artifact_id": "exec-score", "title": "Fault detail execution package"},
+            })
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+
+            report = graph.coverage_report(story_node["id"])["coverage_report"]
+            story = report["story_coverage"][0]
+
+            self.assertEqual(story["acceptance_criteria_score"], 100)
+            self.assertEqual(story["task_coverage_score"], 100)
+            self.assertEqual(story["test_coverage_score"], 100)
+            self.assertEqual(story["execution_coverage_score"], 100)
+            self.assertEqual(story["quality_gate"], "pass")
+
+    def test_story_coverage_reports_partial_acceptance_criteria_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {
+                    "id": "story-partial",
+                    "title": "Filter fault events",
+                    "acceptance_criteria": ["Operator can filter fault events."],
+                },
+                "tasks": [
+                    {"id": "task-partial", "title": "Build filter task", "acceptance_criteria": ["Operator can filter fault events."]},
+                ],
+            })
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+
+            criterion = graph.coverage_report(story_node["id"])["coverage_report"]["acceptance_criteria_coverage"][0]
+            self.assertEqual(criterion["status"], "Partially Covered")
+            self.assertEqual(len(criterion["covered_by_tasks"]), 1)
+            self.assertEqual(len(criterion["covered_by_tests"]), 0)
+
+    def test_feature_coverage_calculates_decomposition_and_rollup_score(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            for index in range(1, 5):
+                graph.ingest({
+                    "feature": {"id": "feature-rollup", "title": "Critical Fault Detection"},
+                    "story": {
+                        "id": f"story-rollup-{index}",
+                        "title": f"Fault story {index}",
+                        "acceptance_criteria": [f"Criterion {index} is satisfied."],
+                    },
+                    "tasks": [{"id": f"task-rollup-{index}", "title": f"Task {index}", "acceptance_criteria": [f"Criterion {index} is satisfied."]}],
+                    "test_cases": [{"test_id": f"TC{index:03d}", "title": f"Test {index}", "covers_acceptance_criteria": [1]}],
+                    "execution_package": {"artifact_id": f"exec-rollup-{index}", "title": f"Execution {index}"},
+                })
+            feature_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Feature")
+
+            feature = graph.coverage_report(feature_node["id"])["coverage_report"]["feature_coverage"][0]
+            self.assertEqual(feature["story_count"], 4)
+            self.assertEqual(feature["story_completeness_score"], 100)
+            self.assertEqual(feature["quality_gate"], "pass")
+
+    def test_gap_detection_finds_missing_tests_and_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {
+                    "id": "story-gaps",
+                    "title": "Review missing telemetry",
+                    "acceptance_criteria": ["Operator can see missing telemetry status."],
+                },
+            })
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+
+            gaps = graph.gap_report(story_node["id"])["gaps"]
+            gap_types = {gap["type"] for gap in gaps}
+            self.assertIn("story_no_tasks", gap_types)
+            self.assertIn("story_no_tests", gap_types)
+            self.assertIn("acceptance_criteria_without_tasks", gap_types)
+            self.assertIn("acceptance_criteria_without_tests", gap_types)
+
+    def test_gap_detection_finds_feature_weak_decomposition(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "feature": {"id": "feature-thin", "title": "Operator Alerting"},
+                "story": {"id": "story-thin", "title": "Receive urgent alert"},
+            })
+            feature_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Feature")
+
+            gaps = graph.gap_report(feature_node["id"])["gaps"]
+            self.assertIn("feature_weak_decomposition", {gap["type"] for gap in gaps})
+
+    def test_regression_impact_calculation_returns_downstream_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {
+                    "id": "story-regression",
+                    "title": "Show outage timeline",
+                    "acceptance_criteria": ["Operator can show outage timeline."],
+                },
+                "tasks": [{"id": "task-regression", "title": "Build outage timeline"}],
+                "test_cases": [{"test_id": "TC100", "title": "Open outage timeline", "covers_acceptance_criteria": [1]}],
+                "modules": ["Fault Monitoring"],
+                "flows": ["Outage Investigation Flow"],
+                "execution_package": {"artifact_id": "exec-regression", "title": "Outage execution package"},
+            })
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+
+            impact = graph.regression_impact(story_node["id"])
+            self.assertTrue(impact["regression_required"])
+            self.assertEqual(impact["regression_scope"]["tasks"][0]["title"], "Build outage timeline")
+            self.assertEqual(impact["regression_scope"]["test_cases"][0]["title"], "Open outage timeline")
+            self.assertEqual(impact["regression_scope"]["modules"][0]["title"], "Fault Monitoring")
+
+    def test_project_coverage_score_aggregates_story_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {"id": "story-covered", "title": "Covered story", "acceptance_criteria": ["Covered AC"]},
+                "tasks": [{"id": "task-covered", "title": "Covered task", "acceptance_criteria": ["Covered AC"]}],
+                "test_cases": [{"test_id": "TC200", "title": "Covered test", "covers_acceptance_criteria": [1]}],
+                "execution_package": {"artifact_id": "exec-covered", "title": "Covered execution"},
+            })
+            graph.ingest({
+                "story": {"id": "story-uncovered", "title": "Uncovered story", "acceptance_criteria": ["Uncovered AC"]},
+            })
+
+            report = graph.coverage_report()["coverage_report"]
+            self.assertGreater(report["overall_project_coverage"], 0)
+            self.assertLess(report["overall_project_coverage"], 100)
+
+    def test_quality_gate_fails_when_story_has_no_tasks_tests_or_low_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            graph = ProjectKnowledgeGraphService()
+            graph.ingest({
+                "story": {"id": "story-gate", "title": "Gate story", "acceptance_criteria": ["Gate AC"]},
+            })
+            story_node = next(node for node in graph.get_graph()["nodes"] if node["type"] == "Story")
+
+            gate = graph.quality_gate(story_node["id"], threshold=80)
+            self.assertEqual(gate["status"], "fail")
+            self.assertTrue(any("no implementation tasks" in reason for reason in gate["reasons"]))
+            self.assertTrue(any("no QA test cases" in reason for reason in gate["reasons"]))
 
 
 if __name__ == "__main__":

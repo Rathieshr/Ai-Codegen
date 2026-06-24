@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,7 @@ PROJECT_EXECUTION_OPERATIONS = {
     "build_ui_prompt",
     "build_qa_prompt",
     "build_copilot_context",
+    "generate_qa_test_cases",
 }
 PROJECT_EXECUTION_BUDGET_ATTEMPTS = [
     {"draft_budget": 220, "context_budget": 350},
@@ -134,6 +137,9 @@ class ProjectIntelligenceService:
         self._profile_dir = data_dir / "project_intelligence"
         self._profile_path = self._profile_dir / "profile.json"
         self._profiles_dir = self._profile_dir / "profiles"
+        self._session_path = self._profile_dir / "session.json"
+        self._knowledge_cache_path = self._profile_dir / "knowledge_cache.json"
+        self._artifacts_path = self._profile_dir / "artifacts.json"
         self._profile_path.parent.mkdir(parents=True, exist_ok=True)
         self._profiles_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,6 +159,269 @@ class ProjectIntelligenceService:
             profile_path = self._profiles_dir / f"{_safe_profile_id(normalized['project_id'])}.json"
             profile_path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
         return normalized
+
+    def get_session(self) -> dict[str, Any]:
+        if not self._session_path.exists():
+            return {"exists": False, "session": {}}
+        try:
+            session = json.loads(self._session_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"exists": False, "session": {}}
+        return {"exists": True, "session": _normalize_project_session(session)}
+
+    def save_session(self, session: dict[str, Any]) -> dict[str, Any]:
+        normalized = _normalize_project_session(session)
+        normalized["saved_at"] = _now_iso()
+        self._session_path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
+        return {"exists": True, "session": normalized}
+
+    def get_knowledge_cache(self) -> dict[str, Any]:
+        cache = self._read_knowledge_cache()
+        if not cache:
+            return {"exists": False, "cache": {}, **self.knowledge_cache_status()}
+        return {"exists": True, "cache": cache, **self.knowledge_cache_status()}
+
+    def knowledge_cache_status(
+        self,
+        project_id: str = "",
+        repository_id: str = "",
+        branch: str = "",
+        document_hashes: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        cache = self._read_knowledge_cache()
+        profile = self.get_profile()
+        if not cache:
+            mapping = self.resolve_connector_mapping(profile=profile)
+            return _knowledge_status_payload(
+                profile=profile,
+                mapping=mapping,
+                status="missing",
+                last_analyzed_at="",
+                source_files=[],
+                document_hashes={},
+                changed_files=[],
+                invalidation_reasons=["cached knowledge is missing"],
+            )
+        mapping = cache.get("repository_mapping") if isinstance(cache.get("repository_mapping"), dict) else {}
+        expected_project_id = _clean_text(project_id) or _clean_text(profile.get("project_id")) or _clean_text(cache.get("project_id"))
+        expected_repository_id = _clean_text(repository_id) or _clean_text(profile.get("repository_connection", {}).get("repository_id")) or _clean_text(mapping.get("repository_id"))
+        expected_branch = _clean_text(branch) or _clean_text(profile.get("repository_connection", {}).get("branch")) or _clean_text(mapping.get("branch"))
+        cached_hashes = cache.get("document_hashes") if isinstance(cache.get("document_hashes"), dict) else {}
+        changed_files = []
+        for path, current_hash in (document_hashes or {}).items():
+            cached_hash = cached_hashes.get(path)
+            if cached_hash and cached_hash != current_hash:
+                changed_files.append(path)
+        reasons = []
+        if expected_project_id and _clean_text(cache.get("project_id")) and expected_project_id != _clean_text(cache.get("project_id")):
+            reasons.append("project id changed")
+        if expected_repository_id and _clean_text(mapping.get("repository_id")) and expected_repository_id != _clean_text(mapping.get("repository_id")):
+            reasons.append("repository changed")
+        if expected_branch and _clean_text(mapping.get("branch")) and expected_branch != _clean_text(mapping.get("branch")):
+            reasons.append("branch changed")
+        if cache.get("schema_version") != _knowledge_schema_version():
+            reasons.append("knowledge schema version changed")
+        if changed_files:
+            reasons.append("source document hash changed")
+        status = "ready"
+        if reasons:
+            status = "refresh_available" if changed_files and len(reasons) == 1 else "stale"
+        return _knowledge_status_payload(
+            profile=cache.get("profile") if isinstance(cache.get("profile"), dict) else profile,
+            mapping=mapping,
+            status=status,
+            last_analyzed_at=_clean_text(cache.get("last_analyzed_at")),
+            source_files=_string_list(cache.get("source_files")),
+            document_hashes=cached_hashes,
+            changed_files=changed_files,
+            invalidation_reasons=reasons,
+        )
+
+    def refresh_knowledge_cache(
+        self,
+        documents: dict[str, str] | None = None,
+        repository: dict[str, Any] | None = None,
+        profile: dict[str, Any] | None = None,
+        selected_files: list[str] | None = None,
+        connector_mapping: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        previous = self._read_knowledge_cache()
+        try:
+            analyzed = self.analyze_repository_documents(documents, repository, profile, selected_files, connector_mapping)
+            mapping = self.resolve_connector_mapping(connector_mapping or (repository or {}).get("connector_mapping"), analyzed)
+            document_hashes = _document_hashes(documents or {})
+            cache = {
+                "schema_version": _knowledge_schema_version(),
+                "project_id": _clean_text(analyzed.get("project_id")),
+                "project_name": _clean_text(analyzed.get("project_name")),
+                "profile": _normalize_profile(analyzed),
+                "repository_mapping": mapping,
+                "repository": mapping.get("repository_name") or analyzed["repository_connection"]["repository_name"],
+                "branch": mapping.get("branch") or analyzed["repository_connection"]["branch"],
+                "knowledge_version": _knowledge_version(analyzed, document_hashes),
+                "last_analyzed_at": _now_iso(),
+                "source_files": _string_list(analyzed.get("source_files")) or analyzed["knowledge_registry"]["source_files"],
+                "document_hashes": document_hashes,
+                "document_status": [
+                    {"path": path, "hash": digest, "lastAnalyzedAt": _now_iso()}
+                    for path, digest in sorted(document_hashes.items())
+                ],
+                "knowledge_registry": analyzed["knowledge_registry"],
+                "architecture_summary": _clean_text(analyzed.get("architecture_summary")) or " ".join(analyzed["knowledge_registry"]["architecture_notes"][:3]),
+                "modules": analyzed["knowledge_registry"]["modules"],
+                "flows": analyzed["knowledge_registry"]["flows"],
+                "components": analyzed["knowledge_registry"]["components"],
+                "standards": analyzed["knowledge_registry"]["standards"],
+                "generated_project_summary": _project_summary(analyzed),
+            }
+            self._knowledge_cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+            self.save_session({
+                "active_project": analyzed.get("project_name") or mapping.get("ado_project"),
+                "project_id": analyzed.get("project_id"),
+                "last_repository": mapping.get("repository_name"),
+                "last_repository_id": mapping.get("repository_id"),
+                "last_branch": mapping.get("branch"),
+                "last_analysis_timestamp": cache["last_analyzed_at"],
+                "knowledge_version": cache["knowledge_version"],
+            })
+            try:
+                from backend.project_graph import project_knowledge_graph_service
+
+                project_knowledge_graph_service.ingest({
+                    "project": {
+                        "id": analyzed.get("project_id"),
+                        "title": analyzed.get("project_name") or mapping.get("ado_project"),
+                        "description": analyzed.get("project_description"),
+                    },
+                    "modules": analyzed["knowledge_registry"]["modules"],
+                    "flows": analyzed["knowledge_registry"]["flows"],
+                    "components": analyzed["knowledge_registry"]["components"],
+                    "repository_documents": [
+                        {"title": path, "path": path}
+                        for path in cache["source_files"]
+                    ],
+                })
+            except Exception as error:  # pragma: no cover - graph updates should not break refresh
+                logger.warning("project graph refresh ingest failed: %s", error)
+            return {"success": True, "cache": cache, **self.knowledge_cache_status()}
+        except Exception as error:  # pragma: no cover - defensive; tests exercise preservation behavior
+            return {
+                "success": False,
+                "error": str(error),
+                "message": "Refresh failed. Existing knowledge is still available.",
+                "cache": previous or {},
+                **self.knowledge_cache_status(),
+            }
+
+    def list_artifacts(
+        self,
+        artifact_type: str = "",
+        source_item_id: str = "",
+        state: str = "",
+        fingerprint: str = "",
+    ) -> dict[str, Any]:
+        artifacts = self._read_artifacts()
+        filtered = [
+            artifact for artifact in artifacts
+            if (not artifact_type or artifact["artifact_type"] == artifact_type)
+            and (not source_item_id or artifact["source_item"].get("id") == str(source_item_id))
+            and (not state or artifact["state"] == state)
+            and (not fingerprint or artifact["fingerprint"] == fingerprint)
+        ]
+        filtered.sort(key=lambda item: (item.get("created_on", ""), item.get("version", 0)), reverse=True)
+        return {"artifacts": filtered, "count": len(filtered)}
+
+    def find_reusable_artifact(self, artifact_type: str, fingerprint: str, source_item_id: str = "") -> dict[str, Any]:
+        candidates = self.list_artifacts(artifact_type, source_item_id, "", fingerprint)["artifacts"]
+        reusable = [item for item in candidates if item.get("state") in {"approved", "locked"}]
+        if reusable:
+            return {"reusable": True, "artifact": reusable[0], "status": "reusable"}
+        stale = self.list_artifacts(artifact_type, source_item_id)["artifacts"]
+        return {
+            "reusable": False,
+            "artifact": stale[0] if stale else {},
+            "status": "refresh_required" if stale else "missing",
+        }
+
+    def save_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
+        artifacts = self._read_artifacts()
+        artifact_type = _clean_text(artifact.get("artifact_type") or artifact.get("type")) or "Artifact"
+        source_item = artifact.get("source_item") if isinstance(artifact.get("source_item"), dict) else {}
+        source_item_id = _clean_text(source_item.get("id"))
+        fingerprint = _clean_text(artifact.get("fingerprint")) or _artifact_fingerprint(
+            artifact_type,
+            source_item,
+            artifact.get("payload"),
+        )
+        existing_versions = [
+            item.get("version", 0)
+            for item in artifacts
+            if item.get("artifact_type") == artifact_type
+            and item.get("source_item", {}).get("id") == source_item_id
+        ]
+        now = _now_iso()
+        record = {
+            "artifact_id": _clean_text(artifact.get("artifact_id")) or f"artifact_{hashlib.sha256(f'{artifact_type}|{source_item_id}|{fingerprint}|{now}'.encode('utf-8')).hexdigest()[:12]}",
+            "artifact_type": artifact_type,
+            "state": _normalize_artifact_state(artifact.get("state") or "draft"),
+            "title": _clean_text(artifact.get("title")) or artifact_type,
+            "payload": artifact.get("payload") if isinstance(artifact.get("payload"), (dict, list, str)) else {},
+            "fingerprint": fingerprint,
+            "source_item": {
+                "id": source_item_id,
+                "type": _clean_text(source_item.get("type")),
+                "title": _clean_text(source_item.get("title")),
+            },
+            "version": max([int(version or 0) for version in existing_versions] or [0]) + 1,
+            "created_by": _clean_text(artifact.get("created_by")) or "AI Gen",
+            "created_on": now,
+            "approved_by": "",
+            "approved_on": "",
+            "locked_on": "",
+            "archived_on": "",
+            "history": [],
+        }
+        artifacts.append(record)
+        self._write_artifacts(artifacts)
+        try:
+            from backend.project_graph import project_knowledge_graph_service
+
+            project_knowledge_graph_service.ingest_artifact(record)
+        except Exception as error:  # pragma: no cover - graph updates should not block artifact save
+            logger.warning("project graph artifact ingest failed: %s", error)
+        return record
+
+    def approve_artifact(self, artifact_id: str, approved_by: str = "") -> dict[str, Any]:
+        artifacts = self._read_artifacts()
+        now = _now_iso()
+        for artifact in artifacts:
+            if artifact.get("artifact_id") == artifact_id:
+                artifact.setdefault("history", []).append({"state": artifact.get("state"), "changed_on": now})
+                artifact["state"] = "locked"
+                artifact["approved_by"] = _clean_text(approved_by) or "AI Gen User"
+                artifact["approved_on"] = now
+                artifact["locked_on"] = now
+                self._write_artifacts(artifacts)
+                try:
+                    from backend.project_graph import project_knowledge_graph_service
+
+                    project_knowledge_graph_service.ingest_artifact(artifact)
+                except Exception as error:  # pragma: no cover - graph updates should not block approval
+                    logger.warning("project graph artifact approval ingest failed: %s", error)
+                return artifact
+        raise ValueError(f"Artifact {artifact_id} was not found.")
+
+    def archive_artifact(self, artifact_id: str) -> dict[str, Any]:
+        artifacts = self._read_artifacts()
+        now = _now_iso()
+        for artifact in artifacts:
+            if artifact.get("artifact_id") == artifact_id:
+                artifact.setdefault("history", []).append({"state": artifact.get("state"), "changed_on": now})
+                artifact["state"] = "archived"
+                artifact["archived_on"] = now
+                self._write_artifacts(artifacts)
+                return artifact
+        raise ValueError(f"Artifact {artifact_id} was not found.")
 
     def get_connector_mapping(self, project_id: str = "") -> dict[str, Any]:
         return self._load_profile_for_project(project_id)["connectors"]["azure_devops"]
@@ -189,6 +458,33 @@ class ProjectIntelligenceService:
                 except (OSError, json.JSONDecodeError):
                     pass
         return self.get_profile()
+
+    def _read_knowledge_cache(self) -> dict[str, Any]:
+        if not self._knowledge_cache_path.exists():
+            return {}
+        try:
+            cache = json.loads(self._knowledge_cache_path.read_text(encoding="utf-8"))
+            return cache if isinstance(cache, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _read_artifacts(self) -> list[dict[str, Any]]:
+        if not self._artifacts_path.exists():
+            return []
+        try:
+            payload = json.loads(self._artifacts_path.read_text(encoding="utf-8"))
+            records = payload.get("artifacts") if isinstance(payload, dict) else payload
+            if not isinstance(records, list):
+                return []
+            return [_normalize_artifact_record(item) for item in records if isinstance(item, dict)]
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def _write_artifacts(self, artifacts: list[dict[str, Any]]) -> None:
+        self._artifacts_path.write_text(
+            json.dumps({"schema_version": "artifact-lifecycle-v1", "artifacts": artifacts}, indent=2),
+            encoding="utf-8",
+        )
 
     def analyze_description(self, description: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         base = self.get_profile()
@@ -566,6 +862,7 @@ class ProjectIntelligenceService:
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
         impact_analysis: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(story.get("title")) or "Untitled story"
@@ -579,10 +876,34 @@ class ProjectIntelligenceService:
         dependencies = _string_list(story.get("dependencies")) or impact["dependencies"] or _impact_dependencies(active_profile, keywords, modules, flows)
         acceptance = _string_list(story.get("acceptance_criteria")) or _acceptance_criteria(title, flows, modules)
         suite = _qa_test_suite(title, description, acceptance, modules, flows, dependencies, active_profile, keywords)
-        return _with_provider_metadata(
+        phi_item = {
+            **story,
+            "title": title,
+            "description": description,
+            "acceptance_criteria": acceptance,
+            "affected_modules": modules,
+            "affected_flows": flows,
+            "dependencies": dependencies,
+            "domain": _clean_text(active_profile.get("domain")) or active_profile["knowledge_profile_preview"].get("domain") or "",
+        }
+        phi = _project_phi_json(
+            "generate_qa_test_cases",
+            active_profile,
+            phi_item,
             suite,
-            _fallback_metadata("deterministic_fallback", "QA test case generation uses deterministic coverage mapping in this preview."),
+            options,
+            ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps"],
         )
+        if phi["used"]:
+            merged = _merge_known_fields(
+                suite,
+                _normalize_phi_qa_suite(phi["parsed"], suite),
+                ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps"],
+            )
+            return _with_provider_metadata(merged, phi["metadata"])
+        if phi["blocked"]:
+            return _phi_error_response(phi)
+        return _with_provider_metadata(suite, phi["metadata"])
 
     def analyze_story_impact(
         self,
@@ -984,6 +1305,143 @@ def _legacy_azure_devops_connector(repository_connection: dict[str, str] | None 
 def _safe_profile_id(value: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(value).strip())
     return safe or "default"
+
+
+def _normalize_project_session(session: dict[str, Any]) -> dict[str, Any]:
+    session = session if isinstance(session, dict) else {}
+    return {
+        "active_project": _clean_text(session.get("active_project")),
+        "project_id": _clean_text(session.get("project_id")),
+        "last_active_workspace": _clean_text(session.get("last_active_workspace")) or _clean_text(session.get("last_workspace")) or "overview",
+        "last_active_tab": _clean_text(session.get("last_active_tab")) or _clean_text(session.get("last_active_workspace")) or "overview",
+        "last_work_item_id": session.get("last_work_item_id"),
+        "last_work_item_type": _clean_text(session.get("last_work_item_type")),
+        "last_work_item_title": _clean_text(session.get("last_work_item_title")),
+        "last_repository": _clean_text(session.get("last_repository")) or _clean_text(session.get("repository_name")),
+        "last_repository_id": _clean_text(session.get("last_repository_id")) or _clean_text(session.get("repository_id")),
+        "last_branch": _clean_text(session.get("last_branch")) or _clean_text(session.get("branch")) or "main",
+        "last_analysis_timestamp": _clean_text(session.get("last_analysis_timestamp")),
+        "knowledge_version": _clean_text(session.get("knowledge_version")),
+        "saved_at": _clean_text(session.get("saved_at")) or _now_iso(),
+    }
+
+
+def _knowledge_schema_version() -> str:
+    return "project-intelligence-cache-v1"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _document_hashes(documents: dict[str, str]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for path, content in sorted((documents or {}).items()):
+        clean_path = _clean_path(path)
+        text = _clean_text(content)
+        if clean_path and text:
+            hashes[clean_path] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return hashes
+
+
+def _knowledge_version(profile: dict[str, Any], document_hashes: dict[str, str] | None = None) -> str:
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    payload = {
+        "schema": _knowledge_schema_version(),
+        "project_id": profile.get("project_id"),
+        "repository": profile.get("repository_connection", {}).get("repository_id") if isinstance(profile.get("repository_connection"), dict) else "",
+        "branch": profile.get("repository_connection", {}).get("branch") if isinstance(profile.get("repository_connection"), dict) else "",
+        "source_files": registry.get("source_files"),
+        "modules": registry.get("modules"),
+        "flows": registry.get("flows"),
+        "components": registry.get("components"),
+        "document_hashes": document_hashes or {},
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
+def _project_summary(profile: dict[str, Any]) -> str:
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    parts = [
+        _clean_text(profile.get("project_name")) or "Project",
+        _clean_text(profile.get("domain")),
+        f"Modules: {', '.join(_string_list(registry.get('modules'))[:6])}" if _string_list(registry.get("modules")) else "",
+        f"Flows: {', '.join(_string_list(registry.get('flows'))[:6])}" if _string_list(registry.get("flows")) else "",
+    ]
+    return ". ".join(part for part in parts if part)
+
+
+def _knowledge_status_payload(
+    *,
+    profile: dict[str, Any],
+    mapping: dict[str, Any],
+    status: str,
+    last_analyzed_at: str,
+    source_files: list[str],
+    document_hashes: dict[str, str],
+    changed_files: list[str],
+    invalidation_reasons: list[str],
+) -> dict[str, Any]:
+    return {
+        "project_id": _clean_text(profile.get("project_id")),
+        "project_name": _clean_text(profile.get("project_name")),
+        "repository": _clean_text(mapping.get("repository_name")) or _clean_text(profile.get("repository_connection", {}).get("repository_name") if isinstance(profile.get("repository_connection"), dict) else ""),
+        "repository_id": _clean_text(mapping.get("repository_id")) or _clean_text(profile.get("repository_connection", {}).get("repository_id") if isinstance(profile.get("repository_connection"), dict) else ""),
+        "branch": _clean_text(mapping.get("branch")) or _clean_text(profile.get("repository_connection", {}).get("branch") if isinstance(profile.get("repository_connection"), dict) else "main"),
+        "knowledge_status": status,
+        "last_analyzed_at": last_analyzed_at,
+        "knowledge_version": _knowledge_version(_normalize_profile(profile), document_hashes),
+        "source_files": source_files,
+        "changed_files": changed_files,
+        "invalidation_reasons": invalidation_reasons,
+        "document_hashes": document_hashes,
+    }
+
+
+def _normalize_artifact_state(value: Any) -> str:
+    state = _clean_text(value).lower()
+    if state in {"draft", "approved", "locked", "archived"}:
+        return state
+    return "draft"
+
+
+def _normalize_artifact_record(value: dict[str, Any]) -> dict[str, Any]:
+    source = value.get("source_item") if isinstance(value.get("source_item"), dict) else {}
+    return {
+        "artifact_id": _clean_text(value.get("artifact_id")),
+        "artifact_type": _clean_text(value.get("artifact_type") or value.get("type")) or "Artifact",
+        "state": _normalize_artifact_state(value.get("state")),
+        "title": _clean_text(value.get("title")),
+        "payload": value.get("payload") if isinstance(value.get("payload"), (dict, list, str)) else {},
+        "fingerprint": _clean_text(value.get("fingerprint")),
+        "source_item": {
+            "id": _clean_text(source.get("id")),
+            "type": _clean_text(source.get("type")),
+            "title": _clean_text(source.get("title")),
+        },
+        "version": int(value.get("version") or 1),
+        "created_by": _clean_text(value.get("created_by")),
+        "created_on": _clean_text(value.get("created_on")),
+        "approved_by": _clean_text(value.get("approved_by")),
+        "approved_on": _clean_text(value.get("approved_on")),
+        "locked_on": _clean_text(value.get("locked_on")),
+        "archived_on": _clean_text(value.get("archived_on")),
+        "history": value.get("history") if isinstance(value.get("history"), list) else [],
+    }
+
+
+def _artifact_fingerprint(artifact_type: str, source_item: dict[str, Any], payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "artifact_type": artifact_type,
+                "source_item": source_item,
+                "payload": payload,
+            },
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _normalize_readme_analysis(value: Any) -> dict[str, Any]:
@@ -3406,6 +3864,71 @@ def _qa_test_suite(
         "generated_test_count": len(tests),
         "coverage_gaps": coverage["uncovered_acceptance_criteria"],
     }
+
+
+def _normalize_phi_qa_suite(incoming: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+    suite = incoming.get("test_suite") if isinstance(incoming.get("test_suite"), dict) else {}
+    base_suite = base.get("test_suite") if isinstance(base.get("test_suite"), dict) else {}
+    tests_input = suite.get("test_cases") or incoming.get("test_cases") or []
+    tests: list[dict[str, Any]] = []
+    for index, item in enumerate(tests_input if isinstance(tests_input, list) else [], start=1):
+        if not isinstance(item, dict):
+            continue
+        category = _clean_text(item.get("category")) or "Positive Tests"
+        if category not in QA_TEST_CATEGORIES:
+            category = _normalize_qa_category(category)
+        tests.append(
+            {
+                "test_id": _clean_text(item.get("test_id")) or f"TC{index:03d}",
+                "category": category,
+                "title": _clean_text(item.get("title")) or f"Validate {base_suite.get('story', {}).get('title') or 'story behavior'}",
+                "preconditions": _string_list(item.get("preconditions")) or ["Approved story and acceptance criteria are available."],
+                "steps": _string_list(item.get("steps")) or ["Execute the approved user behavior.", "Verify the expected outcome."],
+                "expected_result": _clean_text(item.get("expected_result") or item.get("expected")) or "Expected behavior is observed.",
+                "priority": _clean_text(item.get("priority")) or "Medium",
+                "risk_level": _clean_text(item.get("risk_level")) or "Medium",
+                "covers_acceptance_criteria": item.get("covers_acceptance_criteria") if isinstance(item.get("covers_acceptance_criteria"), list) else [],
+            }
+        )
+    if not tests:
+        return {}
+    for index, test in enumerate(tests, start=1):
+        test["test_id"] = _clean_text(test.get("test_id")) or f"TC{index:03d}"
+    acceptance = _string_list(base.get("test_suite", {}).get("acceptance_criteria")) or _string_list(base.get("acceptance_criteria"))
+    if not acceptance:
+        story = base_suite.get("story") if isinstance(base_suite.get("story"), dict) else {}
+        acceptance = _string_list(story.get("acceptance_criteria"))
+    coverage_summary = incoming.get("coverage_summary") if isinstance(incoming.get("coverage_summary"), dict) else _qa_coverage_summary(acceptance, tests)
+    coverage_breakdown = incoming.get("coverage_breakdown") if isinstance(incoming.get("coverage_breakdown"), dict) else _qa_coverage_breakdown(tests, acceptance)
+    coverage_score = int(incoming.get("coverage_score") or _qa_coverage_score(coverage_breakdown, coverage_summary))
+    normalized_suite = {
+        **base_suite,
+        **suite,
+        "test_cases": tests,
+    }
+    return {
+        "test_suite": normalized_suite,
+        "coverage_summary": coverage_summary,
+        "coverage_score": coverage_score,
+        "coverage_breakdown": coverage_breakdown,
+        "generated_test_count": int(incoming.get("generated_test_count") or len(tests)),
+        "coverage_gaps": _string_list(incoming.get("coverage_gaps")) or _string_list(coverage_summary.get("uncovered_acceptance_criteria")),
+    }
+
+
+def _normalize_qa_category(value: str) -> str:
+    lowered = value.lower()
+    if "negative" in lowered:
+        return "Negative Tests"
+    if "boundary" in lowered or "edge" in lowered:
+        return "Boundary Tests"
+    if "permission" in lowered or "role" in lowered or "access" in lowered:
+        return "Permission Tests"
+    if "error" in lowered or "failure" in lowered or "exception" in lowered:
+        return "Error Handling Tests"
+    if "regression" in lowered:
+        return "Regression Candidates"
+    return "Positive Tests"
 
 
 def _qa_positive_test(title: str, acceptance: list[str], flows: list[str], modules: list[str]) -> dict[str, Any]:

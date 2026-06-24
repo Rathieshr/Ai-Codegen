@@ -57,6 +57,26 @@ const AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED = false;
 
 type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'admin';
 type AIGenRole = 'admin' | 'contributor' | 'viewer';
+type WorkItemKind = 'Epic' | 'Feature' | 'Story' | 'Task' | 'Bug' | 'Test Case';
+type RoutedWorkspace = Extract<PlannerTab, 'planning' | 'execution' | 'qa'>;
+type ApprovalStatus = 'locked' | 'draft' | 'ready_for_approval' | 'approved';
+type ApprovalArtifact = 'epic' | 'features' | 'feature' | 'stories' | 'story' | 'tasks' | 'qa' | 'execution';
+type ApprovalWorkflowState = Record<ApprovalArtifact, ApprovalStatus>;
+type ArtifactLifecycleState = 'draft' | 'approved' | 'locked' | 'archived';
+type ArtifactType =
+  | 'Epic'
+  | 'Feature'
+  | 'Story'
+  | 'Task'
+  | 'Acceptance Criteria'
+  | 'Execution Package'
+  | 'Dev Prompt'
+  | 'UI Prompt'
+  | 'QA Prompt'
+  | 'Copilot Context'
+  | 'Test Suite'
+  | 'Test Plan'
+  | 'Coverage Report';
 type AzureDevOpsUserIdentity = {
   id?: string;
   descriptor?: string;
@@ -257,8 +277,118 @@ type ProjectSessionSnapshot = {
   knowledge_version: string;
   last_analysis_timestamp: string;
   last_active_tab: PlannerTab;
+  last_workspace?: PlannerTab;
+  last_work_item_id?: number;
+  last_work_item_type?: string;
+  last_work_item_title?: string;
+  auto_route_by_work_item_type?: boolean;
+  approval_workflow?: ApprovalWorkflowState;
   knowledge_governance?: KnowledgeGovernance;
   saved_at: string;
+};
+
+type BackendProjectSessionResponse = {
+  exists: boolean;
+  session: Partial<ProjectSessionSnapshot> & Record<string, unknown>;
+};
+
+type KnowledgeCacheStatus = {
+  project_id?: string;
+  project_name?: string;
+  repository?: string;
+  repository_id?: string;
+  branch?: string;
+  knowledge_status: 'ready' | 'missing' | 'refresh_available' | 'stale';
+  last_analyzed_at?: string;
+  knowledge_version?: string;
+  source_files?: string[];
+  changed_files?: string[];
+  invalidation_reasons?: string[];
+};
+
+type KnowledgeCacheResponse = KnowledgeCacheStatus & {
+  exists?: boolean;
+  success?: boolean;
+  cache?: {
+    profile?: ProjectProfile;
+    repository_mapping?: AzureDevOpsConnectorMapping;
+    knowledge_registry?: ProjectProfile['knowledge_registry'];
+    last_analyzed_at?: string;
+    knowledge_version?: string;
+    source_files?: string[];
+  };
+  message?: string;
+  error?: string;
+};
+
+type ArtifactRecord = {
+  artifact_id: string;
+  artifact_type: ArtifactType | string;
+  state: ArtifactLifecycleState;
+  title: string;
+  payload: unknown;
+  fingerprint: string;
+  source_item: { id?: string; type?: string; title?: string };
+  version: number;
+  created_by?: string;
+  created_on?: string;
+  approved_by?: string;
+  approved_on?: string;
+  locked_on?: string;
+  archived_on?: string;
+  history?: Array<Record<string, unknown>>;
+};
+
+type ReusableArtifactResponse = {
+  reusable: boolean;
+  artifact?: ArtifactRecord;
+  status: 'reusable' | 'refresh_required' | 'missing';
+};
+
+type GraphSummary = {
+  version: number;
+  updated_at: string;
+  counts: Record<string, number>;
+  relationship_count: number;
+  coverage?: {
+    acceptance_criteria_count: number;
+    covered_acceptance_criteria_count: number;
+    uncovered_acceptance_criteria_count: number;
+    coverage_percent: number;
+  };
+  chain: {
+    projects: number;
+    epics: number;
+    features: number;
+    stories: number;
+    tasks: number;
+    tests: number;
+    execution_packages: number;
+  };
+};
+
+type CoverageIntelligenceReport = {
+  coverage_report: {
+    threshold: number;
+    overall_project_coverage: number;
+    quality_gate: string;
+    feature_coverage: Array<{ title: string; story_count: number; overall_score: number; quality_gate: string }>;
+    story_coverage: Array<{
+      title: string;
+      acceptance_criteria_count: number;
+      task_count: number;
+      test_count: number;
+      execution_package_count: number;
+      overall_score: number;
+      quality_gate: string;
+    }>;
+    acceptance_criteria_coverage: Array<{ title: string; status: string }>;
+    gap_summary: {
+      gap_count: number;
+      blocking_gap_count: number;
+      gaps: Array<{ type: string; severity: string; title: string; message: string }>;
+    };
+  };
 };
 
 type KnowledgeGovernance = {
@@ -532,7 +662,7 @@ type ChildDraft = {
   acceptanceCriteriaCount?: number;
   acceptanceCriteriaQualityScore?: number;
   selected: boolean;
-  status: 'preview' | 'creating' | 'created' | 'failed' | 'skipped';
+  status: 'preview' | 'approved' | 'creating' | 'created' | 'failed' | 'skipped';
   azureId?: number;
   error?: string;
 };
@@ -613,7 +743,8 @@ const EMPTY_PROFILE: ProjectProfile = {
 
 function ProjectIntelligenceTab() {
   const [activeTab, setActiveTab] = useState<PlannerTab>('overview');
-  const [selectedItemType, setSelectedItemType] = useState<'Epic' | 'Feature' | 'Story' | 'Task'>('Epic');
+  const [selectedItemType, setSelectedItemType] = useState<WorkItemKind>('Epic');
+  const [autoRouteByWorkItemType, setAutoRouteByWorkItemType] = useState(true);
   const [profile, setProfile] = useState<ProjectProfile>(EMPTY_PROFILE);
   const [storyTitle, setStoryTitle] = useState('');
   const [storyDescription, setStoryDescription] = useState('');
@@ -648,10 +779,16 @@ function ProjectIntelligenceTab() {
   const [selectedRepositoryFiles, setSelectedRepositoryFiles] = useState<string[]>(['README.md', 'architecture.md', 'modules.md', 'flows.md']);
   const [repositoryFileStatus, setRepositoryFileStatus] = useState<Record<string, 'available' | 'missing' | 'unknown'>>({});
   const [resumeSession, setResumeSession] = useState<ProjectSessionSnapshot | undefined>();
+  const [knowledgeCacheStatus, setKnowledgeCacheStatus] = useState<KnowledgeCacheStatus | undefined>();
   const [showResumePanel, setShowResumePanel] = useState(false);
   const [lastAnalysisTimestamp, setLastAnalysisTimestamp] = useState('');
   const [permissionState, setPermissionState] = useState<PermissionState>(defaultPermissionState());
   const [knowledgeGovernance, setKnowledgeGovernance] = useState<KnowledgeGovernance>(() => defaultKnowledgeGovernance(EMPTY_PROFILE, true));
+  const [approvalWorkflow, setApprovalWorkflow] = useState<ApprovalWorkflowState>(() => defaultApprovalWorkflowState());
+  const [artifactRecords, setArtifactRecords] = useState<ArtifactRecord[]>([]);
+  const [artifactReuseStatus, setArtifactReuseStatus] = useState('');
+  const [graphSummary, setGraphSummary] = useState<GraphSummary | undefined>();
+  const [coverageReport, setCoverageReport] = useState<CoverageIntelligenceReport | undefined>();
   const [editingProfile, setEditingProfile] = useState(false);
   const [showQuickStart, setShowQuickStart] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -664,27 +801,55 @@ function ProjectIntelligenceTab() {
   const canAdmin = permissionState.role === 'admin';
   const canContribute = permissionState.role === 'admin' || permissionState.role === 'contributor';
   const isViewer = permissionState.role === 'viewer';
+  const currentItemType = currentWorkItem ? normalizePlannerItemType(currentWorkItem.type) : selectedItemType;
+  const recommendedWorkspace = recommendedWorkspaceForItem(currentItemType);
 
   useEffect(() => {
     SDK.ready().then(async () => {
       SDK.notifyLoadSucceeded();
       try {
         const storedSession = readProjectSession();
+        const backendSession = await getBackendProjectSession().catch(() => undefined);
+        const knowledgeCache = await getKnowledgeCache().catch(() => undefined);
+        const lifecycleArtifacts = await getArtifacts().catch(() => ({ artifacts: [] as ArtifactRecord[] }));
+        const relationshipSummary = await getGraphSummary().catch(() => undefined);
+        const graphCoverage = await getCoverageReport().catch(() => undefined);
+        setArtifactRecords(lifecycleArtifacts.artifacts || []);
+        setGraphSummary(relationshipSummary);
+        setCoverageReport(graphCoverage);
+        const cachedProfile = knowledgeCache?.cache?.profile;
+        const effectiveSession = storedSession || sessionFromBackend(backendSession, cachedProfile);
         if (storedSession) {
           setResumeSession(storedSession);
           setLastAnalysisTimestamp(storedSession.last_analysis_timestamp);
           setKnowledgeGovernance(storedSession.knowledge_governance || defaultKnowledgeGovernance(storedSession.profile, false));
+          setAutoRouteByWorkItemType(storedSession.auto_route_by_work_item_type !== false);
+          setApprovalWorkflow(normalizeApprovalWorkflowState(storedSession.approval_workflow));
+        }
+        if (knowledgeCache) {
+          setKnowledgeCacheStatus(knowledgeCache);
         }
         const loaded = await getProfile();
         const projectContext = await loadAzureProjectContext();
         const permissions = await resolveCurrentUserPermission(projectContext);
         setPermissionState(permissions);
-        const seeded = storedSession?.profile?.project_name ? storedSession.profile : seedProfileFromAzureProject(loaded, projectContext);
-        if (!storedSession?.knowledge_governance) {
+        const profileFromCache = cachedProfile ? mergeProfile(loaded, cachedProfile) : undefined;
+        const seeded = effectiveSession?.profile?.project_name
+          ? effectiveSession.profile
+          : profileFromCache?.project_name
+            ? profileFromCache
+            : seedProfileFromAzureProject(loaded, projectContext);
+        if (effectiveSession && !storedSession) {
+          setResumeSession(effectiveSession);
+          setLastAnalysisTimestamp(effectiveSession.last_analysis_timestamp);
+          setAutoRouteByWorkItemType(effectiveSession.auto_route_by_work_item_type !== false);
+          setApprovalWorkflow(normalizeApprovalWorkflowState(effectiveSession.approval_workflow));
+        }
+        if (!effectiveSession?.knowledge_governance) {
           setKnowledgeGovernance(defaultKnowledgeGovernance(seeded, permissions.role === 'admin'));
         }
         const seededChanged = JSON.stringify(seeded) !== JSON.stringify(loaded);
-        if (!storedSession && seededChanged) {
+        if (!effectiveSession && seededChanged) {
           try {
             const saved = await postJson<ProjectProfile>('/profile', { profile: seeded });
             setProfile(saved);
@@ -698,18 +863,21 @@ function ProjectIntelligenceTab() {
           setProfile(seeded);
           lastSavedProfileRef.current = JSON.stringify(seeded);
         }
-        if (storedSession?.last_active_tab) {
-          setActiveTab(storedSession.last_active_tab === 'admin' && permissions.role !== 'admin' ? 'overview' : storedSession.last_active_tab);
+        if (effectiveSession?.last_active_tab) {
+          setActiveTab(effectiveSession.last_active_tab === 'admin' && permissions.role !== 'admin' ? 'overview' : effectiveSession.last_active_tab);
           setShowResumePanel(true);
         }
-        setEditingProfile(permissions.role === 'admin' && !seeded.project_name.trim());
-        setShowQuickStart(permissions.role === 'admin' && !seeded.project_name.trim() && !seeded.project_description.trim());
+        const hasReadyCache = knowledgeCache?.knowledge_status === 'ready' && Boolean(cachedProfile);
+        setEditingProfile(permissions.role === 'admin' && !hasReadyCache && !seeded.project_name.trim());
+        setShowQuickStart(permissions.role === 'admin' && !hasReadyCache && !seeded.project_name.trim() && !seeded.project_description.trim());
         const workItem = await loadCurrentWorkItem();
         if (workItem) {
           setCurrentWorkItem(workItem);
-          seedPlannerFromWorkItem(workItem);
+          seedPlannerFromWorkItem(workItem, effectiveSession?.auto_route_by_work_item_type !== false, effectiveSession?.last_work_item_id !== workItem.id);
         }
-        if (storedSession?.profile?.project_name) {
+        if (hasReadyCache) {
+          setRepositoryLoadMessage('Loaded cached project knowledge. Continue without repository discovery, or refresh knowledge when documents change.');
+        } else if (effectiveSession?.profile?.project_name) {
           setRepositoryLoadMessage('Loaded saved project session. Continue without reanalysis, or refresh analysis when you need updated repository knowledge.');
         } else {
           void loadAdoProjects(seeded);
@@ -740,9 +908,10 @@ function ProjectIntelligenceTab() {
     if (JSON.stringify(nextGovernance) !== JSON.stringify(knowledgeGovernance)) {
       setKnowledgeGovernance(nextGovernance);
     }
-    const session = buildProjectSession(profile, activeTab, lastAnalysisTimestamp, nextGovernance);
+    const session = buildProjectSession(profile, activeTab, lastAnalysisTimestamp, nextGovernance, currentWorkItem, autoRouteByWorkItemType, approvalWorkflow);
     writeProjectSession(session);
     setResumeSession(session);
+    void saveBackendProjectSession(session);
     const serialized = JSON.stringify(profile);
     if (serialized === lastSavedProfileRef.current) {
       setSaveStatus('saved');
@@ -762,7 +931,17 @@ function ProjectIntelligenceTab() {
       }
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [profile, activeTab, lastAnalysisTimestamp, knowledgeGovernance, canAdmin]);
+  }, [profile, activeTab, lastAnalysisTimestamp, knowledgeGovernance, canAdmin, currentWorkItem, autoRouteByWorkItemType, approvalWorkflow]);
+
+  useEffect(() => {
+    if (!initializedRef.current || !currentWorkItem || !autoRouteByWorkItemType) {
+      return;
+    }
+    const nextWorkspace = recommendedWorkspaceForItem(normalizePlannerItemType(currentWorkItem.type));
+    if (activeTab !== nextWorkspace) {
+      setActiveTab(nextWorkspace);
+    }
+  }, [currentWorkItem?.id, currentWorkItem?.type, autoRouteByWorkItemType]);
 
   async function withLoading<T>(nextMessage: string, action: () => Promise<T>): Promise<T | undefined> {
     setLoading(true);
@@ -879,6 +1058,10 @@ function ProjectIntelligenceTab() {
       setProfile(refreshed);
       setLastAnalysisTimestamp(new Date().toISOString());
       markKnowledgeRefreshed(refreshed);
+      const cache = await getKnowledgeCache().catch(() => undefined);
+      if (cache) {
+        setKnowledgeCacheStatus(cache);
+      }
       setActiveTab('overview');
     }
   }
@@ -905,9 +1088,77 @@ function ProjectIntelligenceTab() {
     }
   }
 
-  async function generatePrompts() {
+  function sourceItemForArtifact(type: WorkItemKind = currentItemType): { id: string; type: string; title: string } {
+    const fallback = type === 'Epic' ? epicInput : type === 'Feature' ? featureInput : storyInput;
+    return {
+      id: currentWorkItem ? String(currentWorkItem.id) : `${type}:${fallback.title || profile.project_name || 'draft'}`,
+      type,
+      title: currentWorkItem?.title || fallback.title || profile.project_name || 'Untitled item',
+    };
+  }
+
+  async function loadReusableArtifact<T>(
+    artifactType: ArtifactType,
+    source: Record<string, unknown>,
+    apply: (payload: T, artifact: ArtifactRecord) => void,
+  ): Promise<boolean> {
+    const sourceItem = sourceItemForArtifact();
+    const fingerprint = artifactFingerprint(artifactType, sourceItem, source);
+    const reusable = await getReusableArtifact(artifactType, fingerprint, sourceItem.id).catch(() => undefined);
+    if (reusable?.reusable && reusable.artifact) {
+      apply(reusable.artifact.payload as T, reusable.artifact);
+      setArtifactReuseStatus(`Using existing ${artifactType} v${reusable.artifact.version}.`);
+      return true;
+    }
+    if (reusable?.status === 'refresh_required') {
+      setArtifactReuseStatus(`${artifactType} changed since last approval. Refresh required.`);
+    }
+    return false;
+  }
+
+  async function saveGeneratedArtifact(
+    artifactType: ArtifactType,
+    title: string,
+    payload: unknown,
+    source: Record<string, unknown>,
+    state: ArtifactLifecycleState = 'draft',
+  ): Promise<ArtifactRecord | undefined> {
+    const sourceItem = sourceItemForArtifact();
+    const fingerprint = artifactFingerprint(artifactType, sourceItem, source);
+    const artifact = await saveArtifact({
+      artifact_type: artifactType,
+      title,
+      payload,
+      fingerprint,
+      state,
+      source_item: sourceItem,
+      created_by: permissionState.user_display_name || permissionState.user_name || 'AI Gen User',
+    }).catch(() => undefined);
+    if (artifact) {
+      setArtifactRecords((current) => [artifact, ...current.filter((item) => item.artifact_id !== artifact.artifact_id)]);
+      const summary = await getGraphSummary().catch(() => undefined);
+      const coverage = await getCoverageReport().catch(() => undefined);
+      if (summary) {
+        setGraphSummary(summary);
+      }
+      if (coverage) {
+        setCoverageReport(coverage);
+      }
+    }
+    return artifact;
+  }
+
+  async function generatePrompts(forceRefresh = false) {
     if (!canContribute) {
       setError('Prompt generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    const source = {
+      title: storyTitle,
+      description: storyDescription,
+      acceptance_criteria: splitLines(acceptanceCriteria),
+    };
+    if (!forceRefresh && await loadReusableArtifact<PromptResult>('Dev Prompt', source, (payload) => setPrompts(payload))) {
       return;
     }
     const generated = await withLoading('Generating story prompts...', () => postJson<PromptResult>('/generate-story-prompts', {
@@ -920,12 +1171,19 @@ function ProjectIntelligenceTab() {
     }));
     if (generated) {
       setPrompts(generated);
+      await saveGeneratedArtifact('Dev Prompt', storyTitle || 'Story prompts', generated, source);
     }
   }
 
-  async function refineEpic() {
+  async function refineEpic(forceRefresh = false) {
     if (!canContribute) {
       setError('Planning refinement is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    if (!forceRefresh && await loadReusableArtifact<EpicRefinement>('Epic', epicInput, (payload) => {
+      setEpicResult(payload);
+      markApprovalGenerated('epic', qualityScoreForEpic(payload));
+    })) {
       return;
     }
     const result = await withLoading('Refining epic with Project Intelligence...', () => postJson<EpicRefinement>('/refine-epic', {
@@ -935,12 +1193,20 @@ function ProjectIntelligenceTab() {
     }));
     if (result) {
       setEpicResult(result);
+      markApprovalGenerated('epic', qualityScoreForEpic(result));
+      await saveGeneratedArtifact('Epic', epicInput.title || 'Epic refinement', result, epicInput);
     }
   }
 
-  async function refineFeature() {
+  async function refineFeature(forceRefresh = false) {
     if (!canContribute) {
       setError('Planning refinement is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    if (!forceRefresh && await loadReusableArtifact<FeatureRefinement>('Feature', featureInput, (payload) => {
+      setFeatureResult(payload);
+      markApprovalGenerated('feature', qualityScoreForFeature(payload));
+    })) {
       return;
     }
     const result = await withLoading('Refining feature with Project Intelligence...', () => postJson<FeatureRefinement>('/refine-feature', {
@@ -950,30 +1216,48 @@ function ProjectIntelligenceTab() {
     }));
     if (result) {
       setFeatureResult(result);
+      markApprovalGenerated('feature', qualityScoreForFeature(result));
+      await saveGeneratedArtifact('Feature', featureInput.title || 'Feature refinement', result, featureInput);
     }
   }
 
-  async function refineStory() {
+  async function refineStory(forceRefresh = false) {
     if (!canContribute) {
       setError('Planning refinement is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    const source = { ...storyInput, acceptance_criteria: splitLines(acceptanceCriteria) };
+    if (!forceRefresh && await loadReusableArtifact<StoryRefinement>('Story', source, (payload) => {
+      setStoryResult(payload);
+      markApprovalGenerated('story', qualityScoreForStory(payload));
+    })) {
       return;
     }
     const result = await withLoading('Refining story with Project Intelligence...', () => postJson<StoryRefinement>('/refine-story', {
       profile,
       knowledge_profile: profile.knowledge_registry,
-      story: storyInput,
+      story: source,
     }));
     if (result) {
       setStoryResult(result);
+      markApprovalGenerated('story', qualityScoreForStory(result));
+      await saveGeneratedArtifact('Story', storyInput.title || 'Story refinement', result, source);
     }
   }
 
-  async function generateQATestCases() {
+  async function generateQATestCases(forceRefresh = false) {
     if (!canContribute) {
       setError('QA generation is restricted to AI Gen Admins and Contributors.');
       return;
     }
     const story = currentStoryPayload();
+    const source = { story, impact_analysis: storyImpact || {} };
+    if (!forceRefresh && await loadReusableArtifact<QATestSuiteResult>('Test Suite', source, (payload) => {
+      setQaTestSuite(payload);
+      markApprovalGenerated('qa', payload.coverage_score);
+    })) {
+      return;
+    }
     const result = await withLoading('Generating QA test cases...', () => postJson<QATestSuiteResult>('/generate-qa-test-cases', {
       profile,
       knowledge_profile: profile.knowledge_registry,
@@ -982,15 +1266,72 @@ function ProjectIntelligenceTab() {
     }));
     if (result) {
       setQaTestSuite(result);
+      markApprovalGenerated('qa', result.coverage_score);
+      await saveGeneratedArtifact('Test Suite', story.title || 'QA test suite', result, source);
     }
   }
 
-  async function buildExecutionPackage() {
+  async function generateFeatureTestPlan(forceRefresh = false) {
+    if (!canContribute) {
+      setError('Test plan generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    const title = featureInput.title || currentWorkItem?.title || 'Feature test plan';
+    const description = featureInput.description || htmlToText(currentWorkItem?.description || '') || featureResult?.feature_summary || '';
+    const acceptance = featureResult?.recommended_stories?.flatMap((story) => story.acceptance_criteria || []) || [];
+    const source = { title, description, acceptance, impact_analysis: featureImpact || {} };
+    if (!forceRefresh && await loadReusableArtifact<QATestSuiteResult>('Test Plan', source, (payload) => {
+      setQaTestSuite(payload);
+      markApprovalGenerated('qa', payload.coverage_score);
+      setActiveTab('qa');
+    })) {
+      return;
+    }
+    const result = await withLoading('Generating feature test plan...', () => postJson<QATestSuiteResult>('/generate-qa-test-cases', {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      story: {
+        title,
+        description,
+        acceptance_criteria: acceptance.length ? acceptance : [`${title} has testable stories and release coverage.`],
+        affected_modules: featureResult?.affected_modules || [],
+        affected_flows: featureResult?.affected_flows || [],
+        dependencies: featureResult?.dependencies || [],
+      },
+      impact_analysis: featureImpact || {},
+    }));
+    if (result) {
+      setQaTestSuite(result);
+      markApprovalGenerated('qa', result.coverage_score);
+      await saveGeneratedArtifact('Test Plan', title, result, source);
+      setActiveTab('qa');
+    }
+  }
+
+  async function buildExecutionPackage(forceRefresh = false) {
     if (!canContribute) {
       setError('Execution package generation is restricted to AI Gen Admins and Contributors.');
       return;
     }
     const story = currentStoryPayload();
+    const source = { story, impact_analysis: storyImpact || {} };
+    if (!forceRefresh && await loadReusableArtifact<{
+      context: ExecutionContextResult;
+      dev: PromptBuilderResult;
+      ui: PromptBuilderResult;
+      qa: PromptBuilderResult;
+      copilot: CopilotContextResult;
+    }>('Execution Package', source, (payload) => {
+      setExecutionContext(payload.context);
+      setDevPrompt(payload.dev);
+      setUiPrompt(payload.ui);
+      setQaPrompt(payload.qa);
+      setCopilotContext(payload.copilot);
+      markApprovalGenerated('execution', payload.context.execution_readiness_score);
+      setActiveTab('execution');
+    })) {
+      return;
+    }
     const packageResult = await withLoading('Generating execution package...', async () => {
       const basePayload = {
         profile,
@@ -1011,7 +1352,20 @@ function ProjectIntelligenceTab() {
       setUiPrompt(packageResult.ui);
       setQaPrompt(packageResult.qa);
       setCopilotContext(packageResult.copilot);
+      markApprovalGenerated('execution', packageResult.context.execution_readiness_score);
+      await saveGeneratedArtifact('Execution Package', story.title || 'Execution package', packageResult, source);
       setActiveTab('execution');
+    }
+  }
+
+  function openVsCodeExecutionPackage() {
+    if (!executionContext) {
+      void buildExecutionPackage();
+      return;
+    }
+    const uri = buildVsCodeExecutionPackageUri(executionContext, devPrompt, uiPrompt, qaPrompt, copilotContext);
+    if (uri) {
+      window.open(uri, '_blank');
     }
   }
 
@@ -1023,9 +1377,12 @@ function ProjectIntelligenceTab() {
     };
   }
 
-  function seedPlannerFromWorkItem(workItem: AdoWorkItem) {
+  function seedPlannerFromWorkItem(workItem: AdoWorkItem, shouldAutoRoute = autoRouteByWorkItemType, resetApproval = true) {
     const type = normalizePlannerItemType(workItem.type);
     setSelectedItemType(type);
+    if (resetApproval) {
+      setApprovalWorkflow(defaultApprovalWorkflowState());
+    }
     if (type === 'Epic') {
       setEpicInput({ title: workItem.title, description: htmlToText(workItem.description) });
     } else if (type === 'Feature') {
@@ -1033,6 +1390,9 @@ function ProjectIntelligenceTab() {
     } else {
       setStoryInput({ title: workItem.title, description: htmlToText(workItem.description) });
       setAcceptanceCriteria(htmlToText(workItem.acceptanceCriteria));
+    }
+    if (shouldAutoRoute) {
+      setActiveTab(recommendedWorkspaceForItem(type));
     }
   }
 
@@ -1056,32 +1416,232 @@ function ProjectIntelligenceTab() {
       }
     }
     if (selectedItemType === 'Epic') {
+      const source = { epic: epicInput, purpose: 'generated_features' };
+      if (await loadReusableArtifact<ChildDraft[]>('Feature', source, (payload) => {
+        setChildDrafts(payload);
+        markApprovalGenerated('features', qualityScoreForFeatureDrafts(payload));
+      })) {
+        return;
+      }
       const generated = await withLoading('Generating Features from Epic...', () => postJson<EpicRefinement>('/refine-epic', {
         profile,
         knowledge_profile: profile.knowledge_registry,
         epic: epicInput,
       }));
       if (!generated) return;
+      const drafts = featureDraftsFromEpic(generated);
       setEpicResult(generated);
-      setChildDrafts(featureDraftsFromEpic(generated));
+      setChildDrafts(drafts);
+      markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
+      await saveGeneratedArtifact('Feature', epicInput.title || 'Generated features', drafts, source);
     } else if (selectedItemType === 'Feature') {
+      const source = { feature: featureInput, purpose: 'generated_stories' };
+      if (await loadReusableArtifact<ChildDraft[]>('Story', source, (payload) => {
+        setChildDrafts(payload);
+        markApprovalGenerated('stories', qualityScoreForFeatureDrafts(payload));
+      })) {
+        return;
+      }
       const generated = await withLoading('Generating Stories from Feature...', () => postJson<FeatureRefinement>('/refine-feature', {
         profile,
         knowledge_profile: profile.knowledge_registry,
         feature: featureInput,
       }));
       if (!generated) return;
+      const drafts = storyDraftsFromFeature(generated);
       setFeatureResult(generated);
-      setChildDrafts(storyDraftsFromFeature(generated));
+      setChildDrafts(drafts);
+      markApprovalGenerated('stories', qualityScoreForFeature(generated));
+      await saveGeneratedArtifact('Story', featureInput.title || 'Generated stories', drafts, source);
     } else if (selectedItemType === 'Story') {
+      const source = { story: storyInput, acceptance_criteria: splitLines(acceptanceCriteria), purpose: 'generated_tasks' };
+      if (await loadReusableArtifact<ChildDraft[]>('Task', source, (payload) => {
+        setChildDrafts(payload);
+        markApprovalGenerated('tasks', qualityScoreForTaskDrafts(payload));
+      })) {
+        return;
+      }
       const generated = await withLoading('Generating Tasks from Story...', () => postJson<StoryRefinement>('/refine-story', {
         profile,
         knowledge_profile: profile.knowledge_registry,
         story: { ...storyInput, acceptance_criteria: splitLines(acceptanceCriteria) },
       }));
       if (!generated) return;
+      const drafts = taskDraftsFromStory(generated);
       setStoryResult(generated);
-      setChildDrafts(taskDraftsFromStory(generated));
+      setChildDrafts(drafts);
+      markApprovalGenerated('tasks', qualityScoreForTasks(generated));
+      await saveGeneratedArtifact('Task', storyInput.title || 'Generated tasks', drafts, source);
+    }
+  }
+
+  function markApprovalGenerated(artifact: ApprovalArtifact, qualityScore?: number) {
+    setApprovalWorkflow((current) => ({
+      ...current,
+      [artifact]: isReadyForApproval(qualityScore) ? 'ready_for_approval' : 'draft',
+    }));
+  }
+
+  function approveArtifact(artifact: ApprovalArtifact) {
+    setApprovalWorkflow((current) => ({ ...current, [artifact]: 'approved' }));
+    void lockStoredArtifactsForApproval(artifact);
+  }
+
+  async function lockStoredArtifactsForApproval(approval: ApprovalArtifact) {
+    const artifactTypes = lifecycleTypesForApproval(approval);
+    if (!artifactTypes.length) {
+      return;
+    }
+    const approver = permissionState.user_display_name || permissionState.user_name || 'AI Gen User';
+    const drafts = artifactRecords.filter((artifact) => (
+      artifactTypes.includes(artifact.artifact_type as ArtifactType)
+      && ['draft', 'approved'].includes(artifact.state)
+    ));
+    if (!drafts.length) {
+      return;
+    }
+    const locked = await Promise.all(drafts.map((artifact) => approveStoredArtifact(artifact.artifact_id, approver).catch(() => undefined)));
+    const lockedRecords = locked.filter((artifact): artifact is ArtifactRecord => Boolean(artifact));
+    if (lockedRecords.length) {
+      setArtifactRecords((current) => current.map((artifact) => lockedRecords.find((lockedArtifact) => lockedArtifact.artifact_id === artifact.artifact_id) || artifact));
+      setArtifactReuseStatus(`${approvalLabel(approval)} approved and locked for reuse.`);
+      const summary = await getGraphSummary().catch(() => undefined);
+      const coverage = await getCoverageReport().catch(() => undefined);
+      if (summary) {
+        setGraphSummary(summary);
+      }
+      if (coverage) {
+        setCoverageReport(coverage);
+      }
+    }
+  }
+
+  async function approveEpic() {
+    if (!epicResult) {
+      setError('Generate the epic draft before approving it.');
+      return;
+    }
+    approveArtifact('epic');
+    const drafts = featureDraftsFromEpic(epicResult);
+    if (drafts.length) {
+      setChildDrafts(drafts);
+      markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
+      setMessage('Epic approved. Features are ready for review.');
+      window.setTimeout(() => setMessage(''), 1200);
+      return;
+    }
+    setSelectedItemType('Epic');
+    await generateChildrenForCurrentType();
+  }
+
+  function approveFeatures() {
+    if (!childDrafts.some((draft) => draft.type === 'Feature')) {
+      setError('Generate features before approving them.');
+      return;
+    }
+    approveArtifact('features');
+    setChildDrafts((drafts) => drafts.map((draft) => draft.type === 'Feature' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft));
+  }
+
+  async function approveFeature() {
+    if (!featureResult) {
+      setError('Generate the feature draft before approving it.');
+      return;
+    }
+    approveArtifact('feature');
+    const drafts = storyDraftsFromFeature(featureResult);
+    if (drafts.length) {
+      setChildDrafts(drafts);
+      markApprovalGenerated('stories', qualityScoreForFeature(featureResult));
+      setMessage('Feature approved. Stories are ready for review.');
+      window.setTimeout(() => setMessage(''), 1200);
+      return;
+    }
+    setSelectedItemType('Feature');
+    await generateChildrenForCurrentType();
+  }
+
+  function approveStories() {
+    if (!childDrafts.some((draft) => draft.type === 'User Story')) {
+      setError('Generate stories before approving them.');
+      return;
+    }
+    approveArtifact('stories');
+    setChildDrafts((drafts) => drafts.map((draft) => draft.type === 'User Story' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft));
+  }
+
+  async function approveStory() {
+    if (!storyResult) {
+      setError('Generate the story draft before approving it.');
+      return;
+    }
+    approveArtifact('story');
+    const drafts = taskDraftsFromStory(storyResult);
+    if (drafts.length) {
+      setChildDrafts(drafts);
+      markApprovalGenerated('tasks', qualityScoreForTasks(storyResult));
+    }
+    if (!qaTestSuite) {
+      await generateQATestCases();
+    }
+    if (!executionContext) {
+      await buildExecutionPackage();
+    }
+  }
+
+  function approveTasks() {
+    if (!childDrafts.some((draft) => draft.type === 'Task')) {
+      setError('Generate tasks before approving them.');
+      return;
+    }
+    approveArtifact('tasks');
+    setChildDrafts((drafts) => drafts.map((draft) => draft.type === 'Task' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft));
+  }
+
+  function approveTestSuite() {
+    if (!qaTestSuite) {
+      setError('Generate test cases before approving the test suite.');
+      return;
+    }
+    approveArtifact('qa');
+  }
+
+  function approveExecutionPackage() {
+    if (!executionContext) {
+      setError('Build the execution package before approving it.');
+      return;
+    }
+    approveArtifact('execution');
+  }
+
+  async function analyzeCurrentItemImpact() {
+    if (!canContribute) {
+      setError('Impact analysis is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    if (currentItemType === 'Epic') {
+      const input = epicInput.title.trim() ? epicInput : { title: currentWorkItem?.title || '', description: htmlToText(currentWorkItem?.description || '') };
+      const result = await withLoading('Analyzing epic impact...', () => postJson<EpicImpact>('/analyze-epic-impact', {
+        profile,
+        knowledge_profile: profile.knowledge_registry,
+        epic: input,
+      }));
+      if (result) setEpicImpact(result);
+    } else if (currentItemType === 'Feature') {
+      const input = featureInput.title.trim() ? featureInput : { title: currentWorkItem?.title || '', description: htmlToText(currentWorkItem?.description || '') };
+      const result = await withLoading('Analyzing feature impact...', () => postJson<FeatureImpact>('/analyze-feature-impact', {
+        profile,
+        knowledge_profile: profile.knowledge_registry,
+        feature: input,
+      }));
+      if (result) setFeatureImpact(result);
+    } else {
+      const result = await withLoading(currentItemType === 'Bug' ? 'Analyzing bug impact...' : 'Analyzing story impact...', () => postJson<StoryImpact>('/analyze-story-impact', {
+        profile,
+        knowledge_profile: profile.knowledge_registry,
+        story: currentStoryPayload(),
+      }));
+      if (result) setStoryImpact(result);
     }
   }
 
@@ -1437,7 +1997,7 @@ function ProjectIntelligenceTab() {
     if (!Object.keys(documents).length) {
       return sourceProfile;
     }
-    return postJson<ProjectProfile>('/repository/analyze', {
+    const refreshed = await postJson<KnowledgeCacheResponse>('/knowledge-cache/refresh', {
       profile: sourceProfile,
       connector_mapping: getAdoMapping(sourceProfile),
       repository: {
@@ -1450,6 +2010,11 @@ function ProjectIntelligenceTab() {
       selected_files: Object.keys(documents),
       documents,
     });
+    if (!refreshed.success && refreshed.message) {
+      setError(refreshed.message);
+    }
+    setKnowledgeCacheStatus(refreshed);
+    return refreshed.cache?.profile || sourceProfile;
   }
 
   async function analyzeRepositoryDocuments() {
@@ -1470,6 +2035,13 @@ function ProjectIntelligenceTab() {
       setProfile(analyzed);
       setLastAnalysisTimestamp(new Date().toISOString());
       markKnowledgeRefreshed(analyzed);
+    }
+  }
+
+  function changeWorkspace(tab: PlannerTab) {
+    setActiveTab(tab);
+    if (tab !== recommendedWorkspace && tab !== 'admin' && tab !== 'overview') {
+      setAutoRouteByWorkItemType(false);
     }
   }
 
@@ -1521,10 +2093,55 @@ function ProjectIntelligenceTab() {
       {error ? <div className="planner-error">{error}</div> : null}
       {isViewer ? <div className="planner-banner">Viewer access: Project Intelligence is read-only for your Azure DevOps group.</div> : null}
 
-      <WorkflowTabs activeTab={activeTab} onChange={setActiveTab} canAdmin={canAdmin} />
+      <RecommendedActionCard
+        workItem={currentWorkItem}
+        itemType={currentItemType}
+        activeTab={activeTab}
+        recommendedWorkspace={recommendedWorkspace}
+        approvalWorkflow={approvalWorkflow}
+        autoRoute={autoRouteByWorkItemType}
+        loading={loading}
+        canContribute={canContribute}
+        hasExecutionPackage={Boolean(executionContext)}
+        onToggleAutoRoute={setAutoRouteByWorkItemType}
+        onOpenWorkspace={(workspace) => setActiveTab(workspace)}
+        onApproveEpic={() => void approveEpic()}
+        onApproveFeature={() => void approveFeature()}
+        onApproveStory={() => void approveStory()}
+        onApproveTasks={() => approveTasks()}
+        onApproveTestSuite={() => approveTestSuite()}
+        onRefineEpic={() => void refineEpic(isApprovalPending(approvalWorkflow.epic))}
+        onRefineFeature={() => void refineFeature(isApprovalPending(approvalWorkflow.feature))}
+        onRefineStory={() => void refineStory(isApprovalPending(approvalWorkflow.story))}
+        onGenerateChildren={() => void generateChildrenForCurrentType()}
+        onAnalyzeImpact={() => void analyzeCurrentItemImpact()}
+        onGenerateFeatureTestPlan={() => void generateFeatureTestPlan()}
+        onGenerateQATestCases={() => void generateQATestCases()}
+        onBuildExecutionPackage={() => void buildExecutionPackage()}
+        onOpenVsCode={() => openVsCodeExecutionPackage()}
+      />
+      <ApprovalWorkflowDashboard state={approvalWorkflow} itemType={currentItemType} />
+      <ArtifactLifecyclePanel artifacts={artifactRecords} reuseStatus={artifactReuseStatus} />
+      <RelationshipSummaryCard summary={graphSummary} />
+      <CoverageIntelligenceCard report={coverageReport} />
+
+      <WorkflowTabs activeTab={activeTab} onChange={changeWorkspace} canAdmin={canAdmin} />
 
       {activeTab === 'overview' ? (
         <>
+          <ProjectKnowledgeStatusCard
+            session={resumeSession}
+            status={knowledgeCacheStatus}
+            profile={profile}
+            loading={loading}
+            canRefresh={canAdmin}
+            onContinue={continueProjectSession}
+            onRefresh={() => void refreshProjectAnalysis()}
+            onChangeRepository={() => {
+              setShowQuickStart(false);
+              setEditingProfile(true);
+            }}
+          />
           <ProductIdentityCard profile={profile} />
           <EnterpriseReadinessCard profile={profile} qaReady={Boolean(qaTestSuite)} executionReady={Boolean(executionContext)} />
           {showQuickStart && canAdmin ? (
@@ -1602,6 +2219,7 @@ function ProjectIntelligenceTab() {
           creationLog={creationLog}
           providerMetadata={latestProvider}
           canContribute={canContribute}
+          itemType={currentItemType}
           selectedItemType={selectedItemType}
           onItemTypeChange={setSelectedItemType}
           epicInput={epicInput}
@@ -1611,19 +2229,28 @@ function ProjectIntelligenceTab() {
           epicResult={epicResult}
           featureResult={featureResult}
           storyResult={storyResult}
+          epicImpact={epicImpact}
+          featureImpact={featureImpact}
+          qaTestSuite={qaTestSuite}
+          approvalWorkflow={approvalWorkflow}
           setEpicInput={setEpicInput}
           setFeatureInput={setFeatureInput}
           setStoryInput={setStoryInput}
           setAcceptanceCriteria={setAcceptanceCriteria}
-          refineEpic={() => void refineEpic()}
-          refineFeature={() => void refineFeature()}
-          refineStory={() => void refineStory()}
+          refineEpic={() => void refineEpic(true)}
+          refineFeature={() => void refineFeature(true)}
+          refineStory={() => void refineStory(true)}
+          analyzeImpact={() => void analyzeCurrentItemImpact()}
+          generateFeatureTestPlan={() => void generateFeatureTestPlan()}
           generateChildren={() => void generateChildrenForCurrentType()}
+          approveEpic={() => void approveEpic()}
+          approveFeatures={() => approveFeatures()}
+          approveFeature={() => void approveFeature()}
+          approveStories={() => approveStories()}
           updateDraftSelection={updateDraftSelection}
           createSelectedChildren={() => void createSelectedChildWorkItems()}
-          buildExecutionPackage={() => void buildExecutionPackage()}
-          generateQATestCases={() => void generateQATestCases()}
-          qaTestSuite={qaTestSuite}
+          buildExecutionPackage={() => void buildExecutionPackage(true)}
+          generateQATestCases={() => void generateQATestCases(true)}
         />
       ) : null}
 
@@ -1637,6 +2264,29 @@ function ProjectIntelligenceTab() {
           onGenerate={() => void buildExecutionPackage()}
           loading={loading}
           canContribute={canContribute}
+          itemType={currentItemType}
+          currentWorkItem={currentWorkItem}
+          storyInput={storyInput}
+          acceptanceCriteria={acceptanceCriteria}
+          setStoryInput={setStoryInput}
+          setAcceptanceCriteria={setAcceptanceCriteria}
+          storyResult={storyResult}
+          storyImpact={storyImpact}
+          qaTestSuite={qaTestSuite}
+          childDrafts={childDrafts}
+          creationLog={creationLog}
+          providerMetadata={latestProvider}
+          approvalWorkflow={approvalWorkflow}
+          refineStory={() => void refineStory()}
+          analyzeImpact={() => void analyzeCurrentItemImpact()}
+          generateChildren={() => void generateChildrenForCurrentType()}
+          generateQATestCases={() => void generateQATestCases()}
+          approveStory={() => void approveStory()}
+          approveTasks={() => approveTasks()}
+          approveExecutionPackage={() => approveExecutionPackage()}
+          updateDraftSelection={updateDraftSelection}
+          createSelectedChildren={() => void createSelectedChildWorkItems()}
+          onOpenVsCode={() => openVsCodeExecutionPackage()}
         />
       ) : null}
 
@@ -1648,8 +2298,14 @@ function ProjectIntelligenceTab() {
           setStoryInput={setStoryInput}
           setAcceptanceCriteria={setAcceptanceCriteria}
           qaTestSuite={qaTestSuite}
+          approvalWorkflow={approvalWorkflow}
+          storyImpact={storyImpact}
           generateQATestCases={() => void generateQATestCases()}
+          approveTestSuite={() => approveTestSuite()}
           canContribute={canContribute}
+          itemType={currentItemType}
+          currentWorkItem={currentWorkItem}
+          analyzeImpact={() => void analyzeCurrentItemImpact()}
         />
       ) : null}
 
@@ -1730,6 +2386,391 @@ function ProjectSessionResumeCard({
         <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Refresh Analysis</button>
       </div>
       {!canRefresh ? <div className="planner-subtle">Knowledge refresh is available to AI Gen Admins only.</div> : null}
+    </section>
+  );
+}
+
+function ProjectKnowledgeStatusCard({
+  session,
+  status,
+  profile,
+  loading,
+  canRefresh,
+  onContinue,
+  onRefresh,
+  onChangeRepository,
+}: {
+  session?: ProjectSessionSnapshot;
+  status?: KnowledgeCacheStatus;
+  profile: ProjectProfile;
+  loading: boolean;
+  canRefresh: boolean;
+  onContinue: () => void;
+  onRefresh: () => void;
+  onChangeRepository: () => void;
+}) {
+  const knowledge = status?.knowledge_status || (hasKnowledgeRegistry(profile) ? 'ready' : 'missing');
+  const repository = status?.repository || profile.repository_connection.repository_name || session?.repository_name || 'Not connected';
+  const branch = status?.branch || profile.repository_connection.branch || session?.branch || 'main';
+  const sourceFiles = status?.source_files?.length ? status.source_files : profile.knowledge_registry.source_files;
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Project Knowledge Status</div>
+          <div className="planner-subtle">Cached knowledge is reused on startup. Refresh only when repository documents change.</div>
+        </div>
+        <div className={`planner-session-freshness ${knowledge === 'ready' ? 'fresh' : knowledge === 'missing' ? 'stale' : 'partial'}`}>
+          {knowledgeStatusText(knowledge)}
+        </div>
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Project" value={status?.project_name || session?.active_project || profile.project_name || 'Project Intelligence'} />
+        <Row label="Workspace" value={workspaceLabel(session?.last_active_tab || 'overview')} />
+        <Row label="Repository" value={repository} />
+        <Row label="Branch" value={branch} />
+        <Row label="Knowledge Version" value={status?.knowledge_version || session?.knowledge_version || knowledgeVersion(profile)} />
+        <Row label="Last Analyzed" value={formatTimestamp(status?.last_analyzed_at || session?.last_analysis_timestamp || '')} />
+      </div>
+      <ListBlock title="Source Files" items={sourceFiles.length ? sourceFiles : ['No source files analyzed yet']} />
+      {status?.changed_files?.length ? <ListBlock title="Changed Files" items={status.changed_files} /> : null}
+      {status?.invalidation_reasons?.length ? <ListBlock title="Refresh Reasons" items={status.invalidation_reasons} /> : null}
+      <div className="planner-actions">
+        <button className="planner-button" type="button" onClick={onContinue} disabled={loading}>Continue Working</button>
+        <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Refresh Knowledge</button>
+        <button className="planner-button secondary" type="button" onClick={onChangeRepository} disabled={loading || !canRefresh}>Change Repository</button>
+      </div>
+      {!canRefresh ? <div className="planner-subtle">Knowledge refresh and repository changes are available to AI Gen Admins.</div> : null}
+    </section>
+  );
+}
+
+function RecommendedActionCard({
+  workItem,
+  itemType,
+  activeTab,
+  recommendedWorkspace,
+  approvalWorkflow,
+  autoRoute,
+  loading,
+  canContribute,
+  hasExecutionPackage,
+  onToggleAutoRoute,
+  onOpenWorkspace,
+  onApproveEpic,
+  onApproveFeature,
+  onApproveStory,
+  onApproveTasks,
+  onApproveTestSuite,
+  onRefineEpic,
+  onRefineFeature,
+  onRefineStory,
+  onGenerateChildren,
+  onAnalyzeImpact,
+  onGenerateFeatureTestPlan,
+  onGenerateQATestCases,
+  onBuildExecutionPackage,
+  onOpenVsCode,
+}: {
+  workItem?: AdoWorkItem;
+  itemType: WorkItemKind;
+  activeTab: PlannerTab;
+  recommendedWorkspace: RoutedWorkspace;
+  approvalWorkflow: ApprovalWorkflowState;
+  autoRoute: boolean;
+  loading: boolean;
+  canContribute: boolean;
+  hasExecutionPackage: boolean;
+  onToggleAutoRoute: (enabled: boolean) => void;
+  onOpenWorkspace: (workspace: PlannerTab) => void;
+  onApproveEpic: () => void;
+  onApproveFeature: () => void;
+  onApproveStory: () => void;
+  onApproveTasks: () => void;
+  onApproveTestSuite: () => void;
+  onRefineEpic: () => void;
+  onRefineFeature: () => void;
+  onRefineStory: () => void;
+  onGenerateChildren: () => void;
+  onAnalyzeImpact: () => void;
+  onGenerateFeatureTestPlan: () => void;
+  onGenerateQATestCases: () => void;
+  onBuildExecutionPackage: () => void;
+  onOpenVsCode: () => void;
+}) {
+  const actions = recommendedActionsForItemType(itemType, {
+    onRefineEpic,
+    onRefineFeature,
+    onRefineStory,
+    onGenerateChildren,
+    onAnalyzeImpact,
+    onGenerateFeatureTestPlan,
+    onGenerateQATestCases,
+    onBuildExecutionPackage,
+    onOpenVsCode,
+    hasExecutionPackage,
+    approvalWorkflow,
+    onApproveEpic,
+    onApproveFeature,
+    onApproveStory,
+    onApproveTasks,
+    onApproveTestSuite,
+  }).slice(0, 3);
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Current Item</div>
+          <div className="planner-subtle">{workItem ? `${workItem.type} #${workItem.id}: ${workItem.title}` : 'No Azure DevOps work item detected.'}</div>
+        </div>
+        <label className="planner-checkbox">
+          <input type="checkbox" checked={autoRoute} onChange={(event) => onToggleAutoRoute(event.target.checked)} />
+          Auto Route
+        </label>
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Current Item Type" value={itemType} />
+        <Row label="Current Work Item" value={workItem ? `#${workItem.id}` : 'Not loaded'} />
+        <Row label="Recommended Workspace" value={workspaceLabel(recommendedWorkspace)} />
+        <Row label="Active Workspace" value={workspaceLabel(activeTab)} />
+      </div>
+      {activeTab !== recommendedWorkspace ? (
+        <div className="planner-banner">Manual override is active. Recommended workspace for this item is {workspaceLabel(recommendedWorkspace)}.</div>
+      ) : null}
+      <div className="planner-actions">
+        <button className="planner-button secondary" onClick={() => onOpenWorkspace(recommendedWorkspace)} disabled={loading}>
+          Open {workspaceLabel(recommendedWorkspace)}
+        </button>
+        {actions.map((action) => (
+          <button key={action.label} className={action.primary ? 'planner-button' : 'planner-button secondary'} onClick={action.run} disabled={loading || !canContribute}>
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function recommendedActionsForItemType(
+  itemType: WorkItemKind,
+  handlers: {
+    onRefineEpic: () => void;
+    onRefineFeature: () => void;
+    onRefineStory: () => void;
+    onGenerateChildren: () => void;
+    onAnalyzeImpact: () => void;
+    onGenerateFeatureTestPlan: () => void;
+    onGenerateQATestCases: () => void;
+    onBuildExecutionPackage: () => void;
+    onOpenVsCode: () => void;
+    hasExecutionPackage: boolean;
+    approvalWorkflow: ApprovalWorkflowState;
+    onApproveEpic: () => void;
+    onApproveFeature: () => void;
+    onApproveStory: () => void;
+    onApproveTasks: () => void;
+    onApproveTestSuite: () => void;
+  },
+): Array<{ label: string; run: () => void; primary?: boolean }> {
+  if (itemType === 'Epic') {
+    if (isApprovalPending(handlers.approvalWorkflow.epic)) {
+      return [
+        { label: 'Approve Epic', run: handlers.onApproveEpic, primary: true },
+        { label: 'Regenerate Epic', run: handlers.onRefineEpic },
+        { label: 'Impact Analysis', run: handlers.onAnalyzeImpact },
+      ];
+    }
+    return [
+      { label: 'Generate Epic', run: handlers.onRefineEpic, primary: true },
+      { label: 'Generate Features', run: handlers.onGenerateChildren },
+      { label: 'Impact Analysis', run: handlers.onAnalyzeImpact },
+    ];
+  }
+  if (itemType === 'Feature') {
+    if (isApprovalPending(handlers.approvalWorkflow.feature)) {
+      return [
+        { label: 'Approve Feature', run: handlers.onApproveFeature, primary: true },
+        { label: 'Regenerate Feature', run: handlers.onRefineFeature },
+        { label: 'Generate Test Plan', run: handlers.onGenerateFeatureTestPlan },
+      ];
+    }
+    return [
+      { label: 'Generate Feature', run: handlers.onRefineFeature, primary: true },
+      { label: 'Generate Stories', run: handlers.onGenerateChildren },
+      { label: 'Generate Test Plan', run: handlers.onGenerateFeatureTestPlan },
+    ];
+  }
+  if (itemType === 'Story') {
+    if (isApprovalPending(handlers.approvalWorkflow.story)) {
+      return [
+        { label: 'Approve Story', run: handlers.onApproveStory, primary: true },
+        { label: 'Regenerate Story', run: handlers.onRefineStory },
+        { label: 'Generate Test Cases', run: handlers.onGenerateQATestCases },
+      ];
+    }
+    if (isApprovalPending(handlers.approvalWorkflow.tasks)) {
+      return [
+        { label: 'Approve Tasks', run: handlers.onApproveTasks, primary: true },
+        { label: 'Regenerate Tasks', run: handlers.onGenerateChildren },
+        { label: 'Build Execution Package', run: handlers.onBuildExecutionPackage },
+      ];
+    }
+    return [
+      { label: 'Build Execution Package', run: handlers.onBuildExecutionPackage, primary: true },
+      { label: 'Generate Tasks', run: handlers.onGenerateChildren },
+      { label: 'Generate Test Cases', run: handlers.onGenerateQATestCases },
+    ];
+  }
+  if (itemType === 'Task') {
+    return [
+      { label: handlers.hasExecutionPackage ? 'Open VS Code' : 'Build Execution Package', run: handlers.hasExecutionPackage ? handlers.onOpenVsCode : handlers.onBuildExecutionPackage, primary: true },
+      { label: 'Dev Prompt', run: handlers.onBuildExecutionPackage },
+      { label: 'QA Prompt', run: handlers.onBuildExecutionPackage },
+    ];
+  }
+  if (itemType === 'Bug') {
+    return [
+      { label: 'Build Fix Context', run: handlers.onBuildExecutionPackage, primary: true },
+      { label: 'Impact Analysis', run: handlers.onAnalyzeImpact },
+      { label: 'Generate Regression Tests', run: handlers.onGenerateQATestCases },
+    ];
+  }
+  return [
+    ...(isApprovalPending(handlers.approvalWorkflow.qa) ? [{ label: 'Approve Test Suite', run: handlers.onApproveTestSuite, primary: true }] : []),
+    { label: 'Coverage Analysis', run: handlers.onGenerateQATestCases, primary: !isApprovalPending(handlers.approvalWorkflow.qa) },
+    { label: 'Regression Scope', run: handlers.onAnalyzeImpact },
+    { label: 'Test Execution Notes', run: handlers.onGenerateQATestCases },
+  ];
+}
+
+function ApprovalWorkflowDashboard({ state, itemType }: { state: ApprovalWorkflowState; itemType: WorkItemKind }) {
+  const rows: Array<{ key: ApprovalArtifact; label: string }> = [
+    { key: 'epic', label: 'Epic' },
+    { key: 'features', label: 'Features' },
+    { key: 'feature', label: 'Feature' },
+    { key: 'stories', label: 'Stories' },
+    { key: 'story', label: 'Story' },
+    { key: 'tasks', label: 'Tasks' },
+    { key: 'qa', label: 'QA' },
+    { key: 'execution', label: 'Execution Package' },
+  ];
+  const visible = rows.filter((row) => {
+    if (itemType === 'Epic') return ['epic', 'features'].includes(row.key);
+    if (itemType === 'Feature') return ['feature', 'stories', 'qa'].includes(row.key);
+    if (itemType === 'Story') return ['story', 'tasks', 'qa', 'execution'].includes(row.key);
+    if (itemType === 'Task' || itemType === 'Bug') return ['execution', 'qa'].includes(row.key);
+    return ['qa'].includes(row.key);
+  });
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Approval Workflow</div>
+          <div className="planner-subtle">Generated output stays in Draft until you approve it. Approval unlocks the next level.</div>
+        </div>
+      </div>
+      <div className="planner-summary-grid">
+        {visible.map((row) => (
+          <SummaryTile key={row.key} title={row.label} value={approvalStatusLabel(state[row.key])} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ArtifactLifecyclePanel({ artifacts, reuseStatus }: { artifacts: ArtifactRecord[]; reuseStatus: string }) {
+  const visible = artifacts.slice(0, 6);
+  if (!reuseStatus && !visible.length) {
+    return null;
+  }
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Artifact Lifecycle</div>
+          <div className="planner-subtle">Approved outputs are locked and reused until their source changes or you regenerate them.</div>
+        </div>
+      </div>
+      {reuseStatus ? <div className="planner-banner">{reuseStatus}</div> : null}
+      {visible.length ? (
+        <div className="planner-status-grid">
+          {visible.map((artifact) => (
+            <div className="planner-status-row" key={artifact.artifact_id}>
+              <span>{artifact.artifact_type} v{artifact.version}</span>
+              <strong>{artifactLifecycleLabel(artifact)}</strong>
+              <small>{artifact.title}</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RelationshipSummaryCard({ summary }: { summary?: GraphSummary }) {
+  if (!summary || summary.version === 0) {
+    return null;
+  }
+  const chain = summary.chain;
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Relationship Summary</div>
+          <div className="planner-subtle">Persistent project graph used by planning, execution, QA, coverage, and impact analysis.</div>
+        </div>
+        <div className="planner-session-freshness fresh">Graph v{summary.version}</div>
+      </div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Epics" value={String(chain.epics)} />
+        <SummaryTile title="Features" value={String(chain.features)} />
+        <SummaryTile title="Stories" value={String(chain.stories)} />
+        <SummaryTile title="Tasks" value={String(chain.tasks)} />
+        <SummaryTile title="Tests" value={String(chain.tests)} />
+        <SummaryTile title="Execution Packages" value={String(chain.execution_packages)} />
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Relationships" value={String(summary.relationship_count)} />
+        <Row label="Acceptance Criteria Coverage" value={`${summary.coverage?.coverage_percent || 0}%`} />
+        <Row label="Uncovered Acceptance Criteria" value={String(summary.coverage?.uncovered_acceptance_criteria_count || 0)} />
+        <Row label="Last Graph Update" value={formatTimestamp(summary.updated_at)} />
+      </div>
+    </section>
+  );
+}
+
+function CoverageIntelligenceCard({ report }: { report?: CoverageIntelligenceReport }) {
+  const coverage = report?.coverage_report;
+  if (!coverage || (!coverage.story_coverage.length && !coverage.feature_coverage.length && !coverage.gap_summary.gap_count)) {
+    return null;
+  }
+  const topGaps = coverage.gap_summary.gaps.slice(0, 5).map((gap) => `${gap.severity}: ${gap.message}`);
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Coverage Intelligence</div>
+          <div className="planner-subtle">Traceability and gaps from the persistent project graph.</div>
+        </div>
+        <div className={`planner-session-freshness ${coverage.quality_gate === 'pass' ? 'fresh' : 'stale'}`}>
+          {coverage.quality_gate === 'pass' ? 'Quality Gate Passed' : 'Quality Gate Needs Work'}
+        </div>
+      </div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Project Coverage" value={`${coverage.overall_project_coverage}%`} />
+        <SummaryTile title="Stories" value={String(coverage.story_coverage.length)} />
+        <SummaryTile title="Features" value={String(coverage.feature_coverage.length)} />
+        <SummaryTile title="Gaps" value={String(coverage.gap_summary.gap_count)} />
+        <SummaryTile title="Blocking Gaps" value={String(coverage.gap_summary.blocking_gap_count)} />
+        <SummaryTile title="Threshold" value={`${coverage.threshold}%`} />
+      </div>
+      {topGaps.length ? <ListBlock title="Gap Analysis" items={topGaps} /> : <div className="planner-subtle">No coverage gaps found in the current graph.</div>}
+      {coverage.story_coverage.length ? (
+        <ListBlock
+          title="Story Coverage"
+          items={coverage.story_coverage.slice(0, 5).map((story) => `${story.title}: ${story.overall_score}% (${story.task_count} tasks, ${story.test_count} tests, ${story.execution_package_count} execution packages)`)}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1916,6 +2957,7 @@ function AIPlannerWorkspace({
   creationLog,
   providerMetadata,
   canContribute,
+  itemType,
   selectedItemType,
   onItemTypeChange,
   epicInput,
@@ -1925,7 +2967,10 @@ function AIPlannerWorkspace({
   epicResult,
   featureResult,
   storyResult,
+  epicImpact,
+  featureImpact,
   qaTestSuite,
+  approvalWorkflow,
   setEpicInput,
   setFeatureInput,
   setStoryInput,
@@ -1933,7 +2978,13 @@ function AIPlannerWorkspace({
   refineEpic,
   refineFeature,
   refineStory,
+  analyzeImpact,
+  generateFeatureTestPlan,
   generateChildren,
+  approveEpic,
+  approveFeatures,
+  approveFeature,
+  approveStories,
   updateDraftSelection,
   createSelectedChildren,
   buildExecutionPackage,
@@ -1946,8 +2997,9 @@ function AIPlannerWorkspace({
   creationLog: string[];
   providerMetadata?: ProviderMetadata;
   canContribute: boolean;
-  selectedItemType: 'Epic' | 'Feature' | 'Story' | 'Task';
-  onItemTypeChange: (type: 'Epic' | 'Feature' | 'Story' | 'Task') => void;
+  itemType: WorkItemKind;
+  selectedItemType: WorkItemKind;
+  onItemTypeChange: (type: WorkItemKind) => void;
   epicInput: { title: string; description: string };
   featureInput: { title: string; description: string };
   storyInput: { title: string; description: string };
@@ -1955,7 +3007,10 @@ function AIPlannerWorkspace({
   epicResult?: EpicRefinement;
   featureResult?: FeatureRefinement;
   storyResult?: StoryRefinement;
+  epicImpact?: EpicImpact;
+  featureImpact?: FeatureImpact;
   qaTestSuite?: QATestSuiteResult;
+  approvalWorkflow: ApprovalWorkflowState;
   setEpicInput: (value: { title: string; description: string }) => void;
   setFeatureInput: (value: { title: string; description: string }) => void;
   setStoryInput: (value: { title: string; description: string }) => void;
@@ -1963,13 +3018,31 @@ function AIPlannerWorkspace({
   refineEpic: () => void;
   refineFeature: () => void;
   refineStory: () => void;
+  analyzeImpact: () => void;
+  generateFeatureTestPlan: () => void;
   generateChildren: () => void;
+  approveEpic: () => void;
+  approveFeatures: () => void;
+  approveFeature: () => void;
+  approveStories: () => void;
   updateDraftSelection: (draftId: string, selected: boolean) => void;
   createSelectedChildren: () => void;
   buildExecutionPackage: () => void;
   generateQATestCases: () => void;
 }) {
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
+  const planningType = itemType === 'Epic' || itemType === 'Feature' ? itemType : selectedItemType;
+  if (itemType !== 'Epic' && itemType !== 'Feature' && currentWorkItem) {
+    return (
+      <>
+        <WorkItemContextCard workItem={currentWorkItem} />
+        <section className="planner-card">
+          <div className="planner-label">Planning Workspace</div>
+          <div className="planner-subtle">{itemType} work items are routed to {workspaceLabel(recommendedWorkspaceForItem(itemType))}. Planning actions are hidden for this item type.</div>
+        </section>
+      </>
+    );
+  }
   return (
     <>
       <WorkItemContextCard workItem={currentWorkItem} />
@@ -1983,11 +3056,11 @@ function AIPlannerWorkspace({
         {readOnly ? <div className="planner-error">This work item is Closed. Planning output is read-only.</div> : null}
         {currentWorkItem?.state.toLowerCase() === 'active' ? <div className="planner-banner">This work item is Active. AI Planner will ask before regeneration.</div> : null}
         <div className="planner-pill-row">
-          {(['Epic', 'Feature', 'Story', 'Task'] as const).map((type) => (
+          {(['Epic', 'Feature'] as const).map((type) => (
             <button
               key={type}
               type="button"
-              className={`planner-pill ${selectedItemType === type ? 'active' : ''}`}
+              className={`planner-pill ${planningType === type ? 'active' : ''}`}
               onClick={() => onItemTypeChange(type)}
             >
               {type}
@@ -1996,84 +3069,76 @@ function AIPlannerWorkspace({
         </div>
       </section>
 
-      {selectedItemType === 'Epic' ? (
+      {planningType === 'Epic' ? (
         <section className="planner-card">
           <div className="planner-label">Epic Workflow</div>
-          <div className="planner-subtle">Refine the epic goal, then generate project-aware feature recommendations.</div>
+          <div className="planner-subtle">Generate the epic draft, approve it, then review generated feature recommendations.</div>
           <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
+          <ApprovalStatusStrip label="Epic" status={approvalWorkflow.epic} qualityScore={qualityScoreForEpic(epicResult)} />
           <div className="planner-actions">
-            <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Refine Epic</button>
-            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !epicInput.title.trim()}>Generate Features</button>
+            {!epicResult ? (
+              <button className="planner-button" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Generate Epic</button>
+            ) : (
+              <button className="planner-button" onClick={approveEpic} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.epic)}>Approve Epic</button>
+            )}
+            {epicResult ? <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Epic</button> : null}
+            <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !epicInput.title.trim()}>Impact Analysis</button>
           </div>
+          <details className="planner-task">
+            <summary className="planner-label">Advanced Refine</summary>
+            <div className="planner-subtle">Use only when the generated draft needs custom revision. This calls Phi again.</div>
+            <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Custom Refine Epic</button>
+          </details>
           {epicResult ? (
             <div className="planner-status-grid">
               <EpicRefinementResult result={epicResult} />
               <CardList title="Generated Features" items={epicResult.recommended_features} />
             </div>
           ) : null}
+          {childDrafts.some((draft) => draft.type === 'Feature') ? (
+            <div className="planner-actions">
+              <ApprovalStatusStrip label="Features" status={approvalWorkflow.features} qualityScore={qualityScoreForFeatureDrafts(childDrafts.filter((draft) => draft.type === 'Feature'))} />
+              <button className="planner-button" onClick={approveFeatures} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.features)}>Approve Features</button>
+            </div>
+          ) : null}
+          {epicImpact ? <EpicImpactResult result={epicImpact} /> : null}
         </section>
       ) : null}
 
-      {selectedItemType === 'Feature' ? (
+      {planningType === 'Feature' ? (
         <section className="planner-card">
           <div className="planner-label">Feature Workflow</div>
-          <div className="planner-subtle">Refine the feature and generate meaningful stories from project modules and flows.</div>
+          <div className="planner-subtle">Generate the feature draft, approve it, then review generated stories.</div>
           <RefinementInput input={featureInput} setInput={setFeatureInput} titlePlaceholder="Order visibility" descriptionPlaceholder="Describe feature behavior, affected users, and delivery scope." />
+          <ApprovalStatusStrip label="Feature" status={approvalWorkflow.feature} qualityScore={qualityScoreForFeature(featureResult)} />
           <div className="planner-actions">
-            <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Refine Feature</button>
-            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Stories</button>
+            {!featureResult ? (
+              <button className="planner-button" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Feature</button>
+            ) : (
+              <button className="planner-button" onClick={approveFeature} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.feature)}>Approve Feature</button>
+            )}
+            {featureResult ? <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Regenerate Feature</button> : null}
+            <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !featureInput.title.trim()}>Impact Analysis</button>
+            <button className="planner-button secondary" onClick={generateFeatureTestPlan} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Test Plan</button>
           </div>
+          <details className="planner-task">
+            <summary className="planner-label">Advanced Refine</summary>
+            <div className="planner-subtle">Use only when the generated draft needs custom revision. This calls Phi again.</div>
+            <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Custom Refine Feature</button>
+          </details>
           {featureResult ? (
             <div className="planner-status-grid">
               <FeatureRefinementResult result={featureResult} />
               <CardList title="Generated Stories" items={featureResult.recommended_stories} />
             </div>
           ) : null}
-        </section>
-      ) : null}
-
-      {selectedItemType === 'Story' ? (
-        <section className="planner-card">
-          <div className="planner-label">Story Workflow</div>
-          <div className="planner-subtle">Refine the story, acceptance criteria, affected areas, and proposed implementation tasks.</div>
-          <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Track order delivery status" descriptionPlaceholder="Describe the story, user outcome, and acceptance expectations." />
-          <textarea
-            className="planner-textarea compact"
-            value={acceptanceCriteria}
-            onChange={(event) => setAcceptanceCriteria(event.target.value)}
-            placeholder="Acceptance criteria, one per line"
-          />
-          <div className="planner-actions">
-            <button className="planner-button secondary" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Refine Story</button>
-            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Tasks</button>
-            <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Test Cases</button>
-            <button className="planner-button secondary" onClick={buildExecutionPackage} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Execution Package</button>
-          </div>
-          {storyResult ? (
-            <div className="planner-status-grid">
-              <StoryRefinementResult result={storyResult} />
-              <GeneratedTasksPreview story={storyResult} />
+          {childDrafts.some((draft) => draft.type === 'User Story') ? (
+            <div className="planner-actions">
+              <ApprovalStatusStrip label="Stories" status={approvalWorkflow.stories} qualityScore={qualityScoreForFeature(featureResult)} />
+              <button className="planner-button" onClick={approveStories} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.stories)}>Approve Stories</button>
             </div>
           ) : null}
-          {qaTestSuite ? <QAIntelligencePanel result={qaTestSuite} /> : null}
-        </section>
-      ) : null}
-
-      {selectedItemType === 'Task' ? (
-        <section className="planner-card">
-          <div className="planner-label">Task Workflow</div>
-          <div className="planner-subtle">Generate execution context and prompts for a developer workspace.</div>
-          <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Implement approved story task" descriptionPlaceholder="Describe the task or approved story scope." />
-          <textarea
-            className="planner-textarea compact"
-            value={acceptanceCriteria}
-            onChange={(event) => setAcceptanceCriteria(event.target.value)}
-            placeholder="Acceptance criteria or task validation notes, one per line"
-          />
-          <div className="planner-actions">
-            <button className="planner-button" onClick={buildExecutionPackage} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Execution Package</button>
-          </div>
-          {storyResult ? <GeneratedTasksPreview story={storyResult} /> : null}
+          {featureImpact ? <FeatureImpactResult result={featureImpact} /> : null}
         </section>
       ) : null}
       <GeneratedChildWorkItems
@@ -2339,6 +3404,29 @@ function DeveloperWorkspace({
   onGenerate,
   loading,
   canContribute,
+  itemType,
+  currentWorkItem,
+  storyInput,
+  acceptanceCriteria,
+  setStoryInput,
+  setAcceptanceCriteria,
+  storyResult,
+  storyImpact,
+  qaTestSuite,
+  childDrafts,
+  creationLog,
+  providerMetadata,
+  approvalWorkflow,
+  refineStory,
+  analyzeImpact,
+  generateChildren,
+  generateQATestCases,
+  approveStory,
+  approveTasks,
+  approveExecutionPackage,
+  updateDraftSelection,
+  createSelectedChildren,
+  onOpenVsCode,
 }: {
   executionContext?: ExecutionContextResult;
   devPrompt?: PromptBuilderResult;
@@ -2348,24 +3436,121 @@ function DeveloperWorkspace({
   onGenerate: () => void;
   loading: boolean;
   canContribute: boolean;
+  itemType: WorkItemKind;
+  currentWorkItem?: AdoWorkItem;
+  storyInput: { title: string; description: string };
+  acceptanceCriteria: string;
+  setStoryInput: (value: { title: string; description: string }) => void;
+  setAcceptanceCriteria: (value: string) => void;
+  storyResult?: StoryRefinement;
+  storyImpact?: StoryImpact;
+  qaTestSuite?: QATestSuiteResult;
+  childDrafts: ChildDraft[];
+  creationLog: string[];
+  providerMetadata?: ProviderMetadata;
+  approvalWorkflow: ApprovalWorkflowState;
+  refineStory: () => void;
+  analyzeImpact: () => void;
+  generateChildren: () => void;
+  generateQATestCases: () => void;
+  approveStory: () => void;
+  approveTasks: () => void;
+  approveExecutionPackage: () => void;
+  updateDraftSelection: (draftId: string, selected: boolean) => void;
+  createSelectedChildren: () => void;
+  onOpenVsCode: () => void;
 }) {
   const hasPackage = Boolean(executionContext || devPrompt || uiPrompt || qaPrompt || copilotContext);
   const vsCodeUri = executionContext ? buildVsCodeExecutionPackageUri(executionContext, devPrompt, uiPrompt, qaPrompt, copilotContext) : '';
-  return (
-    <>
+  const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
+  const isStory = itemType === 'Story';
+  const isTask = itemType === 'Task';
+  const isBug = itemType === 'Bug';
+  if (itemType === 'Epic' || itemType === 'Feature' || itemType === 'Test Case') {
+    return (
       <section className="planner-card">
         <div className="planner-label">Developer Workspace</div>
-        <div className="planner-subtle">Execution-ready context for VS Code, Copilot, or manual implementation.</div>
+        <div className="planner-subtle">{itemType} work items are routed to {workspaceLabel(recommendedWorkspaceForItem(itemType))}. Execution actions are hidden for this item type.</div>
+      </section>
+    );
+  }
+  return (
+    <>
+      <WorkItemContextCard workItem={currentWorkItem} />
+      <section className="planner-card">
+        <div className="planner-label">{isBug ? 'Bug Fix Workspace' : isTask ? 'Task Execution Workspace' : 'Story Execution Workspace'}</div>
+        <div className="planner-subtle">
+          {isBug
+            ? 'Analyze impact, prepare fix context, and generate regression coverage.'
+            : isTask
+              ? 'Generate implementation prompts and open the package in VS Code.'
+              : 'Generate the story draft, approve it, then build tasks, QA coverage, and execution-ready prompts.'}
+        </div>
+        {readOnly ? <div className="planner-error">This work item is Closed. Execution output is read-only.</div> : null}
+        <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder={isBug ? 'Bug title' : isTask ? 'Task title' : 'Story title'} descriptionPlaceholder={isBug ? 'Bug symptoms, expected behavior, and observed behavior.' : 'Approved story/task scope for execution.'} />
+        <textarea
+          className="planner-textarea compact"
+          value={acceptanceCriteria}
+          onChange={(event) => setAcceptanceCriteria(event.target.value)}
+          placeholder={isBug ? 'Regression expectations or reproduction notes, one per line' : 'Acceptance criteria or task validation notes, one per line'}
+        />
+        {isStory ? <ApprovalStatusStrip label="Story" status={approvalWorkflow.story} qualityScore={qualityScoreForStory(storyResult)} /> : null}
+        {isTask || isBug ? <ApprovalStatusStrip label={isBug ? 'Fix Context' : 'Execution Package'} status={approvalWorkflow.execution} qualityScore={executionContext?.execution_readiness_score} /> : null}
         <div className="planner-actions">
-          <button className="planner-button" onClick={onGenerate} disabled={loading || !canContribute}>Generate Execution Package</button>
+          {isStory && !storyResult ? <button className="planner-button" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Story</button> : null}
+          {isStory && storyResult ? <button className="planner-button" onClick={approveStory} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.story)}>Approve Story</button> : null}
+          {isStory && storyResult ? <button className="planner-button secondary" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Regenerate Story</button> : null}
+          <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Root Cause / Impact Analysis' : 'Impact Analysis'}</button>
+          {isStory ? <button className="planner-button secondary" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>{storyResult ? 'Regenerate Tasks' : 'Generate Tasks'}</button> : null}
+          {(isStory || isBug) ? <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Generate Regression Tests' : 'Generate Test Cases'}</button> : null}
+          <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : 'Build Execution Package'}</button>
+          {hasPackage ? <button className="planner-button secondary" onClick={approveExecutionPackage} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.execution)}>Approve Package</button> : null}
           {vsCodeUri ? (
-            <button className="planner-button secondary" onClick={() => window.open(vsCodeUri, '_blank')} disabled={loading}>Open in VS Code</button>
+            <button className="planner-button secondary" onClick={onOpenVsCode} disabled={loading}>Open in VS Code</button>
           ) : null}
         </div>
+        {isStory ? (
+          <details className="planner-task">
+            <summary className="planner-label">Advanced Refine</summary>
+            <div className="planner-subtle">Use only when the generated story needs custom revision. This calls Phi again.</div>
+            <button className="planner-button secondary" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Custom Refine Story</button>
+          </details>
+        ) : null}
       </section>
+      {storyResult && isStory ? (
+        <div className="planner-status-grid">
+          <StoryRefinementResult result={storyResult} />
+          <GeneratedTasksPreview story={storyResult} />
+        </div>
+      ) : null}
+      {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
+      {qaTestSuite && (isStory || isBug) ? <QAIntelligencePanel result={qaTestSuite} /> : null}
+      {isStory ? (
+        <>
+          {childDrafts.some((draft) => draft.type === 'Task') ? (
+            <section className="planner-card">
+              <ApprovalStatusStrip label="Tasks" status={approvalWorkflow.tasks} qualityScore={qualityScoreForTaskDrafts(childDrafts.filter((draft) => draft.type === 'Task'))} />
+              <div className="planner-actions">
+                <button className="planner-button" onClick={approveTasks} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.tasks)}>Approve Tasks</button>
+                <button className="planner-button secondary" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>Regenerate Tasks</button>
+              </div>
+            </section>
+          ) : null}
+        <GeneratedChildWorkItems
+          drafts={childDrafts}
+          creationLog={creationLog}
+          currentWorkItem={currentWorkItem}
+          providerMetadata={providerMetadata}
+          readOnly={!canContribute}
+          loading={loading}
+          onSelectionChange={updateDraftSelection}
+          onCreateSelected={createSelectedChildren}
+        />
+        </>
+      ) : null}
       {!hasPackage ? (
         <section className="planner-card">
-          <div className="planner-subtle">No execution package generated yet. Generate one from the Story or Task workflow.</div>
+          <div className="planner-subtle">No execution package generated yet. Generate one from this workspace when the scope is ready.</div>
         </section>
       ) : null}
       {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
@@ -2393,8 +3578,14 @@ function QAWorkspace({
   setStoryInput,
   setAcceptanceCriteria,
   qaTestSuite,
+  approvalWorkflow,
+  storyImpact,
   generateQATestCases,
+  approveTestSuite,
   canContribute,
+  itemType,
+  currentWorkItem,
+  analyzeImpact,
 }: {
   loading: boolean;
   storyInput: { title: string; description: string };
@@ -2402,18 +3593,39 @@ function QAWorkspace({
   setStoryInput: (value: { title: string; description: string }) => void;
   setAcceptanceCriteria: (value: string) => void;
   qaTestSuite?: QATestSuiteResult;
+  approvalWorkflow: ApprovalWorkflowState;
+  storyImpact?: StoryImpact;
   generateQATestCases: () => void;
+  approveTestSuite: () => void;
   canContribute: boolean;
+  itemType: WorkItemKind;
+  currentWorkItem?: AdoWorkItem;
+  analyzeImpact: () => void;
 }) {
+  const isTestCase = itemType === 'Test Case';
+  const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
+  if (itemType !== 'Test Case' && itemType !== 'Story' && itemType !== 'Bug') {
+    return (
+      <section className="planner-card">
+        <div className="planner-label">QA Workspace</div>
+        <div className="planner-subtle">{itemType} work items are routed to {workspaceLabel(recommendedWorkspaceForItem(itemType))}. QA operations are hidden for this item type.</div>
+      </section>
+    );
+  }
   return (
     <>
+      <WorkItemContextCard workItem={currentWorkItem} />
       <section className="planner-card">
         <div className="planner-section-header">
           <div>
-            <div className="planner-label">QA Workspace</div>
-            <div className="planner-subtle">Generate structured test cases, coverage analysis, regression scope, and QA readiness from an approved story.</div>
+            <div className="planner-label">{isTestCase ? 'Test Case Workspace' : 'QA Workspace'}</div>
+            <div className="planner-subtle">
+              {isTestCase
+                ? 'Analyze coverage, regression scope, and execution notes for the selected test case.'
+                : 'Generate structured test cases, coverage analysis, regression scope, and QA readiness from an approved story.'}
+            </div>
           </div>
-          <button className="planner-button" onClick={generateQATestCases} disabled={loading || !canContribute || !storyInput.title.trim()}>Generate Test Cases</button>
+          <button className="planner-button" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>{isTestCase ? 'Coverage Analysis' : 'Generate Test Cases'}</button>
         </div>
         <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Story description or outcome for QA validation." />
         <textarea
@@ -2422,8 +3634,24 @@ function QAWorkspace({
           onChange={(event) => setAcceptanceCriteria(event.target.value)}
           placeholder="Acceptance criteria, one per line"
         />
+        <div className="planner-actions">
+          <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>Regression Scope</button>
+          <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>{qaTestSuite ? 'Regenerate Test Suite' : 'Test Execution Notes'}</button>
+        </div>
       </section>
-      {qaTestSuite ? <QAIntelligencePanel result={qaTestSuite} /> : (
+      {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
+      {qaTestSuite ? (
+        <>
+          <section className="planner-card">
+            <ApprovalStatusStrip label="Test Suite" status={approvalWorkflow.qa} qualityScore={qaTestSuite.coverage_score} />
+            <div className="planner-actions">
+              <button className="planner-button" onClick={approveTestSuite} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.qa)}>Approve Test Suite</button>
+              <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>Regenerate Test Suite</button>
+            </div>
+          </section>
+          <QAIntelligencePanel result={qaTestSuite} />
+        </>
+      ) : (
         <section className="planner-card">
           <div className="planner-label">QA Readiness</div>
           <div className="planner-subtle">No test suite generated yet. Add or load a story, then generate test cases.</div>
@@ -3635,6 +4863,15 @@ function SummaryTile({ title, value }: { title: string; value: string }) {
   );
 }
 
+function ApprovalStatusStrip({ label, status, qualityScore }: { label: string; status: ApprovalStatus; qualityScore?: number }) {
+  return (
+    <div className="planner-status-grid">
+      <Row label={`${label} Status`} value={approvalStatusLabel(status)} />
+      <Row label="Quality Gate" value={qualityScore === undefined ? 'Not scored' : `${formatNumber(qualityScore)} ${isReadyForApproval(qualityScore) ? '- Ready For Approval' : '- Draft'}`} />
+    </div>
+  );
+}
+
 function ChipList({ items }: { items: string[] }) {
   const values = items.length ? items : ['Pending repository analysis'];
   return (
@@ -3722,6 +4959,33 @@ async function getProfile(): Promise<ProjectProfile> {
     throw new Error(await response.text() || `Backend returned HTTP ${response.status}`);
   }
   return response.json() as Promise<ProjectProfile>;
+}
+
+async function getBackendProjectSession(): Promise<BackendProjectSessionResponse> {
+  return getJson<BackendProjectSessionResponse>('/session');
+}
+
+async function saveBackendProjectSession(session: ProjectSessionSnapshot): Promise<void> {
+  await postJson<BackendProjectSessionResponse>('/session', {
+    session: {
+      active_project: session.active_project,
+      project_id: session.profile.project_id,
+      last_active_workspace: session.last_active_tab,
+      last_active_tab: session.last_active_tab,
+      last_work_item_id: session.last_work_item_id,
+      last_work_item_type: session.last_work_item_type,
+      last_work_item_title: session.last_work_item_title,
+      last_repository: session.repository_name,
+      last_repository_id: session.repository_id,
+      last_branch: session.branch,
+      last_analysis_timestamp: session.last_analysis_timestamp,
+      knowledge_version: session.knowledge_version,
+    },
+  });
+}
+
+async function getKnowledgeCache(): Promise<KnowledgeCacheResponse> {
+  return getJson<KnowledgeCacheResponse>('/knowledge-cache');
 }
 
 async function fetchAdoProjects(): Promise<AdoProjectListResponse> {
@@ -4117,6 +5381,67 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
   }
 }
 
+function getReusableArtifact(artifactType: ArtifactType, fingerprint: string, sourceItemId: string): Promise<ReusableArtifactResponse> {
+  const params = new URLSearchParams({
+    artifact_type: artifactType,
+    fingerprint,
+    source_item_id: sourceItemId,
+  });
+  return getJson<ReusableArtifactResponse>(`/artifacts/reusable?${params.toString()}`);
+}
+
+function getArtifacts(): Promise<{ artifacts: ArtifactRecord[]; count: number }> {
+  return getJson<{ artifacts: ArtifactRecord[]; count: number }>('/artifacts');
+}
+
+function getGraphSummary(): Promise<GraphSummary> {
+  return getJson<GraphSummary>('/graph/summary');
+}
+
+function getCoverageReport(): Promise<CoverageIntelligenceReport> {
+  return getJson<CoverageIntelligenceReport>('/coverage/report');
+}
+
+function saveArtifact(artifact: {
+  artifact_type: ArtifactType;
+  title: string;
+  payload: unknown;
+  fingerprint: string;
+  state: ArtifactLifecycleState;
+  source_item: { id: string; type: string; title: string };
+  created_by: string;
+}): Promise<ArtifactRecord> {
+  return postJson<ArtifactRecord>('/artifacts', artifact as unknown as Record<string, unknown>);
+}
+
+function approveStoredArtifact(artifactId: string, approvedBy: string): Promise<ArtifactRecord> {
+  return postJson<ArtifactRecord>(`/artifacts/${encodeURIComponent(artifactId)}/approve`, { approved_by: approvedBy });
+}
+
+function artifactFingerprint(artifactType: ArtifactType, sourceItem: Record<string, unknown>, source: Record<string, unknown>): string {
+  return `fp_${stableHash(stableStringify({ artifactType, sourceItem, source }))}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function stableHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 function splitLines(value: string): string[] {
   return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
 }
@@ -4159,12 +5484,150 @@ function extractWorkItemId(url?: string): number {
   return match ? Number(match[1]) : 0;
 }
 
-function normalizePlannerItemType(type: string): 'Epic' | 'Feature' | 'Story' | 'Task' {
+function normalizePlannerItemType(type: string): WorkItemKind {
   const normalized = type.toLowerCase();
   if (normalized.includes('epic')) return 'Epic';
   if (normalized.includes('feature')) return 'Feature';
+  if (normalized.includes('bug')) return 'Bug';
+  if (normalized.includes('test case') || normalized.includes('testcase')) return 'Test Case';
   if (normalized.includes('task')) return 'Task';
   return 'Story';
+}
+
+function recommendedWorkspaceForItem(type: WorkItemKind): RoutedWorkspace {
+  if (type === 'Epic' || type === 'Feature') {
+    return 'planning';
+  }
+  if (type === 'Test Case') {
+    return 'qa';
+  }
+  return 'execution';
+}
+
+function workspaceLabel(tab: PlannerTab | RoutedWorkspace): string {
+  if (tab === 'planning') return 'Planning';
+  if (tab === 'execution') return 'Execution';
+  if (tab === 'qa') return 'QA';
+  if (tab === 'admin') return 'Admin';
+  return 'Overview';
+}
+
+function knowledgeStatusText(status: KnowledgeCacheStatus['knowledge_status'] | string): string {
+  if (status === 'ready') return 'Ready';
+  if (status === 'refresh_available') return 'Refresh Available';
+  if (status === 'stale') return 'Stale';
+  return 'Missing';
+}
+
+function defaultApprovalWorkflowState(): ApprovalWorkflowState {
+  return {
+    epic: 'locked',
+    features: 'locked',
+    feature: 'locked',
+    stories: 'locked',
+    story: 'locked',
+    tasks: 'locked',
+    qa: 'locked',
+    execution: 'locked',
+  };
+}
+
+function normalizeApprovalWorkflowState(value: unknown): ApprovalWorkflowState {
+  const current = (value && typeof value === 'object' ? value : {}) as Partial<Record<ApprovalArtifact, string>>;
+  const base = defaultApprovalWorkflowState();
+  (Object.keys(base) as ApprovalArtifact[]).forEach((key) => {
+    const status = current[key];
+    if (status === 'draft' || status === 'ready_for_approval' || status === 'approved' || status === 'locked') {
+      base[key] = status;
+    }
+  });
+  return base;
+}
+
+function approvalStatusLabel(status: ApprovalStatus): string {
+  if (status === 'approved') return '✓ Approved';
+  if (status === 'ready_for_approval') return 'Ready For Approval';
+  if (status === 'draft') return 'Draft';
+  return 'Locked';
+}
+
+function isApprovalPending(status: ApprovalStatus): boolean {
+  return status === 'draft' || status === 'ready_for_approval';
+}
+
+function isReadyForApproval(score?: number): boolean {
+  return Number(score || 0) >= 75;
+}
+
+function lifecycleTypesForApproval(approval: ApprovalArtifact): ArtifactType[] {
+  const mapping: Record<ApprovalArtifact, ArtifactType[]> = {
+    epic: ['Epic'],
+    features: ['Feature'],
+    feature: ['Feature'],
+    stories: ['Story'],
+    story: ['Story'],
+    tasks: ['Task'],
+    qa: ['Test Suite', 'Test Plan', 'QA Prompt', 'Coverage Report'],
+    execution: ['Execution Package', 'Dev Prompt', 'UI Prompt', 'QA Prompt', 'Copilot Context'],
+  };
+  return mapping[approval];
+}
+
+function approvalLabel(approval: ApprovalArtifact): string {
+  const labels: Record<ApprovalArtifact, string> = {
+    epic: 'Epic',
+    features: 'Features',
+    feature: 'Feature',
+    stories: 'Stories',
+    story: 'Story',
+    tasks: 'Tasks',
+    qa: 'QA artifact',
+    execution: 'Execution package',
+  };
+  return labels[approval];
+}
+
+function artifactLifecycleLabel(artifact: ArtifactRecord): string {
+  if (artifact.state === 'locked') return `Locked${artifact.approved_on ? ` on ${formatTimestamp(artifact.approved_on)}` : ''}`;
+  if (artifact.state === 'approved') return 'Approved';
+  if (artifact.state === 'archived') return 'Archived';
+  return `Draft${artifact.created_on ? ` from ${formatTimestamp(artifact.created_on)}` : ''}`;
+}
+
+function qualityScoreForEpic(result?: EpicRefinement): number | undefined {
+  if (!result) return undefined;
+  if (result.recommended_features?.length) return 85;
+  if (result.business_goal || result.business_outcomes?.length) return 75;
+  return 60;
+}
+
+function qualityScoreForFeature(result?: FeatureRefinement): number | undefined {
+  if (!result) return undefined;
+  const diagnostics = result.story_generation_diagnostics || {};
+  return diagnostics.story_quality_score || diagnostics.acceptance_criteria_quality_score || (result.recommended_stories?.length >= 4 ? 85 : result.recommended_stories?.length ? 70 : 50);
+}
+
+function qualityScoreForStory(result?: StoryRefinement): number | undefined {
+  if (!result) return undefined;
+  return result.acceptance_criteria_quality_score || (result.acceptance_criteria?.length >= 3 ? 85 : result.acceptance_criteria?.length ? 70 : 50);
+}
+
+function qualityScoreForTasks(result?: StoryRefinement): number | undefined {
+  if (!result) return undefined;
+  const diagnostics = result.task_intelligence_diagnostics || {};
+  return diagnostics.task_quality_score || (result.proposed_tasks?.length ? 80 : 50);
+}
+
+function qualityScoreForFeatureDrafts(drafts: ChildDraft[]): number | undefined {
+  if (!drafts.length) return undefined;
+  const scores = drafts.map((draft) => draft.acceptanceCriteriaQualityScore || (draft.acceptanceCriteria?.length >= 3 ? 80 : 65));
+  return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+}
+
+function qualityScoreForTaskDrafts(drafts: ChildDraft[]): number | undefined {
+  if (!drafts.length) return undefined;
+  const scored = drafts.map((draft) => draft.acceptanceCriteria?.length >= 2 ? 80 : 65);
+  return Math.round(scored.reduce((sum, score) => sum + score, 0) / scored.length);
 }
 
 function htmlToText(value: string): string {
@@ -4745,12 +6208,43 @@ function readProjectSession(): ProjectSessionSnapshot | undefined {
       knowledge_version: parsed.knowledge_version || knowledgeVersion(parsed.profile as ProjectProfile),
       last_analysis_timestamp: parsed.last_analysis_timestamp || '',
       last_active_tab: isPlannerTab(parsed.last_active_tab) ? parsed.last_active_tab : 'overview',
+      last_workspace: isPlannerTab(parsed.last_workspace) ? parsed.last_workspace : (isPlannerTab(parsed.last_active_tab) ? parsed.last_active_tab : 'overview'),
+      last_work_item_id: Number(parsed.last_work_item_id || 0) || undefined,
+      last_work_item_type: parsed.last_work_item_type || '',
+      last_work_item_title: parsed.last_work_item_title || '',
+      auto_route_by_work_item_type: parsed.auto_route_by_work_item_type !== false,
+      approval_workflow: normalizeApprovalWorkflowState(parsed.approval_workflow),
       knowledge_governance: parsed.knowledge_governance,
       saved_at: parsed.saved_at || new Date().toISOString(),
     };
   } catch {
     return undefined;
   }
+}
+
+function sessionFromBackend(response?: BackendProjectSessionResponse, cachedProfile?: ProjectProfile): ProjectSessionSnapshot | undefined {
+  if (!response?.exists || !response.session || !cachedProfile) {
+    return undefined;
+  }
+  const session = response.session;
+  const tab = isPlannerTab(session.last_active_tab) ? session.last_active_tab : isPlannerTab(session.last_workspace) ? session.last_workspace : 'overview';
+  return {
+    profile: cachedProfile,
+    active_project: String(session.active_project || cachedProfile.project_name || 'Project Intelligence'),
+    repository_name: String(session.repository_name || session.last_repository || cachedProfile.repository_connection.repository_name || ''),
+    repository_id: String(session.repository_id || session.last_repository_id || cachedProfile.repository_connection.repository_id || ''),
+    branch: String(session.branch || session.last_branch || cachedProfile.repository_connection.branch || 'main'),
+    knowledge_version: String(session.knowledge_version || knowledgeVersion(cachedProfile)),
+    last_analysis_timestamp: String(session.last_analysis_timestamp || ''),
+    last_active_tab: tab,
+    last_workspace: tab,
+    last_work_item_id: Number(session.last_work_item_id || 0) || undefined,
+    last_work_item_type: String(session.last_work_item_type || ''),
+    last_work_item_title: String(session.last_work_item_title || ''),
+    auto_route_by_work_item_type: session.auto_route_by_work_item_type !== false,
+    approval_workflow: normalizeApprovalWorkflowState(session.approval_workflow),
+    saved_at: String(session.saved_at || new Date().toISOString()),
+  };
 }
 
 function writeProjectSession(session: ProjectSessionSnapshot): void {
@@ -4761,7 +6255,15 @@ function writeProjectSession(session: ProjectSessionSnapshot): void {
   }
 }
 
-function buildProjectSession(profile: ProjectProfile, activeTab: PlannerTab, lastAnalysisTimestamp: string, governance: KnowledgeGovernance): ProjectSessionSnapshot {
+function buildProjectSession(
+  profile: ProjectProfile,
+  activeTab: PlannerTab,
+  lastAnalysisTimestamp: string,
+  governance: KnowledgeGovernance,
+  currentWorkItem?: AdoWorkItem,
+  autoRouteByWorkItemType = true,
+  approvalWorkflow: ApprovalWorkflowState = defaultApprovalWorkflowState(),
+): ProjectSessionSnapshot {
   const mapping = getAdoMapping(profile);
   const now = new Date().toISOString();
   return {
@@ -4773,13 +6275,19 @@ function buildProjectSession(profile: ProjectProfile, activeTab: PlannerTab, las
     knowledge_version: knowledgeVersion(profile),
     last_analysis_timestamp: lastAnalysisTimestamp || inferLastAnalysisTimestamp(profile) || now,
     last_active_tab: activeTab,
+    last_workspace: activeTab,
+    last_work_item_id: currentWorkItem?.id,
+    last_work_item_type: currentWorkItem?.type || '',
+    last_work_item_title: currentWorkItem?.title || '',
+    auto_route_by_work_item_type: autoRouteByWorkItemType,
+    approval_workflow: approvalWorkflow,
     knowledge_governance: governance,
     saved_at: now,
   };
 }
 
 function isPlannerTab(value: unknown): value is PlannerTab {
-  return value === 'overview' || value === 'planning' || value === 'execution' || value === 'qa';
+  return value === 'overview' || value === 'planning' || value === 'execution' || value === 'qa' || value === 'admin';
 }
 
 function knowledgeVersion(profile: ProjectProfile): string {

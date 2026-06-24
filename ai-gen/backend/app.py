@@ -29,6 +29,7 @@ from backend.intent_detector import detect_intent
 from backend.model_router import detect_execution_target, get_available_targets
 from backend.orchestrator.react_controller import PipelineController
 from backend.project_intelligence import project_intelligence_service
+from backend.project_graph import project_knowledge_graph_service
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 from backend.refinement.refinement_decider import should_use_refiner
 from backend.refinement.schema_validator import validate_task_refinement
@@ -300,6 +301,47 @@ class ProjectIntelligenceProfileRequest(BaseModel):
     profile: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProjectIntelligenceSessionRequest(BaseModel):
+    session: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceKnowledgeCacheRefreshRequest(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+    repository: dict[str, Any] = Field(default_factory=dict)
+    connector_mapping: dict[str, Any] = Field(default_factory=dict)
+    selected_files: list[str] = Field(default_factory=list)
+    documents: dict[str, str] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceArtifactRequest(BaseModel):
+    artifact_type: str = ""
+    title: str = ""
+    payload: Any = Field(default_factory=dict)
+    fingerprint: str = ""
+    state: str = "draft"
+    source_item: dict[str, Any] = Field(default_factory=dict)
+    created_by: str = ""
+
+
+class ProjectIntelligenceArtifactApproveRequest(BaseModel):
+    approved_by: str = ""
+
+
+class ProjectIntelligenceGraphIngestRequest(BaseModel):
+    project: dict[str, Any] = Field(default_factory=dict)
+    epic: dict[str, Any] = Field(default_factory=dict)
+    feature: dict[str, Any] = Field(default_factory=dict)
+    story: dict[str, Any] = Field(default_factory=dict)
+    tasks: list[Any] = Field(default_factory=list)
+    test_cases: list[Any] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    execution_package: dict[str, Any] = Field(default_factory=dict)
+    modules: list[str] = Field(default_factory=list)
+    flows: list[str] = Field(default_factory=list)
+    components: list[str] = Field(default_factory=list)
+    repository_documents: list[Any] = Field(default_factory=list)
+
+
 class ProjectIntelligenceDescriptionRequest(BaseModel):
     description: str = ""
     force_provider: str = ""
@@ -393,6 +435,117 @@ def save_project_intelligence_profile(request: ProjectIntelligenceProfileRequest
     return project_intelligence_service.save_profile(request.profile)
 
 
+@app.get("/project-intelligence/session")
+def get_project_intelligence_session() -> dict:
+    return project_intelligence_service.get_session()
+
+
+@app.post("/project-intelligence/session")
+def save_project_intelligence_session(request: ProjectIntelligenceSessionRequest) -> dict:
+    return project_intelligence_service.save_session(request.session)
+
+
+@app.get("/project-intelligence/knowledge-cache")
+def get_project_intelligence_knowledge_cache() -> dict:
+    return project_intelligence_service.get_knowledge_cache()
+
+
+@app.get("/project-intelligence/knowledge-cache/status")
+def get_project_intelligence_knowledge_cache_status() -> dict:
+    return project_intelligence_service.knowledge_cache_status()
+
+
+@app.post("/project-intelligence/knowledge-cache/refresh")
+def refresh_project_intelligence_knowledge_cache(request: ProjectIntelligenceKnowledgeCacheRefreshRequest) -> dict:
+    return project_intelligence_service.refresh_knowledge_cache(
+        request.documents,
+        request.repository,
+        request.profile,
+        request.selected_files,
+        request.connector_mapping,
+    )
+
+
+@app.get("/project-intelligence/artifacts")
+def list_project_intelligence_artifacts(
+    artifact_type: str = "",
+    source_item_id: str = "",
+    state: str = "",
+    fingerprint: str = "",
+) -> dict:
+    return project_intelligence_service.list_artifacts(artifact_type, source_item_id, state, fingerprint)
+
+
+@app.get("/project-intelligence/artifacts/reusable")
+def get_reusable_project_intelligence_artifact(
+    artifact_type: str,
+    fingerprint: str,
+    source_item_id: str = "",
+) -> dict:
+    return project_intelligence_service.find_reusable_artifact(artifact_type, fingerprint, source_item_id)
+
+
+@app.post("/project-intelligence/artifacts")
+def save_project_intelligence_artifact(request: ProjectIntelligenceArtifactRequest) -> dict:
+    return project_intelligence_service.save_artifact(request.model_dump())
+
+
+@app.post("/project-intelligence/artifacts/{artifact_id}/approve")
+def approve_project_intelligence_artifact(artifact_id: str, request: ProjectIntelligenceArtifactApproveRequest) -> dict:
+    try:
+        return project_intelligence_service.approve_artifact(artifact_id, request.approved_by)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/artifacts/{artifact_id}/archive")
+def archive_project_intelligence_artifact(artifact_id: str) -> dict:
+    try:
+        return project_intelligence_service.archive_artifact(artifact_id)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.get("/project-intelligence/graph")
+def get_project_intelligence_graph() -> dict:
+    return project_knowledge_graph_service.get_graph()
+
+
+@app.get("/project-intelligence/graph/summary")
+def get_project_intelligence_graph_summary() -> dict:
+    return project_knowledge_graph_service.summary()
+
+
+@app.post("/project-intelligence/graph/ingest")
+def ingest_project_intelligence_graph(request: ProjectIntelligenceGraphIngestRequest) -> dict:
+    return project_knowledge_graph_service.ingest(request.model_dump())
+
+
+@app.get("/project-intelligence/graph/query")
+def query_project_intelligence_graph(query_type: str, item_id: str = "") -> dict:
+    return project_knowledge_graph_service.query(query_type, item_id)
+
+
+@app.get("/project-intelligence/coverage/report")
+def get_project_intelligence_coverage_report(item_id: str = "", threshold: int = 80) -> dict:
+    return project_knowledge_graph_service.coverage_report(item_id, threshold)
+
+
+@app.get("/project-intelligence/coverage/gaps")
+def get_project_intelligence_gap_report(item_id: str = "") -> dict:
+    return project_knowledge_graph_service.gap_report(item_id)
+
+
+@app.get("/project-intelligence/regression/impact")
+def get_project_intelligence_regression_impact(story_id: str) -> dict:
+    return project_knowledge_graph_service.regression_impact(story_id)
+
+
+@app.get("/project-intelligence/quality-gate")
+def get_project_intelligence_quality_gate(item_id: str = "", threshold: int = 80) -> dict:
+    return project_knowledge_graph_service.quality_gate(item_id, threshold)
+
+
 @app.post("/project-intelligence/analyze-description")
 def analyze_project_description(request: ProjectIntelligenceDescriptionRequest) -> dict:
     return project_intelligence_service.analyze_description(request.description, _project_intelligence_options(request))
@@ -446,6 +599,7 @@ def generate_project_qa_test_cases(request: ProjectIntelligenceExecutionRequest)
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
+        _project_intelligence_options(request),
     )
 
 

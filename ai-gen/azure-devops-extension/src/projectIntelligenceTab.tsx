@@ -2102,6 +2102,7 @@ function ProjectIntelligenceTab() {
         autoRoute={autoRouteByWorkItemType}
         loading={loading}
         canContribute={canContribute}
+        currentRole={roleLabel(permissionState.role)}
         hasExecutionPackage={Boolean(executionContext)}
         onToggleAutoRoute={setAutoRouteByWorkItemType}
         onOpenWorkspace={(workspace) => setActiveTab(workspace)}
@@ -2120,15 +2121,13 @@ function ProjectIntelligenceTab() {
         onBuildExecutionPackage={() => void buildExecutionPackage()}
         onOpenVsCode={() => openVsCodeExecutionPackage()}
       />
-      <ApprovalWorkflowDashboard state={approvalWorkflow} itemType={currentItemType} />
-      <ArtifactLifecyclePanel artifacts={artifactRecords} reuseStatus={artifactReuseStatus} />
-      <RelationshipSummaryCard summary={graphSummary} />
-      <CoverageIntelligenceCard report={coverageReport} />
 
       <WorkflowTabs activeTab={activeTab} onChange={changeWorkspace} canAdmin={canAdmin} />
 
       {activeTab === 'overview' ? (
         <>
+          <ProductIdentityCard profile={profile} />
+          <EnterpriseReadinessCard profile={profile} qaReady={Boolean(qaTestSuite)} executionReady={Boolean(executionContext)} />
           <ProjectKnowledgeStatusCard
             session={resumeSession}
             status={knowledgeCacheStatus}
@@ -2142,8 +2141,6 @@ function ProjectIntelligenceTab() {
               setEditingProfile(true);
             }}
           />
-          <ProductIdentityCard profile={profile} />
-          <EnterpriseReadinessCard profile={profile} qaReady={Boolean(qaTestSuite)} executionReady={Boolean(executionContext)} />
           {showQuickStart && canAdmin ? (
             <QuickStartSetup
               profile={profile}
@@ -2159,54 +2156,7 @@ function ProjectIntelligenceTab() {
               onAnalyzeProject={() => void analyzeProject()}
             />
           ) : null}
-          <div className="planner-two-column">
-            {canAdmin ? (
-              <RepositoryIntelligenceCard
-                profile={profile}
-                adoProjects={adoProjects}
-                repositories={repositories}
-                branches={branches}
-                repositoryLoadMessage={repositoryLoadMessage}
-                repositoryDocuments={repositoryDocuments}
-                fileStatus={repositoryFileStatus}
-                selectedFiles={selectedRepositoryFiles}
-                loading={loading}
-                showConnectionControls={!showQuickStart}
-                onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
-                onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
-                onReloadRepositories={() => void loadAdoProjects()}
-                onProfileChange={setProfile}
-                onRepositoryDocumentsChange={setRepositoryDocuments}
-                onFileStatusChange={setRepositoryFileStatus}
-                onSelectedFilesChange={setSelectedRepositoryFiles}
-                onAnalyzeReadme={() => void analyzeReadme()}
-                onDiscoverDocuments={() => void discoverRepositoryDocuments()}
-                onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
-                governance={knowledgeGovernance}
-              />
-            ) : (
-              <RepositoryReadOnlyCard profile={profile} governance={knowledgeGovernance} />
-            )}
-            <KnowledgeProfilePreview profile={profile} governance={knowledgeGovernance} canAdmin={canAdmin} />
-          </div>
-          <KnowledgeGovernanceCard governance={knowledgeGovernance} canAdmin={canAdmin} />
-          {canAdmin ? (
-            <details className="planner-card">
-              <summary className="planner-label">Advanced Manual Profile Fields</summary>
-              <div className="planner-subtle">Optional fallback fields. Repository intelligence should be the preferred source for modules, flows, architecture notes, and standards.</div>
-              <OnboardingForm
-                profile={profile}
-                loading={loading}
-                onProfileChange={setProfile}
-                onAnalyze={() => void analyzeDescription()}
-                onSave={() => void saveProfile()}
-              />
-            </details>
-          ) : null}
-          <StandardsAndGuidelinesSummary profile={profile} />
           <RecentActivityCard currentWorkItem={currentWorkItem} profile={profile} hasQa={Boolean(qaTestSuite)} hasExecution={Boolean(executionContext)} />
-          <RoadmapCard />
-          <ProjectIntelligenceProviderDiagnostics metadata={latestProvider} />
         </>
       ) : null}
 
@@ -2251,6 +2201,8 @@ function ProjectIntelligenceTab() {
           createSelectedChildren={() => void createSelectedChildWorkItems()}
           buildExecutionPackage={() => void buildExecutionPackage(true)}
           generateQATestCases={() => void generateQATestCases(true)}
+          artifactRecords={artifactRecords}
+          artifactReuseStatus={artifactReuseStatus}
         />
       ) : null}
 
@@ -2306,11 +2258,39 @@ function ProjectIntelligenceTab() {
           itemType={currentItemType}
           currentWorkItem={currentWorkItem}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
+          coverageReport={coverageReport}
+          graphSummary={graphSummary}
         />
       ) : null}
 
       {activeTab === 'admin' && canAdmin ? (
-        <AdminWorkspace permission={permissionState} profile={profile} governance={knowledgeGovernance} onRefreshPermissions={() => void refreshPermissions()} />
+        <AdminWorkspace
+          permission={permissionState}
+          profile={profile}
+          governance={knowledgeGovernance}
+          providerMetadata={latestProvider}
+          loading={loading}
+          adoProjects={adoProjects}
+          repositories={repositories}
+          branches={branches}
+          repositoryLoadMessage={repositoryLoadMessage}
+          repositoryDocuments={repositoryDocuments}
+          fileStatus={repositoryFileStatus}
+          selectedFiles={selectedRepositoryFiles}
+          onRefreshPermissions={() => void refreshPermissions()}
+          onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
+          onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+          onReloadRepositories={() => void loadAdoProjects()}
+          onProfileChange={setProfile}
+          onRepositoryDocumentsChange={setRepositoryDocuments}
+          onFileStatusChange={setRepositoryFileStatus}
+          onSelectedFilesChange={setSelectedRepositoryFiles}
+          onAnalyzeReadme={() => void analyzeReadme()}
+          onDiscoverDocuments={() => void discoverRepositoryDocuments()}
+          onAnalyzeDocuments={() => void analyzeRepositoryDocuments()}
+          onAnalyzeDescription={() => void analyzeDescription()}
+          onSaveProfile={() => void saveProfile()}
+        />
       ) : null}
     </main>
   );
@@ -2454,6 +2434,7 @@ function RecommendedActionCard({
   autoRoute,
   loading,
   canContribute,
+  currentRole,
   hasExecutionPackage,
   onToggleAutoRoute,
   onOpenWorkspace,
@@ -2480,6 +2461,7 @@ function RecommendedActionCard({
   autoRoute: boolean;
   loading: boolean;
   canContribute: boolean;
+  currentRole: string;
   hasExecutionPackage: boolean;
   onToggleAutoRoute: (enabled: boolean) => void;
   onOpenWorkspace: (workspace: PlannerTab) => void;
@@ -2517,22 +2499,17 @@ function RecommendedActionCard({
     onApproveTestSuite,
   }).slice(0, 3);
   return (
-    <section className="planner-card">
+    <section className="planner-card planner-current-item-bar">
       <div className="planner-section-header">
         <div>
           <div className="planner-label">Current Item</div>
-          <div className="planner-subtle">{workItem ? `${workItem.type} #${workItem.id}: ${workItem.title}` : 'No Azure DevOps work item detected.'}</div>
+          <strong>{workItem ? `${workItem.type} #${workItem.id} · ${workItem.title}` : 'No Azure DevOps work item detected'}</strong>
+          <div className="planner-subtle">Recommended: {workspaceLabel(recommendedWorkspace)} · Role: {currentRole} · Next: {actions[0]?.label || 'Continue Working'}</div>
         </div>
         <label className="planner-checkbox">
           <input type="checkbox" checked={autoRoute} onChange={(event) => onToggleAutoRoute(event.target.checked)} />
           Auto Route
         </label>
-      </div>
-      <div className="planner-status-grid">
-        <Row label="Current Item Type" value={itemType} />
-        <Row label="Current Work Item" value={workItem ? `#${workItem.id}` : 'Not loaded'} />
-        <Row label="Recommended Workspace" value={workspaceLabel(recommendedWorkspace)} />
-        <Row label="Active Workspace" value={workspaceLabel(activeTab)} />
       </div>
       {activeTab !== recommendedWorkspace ? (
         <div className="planner-banner">Manual override is active. Recommended workspace for this item is {workspaceLabel(recommendedWorkspace)}.</div>
@@ -2683,25 +2660,29 @@ function ArtifactLifecyclePanel({ artifacts, reuseStatus }: { artifacts: Artifac
   if (!reuseStatus && !visible.length) {
     return null;
   }
+  const summary = visible.slice(0, 2).map((artifact) => `${artifact.artifact_type} v${artifact.version} ${artifact.state}`).join(' · ');
   return (
     <section className="planner-card">
       <div className="planner-section-header">
         <div>
           <div className="planner-label">Artifact Lifecycle</div>
-          <div className="planner-subtle">Approved outputs are locked and reused until their source changes or you regenerate them.</div>
+          <div className="planner-subtle">{summary || 'No reusable artifacts yet.'}</div>
         </div>
       </div>
       {reuseStatus ? <div className="planner-banner">{reuseStatus}</div> : null}
       {visible.length ? (
-        <div className="planner-status-grid">
-          {visible.map((artifact) => (
-            <div className="planner-status-row" key={artifact.artifact_id}>
-              <span>{artifact.artifact_type} v{artifact.version}</span>
-              <strong>{artifactLifecycleLabel(artifact)}</strong>
-              <small>{artifact.title}</small>
-            </div>
-          ))}
-        </div>
+        <details className="planner-accordion">
+          <summary>View Artifact History</summary>
+          <div className="planner-status-grid">
+            {visible.map((artifact) => (
+              <div className="planner-status-row" key={artifact.artifact_id}>
+                <span>{artifact.artifact_type} v{artifact.version}</span>
+                <strong>{artifactLifecycleLabel(artifact)}</strong>
+                <small>{artifact.title}</small>
+              </div>
+            ))}
+          </div>
+        </details>
       ) : null}
     </section>
   );
@@ -2739,7 +2720,7 @@ function RelationshipSummaryCard({ summary }: { summary?: GraphSummary }) {
   );
 }
 
-function CoverageIntelligenceCard({ report }: { report?: CoverageIntelligenceReport }) {
+function CoverageIntelligenceCard({ report, compact = false }: { report?: CoverageIntelligenceReport; compact?: boolean }) {
   const coverage = report?.coverage_report;
   if (!coverage || (!coverage.story_coverage.length && !coverage.feature_coverage.length && !coverage.gap_summary.gap_count)) {
     return null;
@@ -2749,8 +2730,12 @@ function CoverageIntelligenceCard({ report }: { report?: CoverageIntelligenceRep
     <section className="planner-card">
       <div className="planner-section-header">
         <div>
-          <div className="planner-label">Coverage Intelligence</div>
-          <div className="planner-subtle">Traceability and gaps from the persistent project graph.</div>
+          <div className="planner-label">{compact ? 'Project Coverage Snapshot' : 'Coverage Intelligence'}</div>
+          <div className="planner-subtle">
+            {compact
+              ? 'Project-wide traceability summary. Open QA for detailed gaps and regression scope.'
+              : 'Traceability and gaps from the persistent project graph.'}
+          </div>
         </div>
         <div className={`planner-session-freshness ${coverage.quality_gate === 'pass' ? 'fresh' : 'stale'}`}>
           {coverage.quality_gate === 'pass' ? 'Quality Gate Passed' : 'Quality Gate Needs Work'}
@@ -2764,8 +2749,9 @@ function CoverageIntelligenceCard({ report }: { report?: CoverageIntelligenceRep
         <SummaryTile title="Blocking Gaps" value={String(coverage.gap_summary.blocking_gap_count)} />
         <SummaryTile title="Threshold" value={`${coverage.threshold}%`} />
       </div>
-      {topGaps.length ? <ListBlock title="Gap Analysis" items={topGaps} /> : <div className="planner-subtle">No coverage gaps found in the current graph.</div>}
-      {coverage.story_coverage.length ? (
+      {!compact && topGaps.length ? <ListBlock title="Gap Analysis" items={topGaps} /> : null}
+      {!compact && !topGaps.length ? <div className="planner-subtle">No coverage gaps found in the current graph.</div> : null}
+      {!compact && coverage.story_coverage.length ? (
         <ListBlock
           title="Story Coverage"
           items={coverage.story_coverage.slice(0, 5).map((story) => `${story.title}: ${story.overall_score}% (${story.task_count} tasks, ${story.test_count} tests, ${story.execution_package_count} execution packages)`)}
@@ -2788,19 +2774,88 @@ function AdminWorkspace({
   permission,
   profile,
   governance,
+  providerMetadata,
+  loading,
+  adoProjects,
+  repositories,
+  branches,
+  repositoryLoadMessage,
+  repositoryDocuments,
+  fileStatus,
+  selectedFiles,
   onRefreshPermissions,
+  onSelectAdoProject,
+  onSelectRepository,
+  onReloadRepositories,
+  onProfileChange,
+  onRepositoryDocumentsChange,
+  onFileStatusChange,
+  onSelectedFilesChange,
+  onAnalyzeReadme,
+  onDiscoverDocuments,
+  onAnalyzeDocuments,
+  onAnalyzeDescription,
+  onSaveProfile,
 }: {
   permission: PermissionState;
   profile: ProjectProfile;
   governance: KnowledgeGovernance;
+  providerMetadata?: ProviderMetadata;
+  loading: boolean;
+  adoProjects: AdoProject[];
+  repositories: GitRepository[];
+  branches: string[];
+  repositoryLoadMessage: string;
+  repositoryDocuments: Record<string, string>;
+  fileStatus: Record<string, 'available' | 'missing' | 'unknown'>;
+  selectedFiles: string[];
   onRefreshPermissions: () => void;
+  onSelectAdoProject: (adoProject: string) => void;
+  onSelectRepository: (repositoryId: string) => void;
+  onReloadRepositories: () => void;
+  onProfileChange: (profile: ProjectProfile) => void;
+  onRepositoryDocumentsChange: (documents: Record<string, string>) => void;
+  onFileStatusChange: (status: Record<string, 'available' | 'missing' | 'unknown'>) => void;
+  onSelectedFilesChange: (files: string[]) => void;
+  onAnalyzeReadme: () => void;
+  onDiscoverDocuments: () => void;
+  onAnalyzeDocuments: () => void;
+  onAnalyzeDescription: () => void;
+  onSaveProfile: () => void;
 }) {
   return (
     <>
-      <section className="planner-card">
+      <details className="planner-card" open>
+        <summary className="planner-label">Repository Settings</summary>
+        <RepositoryIntelligenceCard
+          profile={profile}
+          adoProjects={adoProjects}
+          repositories={repositories}
+          branches={branches}
+          repositoryLoadMessage={repositoryLoadMessage}
+          repositoryDocuments={repositoryDocuments}
+          fileStatus={fileStatus}
+          selectedFiles={selectedFiles}
+          loading={loading}
+          showConnectionControls
+          onSelectAdoProject={onSelectAdoProject}
+          onSelectRepository={onSelectRepository}
+          onReloadRepositories={onReloadRepositories}
+          onProfileChange={onProfileChange}
+          onRepositoryDocumentsChange={onRepositoryDocumentsChange}
+          onFileStatusChange={onFileStatusChange}
+          onSelectedFilesChange={onSelectedFilesChange}
+          onAnalyzeReadme={onAnalyzeReadme}
+          onDiscoverDocuments={onDiscoverDocuments}
+          onAnalyzeDocuments={onAnalyzeDocuments}
+          governance={governance}
+        />
+      </details>
+
+      <details className="planner-card" open>
+        <summary className="planner-label">Permissions</summary>
         <div className="planner-section-header">
           <div>
-            <div className="planner-label">Admin Tab</div>
             <div className="planner-subtle">AI Gen permissions are inherited from Azure DevOps project security groups.</div>
           </div>
           <button className="planner-button secondary" type="button" onClick={onRefreshPermissions}>Refresh Permissions</button>
@@ -2817,19 +2872,42 @@ function AdminWorkspace({
           <Row label="Last Refreshed On" value={formatTimestamp(governance.last_refreshed_on)} />
         </div>
         {permission.warning ? <div className="planner-banner">{permission.warning}</div> : null}
-      </section>
-      <section className="planner-card">
-        <div className="planner-label">Permissions Mapping</div>
         <div className="planner-status-grid">
           <Row label="Project Administrators" value="AI Gen Admin: Project Profile, Repository Mapping, Knowledge Refresh, Standards, Theme Settings" />
           <Row label="Contributors" value="AI Gen Contributor: Planning, Execution, QA" />
           <Row label="Readers" value="AI Gen Viewer: Read-only access" />
         </div>
-      </section>
-      <section className="planner-card">
         <div className="planner-label">Detected Azure DevOps Groups</div>
         {permission.azure_groups.length ? <ChipList items={permission.azure_groups} /> : <div className="planner-subtle">No Azure DevOps groups were visible to this extension session.</div>}
-      </section>
+      </details>
+
+      <details className="planner-card">
+        <summary className="planner-label">Knowledge Refresh</summary>
+        <KnowledgeGovernanceCard governance={governance} canAdmin />
+        <KnowledgeProfilePreview profile={profile} governance={governance} canAdmin />
+      </details>
+
+      <details className="planner-card">
+        <summary className="planner-label">Standards and Manual Profile Fields</summary>
+        <StandardsAndGuidelinesSummary profile={profile} />
+        <OnboardingForm
+          profile={profile}
+          loading={loading}
+          onProfileChange={onProfileChange}
+          onAnalyze={onAnalyzeDescription}
+          onSave={onSaveProfile}
+        />
+      </details>
+
+      <details className="planner-card">
+        <summary className="planner-label">Theme</summary>
+        <div className="planner-subtle">Theme settings are coming next. Current enterprise theme uses Hubbell yellow, white, and graphite accents.</div>
+      </details>
+
+      <details className="planner-card">
+        <summary className="planner-label">Developer Diagnostics</summary>
+        <ProjectIntelligenceProviderDiagnostics metadata={providerMetadata} />
+      </details>
     </>
   );
 }
@@ -2989,6 +3067,8 @@ function AIPlannerWorkspace({
   createSelectedChildren,
   buildExecutionPackage,
   generateQATestCases,
+  artifactRecords,
+  artifactReuseStatus,
 }: {
   profile: ProjectProfile;
   loading: boolean;
@@ -3029,13 +3109,14 @@ function AIPlannerWorkspace({
   createSelectedChildren: () => void;
   buildExecutionPackage: () => void;
   generateQATestCases: () => void;
+  artifactRecords: ArtifactRecord[];
+  artifactReuseStatus: string;
 }) {
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
   const planningType = itemType === 'Epic' || itemType === 'Feature' ? itemType : selectedItemType;
   if (itemType !== 'Epic' && itemType !== 'Feature' && currentWorkItem) {
     return (
       <>
-        <WorkItemContextCard workItem={currentWorkItem} />
         <section className="planner-card">
           <div className="planner-label">Planning Workspace</div>
           <div className="planner-subtle">{itemType} work items are routed to {workspaceLabel(recommendedWorkspaceForItem(itemType))}. Planning actions are hidden for this item type.</div>
@@ -3045,7 +3126,8 @@ function AIPlannerWorkspace({
   }
   return (
     <>
-      <WorkItemContextCard workItem={currentWorkItem} />
+      <ApprovalWorkflowDashboard state={approvalWorkflow} itemType={planningType} />
+      <ArtifactLifecyclePanel artifacts={artifactRecords} reuseStatus={artifactReuseStatus} />
       <section className="planner-card">
         <div className="planner-label">Planning Workflow</div>
         <div className="planner-subtle">Work through planning in delivery order: Epic, Feature, Story, then Task execution.</div>
@@ -3090,10 +3172,7 @@ function AIPlannerWorkspace({
             <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Custom Refine Epic</button>
           </details>
           {epicResult ? (
-            <div className="planner-status-grid">
-              <EpicRefinementResult result={epicResult} />
-              <CardList title="Generated Features" items={epicResult.recommended_features} />
-            </div>
+            <EpicRefinementResult result={epicResult} />
           ) : null}
           {childDrafts.some((draft) => draft.type === 'Feature') ? (
             <div className="planner-actions">
@@ -3476,7 +3555,6 @@ function DeveloperWorkspace({
   }
   return (
     <>
-      <WorkItemContextCard workItem={currentWorkItem} />
       <section className="planner-card">
         <div className="planner-label">{isBug ? 'Bug Fix Workspace' : isTask ? 'Task Execution Workspace' : 'Story Execution Workspace'}</div>
         <div className="planner-subtle">
@@ -3586,6 +3664,8 @@ function QAWorkspace({
   itemType,
   currentWorkItem,
   analyzeImpact,
+  coverageReport,
+  graphSummary,
 }: {
   loading: boolean;
   storyInput: { title: string; description: string };
@@ -3601,6 +3681,8 @@ function QAWorkspace({
   itemType: WorkItemKind;
   currentWorkItem?: AdoWorkItem;
   analyzeImpact: () => void;
+  coverageReport?: CoverageIntelligenceReport;
+  graphSummary?: GraphSummary;
 }) {
   const isTestCase = itemType === 'Test Case';
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
@@ -3614,7 +3696,8 @@ function QAWorkspace({
   }
   return (
     <>
-      <WorkItemContextCard workItem={currentWorkItem} />
+      <RelationshipSummaryCard summary={graphSummary} />
+      <CoverageIntelligenceCard report={coverageReport} />
       <section className="planner-card">
         <div className="planner-section-header">
           <div>

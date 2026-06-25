@@ -1,6 +1,8 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { HostProvider } from './services/HostProvider';
+import { WorkspaceShell } from './components/layout/WorkspaceShell';
 import {
   addAiGenComment,
   answerOpenQuestions,
@@ -2789,7 +2791,12 @@ const rootElement = document.getElementById('root');
 if (rootElement) {
   createRoot(rootElement).render(
     <ExtensionErrorBoundary>
-      <WorkItemTab />
+      <HostProvider>
+        <WorkspaceShell 
+          legacyPlanningComponent={<WorkItemTab />} 
+          legacyExecutionComponent={<WorkItemTab />} 
+        />
+      </HostProvider>
     </ExtensionErrorBoundary>
   );
 }

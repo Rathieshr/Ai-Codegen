@@ -1,0 +1,150 @@
+/* HEI UI Phase 2: Visual Quality Refactor */
+
+:root {
+  /* Hubbell / Azure DevOps Colors */
+  --hei-yellow: #fbbc05; /* Hubbell Yellow Accent */
+  --hei-black: #000000;
+  
+  --hei-primary: #0078d4;
+  --hei-primary-hover: #106ebe;
+  --hei-text-primary: #201f1e;
+  --hei-text-secondary: #605e5c;
+  --hei-text-muted: #a19f9d;
+  
+  --hei-bg: #f8f9fa; /* Light gray background */
+  --hei-surface: #ffffff; /* White cards */
+  --hei-border: #edebe9;
+  
+  /* Status Colors */
+  --hei-success: #107c10;
+  --hei-success-bg: #dff6dd;
+  --hei-warning: #d83b01;
+  --hei-warning-bg: #fde7e9;
+  --hei-error: #a80000;
+  --hei-error-bg: #fde7e9;
+  --hei-info: #0078d4;
+  --hei-info-bg: #e1dfdd;
+  
+  /* Spacing */
+  --hei-spacing-xs: 4px;
+  --hei-spacing-sm: 8px;
+  --hei-spacing-md: 16px;
+  --hei-spacing-lg: 24px;
+  --hei-spacing-xl: 32px;
+
+  /* Typography */
+  --hei-font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+  --hei-font-size-xs: 11px;
+  --hei-font-size-sm: 12px;
+  --hei-font-size-md: 14px;
+  --hei-font-size-lg: 16px;
+  --hei-font-size-xl: 20px;
+  --hei-font-size-xxl: 24px;
+  
+  /* Borders & Shadows */
+  --hei-radius: 6px;
+  --hei-shadow-sm: 0 2px 4px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.05);
+  --hei-shadow-md: 0 4px 8px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.06);
+}
+
+/* Global Reset for Shell */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--hei-font-family);
+  color: var(--hei-text-primary);
+  background-color: var(--hei-bg);
+  font-size: var(--hei-font-size-md);
+  line-height: 1.5;
+}
+
+/* Layout Utilities */
+.hei-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100vh;
+  background-color: var(--hei-bg);
+}
+
+.hei-container {
+  width: 100%;
+  padding: var(--hei-spacing-lg);
+  box-sizing: border-box;
+}
+
+/* Responsive Grid Base */
+.hei-grid {
+  display: grid;
+  gap: var(--hei-spacing-lg);
+}
+
+@media (min-width: 1024px) {
+  .hei-grid-2-col {
+    grid-template-columns: 1fr 1fr;
+  }
+  .hei-grid-3-col {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .hei-grid-top-row {
+    grid-template-columns: 2fr 1fr;
+  }
+}
+
+/* Typography Utilities */
+.hei-text-small { font-size: var(--hei-font-size-sm); }
+.hei-text-muted { color: var(--hei-text-secondary); }
+.hei-font-semibold { font-weight: 600; }
+.hei-font-bold { font-weight: 700; }
+
+/* Flex Utilities */
+.hei-flex-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+.hei-flex-col {
+  display: flex;
+  flex-direction: column;
+}
+.hei-gap-sm { gap: var(--hei-spacing-sm); }
+.hei-gap-md { gap: var(--hei-spacing-md); }
+.hei-gap-lg { gap: var(--hei-spacing-lg); }
+
+/* Common Components */
+.hei-card {
+  background: var(--hei-surface);
+  border: 1px solid var(--hei-border);
+  border-radius: var(--hei-radius);
+  padding: var(--hei-spacing-lg);
+  box-shadow: var(--hei-shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+.hei-page-header {
+  margin-bottom: var(--hei-spacing-lg);
+}
+
+.hei-page-title {
+  font-size: var(--hei-font-size-xxl);
+  font-weight: 600;
+  margin: 0 0 var(--hei-spacing-xs) 0;
+  padding: 0;
+  color: var(--hei-text-primary);
+}
+
+.hei-page-description {
+  font-size: var(--hei-font-size-md);
+  color: var(--hei-text-secondary);
+  margin: 0;
+}
+
+.hei-section-header {
+  font-size: var(--hei-font-size-lg);
+  font-weight: 600;
+  margin: 0 0 var(--hei-spacing-md) 0;
+  color: var(--hei-text-primary);
+  border-bottom: 1px solid var(--hei-border);
+  padding-bottom: var(--hei-spacing-sm);
+}

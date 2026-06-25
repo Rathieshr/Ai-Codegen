@@ -1,6 +1,8 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { HostProvider } from './services/HostProvider';
+import { WorkspaceShell } from './components/layout/WorkspaceShell';
 import {
   approvePlannerStage,
   buildVsCodePromptUri,
@@ -672,5 +674,9 @@ async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Pr
 
 const rootNode = document.getElementById('root');
 if (rootNode) {
-  createRoot(rootNode).render(<StoryPlannerTab />);
+  createRoot(rootNode).render(
+    <HostProvider>
+      <WorkspaceShell legacyPlanningComponent={<StoryPlannerTab />} />
+    </HostProvider>
+  );
 }

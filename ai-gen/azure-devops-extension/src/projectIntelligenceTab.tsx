@@ -7,6 +7,9 @@ import { GitRepository } from 'azure-devops-extension-api/Git/Git';
 import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { HostProvider } from './services/HostProvider';
+import { WorkspaceShell } from './components/layout/WorkspaceShell';
+import { useUIStore } from './store/uiStore';
 import './storyPlanner.css';
 
 const BASE_URL = 'https://ai-codegen-production.up.railway.app/project-intelligence';
@@ -830,6 +833,22 @@ const EMPTY_PROFILE: ProjectProfile = {
 
 function ProjectIntelligenceTab() {
   const [activeTab, setActiveTab] = useState<PlannerTab>('overview');
+  const activeWorkspace = useUIStore(state => state.activeWorkspace);
+  const setActiveWorkspace = useUIStore(state => state.setActiveWorkspace);
+
+  // Sync zustand -> local
+  useEffect(() => {
+    if (activeWorkspace.toLowerCase() !== activeTab.toLowerCase()) {
+      setActiveTab(activeWorkspace.toLowerCase() as PlannerTab);
+    }
+  }, [activeWorkspace]);
+
+  // Sync local -> zustand
+  useEffect(() => {
+    if (activeWorkspace.toLowerCase() !== activeTab.toLowerCase()) {
+      setActiveWorkspace((activeTab.charAt(0).toUpperCase() + activeTab.slice(1)) as any);
+    }
+  }, [activeTab]);
   const [selectedItemType, setSelectedItemType] = useState<WorkItemKind>('Epic');
   const [autoRouteByWorkItemType, setAutoRouteByWorkItemType] = useState(true);
   const [profile, setProfile] = useState<ProjectProfile>(EMPTY_PROFILE);
@@ -2333,8 +2352,10 @@ function ProjectIntelligenceTab() {
     }
   }
 
-  return (
-    <main className="planner-shell">
+  const { featureFlags } = useUIStore();
+  const flagKey = `enableNew${activeWorkspace}` as keyof typeof featureFlags;
+  const legacyContent = (
+    <main className="planner-shell" style={{ display: featureFlags[flagKey] ? 'none' : 'block' }}>
       <header className="planner-header">
         <div className="planner-header-brand">
           <img className="planner-header-logo" src="static/hei-logo.png" alt="Hubbell Engineering Intelligence" />
@@ -2573,6 +2594,59 @@ function ProjectIntelligenceTab() {
         />
       ) : null}
     </main>
+  );
+
+  const planningProps = {
+    profile,
+    loading,
+    currentWorkItem,
+    childDrafts,
+    creationLog,
+    providerMetadata: latestProvider,
+    canContribute,
+    itemType: currentItemType,
+    selectedItemType,
+    onItemTypeChange: setSelectedItemType,
+    epicInput,
+    featureInput,
+    storyInput,
+    acceptanceCriteria,
+    epicResult,
+    featureResult,
+    storyResult,
+    epicImpact,
+    featureImpact,
+    qaTestSuite,
+    approvalWorkflow,
+    setEpicInput,
+    setFeatureInput,
+    setStoryInput,
+    setAcceptanceCriteria,
+    refineEpic: () => void refineEpic(true),
+    refineFeature: () => void refineFeature(true),
+    refineStory: () => void refineStory(true),
+    analyzeImpact: () => void analyzeCurrentItemImpact(),
+    generateChildren: (forceRegenerate?: boolean) => void generateChildrenForCurrentType(undefined, forceRegenerate),
+    approveEpic: () => void approveEpic(),
+    approveFeatures: () => approveFeatures(),
+    approveFeature: () => void approveFeature(),
+    approveStories: () => approveStories(),
+    updateDraftSelection,
+    createSelectedChildren: () => void createSelectedChildWorkItems(),
+    buildExecutionPackage: () => void buildExecutionPackage(true),
+    generateQATestCases: () => void generateQATestCases(true),
+artifactRecords,
+    artifactReuseStatus,
+  };
+
+  return (
+    <HostProvider>
+      <WorkspaceShell 
+        legacyPlanningComponent={legacyContent} 
+        legacyExecutionComponent={legacyContent} 
+        planningProps={planningProps}
+      />
+    </HostProvider>
   );
 }
 

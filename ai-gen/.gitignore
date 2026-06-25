@@ -65,6 +65,10 @@ Thumbs.db
 .coverage.*
 htmlcov/
 
+# Runtime session/cache output
+data/project_intelligence/
+data/story_planner_sessions/storyplan_*.json
+
 # IDEs
 .classpath
 .project

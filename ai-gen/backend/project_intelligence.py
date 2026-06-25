@@ -1007,7 +1007,7 @@ class ProjectIntelligenceService:
             "risks": _impact_risks(active_profile, keywords, modules, flows),
             "integration_points": _integration_points(active_profile, modules, flows),
             "recommended_reviewers": _recommended_reviewers(active_profile, modules, flows),
-            **_fallback_metadata("deterministic_fallback", "impact analysis is deterministic in this preview."),
+            **_knowledge_registry_metadata("Impact analysis uses the Knowledge Registry and relationship graph."),
         }
 
     def analyze_feature_impact(
@@ -1029,7 +1029,7 @@ class ProjectIntelligenceService:
             "cross_team_dependencies": _cross_team_dependencies(active_profile, modules),
             "integration_points": _integration_points(active_profile, modules, flows),
             "risks": _impact_risks(active_profile, keywords, modules, flows),
-            **_fallback_metadata("deterministic_fallback", "impact analysis is deterministic in this preview."),
+            **_knowledge_registry_metadata("Impact analysis uses the Knowledge Registry and relationship graph."),
         }
 
     def analyze_epic_impact(
@@ -1051,7 +1051,7 @@ class ProjectIntelligenceService:
             "program_dependencies": _program_dependencies(active_profile, modules, flows),
             "risks": _impact_risks(active_profile, keywords, modules, flows),
             "recommended_rollout_strategy": _rollout_strategy(active_profile, keywords),
-            **_fallback_metadata("deterministic_fallback", "impact analysis is deterministic in this preview."),
+            **_knowledge_registry_metadata("Impact analysis uses the Knowledge Registry and relationship graph."),
         }
 
     def build_execution_context(
@@ -5797,6 +5797,20 @@ def _fallback_metadata(provider_used: str, reason: str) -> dict[str, Any]:
         "provider_last_success": None,
         "provider_last_failure": None,
     }
+
+
+def _knowledge_registry_metadata(reason: str) -> dict[str, Any]:
+    metadata = _fallback_metadata("knowledge_registry", reason)
+    metadata.update(
+        {
+            "provider_used": "knowledge_registry",
+            "source": "knowledge_registry",
+            "phi_status": "not_required",
+            "fallback_used": False,
+            "fallback_reason": "",
+        }
+    )
+    return metadata
 
 
 def _execution_ai_enrichment_enabled(options: dict[str, Any] | None) -> bool:

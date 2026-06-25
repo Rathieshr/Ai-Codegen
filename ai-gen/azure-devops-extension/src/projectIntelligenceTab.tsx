@@ -976,6 +976,7 @@ function ProjectIntelligenceTab() {
         if (workItem) {
           setCurrentWorkItem(workItem);
           seedPlannerFromWorkItem(workItem, effectiveSession?.auto_route_by_work_item_type !== false, effectiveSession?.last_work_item_id !== workItem.id);
+          restoreGeneratedChildArtifactForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
         }
         if (hasReadyCache) {
           setRepositoryLoadMessage('Loaded cached project knowledge. Continue without repository discovery, or refresh knowledge when documents change.');
@@ -1229,6 +1230,32 @@ function ProjectIntelligenceTab() {
       type,
       title: currentWorkItem?.title || fallback.title || profile.project_name || 'Untitled item',
     };
+  }
+
+  function restoreGeneratedChildArtifactForWorkItem(workItem: AdoWorkItem, artifacts: ArtifactRecord[]) {
+    const itemType = normalizePlannerItemType(workItem.type);
+    const artifactType = childArtifactTypeForWorkItem(itemType);
+    if (!artifactType) {
+      return;
+    }
+    const artifact = latestChildArtifactForSource(artifacts, artifactType, String(workItem.id));
+    if (!artifact || !Array.isArray(artifact.payload)) {
+      return;
+    }
+    const drafts = normalizeChildDraftPayload(artifact.payload, artifact.state);
+    if (!drafts.length) {
+      return;
+    }
+    setChildDrafts(drafts);
+    const approval = approvalForChildArtifactType(artifactType);
+    const quality = artifactType === 'Task' ? qualityScoreForTaskDrafts(drafts) : qualityScoreForFeatureDrafts(drafts);
+    setApprovalWorkflow((current) => ({
+      ...current,
+      [approval]: artifact.state === 'approved' || artifact.state === 'locked'
+        ? 'approved'
+        : isReadyForApproval(quality) ? 'ready_for_approval' : 'draft',
+    }));
+    setArtifactReuseStatus(`Loaded existing ${childGenerationNoun(itemType)} v${artifact.version}. Use Regenerate if the ${itemType.toLowerCase()} details changed.`);
   }
 
   async function loadReusableArtifact<T>(
@@ -1538,11 +1565,13 @@ function ProjectIntelligenceTab() {
       await buildExecutionPackage();
     }
     setMessage('Enhancing with AI...');
-    await buildExecutionPrompt('dev', 'enhance_with_ai');
-    await buildExecutionPrompt('ui', 'enhance_with_ai');
-    await buildExecutionPrompt('qa', 'enhance_with_ai');
-    await buildExecutionPrompt('copilot', 'enhance_with_ai');
-    setMessage('AI enrichment finished. Deterministic package remained available throughout.');
+    const enriched = await withLoading('Enhancing execution package with AI...', () => {
+      return postJson<ExecutionContextResult>('/build-execution-context', executionBasePayload('enhance_with_ai'));
+    });
+    if (enriched) {
+      setExecutionContext(enriched);
+    }
+    setMessage('AI enrichment finished. Prompts remain deterministic unless generated separately.');
     window.setTimeout(() => setMessage(''), 1800);
   }
 
@@ -1652,16 +1681,23 @@ function ProjectIntelligenceTab() {
     setChildDrafts((current) => current.map((draft) => draft.id === draftId ? { ...draft, selected } : draft));
   }
 
-  async function generateChildrenForCurrentType(targetType: WorkItemKind = selectedItemType) {
+  async function generateChildrenForCurrentType(targetType: WorkItemKind = selectedItemType, forceRegenerate = false) {
     if (!canContribute) {
       setError('Planning generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    const existingDrafts = childDraftsForTarget(targetType, childDrafts);
+    if (existingDrafts.length && !forceRegenerate) {
+      setMessage(`${childGenerationNoun(targetType)} already generated. Review the existing preview, create it in Azure DevOps, or use Regenerate from the advanced action.`);
+      setActiveTab(targetType === 'Story' ? 'execution' : 'planning');
+      window.setTimeout(() => setMessage(''), 2200);
       return;
     }
     if (currentWorkItem?.state.toLowerCase() === 'closed') {
       setError('This work item is Closed. AI Planner is read-only for closed items.');
       return;
     }
-    if (currentWorkItem?.state.toLowerCase() === 'active') {
+    if (currentWorkItem?.state.toLowerCase() === 'active' && forceRegenerate) {
       const confirmed = window.confirm('This work item is Active. Regenerating planning output may affect in-progress work. Continue?');
       if (!confirmed) {
         return;
@@ -1669,7 +1705,7 @@ function ProjectIntelligenceTab() {
     }
     if (targetType === 'Epic') {
       const source = { epic: epicInput, purpose: 'generated_features' };
-      if (await loadReusableArtifact<ChildDraft[]>('Feature', source, (payload) => {
+      if (!forceRegenerate && await loadReusableArtifact<ChildDraft[]>('Feature', source, (payload) => {
         setChildDrafts(payload);
         markApprovalGenerated('features', qualityScoreForFeatureDrafts(payload));
       })) {
@@ -1688,7 +1724,7 @@ function ProjectIntelligenceTab() {
       await saveGeneratedArtifact('Feature', epicInput.title || 'Generated features', drafts, source);
     } else if (targetType === 'Feature') {
       const source = { feature: featureInput, purpose: 'generated_stories' };
-      if (await loadReusableArtifact<ChildDraft[]>('Story', source, (payload) => {
+      if (!forceRegenerate && await loadReusableArtifact<ChildDraft[]>('Story', source, (payload) => {
         setChildDrafts(payload);
         markApprovalGenerated('stories', qualityScoreForFeatureDrafts(payload));
       })) {
@@ -1707,7 +1743,7 @@ function ProjectIntelligenceTab() {
       await saveGeneratedArtifact('Story', featureInput.title || 'Generated stories', drafts, source);
     } else if (targetType === 'Story') {
       const source = { story: storyInput, acceptance_criteria: splitLines(acceptanceCriteria), purpose: 'generated_tasks' };
-      if (await loadReusableArtifact<ChildDraft[]>('Task', source, (payload) => {
+      if (!forceRegenerate && await loadReusableArtifact<ChildDraft[]>('Task', source, (payload) => {
         setChildDrafts(payload);
         markApprovalGenerated('tasks', qualityScoreForTaskDrafts(payload));
       })) {
@@ -2434,7 +2470,7 @@ function ProjectIntelligenceTab() {
           refineFeature={() => void refineFeature(true)}
           refineStory={() => void refineStory(true)}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
-          generateChildren={() => void generateChildrenForCurrentType()}
+          generateChildren={(forceRegenerate) => void generateChildrenForCurrentType(undefined, forceRegenerate)}
           approveEpic={() => void approveEpic()}
           approveFeatures={() => approveFeatures()}
           approveFeature={() => void approveFeature()}
@@ -2475,7 +2511,7 @@ function ProjectIntelligenceTab() {
           approvalWorkflow={approvalWorkflow}
           refineStory={() => void refineStory()}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
-          generateChildren={() => void generateChildrenForCurrentType()}
+          generateChildren={(forceRegenerate) => void generateChildrenForCurrentType('Story', forceRegenerate)}
           generateQATestCases={() => void generateQATestCases()}
           approveStory={() => void approveStory()}
           approveTasks={() => approveTasks()}
@@ -3155,6 +3191,64 @@ function recommendedActionsForItemType(
   ];
 }
 
+function childDraftsForTarget(targetType: WorkItemKind, drafts: ChildDraft[]): ChildDraft[] {
+  if (targetType === 'Epic') {
+    return drafts.filter((draft) => draft.type === 'Feature');
+  }
+  if (targetType === 'Feature') {
+    return drafts.filter((draft) => draft.type === 'User Story');
+  }
+  if (targetType === 'Story') {
+    return drafts.filter((draft) => draft.type === 'Task');
+  }
+  return [];
+}
+
+function childArtifactTypeForWorkItem(itemType: WorkItemKind): ArtifactType | undefined {
+  if (itemType === 'Epic') return 'Feature';
+  if (itemType === 'Feature') return 'Story';
+  if (itemType === 'Story') return 'Task';
+  return undefined;
+}
+
+function approvalForChildArtifactType(artifactType: ArtifactType): ApprovalArtifact {
+  if (artifactType === 'Feature') return 'features';
+  if (artifactType === 'Story') return 'stories';
+  if (artifactType === 'Task') return 'tasks';
+  return 'features';
+}
+
+function latestChildArtifactForSource(artifacts: ArtifactRecord[], artifactType: ArtifactType, sourceItemId: string): ArtifactRecord | undefined {
+  return artifacts
+    .filter((artifact) => artifact.artifact_type === artifactType && artifact.source_item?.id === sourceItemId && Array.isArray(artifact.payload))
+    .sort((left, right) => {
+      const dateCompare = String(right.created_on || '').localeCompare(String(left.created_on || ''));
+      return dateCompare || Number(right.version || 0) - Number(left.version || 0);
+    })[0];
+}
+
+function normalizeChildDraftPayload(payload: unknown, artifactState: ArtifactLifecycleState): ChildDraft[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  return payload
+    .filter((draft): draft is ChildDraft => Boolean(draft && typeof draft === 'object' && 'type' in draft && 'title' in draft))
+    .map((draft) => ({
+      ...draft,
+      selected: draft.selected !== false,
+      status: artifactState === 'approved' || artifactState === 'locked'
+        ? (draft.status === 'created' ? 'created' : 'approved')
+        : draft.status || 'preview',
+    }));
+}
+
+function childGenerationNoun(targetType: WorkItemKind): string {
+  if (targetType === 'Epic') return 'Features';
+  if (targetType === 'Feature') return 'Stories';
+  if (targetType === 'Story') return 'Tasks';
+  return 'Child work items';
+}
+
 function ApprovalWorkflowDashboard({ state, itemType }: { state: ApprovalWorkflowState; itemType: WorkItemKind }) {
   const rows: Array<{ key: ApprovalArtifact; label: string }> = [
     { key: 'epic', label: 'Epic' },
@@ -3633,7 +3727,7 @@ function AIPlannerWorkspace({
   refineFeature: () => void;
   refineStory: () => void;
   analyzeImpact: () => void;
-  generateChildren: () => void;
+  generateChildren: (forceRegenerate?: boolean) => void;
   approveEpic: () => void;
   approveFeatures: () => void;
   approveFeature: () => void;
@@ -3647,6 +3741,8 @@ function AIPlannerWorkspace({
 }) {
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
   const planningType = itemType === 'Epic' || itemType === 'Feature' ? itemType : selectedItemType;
+  const hasGeneratedFeatures = childDrafts.some((draft) => draft.type === 'Feature');
+  const hasGeneratedStories = childDrafts.some((draft) => draft.type === 'User Story');
   if (itemType !== 'Epic' && itemType !== 'Feature' && currentWorkItem) {
     return (
       <>
@@ -3696,8 +3792,9 @@ function AIPlannerWorkspace({
             ) : (
               <button className="planner-button" onClick={approveEpic} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.epic)}>Approve Epic</button>
             )}
-            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !epicInput.title.trim()}>Generate Features</button>
+            <button className="planner-button" onClick={() => generateChildren(false)} disabled={loading || readOnly || !epicInput.title.trim() || hasGeneratedFeatures}>{hasGeneratedFeatures ? 'Features Already Generated' : 'Generate Features'}</button>
             {epicResult ? <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Epic</button> : null}
+            {hasGeneratedFeatures ? <button className="planner-button secondary" onClick={() => generateChildren(true)} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Features</button> : null}
             <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !epicInput.title.trim()}>Impact Analysis</button>
           </div>
           <details className="planner-task">
@@ -3708,7 +3805,7 @@ function AIPlannerWorkspace({
           {epicResult ? (
             <EpicRefinementResult result={epicResult} />
           ) : null}
-          {childDrafts.some((draft) => draft.type === 'Feature') ? (
+          {hasGeneratedFeatures ? (
             <div className="planner-actions">
               <ApprovalStatusStrip label="Features" status={approvalWorkflow.features} qualityScore={qualityScoreForFeatureDrafts(childDrafts.filter((draft) => draft.type === 'Feature'))} />
               <button className="planner-button" onClick={approveFeatures} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.features)}>Approve Features</button>
@@ -3730,8 +3827,9 @@ function AIPlannerWorkspace({
             ) : (
               <button className="planner-button" onClick={approveFeature} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.feature)}>Approve Feature</button>
             )}
-            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Stories</button>
+            <button className="planner-button" onClick={() => generateChildren(false)} disabled={loading || readOnly || !featureInput.title.trim() || hasGeneratedStories}>{hasGeneratedStories ? 'Stories Already Generated' : 'Generate Stories'}</button>
             {featureResult ? <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Regenerate Feature</button> : null}
+            {hasGeneratedStories ? <button className="planner-button secondary" onClick={() => generateChildren(true)} disabled={loading || readOnly || !featureInput.title.trim()}>Regenerate Stories</button> : null}
             <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !featureInput.title.trim()}>Impact Analysis</button>
           </div>
           <details className="planner-task">
@@ -3745,7 +3843,7 @@ function AIPlannerWorkspace({
               <CardList title="Generated Stories" items={featureResult.recommended_stories} />
             </div>
           ) : null}
-          {childDrafts.some((draft) => draft.type === 'User Story') ? (
+          {hasGeneratedStories ? (
             <div className="planner-actions">
               <ApprovalStatusStrip label="Stories" status={approvalWorkflow.stories} qualityScore={qualityScoreForFeature(featureResult)} />
               <button className="planner-button" onClick={approveStories} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.stories)}>Approve Stories</button>
@@ -4068,7 +4166,7 @@ function DeveloperWorkspace({
   approvalWorkflow: ApprovalWorkflowState;
   refineStory: () => void;
   analyzeImpact: () => void;
-  generateChildren: () => void;
+  generateChildren: (forceRegenerate?: boolean) => void;
   generateQATestCases: () => void;
   approveStory: () => void;
   approveTasks: () => void;
@@ -4083,6 +4181,7 @@ function DeveloperWorkspace({
   const isStory = itemType === 'Story';
   const isTask = itemType === 'Task';
   const isBug = itemType === 'Bug';
+  const hasGeneratedTasks = childDrafts.some((draft) => draft.type === 'Task');
   if (itemType === 'Epic' || itemType === 'Feature' || itemType === 'Test Case') {
     return (
       <section className="planner-card">
@@ -4113,11 +4212,11 @@ function DeveloperWorkspace({
         {isStory ? <ApprovalStatusStrip label="Story" status={approvalWorkflow.story} qualityScore={qualityScoreForStory(storyResult)} /> : null}
         {isTask || isBug ? <ApprovalStatusStrip label={isBug ? 'Fix Context' : 'Execution Package'} status={approvalWorkflow.execution} qualityScore={executionContext?.execution_readiness_score} /> : null}
         <div className="planner-actions">
-          {isStory && !storyResult ? <button className="planner-button" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Generate Story</button> : null}
+          {isStory && !storyResult ? <button className="planner-button secondary" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Refine Story</button> : null}
           {isStory && storyResult ? <button className="planner-button" onClick={approveStory} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.story)}>Approve Story</button> : null}
           {isStory && storyResult ? <button className="planner-button secondary" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>Regenerate Story</button> : null}
           <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Root Cause / Impact Analysis' : 'Impact Analysis'}</button>
-          {isStory ? <button className="planner-button secondary" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>{storyResult ? 'Regenerate Tasks' : 'Generate Tasks'}</button> : null}
+          {isStory ? <button className="planner-button secondary" onClick={() => generateChildren(false)} disabled={loading || readOnly || !storyInput.title.trim() || hasGeneratedTasks}>{hasGeneratedTasks ? 'Tasks Already Generated' : 'Generate Tasks'}</button> : null}
           {(isStory || isBug) ? <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Generate Regression Tests' : 'Generate Test Cases'}</button> : null}
           <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : 'Build Execution Package'}</button>
           {executionContext ? <button className="planner-button secondary" onClick={onEnhanceWithAi} disabled={loading || readOnly}>Enhance with AI</button> : null}
@@ -4144,12 +4243,12 @@ function DeveloperWorkspace({
       {qaTestSuite && (isStory || isBug) ? <QAIntelligencePanel result={qaTestSuite} /> : null}
       {isStory ? (
         <>
-          {childDrafts.some((draft) => draft.type === 'Task') ? (
+          {hasGeneratedTasks ? (
             <section className="planner-card">
               <ApprovalStatusStrip label="Tasks" status={approvalWorkflow.tasks} qualityScore={qualityScoreForTaskDrafts(childDrafts.filter((draft) => draft.type === 'Task'))} />
               <div className="planner-actions">
                 <button className="planner-button" onClick={approveTasks} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.tasks)}>Approve Tasks</button>
-                <button className="planner-button secondary" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>Regenerate Tasks</button>
+                <button className="planner-button secondary" onClick={() => generateChildren(true)} disabled={loading || readOnly || !storyInput.title.trim()}>Regenerate Tasks</button>
               </div>
             </section>
           ) : null}
@@ -7529,6 +7628,9 @@ function sourceLabel(source?: string): string {
   }
   if (normalized === 'deterministic_execution') {
     return 'Deterministic Execution';
+  }
+  if (normalized === 'knowledge_registry') {
+    return 'Knowledge Registry';
   }
   return 'Not run';
 }

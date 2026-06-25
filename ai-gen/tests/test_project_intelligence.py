@@ -1457,7 +1457,8 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             self.assertIn("fallback_reason", payload)
             self.assertIn("phi_raw_response_preview", payload)
             self.assertIn("phi_parsed_response_preview", payload)
-        self.assertEqual(impact["provider_used"], "deterministic_fallback")
+        self.assertEqual(impact["provider_used"], "knowledge_registry")
+        self.assertFalse(impact["fallback_used"])
         self.assertEqual(refined["provider_used"], "azure_phi")
         self.assertIn("error", refined)
 

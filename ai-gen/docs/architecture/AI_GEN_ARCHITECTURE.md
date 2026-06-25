@@ -256,6 +256,22 @@ Future connectors:
 * Confluence
 * Teams
 
+## Context Optimization Engine
+
+The Context Optimization Engine prepares model-specific execution context.
+
+Responsibilities
+
+- Context compression
+- Context ranking
+- Token budgeting
+- Context deduplication
+- Delta context generation
+- Working-set selection
+- Prompt assembly
+
+The engine ensures only relevant engineering knowledge is supplied to downstream AI providers.
+
 ---
 
 # 7. Workflow Engine
@@ -504,6 +520,17 @@ HEI will always prioritize:
 * Open integration over vendor lock-in.
 
 ---
+# 18. 
+
+Context Optimization Engine
+
+↓
+
+Knowledge Registry
+
+↓
+
+Execution Package Builder
 
 # Revision History
 

@@ -536,6 +536,78 @@ Project Intelligence remains the authoritative source of project-level engineeri
 
 ---
 
+# 21. Living Project Intelligence
+
+Project Intelligence is not a one-time configuration wizard.
+
+It continuously evolves as the project changes.
+
+Capabilities
+
+- Knowledge Health
+- Repository Drift Detection
+- Knowledge Impact Analysis
+- Context Freshness
+- AI Recommendations
+- Knowledge Versioning
+- Manual Review before Refresh
+
+# 22. Knowledge Health
+
+Project Intelligence continuously evaluates engineering knowledge.
+
+Health Categories
+
+- Project Profile
+- Repository
+- Knowledge Registry
+- Standards
+- Planning
+- Execution
+- QA
+
+# 23. Repository Drift Detection
+
+Repository Intelligence compares newly discovered repository information with approved project knowledge.
+
+Detected differences include
+
+- Modules
+- Flows
+- Technology
+- Documentation
+- Architecture
+
+Users review detected changes before knowledge is updated.
+
+# 24. Knowledge Impact Analysis
+
+When knowledge changes, HEI identifies affected engineering artifacts.
+
+Examples
+
+- Features
+- Stories
+- Tasks
+- Execution Packages
+- Test Cases
+- QA Coverage
+
+This enables safe knowledge evolution without blindly regenerating project artifacts.
+
+# 25. Context Freshness
+
+Every engineering artifact stores
+
+- Knowledge Version
+- Generated Date
+- Current Knowledge Version
+- Refresh Recommendation
+
+This allows users to determine whether an artifact should be regenerated.
+
+Each category is independently evaluated to determine overall engineering readiness.
+
 # Revision History
 
 | Version | Date       | Author               | Description                                |

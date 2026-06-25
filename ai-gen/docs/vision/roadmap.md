@@ -305,7 +305,27 @@ Evolve HEI into a platform capability within the broader Engineering Operating S
 
 ---
 
-# 9. Deferred Capabilities
+# 9. Phase 6
+
+Context Optimization Engine
+
+Capabilities
+
+Knowledge Compression
+
+Context Capsules
+
+Delta Context
+
+Working Memory
+
+Token Budgeting
+
+Prompt Optimization
+
+Model-specific Context Adaptation
+
+# 10. Deferred Capabilities
 
 The following capabilities are intentionally deferred until later phases:
 
@@ -322,7 +342,7 @@ These capabilities should not delay delivery of earlier milestones.
 
 ---
 
-# 10. Release Strategy
+# 11. Release Strategy
 
 ## HEI v1.0
 
@@ -405,7 +425,7 @@ No phase should require redesign of previously delivered capabilities.
 
 ---
 
-# 12. Current Focus
+# 13. Current Focus
 
 Current development is focused on:
 
@@ -419,13 +439,29 @@ and
 
 Execution Intelligence
 
+Execution Packages
+
+Context Capsules
+
+Prompt Builder
+
+Repository Intelligence
+
+Context Optimization
+
+VS Code Integration
+
+Copilot Context
+
+Knowledge Refresh
+
 These phases form the demonstration baseline for Hubbell.
 
 All future work should be developed on separate feature branches after successful completion of the demonstration scope.
 
 ---
 
-# 13. Long-Term Vision
+# 14. Long-Term Vision
 
 HEI represents the Hubbell implementation of the underlying Engineering Intelligence Platform.
 

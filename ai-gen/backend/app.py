@@ -313,6 +313,12 @@ class ProjectIntelligenceKnowledgeCacheRefreshRequest(BaseModel):
     documents: dict[str, str] = Field(default_factory=dict)
 
 
+class ProjectIntelligenceContextCapsuleRefreshRequest(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+    item: dict[str, Any] = Field(default_factory=dict)
+    capsule_types: list[str] = Field(default_factory=list)
+
+
 class ProjectIntelligenceArtifactRequest(BaseModel):
     artifact_type: str = ""
     title: str = ""
@@ -463,6 +469,20 @@ def refresh_project_intelligence_knowledge_cache(request: ProjectIntelligenceKno
         request.profile,
         request.selected_files,
         request.connector_mapping,
+    )
+
+
+@app.get("/project-intelligence/context-capsules")
+def get_project_intelligence_context_capsules() -> dict:
+    return project_intelligence_service.get_context_capsules()
+
+
+@app.post("/project-intelligence/context-capsules/refresh")
+def refresh_project_intelligence_context_capsules(request: ProjectIntelligenceContextCapsuleRefreshRequest) -> dict:
+    return project_intelligence_service.refresh_context_capsules(
+        request.profile,
+        request.item,
+        request.capsule_types,
     )
 
 

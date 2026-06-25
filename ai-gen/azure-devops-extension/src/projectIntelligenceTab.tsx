@@ -62,6 +62,39 @@ type RoutedWorkspace = Extract<PlannerTab, 'planning' | 'execution' | 'qa'>;
 type ApprovalStatus = 'locked' | 'draft' | 'ready_for_approval' | 'approved';
 type ApprovalArtifact = 'epic' | 'features' | 'feature' | 'stories' | 'story' | 'tasks' | 'qa' | 'execution';
 type ApprovalWorkflowState = Record<ApprovalArtifact, ApprovalStatus>;
+type WorkflowHealthStatus = 'Ready' | 'Needs Attention' | 'Blocked' | 'In Progress';
+type WorkflowActionKind =
+  | 'approve_epic'
+  | 'generate_features'
+  | 'approve_features'
+  | 'approve_feature'
+  | 'generate_stories'
+  | 'approve_stories'
+  | 'approve_story'
+  | 'generate_tasks'
+  | 'approve_tasks'
+  | 'generate_tests'
+  | 'build_execution'
+  | 'open_vscode'
+  | 'open_planning'
+  | 'open_execution'
+  | 'open_qa';
+type WorkflowNextAction = {
+  label: string;
+  action: WorkflowActionKind;
+  workspace: PlannerTab;
+  reason: string;
+};
+type WorkflowOrchestrationState = {
+  statuses: Record<'epic' | 'features' | 'stories' | 'tasks' | 'tests' | 'execution', 'complete' | 'current' | 'pending' | 'blocked'>;
+  planningHealth: WorkflowHealthStatus;
+  executionHealth: WorkflowHealthStatus;
+  qaHealth: WorkflowHealthStatus;
+  coverageHealth: WorkflowHealthStatus;
+  currentStage: string;
+  nextAction: WorkflowNextAction;
+  blockers: string[];
+};
 type ArtifactLifecycleState = 'draft' | 'approved' | 'locked' | 'archived';
 type ArtifactType =
   | 'Epic'
@@ -177,6 +210,15 @@ type ProviderMetadata = {
   context_section_tokens?: Record<string, number>;
   final_prompt_preview?: string;
   prompt_too_long_stage?: string;
+  context_capsule_used?: boolean;
+  context_capsule_type?: string;
+  context_capsule_version?: number;
+  context_capsule_size_tokens?: number;
+  context_capsule_source_size_tokens?: number;
+  context_capsule_compression_ratio?: number;
+  deterministic_generation_ms?: number;
+  phi_enrichment_ms?: number;
+  timeout_used?: boolean;
 };
 
 type ProjectProfile = {
@@ -321,6 +363,31 @@ type KnowledgeCacheResponse = KnowledgeCacheStatus & {
   error?: string;
 };
 
+type ContextCapsuleItem = {
+  capsule_type: string;
+  status: 'ready' | 'missing' | 'refresh_required';
+  version: number;
+  last_refreshed?: string;
+  source_version?: string;
+  capsule_size_tokens?: number;
+  source_size_tokens?: number;
+  compression_ratio?: number;
+};
+
+type ContextCapsuleStatus = {
+  knowledge_version?: string;
+  capsules: ContextCapsuleItem[];
+  ready_count: number;
+  total_count: number;
+};
+
+type ContextCapsuleResponse = {
+  exists?: boolean;
+  success?: boolean;
+  capsules?: Record<string, unknown>;
+  status: ContextCapsuleStatus;
+};
+
 type ArtifactRecord = {
   artifact_id: string;
   artifact_type: ArtifactType | string;
@@ -460,6 +527,23 @@ type CopilotContextResult = ProviderMetadata & {
   context: string;
 };
 
+type GenerationReview = {
+  modules_used?: string[];
+  flows_used?: string[];
+  standards_used?: string[];
+  applications_used?: string[];
+  domain_terms_used?: string[];
+  quality_scores?: {
+    knowledge_usage?: number;
+    module_coverage?: number;
+    flow_coverage?: number;
+    domain_specificity?: number;
+    generic_content_risk?: number;
+    overall?: number;
+  };
+  quality_gate?: string;
+};
+
 type EpicRefinement = ProviderMetadata & {
   business_goal: string;
   business_outcomes: string[];
@@ -489,6 +573,7 @@ type EpicRefinement = ProviderMetadata & {
     acceptance_criteria_quality_score?: number;
     status?: string;
   }>;
+  generation_review?: GenerationReview;
 };
 
 type FeatureRefinement = ProviderMetadata & {
@@ -498,6 +583,7 @@ type FeatureRefinement = ProviderMetadata & {
   dependencies: string[];
   risks: string[];
   recommended_stories: Array<{ title: string; description: string; acceptance_criteria?: string[]; coverage_area?: string }>;
+  generation_review?: GenerationReview;
   story_generation_diagnostics?: {
     capabilities_identified?: string[];
     user_actions_identified?: string[];
@@ -526,6 +612,7 @@ type StoryRefinement = ProviderMetadata & {
   technical_considerations: string[];
   qa_considerations: string[];
   proposed_tasks?: StoryTask[];
+  generation_review?: GenerationReview;
   task_intelligence_diagnostics?: {
     work_areas?: string[];
     generated_task_count?: number;
@@ -780,6 +867,7 @@ function ProjectIntelligenceTab() {
   const [repositoryFileStatus, setRepositoryFileStatus] = useState<Record<string, 'available' | 'missing' | 'unknown'>>({});
   const [resumeSession, setResumeSession] = useState<ProjectSessionSnapshot | undefined>();
   const [knowledgeCacheStatus, setKnowledgeCacheStatus] = useState<KnowledgeCacheStatus | undefined>();
+  const [contextCapsuleStatus, setContextCapsuleStatus] = useState<ContextCapsuleStatus | undefined>();
   const [showResumePanel, setShowResumePanel] = useState(false);
   const [lastAnalysisTimestamp, setLastAnalysisTimestamp] = useState('');
   const [permissionState, setPermissionState] = useState<PermissionState>(defaultPermissionState());
@@ -803,6 +891,16 @@ function ProjectIntelligenceTab() {
   const isViewer = permissionState.role === 'viewer';
   const currentItemType = currentWorkItem ? normalizePlannerItemType(currentWorkItem.type) : selectedItemType;
   const recommendedWorkspace = recommendedWorkspaceForItem(currentItemType);
+  const workflowOrchestration = buildWorkflowOrchestration({
+    itemType: currentItemType,
+    approvalWorkflow,
+    childDrafts,
+    hasQa: Boolean(qaTestSuite),
+    hasExecution: Boolean(executionContext),
+    hasKnowledge: hasKnowledgeRegistry(profile),
+    standardsReady: standardsCaptured(profile),
+    hasExecutionPackage: Boolean(executionContext),
+  });
 
   useEffect(() => {
     SDK.ready().then(async () => {
@@ -811,6 +909,7 @@ function ProjectIntelligenceTab() {
         const storedSession = readProjectSession();
         const backendSession = await getBackendProjectSession().catch(() => undefined);
         const knowledgeCache = await getKnowledgeCache().catch(() => undefined);
+        const contextCapsules = await getContextCapsules().catch(() => undefined);
         const lifecycleArtifacts = await getArtifacts().catch(() => ({ artifacts: [] as ArtifactRecord[] }));
         const relationshipSummary = await getGraphSummary().catch(() => undefined);
         const graphCoverage = await getCoverageReport().catch(() => undefined);
@@ -828,6 +927,9 @@ function ProjectIntelligenceTab() {
         }
         if (knowledgeCache) {
           setKnowledgeCacheStatus(knowledgeCache);
+        }
+        if (contextCapsules?.status) {
+          setContextCapsuleStatus(contextCapsules.status);
         }
         const loaded = await getProfile();
         const projectContext = await loadAzureProjectContext();
@@ -1010,6 +1112,7 @@ function ProjectIntelligenceTab() {
       setProfile(analyzed);
       setLastAnalysisTimestamp(new Date().toISOString());
       markKnowledgeRefreshed(analyzed);
+      await refreshContextCapsules(analyzed, ['project']);
       lastSavedProfileRef.current = JSON.stringify(analyzed);
       setSaveStatus('saved');
       setEditingProfile(false);
@@ -1019,8 +1122,10 @@ function ProjectIntelligenceTab() {
   }
 
   function continueProjectSession() {
-    if (resumeSession?.last_active_tab) {
+    if (resumeSession?.last_active_tab && resumeSession.last_active_tab !== 'overview') {
       setActiveTab(resumeSession.last_active_tab);
+    } else {
+      setActiveTab(recommendedWorkspace);
     }
     if (resumeSession?.profile) {
       setProfile(resumeSession.profile);
@@ -1029,6 +1134,23 @@ function ProjectIntelligenceTab() {
     setEditingProfile(false);
     setShowQuickStart(false);
     setRepositoryLoadMessage('Continuing saved project session. Repository analysis was not rerun.');
+  }
+
+  async function openRepositorySettings() {
+    setShowResumePanel(false);
+    setEditingProfile(true);
+    setShowQuickStart(false);
+    if (canAdmin) {
+      setActiveTab('admin');
+      if (!repositories.length && !repositoryLoadMessage.includes('Loaded')) {
+        await loadAdoProjects(profile);
+      }
+      setRepositoryLoadMessage((current) => current || 'Repository settings are open. Select a repository and branch, then analyze documents.');
+      return;
+    }
+    setActiveTab('overview');
+    setShowQuickStart(true);
+    setError('Repository changes are restricted to AI Gen Admins. Your current role is read-only.');
   }
 
   async function refreshProjectAnalysis() {
@@ -1058,6 +1180,7 @@ function ProjectIntelligenceTab() {
       setProfile(refreshed);
       setLastAnalysisTimestamp(new Date().toISOString());
       markKnowledgeRefreshed(refreshed);
+      await refreshContextCapsules(refreshed, ['project']);
       const cache = await getKnowledgeCache().catch(() => undefined);
       if (cache) {
         setKnowledgeCacheStatus(cache);
@@ -1076,6 +1199,17 @@ function ProjectIntelligenceTab() {
       last_refreshed_on: refreshedOn,
     });
     setLastAnalysisTimestamp(refreshedOn);
+  }
+
+  async function refreshContextCapsules(nextProfile: ProjectProfile = profile, capsuleTypes: string[] = ['project']) {
+    const response = await postJson<ContextCapsuleResponse>('/context-capsules/refresh', {
+      profile: nextProfile,
+      capsule_types: capsuleTypes,
+      item: currentStoryPayload(),
+    }).catch(() => undefined);
+    if (response?.status) {
+      setContextCapsuleStatus(response.status);
+    }
   }
 
   async function refreshPermissions() {
@@ -1268,6 +1402,7 @@ function ProjectIntelligenceTab() {
       setQaTestSuite(result);
       markApprovalGenerated('qa', result.coverage_score);
       await saveGeneratedArtifact('Test Suite', story.title || 'QA test suite', result, source);
+      await refreshContextCapsules(profile, ['story', 'qa']);
     }
   }
 
@@ -1304,6 +1439,7 @@ function ProjectIntelligenceTab() {
       setQaTestSuite(result);
       markApprovalGenerated('qa', result.coverage_score);
       await saveGeneratedArtifact('Test Plan', title, result, source);
+      await refreshContextCapsules(profile, ['feature', 'qa']);
       setActiveTab('qa');
     }
   }
@@ -1317,10 +1453,10 @@ function ProjectIntelligenceTab() {
     const source = { story, impact_analysis: storyImpact || {} };
     if (!forceRefresh && await loadReusableArtifact<{
       context: ExecutionContextResult;
-      dev: PromptBuilderResult;
-      ui: PromptBuilderResult;
-      qa: PromptBuilderResult;
-      copilot: CopilotContextResult;
+      dev?: PromptBuilderResult;
+      ui?: PromptBuilderResult;
+      qa?: PromptBuilderResult;
+      copilot?: CopilotContextResult;
     }>('Execution Package', source, (payload) => {
       setExecutionContext(payload.context);
       setDevPrompt(payload.dev);
@@ -1332,30 +1468,82 @@ function ProjectIntelligenceTab() {
     })) {
       return;
     }
-    const packageResult = await withLoading('Generating execution package...', async () => {
+    const context = await withLoading('Building execution package...', async () => {
       const basePayload = {
         profile,
         knowledge_profile: profile.knowledge_registry,
         story,
         impact_analysis: storyImpact || {},
+        mode: 'deterministic_only',
       };
-      const context = await postJson<ExecutionContextResult>('/build-execution-context', basePayload);
-      const dev = await postJson<PromptBuilderResult>('/build-dev-prompt', basePayload);
-      const ui = await postJson<PromptBuilderResult>('/build-ui-prompt', basePayload);
-      const qa = await postJson<PromptBuilderResult>('/build-qa-prompt', basePayload);
-      const copilot = await postJson<CopilotContextResult>('/build-copilot-context', basePayload);
-      return { context, dev, ui, qa, copilot };
+      return postJson<ExecutionContextResult>('/build-execution-context', basePayload);
     });
-    if (packageResult) {
-      setExecutionContext(packageResult.context);
-      setDevPrompt(packageResult.dev);
-      setUiPrompt(packageResult.ui);
-      setQaPrompt(packageResult.qa);
-      setCopilotContext(packageResult.copilot);
-      markApprovalGenerated('execution', packageResult.context.execution_readiness_score);
-      await saveGeneratedArtifact('Execution Package', story.title || 'Execution package', packageResult, source);
+    if (context) {
+      setExecutionContext(context);
+      setDevPrompt(undefined);
+      setUiPrompt(undefined);
+      setQaPrompt(undefined);
+      setCopilotContext(undefined);
+      markApprovalGenerated('execution', context.execution_readiness_score);
+      await saveGeneratedArtifact('Execution Package', story.title || 'Execution package', { context }, source);
+      await refreshContextCapsules(profile, ['story', 'execution', 'qa']);
       setActiveTab('execution');
     }
+  }
+
+  function executionBasePayload(mode = 'deterministic_only') {
+    return {
+      profile,
+      knowledge_profile: profile.knowledge_registry,
+      story: currentStoryPayload(),
+      impact_analysis: storyImpact || {},
+      mode,
+    };
+  }
+
+  async function buildExecutionPrompt(kind: 'dev' | 'ui' | 'qa' | 'copilot', mode = 'deterministic_only') {
+    if (!canContribute) {
+      setError('Execution prompt generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    const endpointByKind = {
+      dev: '/build-dev-prompt',
+      ui: '/build-ui-prompt',
+      qa: '/build-qa-prompt',
+      copilot: '/build-copilot-context',
+    };
+    const labelByKind = {
+      dev: 'Dev Prompt',
+      ui: 'UI Prompt',
+      qa: 'QA Prompt',
+      copilot: 'Copilot Context',
+    };
+    const result = await withLoading(`${mode === 'enhance_with_ai' ? 'Enhancing' : 'Generating'} ${labelByKind[kind]}...`, async () => {
+      if (!executionContext) {
+        await buildExecutionPackage();
+      }
+      return postJson<PromptBuilderResult | CopilotContextResult>(endpointByKind[kind], executionBasePayload(mode));
+    });
+    if (!result) {
+      return;
+    }
+    if (kind === 'dev') setDevPrompt(result as PromptBuilderResult);
+    if (kind === 'ui') setUiPrompt(result as PromptBuilderResult);
+    if (kind === 'qa') setQaPrompt(result as PromptBuilderResult);
+    if (kind === 'copilot') setCopilotContext(result as CopilotContextResult);
+  }
+
+  async function enhanceExecutionWithAi() {
+    if (!executionContext) {
+      await buildExecutionPackage();
+    }
+    setMessage('Enhancing with AI...');
+    await buildExecutionPrompt('dev', 'enhance_with_ai');
+    await buildExecutionPrompt('ui', 'enhance_with_ai');
+    await buildExecutionPrompt('qa', 'enhance_with_ai');
+    await buildExecutionPrompt('copilot', 'enhance_with_ai');
+    setMessage('AI enrichment finished. Deterministic package remained available throughout.');
+    window.setTimeout(() => setMessage(''), 1800);
   }
 
   function openVsCodeExecutionPackage() {
@@ -1367,6 +1555,70 @@ function ProjectIntelligenceTab() {
     if (uri) {
       window.open(uri, '_blank');
     }
+  }
+
+  async function continueWorkflow() {
+    if (!canContribute) {
+      setError('Workflow continuation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    setError('');
+    const action = workflowOrchestration.nextAction.action;
+    setMessage(`Continuing workflow: ${workflowOrchestration.nextAction.label}`);
+    if (action === 'approve_epic') {
+      await approveEpic();
+    } else if (action === 'generate_features') {
+      setSelectedItemType('Epic');
+      await generateChildrenForCurrentType('Epic');
+    } else if (action === 'approve_features') {
+      approveFeatures();
+    } else if (action === 'approve_feature') {
+      await approveFeature();
+    } else if (action === 'generate_stories') {
+      setSelectedItemType('Feature');
+      await generateChildrenForCurrentType('Feature');
+    } else if (action === 'approve_stories') {
+      approveStories();
+    } else if (action === 'approve_story') {
+      await approveStory();
+    } else if (action === 'generate_tasks') {
+      setSelectedItemType('Story');
+      await generateChildrenForCurrentType('Story');
+    } else if (action === 'approve_tasks') {
+      approveTasks();
+    } else if (action === 'generate_tests') {
+      await generateQATestCases();
+    } else if (action === 'build_execution') {
+      await buildExecutionPackage();
+    } else if (action === 'open_vscode') {
+      openVsCodeExecutionPackage();
+    } else if (action === 'open_planning') {
+      setActiveTab('planning');
+    } else if (action === 'open_execution') {
+      setActiveTab('execution');
+    } else if (action === 'open_qa') {
+      setActiveTab('qa');
+    }
+  }
+
+  async function generateEverythingForStory() {
+    if (!canContribute) {
+      setError('Story automation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    setError('');
+    setSelectedItemType('Story');
+    if (!childDrafts.some((draft) => draft.type === 'Task')) {
+      await generateChildrenForCurrentType('Story');
+    }
+    if (!qaTestSuite) {
+      await generateQATestCases();
+    }
+    if (!executionContext) {
+      await buildExecutionPackage();
+    }
+    setMessage('Story automation complete. Review tasks, QA coverage, and execution package.');
+    window.setTimeout(() => setMessage(''), 1800);
   }
 
   function currentStoryPayload(): { title: string; description: string; acceptance_criteria: string[] } {
@@ -1400,7 +1652,7 @@ function ProjectIntelligenceTab() {
     setChildDrafts((current) => current.map((draft) => draft.id === draftId ? { ...draft, selected } : draft));
   }
 
-  async function generateChildrenForCurrentType() {
+  async function generateChildrenForCurrentType(targetType: WorkItemKind = selectedItemType) {
     if (!canContribute) {
       setError('Planning generation is restricted to AI Gen Admins and Contributors.');
       return;
@@ -1415,7 +1667,7 @@ function ProjectIntelligenceTab() {
         return;
       }
     }
-    if (selectedItemType === 'Epic') {
+    if (targetType === 'Epic') {
       const source = { epic: epicInput, purpose: 'generated_features' };
       if (await loadReusableArtifact<ChildDraft[]>('Feature', source, (payload) => {
         setChildDrafts(payload);
@@ -1434,7 +1686,7 @@ function ProjectIntelligenceTab() {
       setChildDrafts(drafts);
       markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
       await saveGeneratedArtifact('Feature', epicInput.title || 'Generated features', drafts, source);
-    } else if (selectedItemType === 'Feature') {
+    } else if (targetType === 'Feature') {
       const source = { feature: featureInput, purpose: 'generated_stories' };
       if (await loadReusableArtifact<ChildDraft[]>('Story', source, (payload) => {
         setChildDrafts(payload);
@@ -1453,7 +1705,7 @@ function ProjectIntelligenceTab() {
       setChildDrafts(drafts);
       markApprovalGenerated('stories', qualityScoreForFeature(generated));
       await saveGeneratedArtifact('Story', featureInput.title || 'Generated stories', drafts, source);
-    } else if (selectedItemType === 'Story') {
+    } else if (targetType === 'Story') {
       const source = { story: storyInput, acceptance_criteria: splitLines(acceptanceCriteria), purpose: 'generated_tasks' };
       if (await loadReusableArtifact<ChildDraft[]>('Task', source, (payload) => {
         setChildDrafts(payload);
@@ -2093,54 +2345,45 @@ function ProjectIntelligenceTab() {
       {error ? <div className="planner-error">{error}</div> : null}
       {isViewer ? <div className="planner-banner">Viewer access: Project Intelligence is read-only for your Azure DevOps group.</div> : null}
 
-      <RecommendedActionCard
+      <WorkflowTabs activeTab={activeTab} onChange={changeWorkspace} canAdmin={canAdmin} />
+
+      <StickyContextBar
         workItem={currentWorkItem}
         itemType={currentItemType}
         activeTab={activeTab}
         recommendedWorkspace={recommendedWorkspace}
-        approvalWorkflow={approvalWorkflow}
+        workflow={workflowOrchestration}
         autoRoute={autoRouteByWorkItemType}
         loading={loading}
         canContribute={canContribute}
         currentRole={roleLabel(permissionState.role)}
-        hasExecutionPackage={Boolean(executionContext)}
         onToggleAutoRoute={setAutoRouteByWorkItemType}
-        onOpenWorkspace={(workspace) => setActiveTab(workspace)}
-        onApproveEpic={() => void approveEpic()}
-        onApproveFeature={() => void approveFeature()}
-        onApproveStory={() => void approveStory()}
-        onApproveTasks={() => approveTasks()}
-        onApproveTestSuite={() => approveTestSuite()}
-        onRefineEpic={() => void refineEpic(isApprovalPending(approvalWorkflow.epic))}
-        onRefineFeature={() => void refineFeature(isApprovalPending(approvalWorkflow.feature))}
-        onRefineStory={() => void refineStory(isApprovalPending(approvalWorkflow.story))}
-        onGenerateChildren={() => void generateChildrenForCurrentType()}
-        onAnalyzeImpact={() => void analyzeCurrentItemImpact()}
-        onGenerateFeatureTestPlan={() => void generateFeatureTestPlan()}
-        onGenerateQATestCases={() => void generateQATestCases()}
-        onBuildExecutionPackage={() => void buildExecutionPackage()}
-        onOpenVsCode={() => openVsCodeExecutionPackage()}
+        onContinueWorkflow={() => void continueWorkflow()}
       />
-
-      <WorkflowTabs activeTab={activeTab} onChange={changeWorkspace} canAdmin={canAdmin} />
 
       {activeTab === 'overview' ? (
         <>
           <ProductIdentityCard profile={profile} />
-          <EnterpriseReadinessCard profile={profile} qaReady={Boolean(qaTestSuite)} executionReady={Boolean(executionContext)} />
-          <ProjectKnowledgeStatusCard
+          <OverviewHealthCard
+            workflow={workflowOrchestration}
+            profile={profile}
+            hasQa={Boolean(qaTestSuite)}
+            hasExecution={Boolean(executionContext)}
+          />
+          <KnowledgeHealthCompactCard
             session={resumeSession}
             status={knowledgeCacheStatus}
             profile={profile}
+            capsuleStatus={contextCapsuleStatus}
             loading={loading}
             canRefresh={canAdmin}
             onContinue={continueProjectSession}
             onRefresh={() => void refreshProjectAnalysis()}
             onChangeRepository={() => {
-              setShowQuickStart(false);
-              setEditingProfile(true);
+              void openRepositorySettings();
             }}
           />
+          <AIRecommendationCard workflow={workflowOrchestration} loading={loading} canContribute={canContribute} onContinue={() => void continueWorkflow()} />
           {showQuickStart && canAdmin ? (
             <QuickStartSetup
               profile={profile}
@@ -2191,7 +2434,6 @@ function ProjectIntelligenceTab() {
           refineFeature={() => void refineFeature(true)}
           refineStory={() => void refineStory(true)}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
-          generateFeatureTestPlan={() => void generateFeatureTestPlan()}
           generateChildren={() => void generateChildrenForCurrentType()}
           approveEpic={() => void approveEpic()}
           approveFeatures={() => approveFeatures()}
@@ -2214,6 +2456,8 @@ function ProjectIntelligenceTab() {
           qaPrompt={qaPrompt}
           copilotContext={copilotContext}
           onGenerate={() => void buildExecutionPackage()}
+          onGeneratePrompt={(kind) => void buildExecutionPrompt(kind)}
+          onEnhanceWithAi={() => void enhanceExecutionWithAi()}
           loading={loading}
           canContribute={canContribute}
           itemType={currentItemType}
@@ -2329,6 +2573,56 @@ function WorkflowTabs({
   );
 }
 
+function StickyContextBar({
+  workItem,
+  itemType,
+  activeTab,
+  recommendedWorkspace,
+  workflow,
+  autoRoute,
+  loading,
+  canContribute,
+  currentRole,
+  onToggleAutoRoute,
+  onContinueWorkflow,
+}: {
+  workItem?: AdoWorkItem;
+  itemType: WorkItemKind;
+  activeTab: PlannerTab;
+  recommendedWorkspace: RoutedWorkspace;
+  workflow: WorkflowOrchestrationState;
+  autoRoute: boolean;
+  loading: boolean;
+  canContribute: boolean;
+  currentRole: string;
+  onToggleAutoRoute: (enabled: boolean) => void;
+  onContinueWorkflow: () => void;
+}) {
+  const itemLabel = workItem
+    ? `${workItem.type} #${workItem.id} · ${workItem.title || 'Untitled'}`
+    : `${itemType} · No Azure DevOps work item loaded`;
+  return (
+    <section className="hei-context-bar" aria-label="Current AI Gen context">
+      <div className="hei-context-main">
+        <strong>{itemLabel}</strong>
+        <span>Workspace: {workspaceLabel(activeTab)}</span>
+        <span>Role: {currentRole}</span>
+        <span>Next: {workflow.nextAction.label}</span>
+      </div>
+      {activeTab !== recommendedWorkspace ? (
+        <span className="hei-context-warning">Recommended: {workspaceLabel(recommendedWorkspace)}</span>
+      ) : null}
+      <label className="planner-checkbox hei-auto-route">
+        <input type="checkbox" checked={autoRoute} onChange={(event) => onToggleAutoRoute(event.target.checked)} />
+        Auto Route
+      </label>
+      <button className="planner-button" onClick={onContinueWorkflow} disabled={loading || !canContribute}>
+        Continue
+      </button>
+    </section>
+  );
+}
+
 function ProjectSessionResumeCard({
   session,
   onContinue,
@@ -2366,6 +2660,116 @@ function ProjectSessionResumeCard({
         <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Refresh Analysis</button>
       </div>
       {!canRefresh ? <div className="planner-subtle">Knowledge refresh is available to AI Gen Admins only.</div> : null}
+    </section>
+  );
+}
+
+function OverviewHealthCard({
+  workflow,
+  profile,
+  hasQa,
+  hasExecution,
+}: {
+  workflow: WorkflowOrchestrationState;
+  profile: ProjectProfile;
+  hasQa: boolean;
+  hasExecution: boolean;
+}) {
+  const setup = projectSetupStatus(profile);
+  return (
+    <section className="planner-card planner-card-accent">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Engineering Health</div>
+          <div className="planner-subtle">A compact read on planning, execution, QA, and setup readiness.</div>
+        </div>
+        <div className={`planner-session-freshness ${setup.complete ? 'fresh' : 'stale'}`}>
+          {setup.complete ? 'Ready' : 'Needs Setup'}
+        </div>
+      </div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Planning" value={workflow.planningHealth} />
+        <SummaryTile title="Execution" value={hasExecution ? 'Ready' : workflow.executionHealth} />
+        <SummaryTile title="QA" value={hasQa ? 'Ready' : workflow.qaHealth} />
+      </div>
+    </section>
+  );
+}
+
+function KnowledgeHealthCompactCard({
+  session,
+  status,
+  profile,
+  capsuleStatus,
+  loading,
+  canRefresh,
+  onContinue,
+  onRefresh,
+  onChangeRepository,
+}: {
+  session?: ProjectSessionSnapshot;
+  status?: KnowledgeCacheStatus;
+  profile: ProjectProfile;
+  capsuleStatus?: ContextCapsuleStatus;
+  loading: boolean;
+  canRefresh: boolean;
+  onContinue: () => void;
+  onRefresh: () => void;
+  onChangeRepository: () => void;
+}) {
+  const knowledge = status?.knowledge_status || (hasKnowledgeRegistry(profile) ? 'ready' : 'missing');
+  const repository = status?.repository || profile.repository_connection.repository_name || session?.repository_name || 'Not connected';
+  const sourceFiles = status?.source_files?.length ? status.source_files : profile.knowledge_registry.source_files;
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Knowledge Health</div>
+          <div className="planner-subtle">Cached repository knowledge is reused until an admin refreshes it.</div>
+        </div>
+        <div className={`planner-session-freshness ${knowledge === 'ready' ? 'fresh' : 'stale'}`}>
+          {knowledgeStatusText(knowledge)}
+        </div>
+      </div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Repository" value={repository} />
+        <SummaryTile title="Knowledge" value={registrySummary(profile)} />
+        <SummaryTile title="Capsules" value={`${formatNumber(capsuleStatus?.ready_count || 0)} ready`} />
+      </div>
+      <div className="planner-subtle">
+        {sourceFiles.length ? `Sources: ${sourceFiles.slice(0, 5).join(', ')}` : 'No repository documents analyzed yet.'}
+      </div>
+      <div className="planner-actions compact">
+        <button className="planner-button" type="button" onClick={onContinue} disabled={loading}>Continue Working</button>
+        <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Refresh Knowledge</button>
+        <button className="planner-button secondary" type="button" onClick={onChangeRepository} disabled={loading || !canRefresh}>Change Repository</button>
+      </div>
+    </section>
+  );
+}
+
+function AIRecommendationCard({
+  workflow,
+  loading,
+  canContribute,
+  onContinue,
+}: {
+  workflow: WorkflowOrchestrationState;
+  loading: boolean;
+  canContribute: boolean;
+  onContinue: () => void;
+}) {
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">AI Recommendation</div>
+          <strong>{workflow.nextAction.label}</strong>
+          <div className="planner-subtle">{workflow.nextAction.reason}</div>
+        </div>
+        <button className="planner-button" onClick={onContinue} disabled={loading || !canContribute}>Continue</button>
+      </div>
+      {workflow.blockers.length ? <ListBlock title="Needs Attention" items={workflow.blockers.slice(0, 3)} /> : null}
     </section>
   );
 }
@@ -2418,9 +2822,61 @@ function ProjectKnowledgeStatusCard({
       <div className="planner-actions">
         <button className="planner-button" type="button" onClick={onContinue} disabled={loading}>Continue Working</button>
         <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Refresh Knowledge</button>
-        <button className="planner-button secondary" type="button" onClick={onChangeRepository} disabled={loading || !canRefresh}>Change Repository</button>
+        <button className="planner-button secondary" type="button" onClick={onChangeRepository} disabled={loading || !canRefresh}>Open Repository Settings</button>
       </div>
       {!canRefresh ? <div className="planner-subtle">Knowledge refresh and repository changes are available to AI Gen Admins.</div> : null}
+    </section>
+  );
+}
+
+function ContextCapsuleStatusCard({
+  status,
+  loading,
+  canRefresh,
+  onRefresh,
+}: {
+  status?: ContextCapsuleStatus;
+  loading: boolean;
+  canRefresh: boolean;
+  onRefresh: () => void;
+}) {
+  const capsules: ContextCapsuleItem[] = status?.capsules?.length ? status.capsules : ['project', 'feature', 'story', 'execution', 'qa'].map((capsuleType) => ({
+    capsule_type: capsuleType,
+    status: 'missing' as const,
+    version: 0,
+  }));
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Context Capsule Status</div>
+          <div className="planner-subtle">Reusable compressed context for Planning, Execution, QA, VS Code, and future agents.</div>
+        </div>
+        <div className={`planner-session-freshness ${(status?.ready_count || 0) ? 'fresh' : 'stale'}`}>
+          {formatNumber(status?.ready_count || 0)} / {formatNumber(status?.total_count || capsules.length)} Ready
+        </div>
+      </div>
+      <div className="planner-status-grid">
+        {capsules.map((capsule) => (
+          <div className="planner-summary-tile" key={capsule.capsule_type}>
+            <span>{titleCase(capsule.capsule_type)} Capsule</span>
+            <strong>{titleCase(capsule.status || 'missing')}</strong>
+            <small>
+              v{formatNumber(capsule.version || 0)}
+              {capsule.capsule_size_tokens ? ` · ${formatNumber(capsule.capsule_size_tokens)} tokens` : ''}
+              {capsule.compression_ratio ? ` · ${formatNumber(Math.round((capsule.compression_ratio || 0) * 100))}% source` : ''}
+            </small>
+          </div>
+        ))}
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Knowledge Version" value={status?.knowledge_version || 'Pending'} />
+        <Row label="Last Capsule Refresh" value={formatTimestamp(capsules.map((capsule) => capsule.last_refreshed || '').filter(Boolean).sort().pop() || '')} />
+      </div>
+      <div className="planner-actions">
+        <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Refresh Capsules</button>
+      </div>
+      {!canRefresh ? <div className="planner-subtle">Capsule refresh is available to AI Gen Admins.</div> : null}
     </section>
   );
 }
@@ -2431,6 +2887,7 @@ function RecommendedActionCard({
   activeTab,
   recommendedWorkspace,
   approvalWorkflow,
+  workflow,
   autoRoute,
   loading,
   canContribute,
@@ -2452,12 +2909,15 @@ function RecommendedActionCard({
   onGenerateQATestCases,
   onBuildExecutionPackage,
   onOpenVsCode,
+  onContinueWorkflow,
+  onGenerateEverythingForStory,
 }: {
   workItem?: AdoWorkItem;
   itemType: WorkItemKind;
   activeTab: PlannerTab;
   recommendedWorkspace: RoutedWorkspace;
   approvalWorkflow: ApprovalWorkflowState;
+  workflow: WorkflowOrchestrationState;
   autoRoute: boolean;
   loading: boolean;
   canContribute: boolean;
@@ -2479,6 +2939,8 @@ function RecommendedActionCard({
   onGenerateQATestCases: () => void;
   onBuildExecutionPackage: () => void;
   onOpenVsCode: () => void;
+  onContinueWorkflow: () => void;
+  onGenerateEverythingForStory: () => void;
 }) {
   const actions = recommendedActionsForItemType(itemType, {
     onRefineEpic,
@@ -2504,7 +2966,7 @@ function RecommendedActionCard({
         <div>
           <div className="planner-label">Current Item</div>
           <strong>{workItem ? `${workItem.type} #${workItem.id} · ${workItem.title}` : 'No Azure DevOps work item detected'}</strong>
-          <div className="planner-subtle">Recommended: {workspaceLabel(recommendedWorkspace)} · Role: {currentRole} · Next: {actions[0]?.label || 'Continue Working'}</div>
+          <div className="planner-subtle">Recommended: {workspaceLabel(workflow.nextAction.workspace)} · Role: {currentRole} · Next: {workflow.nextAction.label}</div>
         </div>
         <label className="planner-checkbox">
           <input type="checkbox" checked={autoRoute} onChange={(event) => onToggleAutoRoute(event.target.checked)} />
@@ -2515,14 +2977,87 @@ function RecommendedActionCard({
         <div className="planner-banner">Manual override is active. Recommended workspace for this item is {workspaceLabel(recommendedWorkspace)}.</div>
       ) : null}
       <div className="planner-actions">
-        <button className="planner-button secondary" onClick={() => onOpenWorkspace(recommendedWorkspace)} disabled={loading}>
-          Open {workspaceLabel(recommendedWorkspace)}
+        <button className="planner-button" onClick={onContinueWorkflow} disabled={loading || !canContribute}>
+          Continue Workflow
         </button>
+        <button className="planner-button secondary" onClick={() => onOpenWorkspace(workflow.nextAction.workspace)} disabled={loading}>
+          Open {workspaceLabel(workflow.nextAction.workspace)}
+        </button>
+        {itemType === 'Story' ? (
+          <button className="planner-button secondary" onClick={onGenerateEverythingForStory} disabled={loading || !canContribute}>
+            Generate Everything
+          </button>
+        ) : null}
         {actions.map((action) => (
           <button key={action.label} className={action.primary ? 'planner-button' : 'planner-button secondary'} onClick={action.run} disabled={loading || !canContribute}>
             {action.label}
           </button>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function WorkflowNextActionCard({
+  workflow,
+  loading,
+  canContribute,
+  onContinue,
+}: {
+  workflow: WorkflowOrchestrationState;
+  loading: boolean;
+  canContribute: boolean;
+  onContinue: () => void;
+}) {
+  return (
+    <section className="planner-card planner-next-action-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Next Recommended Action</div>
+          <strong>{workflow.nextAction.label}</strong>
+          <div className="planner-subtle">{workflow.nextAction.reason}</div>
+        </div>
+        <button className="planner-button" onClick={onContinue} disabled={loading || !canContribute}>Continue Workflow</button>
+      </div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Planning Health" value={workflow.planningHealth} />
+        <SummaryTile title="Execution Health" value={workflow.executionHealth} />
+        <SummaryTile title="QA Health" value={workflow.qaHealth} />
+      </div>
+      {workflow.blockers.length ? <ListBlock title="Workflow Blockers" items={workflow.blockers} /> : <div className="planner-subtle">No blockers detected. The workflow can continue.</div>}
+    </section>
+  );
+}
+
+function WorkflowTimeline({ workflow }: { workflow: WorkflowOrchestrationState }) {
+  const stages: Array<{ key: keyof WorkflowOrchestrationState['statuses']; label: string }> = [
+    { key: 'epic', label: 'Epic' },
+    { key: 'features', label: 'Features' },
+    { key: 'stories', label: 'Stories' },
+    { key: 'tasks', label: 'Tasks' },
+    { key: 'tests', label: 'Tests' },
+    { key: 'execution', label: 'Execution' },
+  ];
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Workflow Timeline</div>
+          <div className="planner-subtle">Current stage: {workflow.currentStage}</div>
+        </div>
+      </div>
+      <div className="planner-timeline">
+        {stages.map((stage) => {
+          const status = workflow.statuses[stage.key];
+          const marker = status === 'complete' ? '✓' : status === 'current' ? '●' : status === 'blocked' ? '!' : '○';
+          return (
+            <div className={`planner-timeline-step ${status}`} key={stage.key}>
+              <span>{marker}</span>
+              <strong>{stage.label}</strong>
+              <small>{titleCase(status)}</small>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -2558,8 +3093,8 @@ function recommendedActionsForItemType(
       ];
     }
     return [
-      { label: 'Generate Epic', run: handlers.onRefineEpic, primary: true },
-      { label: 'Generate Features', run: handlers.onGenerateChildren },
+      { label: 'Generate Features', run: handlers.onGenerateChildren, primary: true },
+      { label: 'Refine Epic', run: handlers.onRefineEpic },
       { label: 'Impact Analysis', run: handlers.onAnalyzeImpact },
     ];
   }
@@ -2572,9 +3107,9 @@ function recommendedActionsForItemType(
       ];
     }
     return [
-      { label: 'Generate Feature', run: handlers.onRefineFeature, primary: true },
-      { label: 'Generate Stories', run: handlers.onGenerateChildren },
-      { label: 'Generate Test Plan', run: handlers.onGenerateFeatureTestPlan },
+      { label: 'Generate Stories', run: handlers.onGenerateChildren, primary: true },
+      { label: 'Refine Feature', run: handlers.onRefineFeature },
+      { label: 'Impact Analysis', run: handlers.onAnalyzeImpact },
     ];
   }
   if (itemType === 'Story') {
@@ -2593,9 +3128,9 @@ function recommendedActionsForItemType(
       ];
     }
     return [
-      { label: 'Build Execution Package', run: handlers.onBuildExecutionPackage, primary: true },
       { label: 'Generate Tasks', run: handlers.onGenerateChildren },
       { label: 'Generate Test Cases', run: handlers.onGenerateQATestCases },
+      { label: 'Build Execution Package', run: handlers.onBuildExecutionPackage, primary: true },
     ];
   }
   if (itemType === 'Task') {
@@ -3057,7 +3592,6 @@ function AIPlannerWorkspace({
   refineFeature,
   refineStory,
   analyzeImpact,
-  generateFeatureTestPlan,
   generateChildren,
   approveEpic,
   approveFeatures,
@@ -3099,7 +3633,6 @@ function AIPlannerWorkspace({
   refineFeature: () => void;
   refineStory: () => void;
   analyzeImpact: () => void;
-  generateFeatureTestPlan: () => void;
   generateChildren: () => void;
   approveEpic: () => void;
   approveFeatures: () => void;
@@ -3154,15 +3687,16 @@ function AIPlannerWorkspace({
       {planningType === 'Epic' ? (
         <section className="planner-card">
           <div className="planner-label">Epic Workflow</div>
-          <div className="planner-subtle">Generate the epic draft, approve it, then review generated feature recommendations.</div>
+          <div className="planner-subtle">Refine the epic, approve it, then generate feature recommendations.</div>
           <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
           <ApprovalStatusStrip label="Epic" status={approvalWorkflow.epic} qualityScore={qualityScoreForEpic(epicResult)} />
           <div className="planner-actions">
             {!epicResult ? (
-              <button className="planner-button" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Generate Epic</button>
+              <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Refine Epic</button>
             ) : (
               <button className="planner-button" onClick={approveEpic} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.epic)}>Approve Epic</button>
             )}
+            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !epicInput.title.trim()}>Generate Features</button>
             {epicResult ? <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Epic</button> : null}
             <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !epicInput.title.trim()}>Impact Analysis</button>
           </div>
@@ -3187,18 +3721,18 @@ function AIPlannerWorkspace({
       {planningType === 'Feature' ? (
         <section className="planner-card">
           <div className="planner-label">Feature Workflow</div>
-          <div className="planner-subtle">Generate the feature draft, approve it, then review generated stories.</div>
+          <div className="planner-subtle">Refine the feature, approve it, then generate user stories.</div>
           <RefinementInput input={featureInput} setInput={setFeatureInput} titlePlaceholder="Order visibility" descriptionPlaceholder="Describe feature behavior, affected users, and delivery scope." />
           <ApprovalStatusStrip label="Feature" status={approvalWorkflow.feature} qualityScore={qualityScoreForFeature(featureResult)} />
           <div className="planner-actions">
             {!featureResult ? (
-              <button className="planner-button" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Feature</button>
+              <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Refine Feature</button>
             ) : (
               <button className="planner-button" onClick={approveFeature} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.feature)}>Approve Feature</button>
             )}
+            <button className="planner-button" onClick={generateChildren} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Stories</button>
             {featureResult ? <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Regenerate Feature</button> : null}
             <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !featureInput.title.trim()}>Impact Analysis</button>
-            <button className="planner-button secondary" onClick={generateFeatureTestPlan} disabled={loading || readOnly || !featureInput.title.trim()}>Generate Test Plan</button>
           </div>
           <details className="planner-task">
             <summary className="planner-label">Advanced Refine</summary>
@@ -3481,6 +4015,8 @@ function DeveloperWorkspace({
   qaPrompt,
   copilotContext,
   onGenerate,
+  onGeneratePrompt,
+  onEnhanceWithAi,
   loading,
   canContribute,
   itemType,
@@ -3513,6 +4049,8 @@ function DeveloperWorkspace({
   qaPrompt?: PromptBuilderResult;
   copilotContext?: CopilotContextResult;
   onGenerate: () => void;
+  onGeneratePrompt: (kind: 'dev' | 'ui' | 'qa' | 'copilot') => void;
+  onEnhanceWithAi: () => void;
   loading: boolean;
   canContribute: boolean;
   itemType: WorkItemKind;
@@ -3582,6 +4120,7 @@ function DeveloperWorkspace({
           {isStory ? <button className="planner-button secondary" onClick={generateChildren} disabled={loading || readOnly || !storyInput.title.trim()}>{storyResult ? 'Regenerate Tasks' : 'Generate Tasks'}</button> : null}
           {(isStory || isBug) ? <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Generate Regression Tests' : 'Generate Test Cases'}</button> : null}
           <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : 'Build Execution Package'}</button>
+          {executionContext ? <button className="planner-button secondary" onClick={onEnhanceWithAi} disabled={loading || readOnly}>Enhance with AI</button> : null}
           {hasPackage ? <button className="planner-button secondary" onClick={approveExecutionPackage} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.execution)}>Approve Package</button> : null}
           {vsCodeUri ? (
             <button className="planner-button secondary" onClick={onOpenVsCode} disabled={loading}>Open in VS Code</button>
@@ -3632,6 +4171,18 @@ function DeveloperWorkspace({
         </section>
       ) : null}
       {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
+      {executionContext ? (
+        <section className="planner-card">
+          <div className="planner-label">Lazy Execution Outputs</div>
+          <div className="planner-subtle">The execution package is available immediately. Generate each prompt only when needed.</div>
+          <div className="planner-actions">
+            <button className="planner-button secondary" onClick={() => onGeneratePrompt('dev')} disabled={loading || readOnly}>Generate Dev Prompt</button>
+            <button className="planner-button secondary" onClick={() => onGeneratePrompt('ui')} disabled={loading || readOnly}>Generate UI Prompt</button>
+            <button className="planner-button secondary" onClick={() => onGeneratePrompt('qa')} disabled={loading || readOnly}>Generate QA Prompt</button>
+            <button className="planner-button secondary" onClick={() => onGeneratePrompt('copilot')} disabled={loading || readOnly}>Generate Copilot Context</button>
+          </div>
+        </section>
+      ) : null}
       {devPrompt ? <PromptBlock title="Dev Prompt" value={devPrompt.prompt} metadata={devPrompt} copyable /> : null}
       {uiPrompt ? <PromptBlock title="UI Prompt" value={uiPrompt.prompt} metadata={uiPrompt} copyable /> : null}
       {qaPrompt ? <PromptBlock title="QA Prompt" value={qaPrompt.prompt} metadata={qaPrompt} copyable /> : null}
@@ -4324,6 +4875,8 @@ function RepositoryIntelligenceCard({
   const selectedRepositoryLoaded = repositories.some((repo) => repo.id === profile.repository_connection.repository_id);
   const mapping = getAdoMapping(profile);
   const documents = repositoryDocumentSummary(fileStatus, profile.knowledge_registry.source_files);
+  const foundDocuments = documents.filter((doc) => doc.status === 'available');
+  const missingDocuments = documents.filter((doc) => doc.status !== 'available');
   return (
     <section className="planner-card">
       <div className="planner-section-header">
@@ -4413,16 +4966,35 @@ function RepositoryIntelligenceCard({
       </div>
       <div className="planner-task">
         <div className="planner-label">Repository Documents</div>
-        <div className="planner-document-list">
-          {documents.map((doc) => (
-            <div className="planner-document-row" key={doc.label}>
-              <span className={`planner-document-state ${doc.status}`}>{doc.status === 'available' ? '✓' : '⚠'}</span>
-              <div>
-                <strong>{doc.label}</strong>
-                <small>{doc.path || 'Not Found'}</small>
-              </div>
+        <div className="planner-document-columns">
+          <div>
+            <div className="planner-subtle">Documents Found</div>
+            <div className="planner-document-list">
+              {(foundDocuments.length ? foundDocuments : [{ label: 'None yet', path: 'Run discovery or analyze pasted documents', status: 'unknown' as const }]).map((doc) => (
+                <div className="planner-document-row" key={`found-${doc.label}`}>
+                  <span className={`planner-document-state ${doc.status}`}>{doc.status === 'available' ? '✓' : '•'}</span>
+                  <div>
+                    <strong>{doc.label}</strong>
+                    <small>{doc.path || 'Not Found'}</small>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
+          <div>
+            <div className="planner-subtle">Missing</div>
+            <div className="planner-document-list">
+              {(missingDocuments.length ? missingDocuments : [{ label: 'None', path: 'All known document groups were found', status: 'available' as const }]).map((doc) => (
+                <div className="planner-document-row" key={`missing-${doc.label}`}>
+                  <span className={`planner-document-state ${doc.status}`}>{doc.status === 'available' ? '✓' : '⚠'}</span>
+                  <div>
+                    <strong>{doc.label}</strong>
+                    <small>{doc.path || 'No known file found'}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
         <details className="planner-accordion">
           <summary>Choose Documentation Files</summary>
@@ -4549,6 +5121,12 @@ function ProjectIntelligenceProviderDiagnostics({ metadata }: { metadata?: Provi
         <Row label="Compression Ratio" value={metadata?.compression_ratio !== undefined ? `${Math.round(metadata.compression_ratio * 100)}%` : 'n/a'} />
         <Row label="Final Prompt Tokens" value={metadata?.final_prompt_tokens ? `${metadata.final_prompt_tokens} / ${metadata.model_context_limit || 'n/a'}` : 'n/a'} />
         <Row label="Project Context Tokens" value={formatNumber(metadata?.project_context_tokens || metadata?.compressed_context_tokens)} />
+        <Row label="Context Capsule Used" value={metadata?.context_capsule_used === undefined ? 'n/a' : metadata.context_capsule_used ? 'Yes' : 'No'} />
+        <Row label="Context Capsule Type" value={metadata?.context_capsule_type || 'n/a'} />
+        <Row label="Context Capsule Version" value={formatNumber(metadata?.context_capsule_version)} />
+        <Row label="Context Capsule Size" value={formatNumber(metadata?.context_capsule_size_tokens)} />
+        <Row label="Capsule Source Size" value={formatNumber(metadata?.context_capsule_source_size_tokens)} />
+        <Row label="Capsule Compression" value={metadata?.context_capsule_compression_ratio !== undefined ? `${Math.round(metadata.context_capsule_compression_ratio * 100)}%` : 'n/a'} />
         <Row label="Context Budget Used" value={formatNumber(metadata?.context_budget_used)} />
         <Row label="Compression Level" value={formatNumber(metadata?.compression_level || metadata?.context_compression_level)} />
         <Row label="Retry Attempt" value={formatNumber(metadata?.retry_attempt)} />
@@ -4781,6 +5359,7 @@ function EpicRefinementResult({ result }: { result: EpicRefinement }) {
   return (
     <div className="planner-status-grid">
       <SourceBadge metadata={result} />
+      <GenerationReviewBlock review={result.generation_review} />
       <Row label="Business Goal" value={result.business_goal} />
       <ListBlock title="Business Outcomes" items={result.business_outcomes} />
       <ListBlock title="Users" items={result.users} />
@@ -4798,6 +5377,7 @@ function FeatureRefinementResult({ result }: { result: FeatureRefinement }) {
   return (
     <div className="planner-status-grid">
       <SourceBadge metadata={result} />
+      <GenerationReviewBlock review={result.generation_review} />
       <Row label="Feature Summary" value={result.feature_summary} />
       <Row label="Capability Count" value={formatNumber(diagnostics.capability_count)} />
       <Row label="Action Count" value={formatNumber(diagnostics.action_count)} />
@@ -4822,6 +5402,7 @@ function StoryRefinementResult({ result }: { result: StoryRefinement }) {
   return (
     <div className="planner-status-grid">
       <SourceBadge metadata={result} />
+      <GenerationReviewBlock review={result.generation_review} />
       <Row label="Story Summary" value={result.story_summary} />
       <Row label="Acceptance Criteria Quality" value={formatNumber(result.acceptance_criteria_quality_score)} />
       <ListBlock title="Acceptance Criteria Categories" items={result.acceptance_criteria_categories || []} />
@@ -4834,6 +5415,32 @@ function StoryRefinementResult({ result }: { result: StoryRefinement }) {
       <ListBlock title="UI Considerations" items={result.ui_considerations} />
       <ListBlock title="Technical Considerations" items={result.technical_considerations} />
       <ListBlock title="QA Considerations" items={result.qa_considerations} />
+    </div>
+  );
+}
+
+function GenerationReviewBlock({ review }: { review?: GenerationReview }) {
+  if (!review) {
+    return null;
+  }
+  const scores = review.quality_scores || {};
+  return (
+    <div className="planner-task">
+      <div className="planner-label">Generated Using</div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Knowledge Usage" value={formatNumber(scores.knowledge_usage)} />
+        <SummaryTile title="Module Coverage" value={formatNumber(scores.module_coverage)} />
+        <SummaryTile title="Flow Coverage" value={formatNumber(scores.flow_coverage)} />
+        <SummaryTile title="Domain Specificity" value={formatNumber(scores.domain_specificity)} />
+        <SummaryTile title="Generic Risk" value={formatNumber(scores.generic_content_risk)} />
+        <SummaryTile title="Quality Gate" value={titleCase(review.quality_gate || 'not scored')} />
+      </div>
+      <div className="planner-grid">
+        <ListBlock title="Modules Used" items={review.modules_used || []} />
+        <ListBlock title="Flows Used" items={review.flows_used || []} />
+        <ListBlock title="Applications Used" items={review.applications_used || []} />
+        <ListBlock title="Standards Used" items={review.standards_used || []} />
+      </div>
     </div>
   );
 }
@@ -5069,6 +5676,10 @@ async function saveBackendProjectSession(session: ProjectSessionSnapshot): Promi
 
 async function getKnowledgeCache(): Promise<KnowledgeCacheResponse> {
   return getJson<KnowledgeCacheResponse>('/knowledge-cache');
+}
+
+async function getContextCapsules(): Promise<ContextCapsuleResponse> {
+  return getJson<ContextCapsuleResponse>('/context-capsules');
 }
 
 async function fetchAdoProjects(): Promise<AdoProjectListResponse> {
@@ -5413,10 +6024,23 @@ function storyDraftsFromFeature(result: FeatureRefinement): ChildDraft[] {
     type: 'User Story',
     title: story.title,
     description: story.description,
-    acceptanceCriteria: story.acceptance_criteria?.length ? story.acceptance_criteria : [`${story.title} is visible, independently testable, and supports the approved user outcome.`],
+    acceptanceCriteria: story.acceptance_criteria?.length ? story.acceptance_criteria : storyCriteriaFallback(story),
     selected: true,
     status: 'preview',
   }));
+}
+
+function storyCriteriaFallback(story: { title: string; description: string; coverage_area?: string }): string[] {
+  const title = story.title || 'Story';
+  const lower = `${story.title} ${story.description} ${story.coverage_area || ''}`.toLowerCase();
+  const subject = lower.includes('fault') ? 'fault event' : lower.includes('telemetry') ? 'telemetry record' : lower.includes('device health') ? 'device health record' : 'record';
+  return [
+    `Operations User can open the ${subject} for ${title} from the approved entry point.`,
+    `The view displays Device ID, Fault Type, Severity, Event Timestamp, Current Status, and Device Health when available.`,
+    'Unauthorized users receive an access-restricted message and no protected operational data is displayed.',
+    'Missing or stale telemetry is labeled as Data Unavailable without hiding other available fields.',
+    'The primary action completes within 2 seconds for normal project data volume.',
+  ];
 }
 
 function taskDraftsFromStory(result: StoryRefinement): ChildDraft[] {
@@ -6437,6 +7061,137 @@ function profileCompletion(profile: ProjectProfile): { complete: boolean; missin
   };
 }
 
+function standardsCaptured(profile: ProjectProfile): boolean {
+  return hasDevelopmentStandards(profile) || summarizeUiGuidelines(profile) !== 'Not captured yet';
+}
+
+function buildWorkflowOrchestration({
+  itemType,
+  approvalWorkflow,
+  childDrafts,
+  hasQa,
+  hasExecution,
+  hasKnowledge,
+  standardsReady,
+  hasExecutionPackage,
+}: {
+  itemType: WorkItemKind;
+  approvalWorkflow: ApprovalWorkflowState;
+  childDrafts: ChildDraft[];
+  hasQa: boolean;
+  hasExecution: boolean;
+  hasKnowledge: boolean;
+  standardsReady: boolean;
+  hasExecutionPackage: boolean;
+}): WorkflowOrchestrationState {
+  const featureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
+  const storyDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
+  const taskDrafts = childDrafts.filter((draft) => draft.type === 'Task');
+  const featuresApproved = approvalWorkflow.features === 'approved' || featureDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const storiesApproved = approvalWorkflow.stories === 'approved' || storyDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const tasksApproved = approvalWorkflow.tasks === 'approved' || taskDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const blockers = [
+    !hasKnowledge ? 'Project knowledge is missing. Repository analysis will improve recommendations.' : '',
+    !standardsReady ? 'Development or UI standards are missing.' : '',
+  ].filter(Boolean);
+
+  let nextAction: WorkflowNextAction = {
+    label: 'Open Planning',
+    action: 'open_planning',
+    workspace: 'planning',
+    reason: 'Start by planning the current work item.',
+  };
+  let currentStage = 'Planning';
+
+  if (itemType === 'Epic') {
+    if (isApprovalPending(approvalWorkflow.epic)) {
+      nextAction = { label: 'Approve Epic', action: 'approve_epic', workspace: 'planning', reason: 'The epic draft is ready and needs approval before feature generation.' };
+      currentStage = 'Epic Approval';
+    } else if (!featureDrafts.length) {
+      nextAction = { label: 'Generate Features', action: 'generate_features', workspace: 'planning', reason: 'The epic is ready. Generate child Features next.' };
+      currentStage = 'Feature Generation';
+    } else if (!featuresApproved || isApprovalPending(approvalWorkflow.features)) {
+      nextAction = { label: 'Approve Features', action: 'approve_features', workspace: 'planning', reason: 'Generated Features are waiting for approval.' };
+      currentStage = 'Feature Approval';
+    } else {
+      nextAction = { label: 'Open Planning', action: 'open_planning', workspace: 'planning', reason: 'Epic planning has generated approved Features. Continue with a Feature work item to generate Stories.' };
+      currentStage = 'Feature Ready';
+    }
+  } else if (itemType === 'Feature') {
+    if (isApprovalPending(approvalWorkflow.feature)) {
+      nextAction = { label: 'Approve Feature', action: 'approve_feature', workspace: 'planning', reason: 'The feature draft is ready and needs approval before story generation.' };
+      currentStage = 'Feature Approval';
+    } else if (!storyDrafts.length) {
+      nextAction = { label: 'Generate Stories', action: 'generate_stories', workspace: 'planning', reason: 'The feature is ready. Generate child Stories next.' };
+      currentStage = 'Story Generation';
+    } else if (!storiesApproved || isApprovalPending(approvalWorkflow.stories)) {
+      nextAction = { label: 'Approve Stories', action: 'approve_stories', workspace: 'planning', reason: 'Generated Stories are waiting for approval.' };
+      currentStage = 'Story Approval';
+    } else {
+      nextAction = { label: 'Generate Test Cases', action: 'generate_tests', workspace: 'qa', reason: 'Stories exist. Generate a feature-level test plan or open a Story for execution.' };
+      currentStage = 'QA Planning';
+    }
+  } else if (itemType === 'Story') {
+    if (isApprovalPending(approvalWorkflow.story)) {
+      nextAction = { label: 'Approve Story', action: 'approve_story', workspace: 'execution', reason: 'The story draft is ready and must be approved before delivery artifacts are generated.' };
+      currentStage = 'Story Approval';
+    } else if (!taskDrafts.length) {
+      nextAction = { label: 'Generate Tasks', action: 'generate_tasks', workspace: 'execution', reason: 'The story is approved or loaded. Generate implementation tasks next.' };
+      currentStage = 'Task Generation';
+    } else if (!tasksApproved || isApprovalPending(approvalWorkflow.tasks)) {
+      nextAction = { label: 'Approve Tasks', action: 'approve_tasks', workspace: 'execution', reason: 'Generated Tasks are waiting for approval.' };
+      currentStage = 'Task Approval';
+    } else if (!hasQa) {
+      nextAction = { label: 'Generate Test Cases', action: 'generate_tests', workspace: 'qa', reason: 'Tasks exist. Generate QA coverage before execution starts.' };
+      currentStage = 'QA Generation';
+    } else if (!hasExecution) {
+      nextAction = { label: 'Build Execution Package', action: 'build_execution', workspace: 'execution', reason: 'Tasks and tests exist. Build the developer execution package.' };
+      currentStage = 'Execution Package';
+    } else {
+      nextAction = { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'Execution package is ready for implementation.' };
+      currentStage = 'Execution Ready';
+    }
+  } else if (itemType === 'Task') {
+    nextAction = hasExecutionPackage
+      ? { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'The execution package is ready.' }
+      : { label: 'Build Execution Package', action: 'build_execution', workspace: 'execution', reason: 'Build the implementation package for this task.' };
+    currentStage = hasExecutionPackage ? 'Execution Ready' : 'Execution Package';
+  } else if (itemType === 'Bug') {
+    nextAction = hasExecutionPackage
+      ? { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'The fix package is ready.' }
+      : { label: 'Build Execution Package', action: 'build_execution', workspace: 'execution', reason: 'Build the fix context and regression prompt.' };
+    currentStage = hasExecutionPackage ? 'Fix Ready' : 'Fix Context';
+  } else {
+    nextAction = { label: 'Coverage Analysis', action: 'generate_tests', workspace: 'qa', reason: 'Analyze test coverage and regression scope.' };
+    currentStage = 'QA Coverage';
+  }
+
+  const statuses: WorkflowOrchestrationState['statuses'] = {
+    epic: approvalWorkflow.epic === 'approved' || itemType !== 'Epic' ? 'complete' : isApprovalPending(approvalWorkflow.epic) ? 'current' : 'pending',
+    features: featureDrafts.length ? (featuresApproved ? 'complete' : 'current') : itemType === 'Epic' ? 'current' : 'pending',
+    stories: storyDrafts.length ? (storiesApproved ? 'complete' : 'current') : itemType === 'Feature' ? 'current' : 'pending',
+    tasks: taskDrafts.length ? (tasksApproved ? 'complete' : 'current') : itemType === 'Story' ? 'current' : 'pending',
+    tests: hasQa ? 'complete' : itemType === 'Story' || itemType === 'Bug' || itemType === 'Test Case' ? 'current' : 'pending',
+    execution: hasExecution ? 'complete' : itemType === 'Story' || itemType === 'Task' || itemType === 'Bug' ? 'current' : 'pending',
+  };
+
+  const planningHealth: WorkflowHealthStatus = blockers.length ? 'Needs Attention' : ['Epic', 'Feature'].includes(itemType) ? 'In Progress' : 'Ready';
+  const qaHealth: WorkflowHealthStatus = hasQa ? 'Ready' : itemType === 'Story' || itemType === 'Bug' || itemType === 'Test Case' ? 'Needs Attention' : 'In Progress';
+  const executionHealth: WorkflowHealthStatus = hasExecution ? 'Ready' : itemType === 'Story' || itemType === 'Task' || itemType === 'Bug' ? 'Needs Attention' : 'In Progress';
+  const coverageHealth: WorkflowHealthStatus = hasQa ? 'Ready' : 'Needs Attention';
+
+  return {
+    statuses,
+    planningHealth,
+    executionHealth,
+    qaHealth,
+    coverageHealth,
+    currentStage,
+    nextAction,
+    blockers,
+  };
+}
+
 function profileReadinessBreakdown(profile: ProjectProfile): Array<{ title: string; percent: number; missing: string[]; status: 'Missing' | 'Partial' | 'Ready' }> {
   const stack = mergeTechnologyStack(profile.technology_stack, profile.knowledge_registry.technology_stack);
   const profileChecks = [
@@ -6771,6 +7526,9 @@ function sourceLabel(source?: string): string {
   }
   if (normalized === 'deterministic_fallback') {
     return 'Deterministic Fallback';
+  }
+  if (normalized === 'deterministic_execution') {
+    return 'Deterministic Execution';
   }
   return 'Not run';
 }

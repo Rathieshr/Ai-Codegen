@@ -270,6 +270,72 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertIn("Fault Monitoring", cache["cache"]["modules"])
         self.assertEqual(cache["repository"], "LineDefender")
 
+    def test_project_capsule_created_after_knowledge_refresh_and_persists(self) -> None:
+        documents = {
+            "README.md": "LineDefender utility monitoring platform for fault events and telemetry.",
+            "modules.md": "Modules: Authentication, Telemetry, Fault Monitoring, Asset Health.",
+            "flows.md": "Flows: Fault Event Review, Device Health Review, Outage Investigation.",
+            "docs/architecture.md": "Mobile app calls Backend API, telemetry services, analytics dashboard.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            service.refresh_knowledge_cache(
+                documents,
+                repository={"repository_id": "repo-ld", "repository_name": "LineDefender", "branch": "main"},
+                profile={"project_id": "linedefender", "project_name": "LineDefender", "domain": "Utility Grid Management"},
+            )
+            capsules = service.get_context_capsules()
+            reloaded = ProjectIntelligenceService().get_context_capsules()
+
+        self.assertTrue(capsules["exists"])
+        self.assertEqual(capsules["status"]["capsules"][0]["status"], "ready")
+        self.assertIn("project", capsules["capsules"])
+        self.assertIn("Fault Monitoring", capsules["capsules"]["project"]["payload"]["modules"])
+        self.assertLess(capsules["capsules"]["project"]["diagnostics"]["capsule_size_tokens"], capsules["capsules"]["project"]["diagnostics"]["source_size_tokens"])
+        self.assertTrue(reloaded["exists"])
+
+    def test_execution_capsule_is_used_in_provider_diagnostics(self) -> None:
+        provider = RecordingPhiProvider({"implementation_notes": ["Phi execution note"], "testing_tasks": ["Coordinate fault details"]})
+        profile = {
+            "project_name": "LineDefender",
+            "domain": "Utility Grid Management",
+            "project_description": "LineDefender platform. " * 80,
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Asset Health", *[f"Module {index}" for index in range(40)]],
+                "flows": ["Fault Event Review", "Device Health Review", *[f"Flow {index}" for index in range(40)]],
+                "architecture_notes": ["Mobile app calls backend telemetry APIs. " * 20],
+            },
+        }
+        story = {
+            "title": "Display Fault Event Details",
+            "description": "As an Operations User, I want to review critical fault event details.",
+            "acceptance_criteria": ["Device ID, severity, timestamp, and device health are visible."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            result = ProjectIntelligenceService().build_execution_context(story, profile, options={"mode": "enhance_with_ai"})
+
+        self.assertEqual(result["phi_status"], "success")
+        self.assertTrue(result["context_capsule_used"])
+        self.assertEqual(result["context_capsule_type"], "execution")
+        self.assertLess(result["context_capsule_size_tokens"], result["context_capsule_source_size_tokens"])
+
+    def test_capsule_refresh_updates_source_hash_when_story_changes(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "knowledge_registry": {"modules": ["Fault Monitoring"], "flows": ["Fault Event Review"], "architecture_notes": ["Backend telemetry APIs."]},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            first = service.refresh_context_capsules(profile, {"title": "Open fault details"}, ["story"])
+            second = service.refresh_context_capsules(profile, {"title": "Filter fault events by severity"}, ["story"])
+
+        self.assertNotEqual(first["capsules"]["story"]["source_hash"], second["capsules"]["story"]["source_hash"])
+        self.assertEqual(second["status"]["capsules"][2]["status"], "ready")
+
     def test_document_hash_change_marks_refresh_available(self) -> None:
         documents = {"README.md": "LineDefender fault monitoring platform."}
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
@@ -475,6 +541,9 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Telemetry Quality Assurance", feature_titles)
         self.assertIn("Firmware Rollout Visibility", feature_titles)
         self.assertIn("capability_diagnostics", refined)
+        self.assertIn("generation_review", refined)
+        self.assertGreaterEqual(refined["generation_review"]["quality_scores"]["knowledge_usage"], 80)
+        self.assertGreaterEqual(refined["generation_review"]["quality_scores"]["domain_specificity"], 50)
         self.assertGreaterEqual(refined["capability_diagnostics"]["final_feature_count"], 5)
         self.assertFalse(any("Slice" in title or title in {"Story 1", "Story 2"} for title in feature_titles))
 
@@ -693,6 +762,10 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Severity, Status, and Time Range", filter_ac)
         self.assertIn("reset all filters", filter_ac)
         self.assertIn("provider_used", refined)
+        self.assertIn("generation_review", refined)
+        self.assertIn("Fault Monitoring", refined["generation_review"]["modules_used"])
+        self.assertIn("Fault Event Review", refined["generation_review"]["flows_used"])
+        self.assertLess(refined["generation_review"]["quality_scores"]["generic_content_risk"], 40)
 
     def test_qa_intelligence_generates_structured_utility_test_suite(self) -> None:
         profile = {
@@ -1183,6 +1256,36 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Telemetry", copilot_context)
         self.assertIn("Repository Pattern", copilot_context)
 
+    def test_execution_prompt_builders_do_not_require_phi(self) -> None:
+        provider = RecordingPhiProvider({"prompt": "Phi prompt", "context": "Phi context"})
+        profile = {
+            "project_name": "LineDefender Mobile Platform",
+            "technology_stack": {"mobile": ["MAUI"], "backend": [".NET"]},
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review"],
+            },
+        }
+        story = {"title": "Display Fault Event Details", "acceptance_criteria": ["Fault details include timestamp and severity."]}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            service = ProjectIntelligenceService()
+            dev_prompt = service.build_dev_prompt(story, profile)
+            ui_prompt = service.build_ui_prompt(story, profile)
+            qa_prompt = service.build_qa_prompt(story, profile)
+            copilot_context = service.build_copilot_context(story, profile)
+
+        self.assertEqual(provider.calls, 0)
+        self.assertIn("prompt", dev_prompt)
+        self.assertIn("prompt", ui_prompt)
+        self.assertIn("prompt", qa_prompt)
+        self.assertIn("context", copilot_context)
+        self.assertEqual(dev_prompt["provider_used"], "deterministic_execution")
+        self.assertEqual(copilot_context["phi_status"], "skipped")
+
     def test_refine_epic_uses_phi_when_healthy_and_enabled(self) -> None:
         provider = HealthyPhiProvider()
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
@@ -1287,7 +1390,11 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         ):
             os.environ.pop("AI_GEN_PROJECT_INTELLIGENCE_USE_PHI", None)
             service = ProjectIntelligenceService()
-            prompt = service.build_ui_prompt({"title": "Display Fault Event Details"}, {"project_description": "Fault monitoring platform."})
+            prompt = service.build_ui_prompt(
+                {"title": "Display Fault Event Details"},
+                {"project_description": "Fault monitoring platform."},
+                options={"mode": "enhance_with_ai"},
+            )
 
         self.assertGreaterEqual(provider.calls, 1)
         self.assertEqual(prompt["provider_used"], "azure_phi")
@@ -1609,7 +1716,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertNotIn("Raw Module 79", provider.user_prompt)
         self.assertEqual(result["phi_status"], "success")
 
-    def test_build_execution_context_uses_budget_manager(self) -> None:
+    def test_build_execution_context_returns_without_phi_by_default(self) -> None:
         provider = RecordingPhiProvider({"story_summary": "Phi execution story", "implementation_tasks": ["Implement fault details"]})
         profile = {
             "project_description": "LineDefender platform. " * 100,
@@ -1626,10 +1733,38 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
             result = ProjectIntelligenceService().build_execution_context({"title": "Display Fault Event Details"}, profile)
 
+        self.assertEqual(provider.calls, 0)
+        self.assertEqual(result["provider_used"], "deterministic_execution")
+        self.assertEqual(result["phi_status"], "skipped")
+        self.assertFalse(result["fallback_used"])
+        self.assertIn("deterministic_generation_ms", result)
+
+    def test_execution_phi_timeout_still_returns_package(self) -> None:
+        provider = FailingPhiProvider()
+        profile = {
+            "project_description": "LineDefender platform.",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring"],
+                "flows": ["Fault Event Review"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            result = ProjectIntelligenceService().build_execution_context(
+                {"title": "Display Fault Event Details"},
+                profile,
+                options={"mode": "enhance_with_ai"},
+            )
+
         self.assertEqual(provider.calls, 1)
-        self.assertLessEqual(len(provider.system_prompt) + len(provider.user_prompt), 4800)
-        self.assertIn("final_prompt_tokens", result)
-        self.assertNotEqual(result["phi_status"], "prompt_too_long")
+        self.assertIn("story_summary", result)
+        self.assertEqual(result["provider_used"], "deterministic_execution")
+        self.assertEqual(result["phi_status"], "partial_ai_enrichment_timeout")
+        self.assertTrue(result["timeout_used"])
+        self.assertTrue(result["fallback_used"])
 
     def test_build_execution_context_compresses_oversized_draft(self) -> None:
         large_prompt = "# Dev Prompt\n" + ("Previously generated implementation prompt must not recurse. " * 120)
@@ -1714,7 +1849,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertGreaterEqual(attempts[0]["project_context_tokens"], attempts[-1]["project_context_tokens"])
 
     def test_execution_context_phi_uses_compressed_prompt_without_fallback(self) -> None:
-        provider = RecordingPhiProvider({"story_summary": "Phi execution story", "implementation_tasks": ["Coordinate fault details"]})
+        provider = RecordingPhiProvider({"implementation_notes": ["Phi execution note"], "testing_tasks": ["Coordinate fault details"]})
         profile = {
             "project_description": "LineDefender platform. " * 120,
             "knowledge_registry": {
@@ -1734,7 +1869,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
             clear=False,
         ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
-            result = ProjectIntelligenceService().build_execution_context(story, profile)
+            result = ProjectIntelligenceService().build_execution_context(story, profile, options={"mode": "enhance_with_ai"})
 
         self.assertEqual(provider.calls, 1)
         self.assertEqual(result["phi_status"], "success")

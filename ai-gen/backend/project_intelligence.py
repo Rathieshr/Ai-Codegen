@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import hashlib
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -140,6 +141,7 @@ class ProjectIntelligenceService:
         self._session_path = self._profile_dir / "session.json"
         self._knowledge_cache_path = self._profile_dir / "knowledge_cache.json"
         self._artifacts_path = self._profile_dir / "artifacts.json"
+        self._capsules_path = self._profile_dir / "context_capsules.json"
         self._profile_path.parent.mkdir(parents=True, exist_ok=True)
         self._profiles_dir.mkdir(parents=True, exist_ok=True)
 
@@ -180,6 +182,38 @@ class ProjectIntelligenceService:
         if not cache:
             return {"exists": False, "cache": {}, **self.knowledge_cache_status()}
         return {"exists": True, "cache": cache, **self.knowledge_cache_status()}
+
+    def get_context_capsules(self) -> dict[str, Any]:
+        capsules = self._read_context_capsules()
+        return {
+            "exists": bool(capsules),
+            "capsules": capsules,
+            "status": _capsule_status_payload(capsules, self.get_profile(), self._read_knowledge_cache()),
+        }
+
+    def refresh_context_capsules(
+        self,
+        profile: dict[str, Any] | None = None,
+        item: dict[str, Any] | None = None,
+        capsule_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        active_profile = _normalize_profile(profile or self.get_profile())
+        cache = self._read_knowledge_cache()
+        existing = self._read_context_capsules()
+        requested = [kind for kind in (capsule_types or ["project"]) if kind in _context_capsule_types()] or ["project"]
+        now = _now_iso()
+        capsules = {key: value for key, value in existing.items() if isinstance(value, dict)}
+        for capsule_type in requested:
+            source_item = item or {}
+            capsule = _build_context_capsule(capsule_type, active_profile, source_item, cache, existing.get(capsule_type))
+            capsule["created_at"] = now
+            capsules[capsule_type] = capsule
+        self._write_context_capsules(capsules)
+        return {
+            "success": True,
+            "capsules": capsules,
+            "status": _capsule_status_payload(capsules, active_profile, cache),
+        }
 
     def knowledge_cache_status(
         self,
@@ -275,6 +309,7 @@ class ProjectIntelligenceService:
                 "generated_project_summary": _project_summary(analyzed),
             }
             self._knowledge_cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+            self.refresh_context_capsules(analyzed, capsule_types=["project"])
             self.save_session({
                 "active_project": analyzed.get("project_name") or mapping.get("ado_project"),
                 "project_id": analyzed.get("project_id"),
@@ -479,6 +514,40 @@ class ProjectIntelligenceService:
             return [_normalize_artifact_record(item) for item in records if isinstance(item, dict)]
         except (OSError, json.JSONDecodeError):
             return []
+
+    def _read_context_capsules(self) -> dict[str, Any]:
+        if not self._capsules_path.exists():
+            return {}
+        try:
+            payload = json.loads(self._capsules_path.read_text(encoding="utf-8"))
+            capsules = payload.get("capsules") if isinstance(payload, dict) else payload
+            return capsules if isinstance(capsules, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _write_context_capsules(self, capsules: dict[str, Any]) -> None:
+        self._capsules_path.write_text(
+            json.dumps({"schema_version": "context-capsule-v1", "capsules": capsules}, indent=2),
+            encoding="utf-8",
+        )
+
+    def _profile_with_capsule(
+        self,
+        capsule_type: str,
+        profile: dict[str, Any],
+        item: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        capsule_type = capsule_type if capsule_type in _context_capsule_types() else "project"
+        item = item or {}
+        cache = self._read_knowledge_cache()
+        capsules = self._read_context_capsules()
+        current = capsules.get(capsule_type) if isinstance(capsules.get(capsule_type), dict) else {}
+        expected_hash = _capsule_source_hash(capsule_type, profile, item, cache)
+        if current.get("source_hash") != expected_hash:
+            current = _build_context_capsule(capsule_type, profile, item, cache, current)
+            capsules[capsule_type] = current
+            self._write_context_capsules(capsules)
+        return {**profile, "_active_context_capsule": current}
 
     def _write_artifacts(self, artifacts: list[dict[str, Any]]) -> None:
         self._artifacts_path.write_text(
@@ -759,7 +828,9 @@ class ProjectIntelligenceService:
             "dependencies": _dependencies_for_profile(active_profile),
             "recommended_features": features,
             "capability_diagnostics": capability_plan["diagnostics"],
+            "generation_review": _generation_review(active_profile, features, [], keywords),
         }
+        active_profile = self._profile_with_capsule("project", active_profile, epic)
         phi = _project_phi_json("refine_epic", active_profile, epic, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
@@ -772,6 +843,7 @@ class ProjectIntelligenceService:
                 fallback_features=features,
                 diagnostics=merged.get("capability_diagnostics"),
             )
+            merged["generation_review"] = _generation_review(active_profile, merged["recommended_features"], [], keywords)
             return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
@@ -798,12 +870,15 @@ class ProjectIntelligenceService:
             "risks": _risks_for_profile(active_profile, _context_keywords(title, description, active_profile)),
             "recommended_stories": story_plan["recommended_stories"],
             "story_generation_diagnostics": story_plan["diagnostics"],
+            "generation_review": _generation_review(active_profile, story_plan["recommended_stories"], modules, _context_keywords(title, description, active_profile)),
         }
+        active_profile = self._profile_with_capsule("feature", active_profile, feature)
         phi = _project_phi_json("refine_feature", active_profile, feature, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
             merged["recommended_stories"] = story_plan["recommended_stories"]
             merged["story_generation_diagnostics"] = story_plan["diagnostics"]
+            merged["generation_review"] = deterministic["generation_review"]
             return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
@@ -842,7 +917,9 @@ class ProjectIntelligenceService:
             "qa_considerations": _qa_considerations(active_profile, flows),
             "proposed_tasks": task_plan["tasks"],
             "task_intelligence_diagnostics": task_plan["diagnostics"],
+            "generation_review": _generation_review(active_profile, task_plan["tasks"], modules, _context_keywords(title, description, active_profile)),
         }
+        active_profile = self._profile_with_capsule("story", active_profile, story)
         phi = _project_phi_json("refine_story", active_profile, story, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
@@ -851,6 +928,7 @@ class ProjectIntelligenceService:
             merged["acceptance_criteria_quality_score"] = acceptance_quality_score
             merged["proposed_tasks"] = task_plan["tasks"]
             merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
+            merged["generation_review"] = deterministic["generation_review"]
             return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
@@ -876,6 +954,7 @@ class ProjectIntelligenceService:
         dependencies = _string_list(story.get("dependencies")) or impact["dependencies"] or _impact_dependencies(active_profile, keywords, modules, flows)
         acceptance = _string_list(story.get("acceptance_criteria")) or _acceptance_criteria(title, flows, modules)
         suite = _qa_test_suite(title, description, acceptance, modules, flows, dependencies, active_profile, keywords)
+        suite["generation_review"] = _generation_review(active_profile, suite["test_suite"]["test_cases"], modules, keywords)
         phi_item = {
             **story,
             "title": title,
@@ -886,20 +965,22 @@ class ProjectIntelligenceService:
             "dependencies": dependencies,
             "domain": _clean_text(active_profile.get("domain")) or active_profile["knowledge_profile_preview"].get("domain") or "",
         }
+        active_profile = self._profile_with_capsule("qa", active_profile, phi_item)
         phi = _project_phi_json(
             "generate_qa_test_cases",
             active_profile,
             phi_item,
             suite,
             options,
-            ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps"],
+            ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps", "generation_review"],
         )
         if phi["used"]:
             merged = _merge_known_fields(
                 suite,
                 _normalize_phi_qa_suite(phi["parsed"], suite),
-                ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps"],
+                ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps", "generation_review"],
             )
+            merged["generation_review"] = suite["generation_review"]
             return _with_provider_metadata(merged, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
@@ -1022,17 +1103,19 @@ class ProjectIntelligenceService:
             "execution_readiness_breakdown": readiness["breakdown"],
             "execution_readiness_result": readiness["result"],
         }
-        phi = _project_phi_json("build_execution_context", active_profile, story, deterministic, options, list(deterministic.keys()))
+        active_profile = self._profile_with_capsule("execution", active_profile, {**story, "tasks": generated_tasks, "acceptance_criteria": acceptance})
+        metadata = _execution_primary_metadata(time.monotonic(), "build_execution_context")
+        if not _execution_ai_enrichment_enabled(options):
+            return _with_provider_metadata(deterministic, metadata)
+        phi = _project_phi_json("build_execution_context", active_profile, story, deterministic, _execution_ai_options(options), _execution_enrichment_keys("build_execution_context", deterministic))
         if phi["used"]:
-            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
+            merged = _merge_known_fields(deterministic, phi["parsed"], _execution_enrichment_keys("build_execution_context", deterministic))
             merged["proposed_tasks"] = generated_tasks
             merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
             merged["implementation_tasks"] = implementation_tasks
             merged["testing_tasks"] = testing_tasks
             return _with_provider_metadata(merged, phi["metadata"])
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
 
     def build_dev_prompt(
         self,
@@ -1044,6 +1127,7 @@ class ProjectIntelligenceService:
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        active_profile = self._profile_with_capsule("execution", active_profile, {**(story or {}), "execution_context": context})
         deterministic = {
             "prompt": _execution_prompt(
                 "Dev Prompt",
@@ -1059,12 +1143,13 @@ class ProjectIntelligenceService:
                 ],
             )
         }
-        phi = _project_phi_json("build_dev_prompt", active_profile, story, deterministic, options, ["prompt"])
+        metadata = _execution_primary_metadata(time.monotonic(), "build_dev_prompt")
+        if not _execution_ai_enrichment_enabled(options):
+            return _with_provider_metadata(deterministic, metadata)
+        phi = _project_phi_json("build_dev_prompt", active_profile, story, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
 
     def build_ui_prompt(
         self,
@@ -1076,6 +1161,7 @@ class ProjectIntelligenceService:
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        active_profile = self._profile_with_capsule("execution", active_profile, {**(story or {}), "execution_context": context})
         ui = context["ui_guidelines"]
         deterministic = {
             "prompt": _execution_prompt(
@@ -1091,12 +1177,13 @@ class ProjectIntelligenceService:
                 ],
             )
         }
-        phi = _project_phi_json("build_ui_prompt", active_profile, story, deterministic, options, ["prompt"])
+        metadata = _execution_primary_metadata(time.monotonic(), "build_ui_prompt")
+        if not _execution_ai_enrichment_enabled(options):
+            return _with_provider_metadata(deterministic, metadata)
+        phi = _project_phi_json("build_ui_prompt", active_profile, story, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
 
     def build_qa_prompt(
         self,
@@ -1108,6 +1195,7 @@ class ProjectIntelligenceService:
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        active_profile = self._profile_with_capsule("qa", active_profile, {**(story or {}), "execution_context": context})
         impact = _normalize_story_impact(impact_analysis or self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"]))
         deterministic = {
             "prompt": _execution_prompt(
@@ -1123,12 +1211,13 @@ class ProjectIntelligenceService:
                 ],
             )
         }
-        phi = _project_phi_json("build_qa_prompt", active_profile, story, deterministic, options, ["prompt"])
+        metadata = _execution_primary_metadata(time.monotonic(), "build_qa_prompt")
+        if not _execution_ai_enrichment_enabled(options):
+            return _with_provider_metadata(deterministic, metadata)
+        phi = _project_phi_json("build_qa_prompt", active_profile, story, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
 
     def build_copilot_context(
         self,
@@ -1140,6 +1229,7 @@ class ProjectIntelligenceService:
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
+        active_profile = self._profile_with_capsule("execution", active_profile, {**(story or {}), "execution_context": context})
         lines = [
             "Project Awareness Context",
             "",
@@ -1169,12 +1259,13 @@ class ProjectIntelligenceService:
             *_bullet_lines(_flatten_standards(context["development_standards"])),
         ]
         deterministic = {"context": "\n".join(lines).strip()}
-        phi = _project_phi_json("build_copilot_context", active_profile, story, deterministic, options, ["context"])
+        metadata = _execution_primary_metadata(time.monotonic(), "build_copilot_context")
+        if not _execution_ai_enrichment_enabled(options):
+            return _with_provider_metadata(deterministic, metadata)
+        phi = _project_phi_json("build_copilot_context", active_profile, story, deterministic, _execution_ai_options(options), ["context"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["context"])}, phi["metadata"])
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
 
     def provider_probe(self, prompt: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         options = options or {}
@@ -1330,6 +1421,10 @@ def _knowledge_schema_version() -> str:
     return "project-intelligence-cache-v1"
 
 
+def _context_capsule_types() -> set[str]:
+    return {"project", "feature", "story", "execution", "qa"}
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1369,6 +1464,191 @@ def _project_summary(profile: dict[str, Any]) -> str:
         f"Flows: {', '.join(_string_list(registry.get('flows'))[:6])}" if _string_list(registry.get("flows")) else "",
     ]
     return ". ".join(part for part in parts if part)
+
+
+def _build_context_capsule(
+    capsule_type: str,
+    profile: dict[str, Any],
+    item: dict[str, Any] | None,
+    cache: dict[str, Any] | None,
+    previous: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    capsule_type = capsule_type if capsule_type in _context_capsule_types() else "project"
+    profile = _normalize_profile(profile)
+    item = item or {}
+    cache = cache or {}
+    payload = _context_capsule_payload(capsule_type, profile, item)
+    source_payload = _capsule_source_payload(capsule_type, profile, item, cache)
+    source_size = _estimate_tokens(json.dumps(source_payload, ensure_ascii=True, separators=(",", ":")))
+    capsule_size = _estimate_tokens(json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+    source_hash = _capsule_source_hash(capsule_type, profile, item, cache)
+    previous_version = int((previous or {}).get("version") or 0)
+    knowledge_version = _clean_text(cache.get("knowledge_version")) or _knowledge_version(profile)
+    return {
+        "capsule_id": f"{capsule_type}_{source_hash[:12]}",
+        "capsule_type": capsule_type,
+        "status": "ready",
+        "version": previous_version + 1 if (previous or {}).get("source_hash") != source_hash else previous_version or 1,
+        "created_at": _now_iso(),
+        "last_refreshed": _now_iso(),
+        "source_hash": source_hash,
+        "source_version": knowledge_version,
+        "knowledge_version": knowledge_version,
+        "dependencies": _capsule_dependencies(capsule_type, profile, item),
+        "parent_references": _capsule_parent_references(item),
+        "payload": payload,
+        "diagnostics": {
+            "capsule_size_tokens": capsule_size,
+            "source_size_tokens": source_size,
+            "compression_ratio": round(capsule_size / max(source_size, 1), 3),
+            "source_sections": _capsule_source_sections(source_payload),
+        },
+    }
+
+
+def _context_capsule_payload(capsule_type: str, profile: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    registry = profile["knowledge_registry"]
+    modules = _select_relevant_items(registry["modules"], _clean_text(item.get("title")), _clean_text(item.get("description")), fallback_count=6)
+    flows = _select_relevant_items(registry["flows"], _clean_text(item.get("title")), _clean_text(item.get("description")), fallback_count=6)
+    project_payload = {
+        "project_summary": _project_summary(profile),
+        "project_name": profile["project_name"],
+        "domain": profile["domain"] or profile["knowledge_profile_preview"]["domain"],
+        "project_type": profile["project_type"],
+        "applications": _application_names(profile)[:6],
+        "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), 700),
+        "modules": registry["modules"][:10],
+        "flows": registry["flows"][:10],
+        "standards": _unique([*_flatten_standards(profile["development_standards"]), *registry["standards"]])[:10],
+        "roles": _users_for_profile(profile),
+        "technology_stack": _compact_stack(profile),
+        "knowledge_version": _knowledge_version(profile),
+    }
+    if capsule_type == "project":
+        return project_payload
+    if capsule_type == "feature":
+        return {
+            **project_payload,
+            "feature_summary": _truncate_text(_sentence(_clean_text(item.get("title")) or "Feature", _clean_text(item.get("description"))), 260),
+            "business_goal": _clean_text(item.get("business_goal")) or _clean_text(item.get("business_value")),
+            "modules": modules,
+            "flows": flows,
+            "dependencies": _string_list(item.get("dependencies")) or _dependencies_for_profile(profile)[:5],
+            "parent_epic": _clean_text(item.get("parent_epic") or item.get("epic_title")),
+        }
+    if capsule_type == "story":
+        acceptance = _string_list(item.get("acceptance_criteria"))[:8]
+        return {
+            **project_payload,
+            "story_summary": _truncate_text(_sentence(_clean_text(item.get("title")) or "Story", _clean_text(item.get("description"))), 260),
+            "acceptance_criteria": acceptance,
+            "modules": modules,
+            "flows": flows,
+            "roles": _users_for_profile(profile),
+            "dependencies": _string_list(item.get("dependencies")) or _dependencies_for_profile(profile)[:5],
+            "parent_feature": _clean_text(item.get("parent_feature") or item.get("feature_title")),
+        }
+    if capsule_type == "execution":
+        return {
+            **project_payload,
+            "dev_context": _truncate_text(_sentence(_clean_text(item.get("title")) or "Execution", _clean_text(item.get("description"))), 220),
+            "ui_context": ", ".join(_ui_considerations(profile, flows)[:4]),
+            "qa_context": ", ".join(_qa_considerations(profile, flows)[:4]),
+            "impacted_files": _string_list(item.get("recommended_files"))[:8],
+            "modules": modules,
+            "flows": flows,
+            "standards": _unique([*_flatten_standards(profile["development_standards"]), *registry["standards"]])[:8],
+        }
+    if capsule_type == "qa":
+        acceptance = _string_list(item.get("acceptance_criteria"))[:8]
+        return {
+            **project_payload,
+            "coverage_context": _truncate_text(_sentence(_clean_text(item.get("title")) or "QA", _clean_text(item.get("description"))), 220),
+            "regression_context": _unique([*modules, *flows])[:10],
+            "risk_areas": _string_list(item.get("risks")) or _risks_for_profile(profile, _context_keywords(_clean_text(item.get("title")), _clean_text(item.get("description")), profile))[:6],
+            "validation_areas": acceptance or _acceptance_criteria(_clean_text(item.get("title")) or "Story", flows, modules)[:6],
+            "modules": modules,
+            "flows": flows,
+        }
+    return project_payload
+
+
+def _capsule_source_payload(capsule_type: str, profile: dict[str, Any], item: dict[str, Any], cache: dict[str, Any]) -> dict[str, Any]:
+    registry = profile["knowledge_registry"]
+    return {
+        "capsule_type": capsule_type,
+        "profile": {
+            "project_id": profile.get("project_id"),
+            "project_name": profile.get("project_name"),
+            "domain": profile.get("domain"),
+            "project_type": profile.get("project_type"),
+            "description": profile.get("project_description"),
+            "applications": profile.get("applications"),
+            "technology_stack": profile.get("technology_stack"),
+            "development_standards": profile.get("development_standards"),
+            "ui_guidelines": profile.get("ui_guidelines"),
+        },
+        "knowledge_registry": registry,
+        "knowledge_version": cache.get("knowledge_version") or _knowledge_version(profile),
+        "source_files": cache.get("source_files") or registry.get("source_files"),
+        "item": item,
+    }
+
+
+def _capsule_source_hash(capsule_type: str, profile: dict[str, Any], item: dict[str, Any] | None, cache: dict[str, Any] | None) -> str:
+    payload = _capsule_source_payload(capsule_type, _normalize_profile(profile), item or {}, cache or {})
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _capsule_dependencies(capsule_type: str, profile: dict[str, Any], item: dict[str, Any]) -> list[str]:
+    dependencies = ["project_profile", "knowledge_registry"]
+    if profile["knowledge_registry"]["source_files"]:
+        dependencies.append("repository_documents")
+    if capsule_type in {"feature", "story", "execution", "qa"}:
+        dependencies.append("work_item")
+    if capsule_type in {"execution", "qa"}:
+        dependencies.append("acceptance_criteria")
+    return dependencies
+
+
+def _capsule_parent_references(item: dict[str, Any]) -> dict[str, str]:
+    return {
+        key: _clean_text(item.get(key))
+        for key in ["parent_epic", "parent_feature", "parent_story", "epic_title", "feature_title", "story_title"]
+        if _clean_text(item.get(key))
+    }
+
+
+def _capsule_source_sections(source_payload: dict[str, Any]) -> dict[str, int]:
+    return {
+        key: _estimate_tokens(json.dumps(value, ensure_ascii=True, separators=(",", ":"), default=str))
+        for key, value in source_payload.items()
+    }
+
+
+def _capsule_status_payload(capsules: dict[str, Any], profile: dict[str, Any], cache: dict[str, Any]) -> dict[str, Any]:
+    knowledge_version = _clean_text(cache.get("knowledge_version")) or _knowledge_version(_normalize_profile(profile))
+    items = []
+    for capsule_type in ["project", "feature", "story", "execution", "qa"]:
+        capsule = capsules.get(capsule_type) if isinstance(capsules.get(capsule_type), dict) else {}
+        diagnostics = capsule.get("diagnostics") if isinstance(capsule.get("diagnostics"), dict) else {}
+        ready = bool(capsule) and capsule.get("source_version") == knowledge_version
+        items.append({
+            "capsule_type": capsule_type,
+            "status": "ready" if ready else ("refresh_required" if capsule else "missing"),
+            "version": capsule.get("version") or 0,
+            "last_refreshed": _clean_text(capsule.get("last_refreshed") or capsule.get("created_at")),
+            "source_version": _clean_text(capsule.get("source_version")),
+            "capsule_size_tokens": int(diagnostics.get("capsule_size_tokens") or 0),
+            "source_size_tokens": int(diagnostics.get("source_size_tokens") or 0),
+            "compression_ratio": diagnostics.get("compression_ratio") or 0,
+        })
+    return {
+        "knowledge_version": knowledge_version,
+        "capsules": items,
+        "ready_count": sum(1 for item in items if item["status"] == "ready"),
+        "total_count": len(items),
+    }
 
 
 def _knowledge_status_payload(
@@ -2633,6 +2913,126 @@ def _context_keywords(title: str, description: str, profile: dict[str, Any]) -> 
         if keyword in text:
             keywords.append(keyword)
     return _unique(keywords)
+
+
+DOMAIN_TERMS = [
+    "Fault Event",
+    "Telemetry",
+    "Device Health",
+    "Outage",
+    "Recloser",
+    "Firmware",
+    "Asset Health",
+    "Operations User",
+    "Field Technician",
+]
+
+
+GENERIC_CONTENT_MARKERS = [
+    "visible and testable",
+    "complete workflow",
+    "reviewable capability",
+    "workflow is covered",
+    "flow is covered",
+    "validate feature",
+    "implement feature",
+    "generic dashboard",
+    "business software",
+]
+
+
+def _generation_review(
+    profile: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    preferred_modules: list[str] | None = None,
+    keywords: list[str] | None = None,
+) -> dict[str, Any]:
+    registry = profile.get("knowledge_registry") or {}
+    development_standards = profile.get("development_standards") or {}
+    modules = _unique(preferred_modules or _extract_artifact_values(artifacts, ["impacted_modules", "affected_modules", "modules"]) or _string_list(registry.get("modules"))[:5])
+    flows = _unique(_extract_artifact_values(artifacts, ["impacted_flows", "affected_flows", "flows"]) or _string_list(registry.get("flows"))[:5])
+    applications = _unique(_extract_application_names_from_artifacts(artifacts) or _application_names(profile)[:5])
+    standards = _unique([*_flatten_standards(development_standards), *registry.get("standards", [])])[:6]
+    text = _artifact_text(artifacts)
+    lowered = text.lower()
+    keyword_set = set(keywords or [])
+    domain_matches = [term for term in DOMAIN_TERMS if term.lower() in lowered or any(token in term.lower() for token in keyword_set)]
+    generic_hits = [marker for marker in GENERIC_CONTENT_MARKERS if marker in lowered]
+    module_hits = [module for module in modules if module.lower() in lowered]
+    flow_hits = [flow for flow in flows if flow.lower() in lowered]
+    knowledge_usage = 40
+    if modules:
+        knowledge_usage += 20
+    if flows:
+        knowledge_usage += 20
+    if standards:
+        knowledge_usage += 10
+    if applications:
+        knowledge_usage += 10
+    module_coverage = int((len(module_hits) / len(modules)) * 100) if modules else 0
+    flow_coverage = int((len(flow_hits) / len(flows)) * 100) if flows else 0
+    domain_specificity = min(100, 35 + len(domain_matches) * 12 + len(keyword_set & {"fault", "telemetry", "health", "outage", "firmware", "device"}) * 8)
+    generic_risk = min(100, len(generic_hits) * 20)
+    quality_score = max(0, min(100, round((knowledge_usage + module_coverage + flow_coverage + domain_specificity + (100 - generic_risk)) / 5)))
+    return {
+        "modules_used": modules,
+        "flows_used": flows,
+        "standards_used": standards,
+        "applications_used": applications,
+        "domain_terms_used": _unique(domain_matches),
+        "quality_scores": {
+            "knowledge_usage": min(100, knowledge_usage),
+            "module_coverage": module_coverage,
+            "flow_coverage": flow_coverage,
+            "domain_specificity": domain_specificity,
+            "generic_content_risk": generic_risk,
+            "overall": quality_score,
+        },
+        "generic_content_markers": generic_hits,
+        "quality_gate": "passed" if quality_score >= 75 and generic_risk < 40 else "needs_review",
+    }
+
+
+def _artifact_text(artifacts: list[dict[str, Any]]) -> str:
+    chunks: list[str] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        for key, value in artifact.items():
+            if isinstance(value, str):
+                chunks.append(value)
+            elif isinstance(value, list):
+                chunks.extend(str(item) for item in value if not isinstance(item, dict))
+                for item in value:
+                    if isinstance(item, dict):
+                        chunks.append(_artifact_text([item]))
+            elif isinstance(value, dict):
+                chunks.append(_artifact_text([value]))
+    return " ".join(chunks)
+
+
+def _extract_artifact_values(artifacts: list[dict[str, Any]], keys: list[str]) -> list[str]:
+    values: list[str] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        for key in keys:
+            values.extend(_string_list(artifact.get(key)))
+        for value in artifact.values():
+            if isinstance(value, dict):
+                values.extend(_extract_artifact_values([value], keys))
+            elif isinstance(value, list):
+                values.extend(_extract_artifact_values([item for item in value if isinstance(item, dict)], keys))
+    return _unique(values)
+
+
+def _extract_application_names_from_artifacts(artifacts: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    raw = _extract_artifact_values(artifacts, ["impacted_applications", "affected_applications", "applications"])
+    for item in raw:
+        if isinstance(item, str):
+            names.append(item)
+    return _unique(names)
 
 
 CAPABILITY_TAXONOMY = [
@@ -4486,7 +4886,8 @@ def _project_phi_probe(
         probe = provider.probe_json(
             PROJECT_PHI_SYSTEM_PROMPT,
             prompt,
-            max_tokens=900,
+            max_tokens=int(options.get("max_tokens") or 900),
+            timeout_seconds=int(options.get("timeout_seconds")) if options.get("timeout_seconds") else None,
             response_format_enabled=False,
             allow_retry_without_response_format=True,
         )
@@ -4668,6 +5069,19 @@ def _build_project_phi_prompt(
         "project_summary_mode": compression_level >= 4 or budget_tokens < 450,
         "reserved_tokens": PROJECT_CONTEXT_RESERVED_TOKENS,
     }
+    active_capsule = profile.get("_active_context_capsule") if isinstance(profile.get("_active_context_capsule"), dict) else {}
+    if active_capsule:
+        capsule_diagnostics = active_capsule.get("diagnostics") if isinstance(active_capsule.get("diagnostics"), dict) else {}
+        diagnostics.update(
+            {
+                "context_capsule_used": True,
+                "context_capsule_type": active_capsule.get("capsule_type"),
+                "context_capsule_version": active_capsule.get("version"),
+                "context_capsule_size_tokens": capsule_diagnostics.get("capsule_size_tokens", 0),
+                "context_capsule_source_size_tokens": capsule_diagnostics.get("source_size_tokens", 0),
+                "context_capsule_compression_ratio": capsule_diagnostics.get("compression_ratio", 0),
+            }
+        )
     diagnostics.update(draft_diagnostics)
     diagnostics.update(_section_diagnostics(payload))
     diagnostics = _with_final_prompt_diagnostics(PROJECT_PHI_SYSTEM_PROMPT, prompt, diagnostics)
@@ -4966,6 +5380,10 @@ def _compact_stack_for_summary(stack: Any) -> dict[str, list[str]]:
 
 
 def _project_summary_context(operation: str, profile: dict[str, Any], item: dict[str, Any], compression_level: int) -> dict[str, Any]:
+    capsule = profile.get("_active_context_capsule") if isinstance(profile.get("_active_context_capsule"), dict) else {}
+    capsule_payload = capsule.get("payload") if isinstance(capsule.get("payload"), dict) else {}
+    if capsule_payload:
+        return _project_summary_context_from_capsule(capsule, operation, compression_level)
     registry = _normalize_knowledge_registry(profile.get("knowledge_registry", {}))
     selected = _select_semantic_registry_context(operation, item, profile, registry, compression_level)
     level = min(max(compression_level, 0), 5)
@@ -5001,6 +5419,65 @@ def _project_summary_context(operation: str, profile: dict[str, Any], item: dict
     if level < 4:
         context["development_standards"] = _compact_development_standards(profile.get("development_standards", {}), registry)
         context["ui_guidelines"] = _compact_ui_guidelines(profile.get("ui_guidelines", {}), registry)
+    return context
+
+
+def _project_summary_context_from_capsule(capsule: dict[str, Any], operation: str, compression_level: int) -> dict[str, Any]:
+    payload = capsule.get("payload") if isinstance(capsule.get("payload"), dict) else {}
+    level = min(max(compression_level, 0), 5)
+    execution_mode = _is_execution_operation(operation)
+    limits = {
+        "modules": [6, 5, 4, 3, 3, 2] if execution_mode else [10, 8, 7, 6, 5, 3],
+        "flows": [6, 5, 4, 3, 3, 2] if execution_mode else [10, 8, 7, 6, 5, 3],
+        "standards": [5, 4, 3, 2, 1, 1] if execution_mode else [10, 8, 6, 4, 2, 1],
+        "applications": [3, 3, 2, 2, 1, 1] if execution_mode else [6, 5, 4, 3, 2, 1],
+        "architecture": [180, 150, 120, 90, 60, 40] if execution_mode else [700, 520, 360, 220, 120, 60],
+    }
+    context = {
+        "context_source": "context_capsule",
+        "capsule_type": capsule.get("capsule_type") or "project",
+        "capsule_id": capsule.get("capsule_id"),
+        "capsule_version": capsule.get("version"),
+        "source_version": capsule.get("source_version"),
+        "project_name": payload.get("project_name"),
+        "domain": payload.get("domain"),
+        "project_type": payload.get("project_type"),
+        "description": _truncate_text(payload.get("project_summary"), 220 if level < 4 else 100),
+        "project_summary": {
+            "applications": _string_list(payload.get("applications"))[: limits["applications"][level]],
+            "top_modules": _string_list(payload.get("modules"))[: limits["modules"][level]],
+            "top_flows": _string_list(payload.get("flows"))[: limits["flows"][level]],
+            "architecture_summary": _truncate_text(payload.get("architecture_summary"), limits["architecture"][level]),
+        },
+        "technology_stack": _compact_stack_for_summary(payload.get("technology_stack")) if execution_mode else (payload.get("technology_stack") if isinstance(payload.get("technology_stack"), dict) else {}),
+        "knowledge_registry": {
+            "modules": _string_list(payload.get("modules"))[: limits["modules"][level]],
+            "flows": _string_list(payload.get("flows"))[: limits["flows"][level]],
+            "architecture_summary": _truncate_text(payload.get("architecture_summary"), limits["architecture"][level]),
+            "standards": _string_list(payload.get("standards"))[: limits["standards"][level]],
+        },
+        "capsule_focus": {
+            key: value
+            for key, value in payload.items()
+            if key in {
+                "feature_summary",
+                "business_goal",
+                "story_summary",
+                "acceptance_criteria",
+                "dev_context",
+                "ui_context",
+                "qa_context",
+                "coverage_context",
+                "regression_context",
+                "risk_areas",
+                "validation_areas",
+                "impacted_files",
+            }
+            and value not in ("", [], {}, None)
+        },
+    }
+    if level < 4 and not execution_mode:
+        context["roles"] = _string_list(payload.get("roles"))[:4]
     return context
 
 
@@ -5320,6 +5797,71 @@ def _fallback_metadata(provider_used: str, reason: str) -> dict[str, Any]:
         "provider_last_success": None,
         "provider_last_failure": None,
     }
+
+
+def _execution_ai_enrichment_enabled(options: dict[str, Any] | None) -> bool:
+    options = options or {}
+    mode = _clean_text(options.get("mode")).lower()
+    return mode in {"enhance_with_ai", "ai_enrichment"} or bool(options.get("enhance_with_ai")) or _clean_text(options.get("force_provider")) == "azure_phi"
+
+
+def _execution_ai_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    next_options = dict(options or {})
+    next_options["allow_fallback"] = True
+    next_options["timeout_seconds"] = int(next_options.get("timeout_seconds") or 20)
+    next_options["max_tokens"] = int(next_options.get("max_tokens") or 450)
+    if not _clean_text(next_options.get("force_provider")):
+        next_options["force_provider"] = "azure_phi"
+    return next_options
+
+
+def _execution_primary_metadata(started_at: float, operation: str) -> dict[str, Any]:
+    elapsed_ms = max(0, int((time.monotonic() - started_at) * 1000))
+    metadata = _fallback_metadata("deterministic_execution", "Execution generation is deterministic-first. Phi enrichment is optional.")
+    metadata.update(
+        {
+            "provider_used": "deterministic_execution",
+            "source": "deterministic_execution",
+            "phi_status": "skipped",
+            "fallback_used": False,
+            "fallback_reason": "",
+            "deterministic_generation_ms": elapsed_ms,
+            "phi_enrichment_ms": 0,
+            "timeout_used": False,
+            "operation": operation,
+        }
+    )
+    return metadata
+
+
+def _execution_timeout_metadata(base_metadata: dict[str, Any], phi_metadata: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(base_metadata)
+    metadata.update({key: value for key, value in phi_metadata.items() if value not in (None, "", [], {})})
+    phi_status = _clean_text(phi_metadata.get("phi_status")) or _clean_text(phi_metadata.get("failure_reason")) or "unusable_response"
+    phi_latency = int(phi_metadata.get("phi_latency_ms") or phi_metadata.get("elapsed_ms") or 0)
+    timed_out = phi_status in {"provider_timeout", "timeout"} or phi_latency >= 20000
+    metadata.update(
+        {
+            "provider_used": "deterministic_execution",
+            "source": "deterministic_execution",
+            "phi_status": "partial_ai_enrichment_timeout" if timed_out else phi_status,
+            "fallback_used": True,
+            "fallback_reason": "Optional Phi enrichment timed out; deterministic execution package returned." if timed_out else (phi_metadata.get("fallback_reason") or "Optional Phi enrichment did not return usable output."),
+            "phi_enrichment_ms": phi_latency,
+            "timeout_used": timed_out,
+        }
+    )
+    return metadata
+
+
+def _execution_enrichment_keys(operation: str, deterministic: dict[str, Any]) -> list[str]:
+    if operation == "build_execution_context":
+        return ["implementation_notes", "risks", "recommended_files", "testing_tasks"]
+    if operation == "build_copilot_context":
+        return ["context"]
+    if "prompt" in deterministic:
+        return ["prompt"]
+    return list(deterministic.keys())
 
 
 def _with_context_diagnostics(metadata: dict[str, Any], diagnostics: dict[str, Any] | None) -> dict[str, Any]:

@@ -2398,45 +2398,35 @@ function ProjectIntelligenceTab() {
       />
 
       {activeTab === 'overview' ? (
-        <>
-          <ProductIdentityCard profile={profile} />
-          <OverviewHealthCard
-            workflow={workflowOrchestration}
-            profile={profile}
-            hasQa={Boolean(qaTestSuite)}
-            hasExecution={Boolean(executionContext)}
-          />
-          <KnowledgeHealthCompactCard
-            session={resumeSession}
-            status={knowledgeCacheStatus}
-            profile={profile}
-            capsuleStatus={contextCapsuleStatus}
-            loading={loading}
-            canRefresh={canAdmin}
-            onContinue={continueProjectSession}
-            onRefresh={() => void refreshProjectAnalysis()}
-            onChangeRepository={() => {
-              void openRepositorySettings();
-            }}
-          />
-          <AIRecommendationCard workflow={workflowOrchestration} loading={loading} canContribute={canContribute} onContinue={() => void continueWorkflow()} />
-          {showQuickStart && canAdmin ? (
-            <QuickStartSetup
-              profile={profile}
-              adoProjects={adoProjects}
-              repositories={repositories}
-              branches={branches}
-              repositoryLoadMessage={repositoryLoadMessage}
-              loading={loading}
-              onProfileChange={setProfile}
-              onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
-              onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
-              onReloadRepositories={() => void loadAdoProjects()}
-              onAnalyzeProject={() => void analyzeProject()}
-            />
-          ) : null}
-          <RecentActivityCard currentWorkItem={currentWorkItem} profile={profile} hasQa={Boolean(qaTestSuite)} hasExecution={Boolean(executionContext)} />
-        </>
+        <CommandCenterWorkspace
+          profile={profile}
+          workItem={currentWorkItem}
+          workflow={workflowOrchestration}
+          knowledgeCacheStatus={knowledgeCacheStatus}
+          capsuleStatus={contextCapsuleStatus}
+          session={resumeSession}
+          loading={loading}
+          canAdmin={canAdmin}
+          canContribute={canContribute}
+          hasQa={Boolean(qaTestSuite)}
+          hasExecution={Boolean(executionContext)}
+          showQuickStart={showQuickStart}
+          adoProjects={adoProjects}
+          repositories={repositories}
+          branches={branches}
+          repositoryLoadMessage={repositoryLoadMessage}
+          onContinue={continueProjectSession}
+          onContinueWorkflow={() => void continueWorkflow()}
+          onRefresh={() => void refreshProjectAnalysis()}
+          onChangeRepository={() => {
+            void openRepositorySettings();
+          }}
+          onProfileChange={setProfile}
+          onSelectAdoProject={(adoProject) => void selectAdoProject(adoProject)}
+          onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
+          onReloadRepositories={() => void loadAdoProjects()}
+          onAnalyzeProject={() => void analyzeProject()}
+        />
       ) : null}
 
       {activeTab === 'planning' ? (
@@ -2586,11 +2576,11 @@ function WorkflowTabs({
   canAdmin: boolean;
 }) {
   const tabs: Array<{ id: PlannerTab; label: string; subtitle: string }> = [
-    { id: 'overview', label: 'Overview', subtitle: 'Readiness and knowledge' },
+    { id: 'overview', label: 'Command Center', subtitle: 'Current work and next action' },
     { id: 'planning', label: 'Planning', subtitle: 'Epic to task workflow' },
     { id: 'execution', label: 'Execution', subtitle: 'Developer packages' },
-    { id: 'qa', label: 'QA', subtitle: 'Coverage and test cases' },
-    ...(canAdmin ? [{ id: 'admin' as PlannerTab, label: 'Admin', subtitle: 'Permissions and setup' }] : []),
+    { id: 'qa', label: 'QA Intelligence', subtitle: 'Coverage and test cases' },
+    ...(canAdmin ? [{ id: 'admin' as PlannerTab, label: 'Administration', subtitle: 'Repository and governance' }] : []),
   ];
   return (
     <nav className="planner-tabs" aria-label="Project Intelligence workspace tabs">
@@ -2657,6 +2647,273 @@ function StickyContextBar({
       </button>
     </section>
   );
+}
+
+function CommandCenterWorkspace({
+  profile,
+  workItem,
+  workflow,
+  knowledgeCacheStatus,
+  capsuleStatus,
+  session,
+  loading,
+  canAdmin,
+  canContribute,
+  hasQa,
+  hasExecution,
+  showQuickStart,
+  adoProjects,
+  repositories,
+  branches,
+  repositoryLoadMessage,
+  onContinue,
+  onContinueWorkflow,
+  onRefresh,
+  onChangeRepository,
+  onProfileChange,
+  onSelectAdoProject,
+  onSelectRepository,
+  onReloadRepositories,
+  onAnalyzeProject,
+}: {
+  profile: ProjectProfile;
+  workItem?: AdoWorkItem;
+  workflow: WorkflowOrchestrationState;
+  knowledgeCacheStatus?: KnowledgeCacheStatus;
+  capsuleStatus?: ContextCapsuleStatus;
+  session?: ProjectSessionSnapshot;
+  loading: boolean;
+  canAdmin: boolean;
+  canContribute: boolean;
+  hasQa: boolean;
+  hasExecution: boolean;
+  showQuickStart: boolean;
+  adoProjects: AdoProject[];
+  repositories: GitRepository[];
+  branches: string[];
+  repositoryLoadMessage: string;
+  onContinue: () => void;
+  onContinueWorkflow: () => void;
+  onRefresh: () => void;
+  onChangeRepository: () => void;
+  onProfileChange: (profile: ProjectProfile) => void;
+  onSelectAdoProject: (project: string) => void;
+  onSelectRepository: (repositoryId: string) => void;
+  onReloadRepositories: () => void;
+  onAnalyzeProject: () => void;
+}) {
+  return (
+    <div className="hei-command-center">
+      <div className="hei-command-row primary">
+        <CurrentWorkCard profile={profile} workItem={workItem} workflow={workflow} />
+        <RecommendedActionHero workflow={workflow} loading={loading} canContribute={canContribute} onContinue={onContinueWorkflow} />
+      </div>
+      <div className="hei-command-row metrics">
+        <OverviewHealthCard workflow={workflow} profile={profile} hasQa={hasQa} hasExecution={hasExecution} />
+        <RepositoryMetricsCard profile={profile} status={knowledgeCacheStatus} capsuleStatus={capsuleStatus} />
+        <KnowledgeHealthCompactCard
+          session={session}
+          status={knowledgeCacheStatus}
+          profile={profile}
+          capsuleStatus={capsuleStatus}
+          loading={loading}
+          canRefresh={canAdmin}
+          onContinue={onContinue}
+          onRefresh={onRefresh}
+          onChangeRepository={onChangeRepository}
+        />
+      </div>
+      <div className="hei-command-row secondary">
+        <RepositoryDriftCard status={knowledgeCacheStatus} profile={profile} loading={loading} canRefresh={canAdmin} onRefresh={onRefresh} />
+        <RecentActivityCard currentWorkItem={workItem} profile={profile} hasQa={hasQa} hasExecution={hasExecution} />
+      </div>
+      {showQuickStart && canAdmin ? (
+        <QuickStartSetup
+          profile={profile}
+          adoProjects={adoProjects}
+          repositories={repositories}
+          branches={branches}
+          repositoryLoadMessage={repositoryLoadMessage}
+          loading={loading}
+          onProfileChange={onProfileChange}
+          onSelectAdoProject={onSelectAdoProject}
+          onSelectRepository={onSelectRepository}
+          onReloadRepositories={onReloadRepositories}
+          onAnalyzeProject={onAnalyzeProject}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CurrentWorkCard({
+  profile,
+  workItem,
+  workflow,
+}: {
+  profile: ProjectProfile;
+  workItem?: AdoWorkItem;
+  workflow: WorkflowOrchestrationState;
+}) {
+  const hierarchy = [
+    profile.project_name || 'Project',
+    workItem?.type === 'Epic' ? workItem.title : 'Epic not selected',
+    workItem?.type === 'Feature' ? workItem.title : 'Feature context pending',
+    workItem?.type === 'Story' ? workItem.title : 'Story context pending',
+    workItem?.type === 'Task' ? workItem.title : 'Task context pending',
+  ];
+  return (
+    <section className="planner-card hei-current-work">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Current Work</div>
+          <strong>{workItem ? workItem.title : profile.project_name || 'Project Intelligence'}</strong>
+          <div className="planner-subtle">{workItem ? `${workItem.type} #${workItem.id} · ${workItem.state}` : 'Open from an Azure DevOps work item to load item context.'}</div>
+        </div>
+        <StatusBadge tone={workflow.blockers.length ? 'warning' : 'success'} label={workflow.currentStage} />
+      </div>
+      <div className="hei-hierarchy">
+        {hierarchy.map((item, index) => (
+          <React.Fragment key={`${item}-${index}`}>
+            <span className={index === 0 || item.includes('pending') || item.includes('not selected') ? 'muted' : ''}>{item}</span>
+            {index < hierarchy.length - 1 ? <b>↓</b> : null}
+          </React.Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecommendedActionHero({
+  workflow,
+  loading,
+  canContribute,
+  onContinue,
+}: {
+  workflow: WorkflowOrchestrationState;
+  loading: boolean;
+  canContribute: boolean;
+  onContinue: () => void;
+}) {
+  const impact = workflow.blockers.length
+    ? 'Clears workflow blockers before planning moves forward.'
+    : 'Moves the current work item to the next delivery-ready state.';
+  return (
+    <section className="planner-card hei-action-hero">
+      <div>
+        <div className="planner-label">Recommended Action</div>
+        <h2>{workflow.nextAction.label}</h2>
+        <p>{workflow.nextAction.reason}</p>
+      </div>
+      <div className="hei-action-meta">
+        <InfoPill label="Impact" value={impact} />
+        <InfoPill label="AI Time" value={estimatedAiTime(workflow.nextAction.action)} />
+        <InfoPill label="Token Use" value={estimatedTokenUse(workflow.nextAction.action)} />
+      </div>
+      <button className="planner-button" onClick={onContinue} disabled={loading || !canContribute}>Continue Workflow</button>
+    </section>
+  );
+}
+
+function RepositoryMetricsCard({
+  profile,
+  status,
+  capsuleStatus,
+}: {
+  profile: ProjectProfile;
+  status?: KnowledgeCacheStatus;
+  capsuleStatus?: ContextCapsuleStatus;
+}) {
+  const stack = mergeTechnologyStack(profile.technology_stack, profile.knowledge_registry.technology_stack);
+  const techCount = Object.values(stack).reduce((count, values) => count + values.length, 0);
+  const sourceFiles = status?.source_files?.length ? status.source_files : profile.knowledge_registry.source_files;
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Repository Intelligence</div>
+          <div className="planner-subtle">Knowledge extracted from repository documentation and cached project profile.</div>
+        </div>
+        <StatusBadge tone={hasKnowledgeRegistry(profile) ? 'success' : 'warning'} label={hasKnowledgeRegistry(profile) ? 'Ready' : 'Needs Analysis'} />
+      </div>
+      <div className="planner-summary-grid dense">
+        <SummaryTile title="Repository" value={status?.repository || profile.repository_connection.repository_name || 'Not connected'} />
+        <SummaryTile title="Knowledge Version" value={status?.knowledge_version || knowledgeVersion(profile)} />
+        <SummaryTile title="Modules" value={formatNumber(profile.knowledge_registry.modules.length)} />
+        <SummaryTile title="Flows" value={formatNumber(profile.knowledge_registry.flows.length)} />
+        <SummaryTile title="Documents" value={formatNumber(sourceFiles.length)} />
+        <SummaryTile title="Technologies" value={formatNumber(techCount)} />
+      </div>
+      <div className="planner-subtle">Capsules: {formatNumber(capsuleStatus?.ready_count || 0)} ready · Confidence: {hasKnowledgeRegistry(profile) ? 'High' : 'Needs repository scan'}</div>
+    </section>
+  );
+}
+
+function RepositoryDriftCard({
+  status,
+  profile,
+  loading,
+  canRefresh,
+  onRefresh,
+}: {
+  status?: KnowledgeCacheStatus;
+  profile: ProjectProfile;
+  loading: boolean;
+  canRefresh: boolean;
+  onRefresh: () => void;
+}) {
+  const changed = status?.changed_files || [];
+  const sourceFiles = status?.source_files?.length ? status.source_files : profile.knowledge_registry.source_files;
+  const driftRows = changed.length
+    ? changed.slice(0, 4)
+    : sourceFiles.slice(0, 4).map((file) => `${file} is up to date`);
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Repository Drift</div>
+          <div className="planner-subtle">Document changes that may affect planning and execution context.</div>
+        </div>
+        <StatusBadge tone={changed.length ? 'warning' : 'success'} label={changed.length ? 'Review Needed' : 'No Drift'} />
+      </div>
+      <div className="planner-status-grid">
+        <Row label="New Modules" value={changed.some((file) => file.includes('modules')) ? 'Possible' : 'None detected'} />
+        <Row label="Modified Flows" value={changed.some((file) => file.includes('flows')) ? 'Possible' : 'None detected'} />
+        <Row label="Documentation Changes" value={changed.length ? `${changed.length} changed` : 'Up to date'} />
+        <Row label="Architecture Changes" value={changed.some((file) => file.includes('architecture')) ? 'Review needed' : 'None detected'} />
+      </div>
+      <ListBlock title="Drift Signals" items={driftRows.length ? driftRows : ['Repository documents have not been analyzed yet.']} />
+      <div className="planner-actions compact">
+        <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading || !canRefresh}>Review Drift</button>
+      </div>
+    </section>
+  );
+}
+
+function StatusBadge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'error' | 'neutral' }) {
+  return <span className={`hei-status-badge ${tone}`}>{label}</span>;
+}
+
+function InfoPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="hei-info-pill">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function estimatedAiTime(action: WorkflowActionKind): string {
+  if (action === 'open_vscode' || action === 'open_planning' || action === 'open_execution') return 'Instant';
+  if (action.startsWith('approve_')) return 'No AI call';
+  if (action === 'build_execution') return '< 5 sec';
+  return '10-30 sec';
+}
+
+function estimatedTokenUse(action: WorkflowActionKind): string {
+  if (action === 'open_vscode' || action === 'open_planning' || action === 'open_execution' || action.startsWith('approve_')) return '0';
+  if (action === 'build_execution') return 'Low';
+  return 'Medium';
 }
 
 function ProjectSessionResumeCard({

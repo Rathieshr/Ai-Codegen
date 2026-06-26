@@ -3401,13 +3401,18 @@ def _item_relevance_score(capability: str, item: str, kind: str) -> int:
 
 
 def _feature_description(name: str, capability: str, outcome: str, users: list[str], modules: list[str], flows: list[str], profile: dict[str, Any]) -> str:
-    return "\n".join(
-        [
-            f"Business Goal: {_feature_business_goal(name, capability)}",
-            f"User Problem: {_user_problem_for_capability(capability, [])}.",
-            f"Business Value: {outcome}",
-        ]
-    )
+    user_text = ", ".join(users[:3]) or "operations users"
+    module_text = ", ".join(modules[:3]) or "the selected project modules"
+    flow_text = ", ".join(flows[:3]) or "the selected delivery flows"
+    application_text = ", ".join(_application_names(profile)[:4]) or "the configured applications"
+    problem = _user_problem_for_capability(capability, [])
+    sentences = [
+        f"{name} gives {user_text} a focused {capability.lower()} capability for situations where {problem}.",
+        f"It should connect {module_text} through {flow_text}, with user-facing touchpoints in {application_text}.",
+        f"The feature should provide clear review states, actionable operational context, permission-aware access, and validation paths that support the approved outcome.",
+        f"Expected value: {outcome}",
+    ]
+    return " ".join(sentences)
 
 
 def _feature_business_goal(name: str, capability: str) -> str:

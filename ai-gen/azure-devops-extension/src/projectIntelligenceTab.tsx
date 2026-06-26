@@ -4278,8 +4278,7 @@ function RelevanceSummary({ metadata, draft }: { metadata?: ProviderMetadata; dr
     ...(draft?.impactedModules || []),
     ...(draft?.impactedFlows || []),
   ]).slice(0, 8);
-  const rejected = (draft?.rejectedContext || metadata?.rejected_context || []).slice(0, 5);
-  if (!selected.length && !rejected.length) {
+  if (!selected.length) {
     return null;
   }
   return (
@@ -4288,16 +4287,6 @@ function RelevanceSummary({ metadata, draft }: { metadata?: ProviderMetadata; dr
         <div>
           <span className="planner-label-inline">Generated using:</span>
           {selected.map((item) => <span className="planner-chip" key={item}>{item}</span>)}
-        </div>
-      ) : null}
-      {rejected.length ? (
-        <div>
-          <span className="planner-label-inline">Excluded:</span>
-          {rejected.map((item) => (
-            <span className="planner-chip muted" key={`${item.type || 'context'}-${item.name || item.reason}`}>
-              {item.name || 'Context'}{item.reason ? ` - ${item.reason}` : ''}
-            </span>
-          ))}
         </div>
       ) : null}
     </div>

@@ -812,25 +812,28 @@ class ProjectIntelligenceService:
         active_profile = _merge_external_knowledge(active_profile, knowledge_profile or {})
         title = _clean_text(epic.get("title")) or "Untitled epic"
         description = _clean_text(epic.get("description"))
-        keywords = _context_keywords(title, description, active_profile)
+        selection = _select_knowledge_context(active_profile, epic, "Epic")
+        relevant_profile = _profile_with_relevance(active_profile, selection)
+        keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
         business_goal = _sentence(f"Improve {title}", description or active_profile["project_description"])
-        capability_plan = _capability_decomposition(title, business_goal, keywords, active_profile)
+        capability_plan = _capability_decomposition(title, business_goal, keywords, relevant_profile)
         features = capability_plan["recommended_features"]
         deterministic = {
             "business_goal": business_goal,
-            "business_outcomes": _business_outcomes(keywords, active_profile),
-            "users": _users_for_profile(active_profile),
+            "business_outcomes": _business_outcomes(keywords, relevant_profile),
+            "users": _users_for_profile(relevant_profile),
             "user_problems": capability_plan["user_problems"],
             "capability_categories": capability_plan["capability_categories"],
-            "applications": _application_names(active_profile),
-            "constraints": _constraints_for_profile(active_profile),
-            "risks": _risks_for_profile(active_profile, keywords),
-            "dependencies": _dependencies_for_profile(active_profile),
+            "applications": _application_names(relevant_profile),
+            "constraints": _constraints_for_profile(relevant_profile),
+            "risks": _risks_for_profile(relevant_profile, keywords),
+            "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
             "recommended_features": features,
             "capability_diagnostics": capability_plan["diagnostics"],
-            "generation_review": _generation_review(active_profile, features, [], keywords),
+            "generation_review": _generation_review(relevant_profile, features, _selection_names(selection, "relevant_modules"), keywords),
+            **_relevance_metadata(selection),
         }
-        active_profile = self._profile_with_capsule("project", active_profile, epic)
+        active_profile = self._profile_with_capsule("project", relevant_profile, epic)
         phi = _project_phi_json("refine_epic", active_profile, epic, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
@@ -844,10 +847,10 @@ class ProjectIntelligenceService:
                 diagnostics=merged.get("capability_diagnostics"),
             )
             merged["generation_review"] = _generation_review(active_profile, merged["recommended_features"], [], keywords)
-            return _with_provider_metadata(merged, phi["metadata"])
+            return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
         if phi["blocked"]:
             return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, {**phi["metadata"], **_relevance_metadata(selection)})
 
     def refine_feature(
         self,
@@ -859,30 +862,33 @@ class ProjectIntelligenceService:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(feature.get("title")) or "Untitled feature"
         description = _clean_text(feature.get("description"))
-        modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
-        flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
-        story_plan = _story_decomposition(title, modules, flows, active_profile, feature)
+        selection = _select_knowledge_context(active_profile, feature, "Feature")
+        relevant_profile = _profile_with_relevance(active_profile, selection)
+        modules = _selection_names(selection, "relevant_modules")
+        flows = _selection_names(selection, "relevant_flows")
+        story_plan = _story_decomposition(title, modules, flows, relevant_profile, feature)
         deterministic = {
             "feature_summary": _sentence(title, description or f"Deliver {title} using project-aware modules and flows."),
             "affected_modules": modules,
             "affected_flows": flows,
-            "dependencies": _dependencies_for_profile(active_profile),
-            "risks": _risks_for_profile(active_profile, _context_keywords(title, description, active_profile)),
+            "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
+            "risks": _risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
             "recommended_stories": story_plan["recommended_stories"],
             "story_generation_diagnostics": story_plan["diagnostics"],
-            "generation_review": _generation_review(active_profile, story_plan["recommended_stories"], modules, _context_keywords(title, description, active_profile)),
+            "generation_review": _generation_review(relevant_profile, story_plan["recommended_stories"], modules, _context_keywords(title, description, relevant_profile)),
+            **_relevance_metadata(selection),
         }
-        active_profile = self._profile_with_capsule("feature", active_profile, feature)
+        active_profile = self._profile_with_capsule("feature", relevant_profile, feature)
         phi = _project_phi_json("refine_feature", active_profile, feature, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
             merged["recommended_stories"] = story_plan["recommended_stories"]
             merged["story_generation_diagnostics"] = story_plan["diagnostics"]
             merged["generation_review"] = deterministic["generation_review"]
-            return _with_provider_metadata(merged, phi["metadata"])
+            return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
         if phi["blocked"]:
             return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, {**phi["metadata"], **_relevance_metadata(selection)})
 
     def refine_story(
         self,
@@ -894,14 +900,16 @@ class ProjectIntelligenceService:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(story.get("title")) or "Untitled story"
         description = _clean_text(story.get("description"))
-        modules = _select_relevant_items(active_profile["knowledge_registry"]["modules"], title, description, fallback_count=3)
-        flows = _select_relevant_items(active_profile["knowledge_registry"]["flows"], title, description, fallback_count=3)
-        applications = _application_names(active_profile)
-        impact = _normalize_story_impact(self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"]))
+        selection = _select_knowledge_context(active_profile, story, "Story")
+        relevant_profile = _profile_with_relevance(active_profile, selection)
+        modules = _selection_names(selection, "relevant_modules")
+        flows = _selection_names(selection, "relevant_flows")
+        applications = _application_names(relevant_profile)
+        impact = _normalize_story_impact(self.analyze_story_impact(story, relevant_profile, relevant_profile["knowledge_registry"]))
         acceptance = _acceptance_criteria(title, flows, modules)
         acceptance_categories = _acceptance_criteria_categories(acceptance)
         acceptance_quality_score = _acceptance_criteria_quality_score(acceptance)
-        task_plan = _task_intelligence(title, description, acceptance, impact, active_profile)
+        task_plan = _task_intelligence(title, description, acceptance, impact, relevant_profile)
         deterministic = {
             "story_summary": _sentence(title, description or f"Implement {title} within the approved project context."),
             "acceptance_criteria": acceptance,
@@ -910,16 +918,17 @@ class ProjectIntelligenceService:
             "affected_applications": applications,
             "affected_modules": modules,
             "affected_flows": flows,
-            "dependencies": _dependencies_for_profile(active_profile),
-            "risks": _risks_for_profile(active_profile, _context_keywords(title, description, active_profile)),
-            "ui_considerations": _ui_considerations(active_profile, flows),
-            "technical_considerations": _technical_considerations(active_profile, modules),
-            "qa_considerations": _qa_considerations(active_profile, flows),
+            "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
+            "risks": _risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
+            "ui_considerations": _ui_considerations(relevant_profile, flows),
+            "technical_considerations": _technical_considerations(relevant_profile, modules),
+            "qa_considerations": _qa_considerations(relevant_profile, flows),
             "proposed_tasks": task_plan["tasks"],
             "task_intelligence_diagnostics": task_plan["diagnostics"],
-            "generation_review": _generation_review(active_profile, task_plan["tasks"], modules, _context_keywords(title, description, active_profile)),
+            "generation_review": _generation_review(relevant_profile, task_plan["tasks"], modules, _context_keywords(title, description, relevant_profile)),
+            **_relevance_metadata(selection),
         }
-        active_profile = self._profile_with_capsule("story", active_profile, story)
+        active_profile = self._profile_with_capsule("story", relevant_profile, story)
         phi = _project_phi_json("refine_story", active_profile, story, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
@@ -929,10 +938,10 @@ class ProjectIntelligenceService:
             merged["proposed_tasks"] = task_plan["tasks"]
             merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
             merged["generation_review"] = deterministic["generation_review"]
-            return _with_provider_metadata(merged, phi["metadata"])
+            return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
         if phi["blocked"]:
             return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, phi["metadata"])
+        return _with_provider_metadata(deterministic, {**phi["metadata"], **_relevance_metadata(selection)})
 
     def generate_qa_test_cases(
         self,
@@ -995,18 +1004,20 @@ class ProjectIntelligenceService:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(story.get("title")) or "Untitled story"
         description = _clean_text(story.get("description"))
-        keywords = _context_keywords(title, description, active_profile)
-        modules = _impact_modules(active_profile, title, description, keywords)
-        flows = _impact_flows(active_profile, title, description, keywords)
+        selection = _select_knowledge_context(active_profile, story, "Story")
+        keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
+        modules = _selection_names(selection, "relevant_modules")
+        flows = _selection_names(selection, "relevant_flows")
         return {
             "affected_applications": _impact_applications(active_profile, keywords),
             "affected_modules": modules,
             "affected_flows": flows,
             "affected_components": _impact_components(active_profile, modules, flows),
-            "dependencies": _impact_dependencies(active_profile, keywords, modules, flows),
+            "dependencies": _selection_names(selection, "relevant_dependencies") or _impact_dependencies(active_profile, keywords, modules, flows),
             "risks": _impact_risks(active_profile, keywords, modules, flows),
             "integration_points": _integration_points(active_profile, modules, flows),
             "recommended_reviewers": _recommended_reviewers(active_profile, modules, flows),
+            **_relevance_metadata(selection),
             **_knowledge_registry_metadata("Impact analysis uses the Knowledge Registry and relationship graph."),
         }
 
@@ -1019,9 +1030,10 @@ class ProjectIntelligenceService:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(feature.get("title")) or "Untitled feature"
         description = _clean_text(feature.get("description"))
-        keywords = _context_keywords(title, description, active_profile)
-        modules = _impact_modules(active_profile, title, description, keywords, fallback_count=4)
-        flows = _impact_flows(active_profile, title, description, keywords, fallback_count=4)
+        selection = _select_knowledge_context(active_profile, feature, "Feature")
+        keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
+        modules = _selection_names(selection, "relevant_modules")
+        flows = _selection_names(selection, "relevant_flows")
         return {
             "affected_applications": _impact_applications(active_profile, keywords),
             "affected_modules": modules,
@@ -1029,6 +1041,7 @@ class ProjectIntelligenceService:
             "cross_team_dependencies": _cross_team_dependencies(active_profile, modules),
             "integration_points": _integration_points(active_profile, modules, flows),
             "risks": _impact_risks(active_profile, keywords, modules, flows),
+            **_relevance_metadata(selection),
             **_knowledge_registry_metadata("Impact analysis uses the Knowledge Registry and relationship graph."),
         }
 
@@ -1041,9 +1054,10 @@ class ProjectIntelligenceService:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         title = _clean_text(epic.get("title")) or "Untitled epic"
         description = _clean_text(epic.get("description"))
-        keywords = _context_keywords(title, description, active_profile)
-        modules = _impact_modules(active_profile, title, description, keywords, fallback_count=6)
-        flows = _impact_flows(active_profile, title, description, keywords, fallback_count=6)
+        selection = _select_knowledge_context(active_profile, epic, "Epic")
+        keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
+        modules = _selection_names(selection, "relevant_modules")
+        flows = _selection_names(selection, "relevant_flows")
         return {
             "affected_applications": _impact_applications(active_profile, keywords),
             "affected_modules": modules,
@@ -1051,6 +1065,7 @@ class ProjectIntelligenceService:
             "program_dependencies": _program_dependencies(active_profile, modules, flows),
             "risks": _impact_risks(active_profile, keywords, modules, flows),
             "recommended_rollout_strategy": _rollout_strategy(active_profile, keywords),
+            **_relevance_metadata(selection),
             **_knowledge_registry_metadata("Impact analysis uses the Knowledge Registry and relationship graph."),
         }
 
@@ -1066,19 +1081,22 @@ class ProjectIntelligenceService:
         story = story or {}
         title = _clean_text(story.get("title")) or "Untitled story"
         description = _clean_text(story.get("description"))
-        refined_story = self.refine_story(story, active_profile, active_profile["knowledge_registry"], {"force_provider": "deterministic_fallback"})
+        selection = _select_knowledge_context(active_profile, story, "Story")
+        relevant_profile = _profile_with_relevance(active_profile, selection)
+        refined_story = self.refine_story(story, relevant_profile, relevant_profile["knowledge_registry"], {"force_provider": "deterministic_fallback"})
         impact = _normalize_story_impact(
-            impact_analysis or self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"])
+            impact_analysis or self.analyze_story_impact(story, relevant_profile, relevant_profile["knowledge_registry"])
         )
         acceptance = _string_list(story.get("acceptance_criteria")) or refined_story["acceptance_criteria"]
         has_impact = any(impact[key] for key in ["affected_applications", "affected_modules", "affected_flows", "dependencies", "risks"])
-        readiness = _execution_readiness_score(active_profile, has_impact)
-        recommended_files = _recommended_files(active_profile, impact, title)
-        task_plan = _task_intelligence(title, description, acceptance, impact, active_profile, recommended_files)
+        readiness = _execution_readiness_score(relevant_profile, has_impact)
+        recommended_files = _recommended_files(relevant_profile, impact, title)
+        file_ranking_status = "Repository file ranking available" if recommended_files else "Repository file ranking not available"
+        task_plan = _task_intelligence(title, description, acceptance, impact, relevant_profile, recommended_files)
         generated_tasks = task_plan["tasks"]
         implementation_tasks = _tasks_for_areas(generated_tasks, ["UI Work", "Backend Work", "Data Work", "Analytics Work"])
         testing_tasks = _tasks_for_areas(generated_tasks, ["QA Work"])
-        documentation_tasks = _documentation_tasks(title, active_profile, impact)
+        documentation_tasks = _documentation_tasks(title, relevant_profile, impact)
         deterministic = {
             "story_summary": _sentence(title, description or refined_story["story_summary"]),
             "acceptance_criteria": acceptance,
@@ -1087,23 +1105,25 @@ class ProjectIntelligenceService:
             "affected_flows": impact["affected_flows"] or refined_story["affected_flows"],
             "dependencies": impact["dependencies"] or refined_story["dependencies"],
             "risks": impact["risks"] or refined_story["risks"],
-            "technology_stack": active_profile["technology_stack"],
-            "ui_guidelines": active_profile["ui_guidelines"],
-            "development_standards": active_profile["development_standards"],
+            "technology_stack": relevant_profile["technology_stack"],
+            "ui_guidelines": relevant_profile["ui_guidelines"],
+            "development_standards": relevant_profile["development_standards"],
             "recommended_files": recommended_files,
+            "file_ranking_status": file_ranking_status,
             "acceptance_criteria_mapping": _acceptance_criteria_mapping(acceptance, implementation_tasks),
             "proposed_tasks": generated_tasks,
             "task_intelligence_diagnostics": task_plan["diagnostics"],
             "implementation_tasks": implementation_tasks,
             "testing_tasks": testing_tasks,
             "documentation_tasks": documentation_tasks,
-            "implementation_notes": _implementation_notes(active_profile, impact),
+            "implementation_notes": _implementation_notes(relevant_profile, impact),
             "execution_readiness": readiness["label"],
             "execution_readiness_score": readiness["score"],
             "execution_readiness_breakdown": readiness["breakdown"],
             "execution_readiness_result": readiness["result"],
+            **_relevance_metadata(selection),
         }
-        active_profile = self._profile_with_capsule("execution", active_profile, {**story, "tasks": generated_tasks, "acceptance_criteria": acceptance})
+        active_profile = self._profile_with_capsule("execution", relevant_profile, {**story, "tasks": generated_tasks, "acceptance_criteria": acceptance})
         metadata = _execution_primary_metadata(time.monotonic(), "build_execution_context")
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
@@ -1508,8 +1528,16 @@ def _build_context_capsule(
 
 def _context_capsule_payload(capsule_type: str, profile: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     registry = profile["knowledge_registry"]
-    modules = _select_relevant_items(registry["modules"], _clean_text(item.get("title")), _clean_text(item.get("description")), fallback_count=6)
-    flows = _select_relevant_items(registry["flows"], _clean_text(item.get("title")), _clean_text(item.get("description")), fallback_count=6)
+    selection = profile.get("_knowledge_relevance") if isinstance(profile.get("_knowledge_relevance"), dict) else _select_knowledge_context(profile, item, capsule_type.title())
+    modules = _selection_names(selection, "relevant_modules")
+    flows = _selection_names(selection, "relevant_flows")
+    standards = _selection_names(selection, "relevant_standards")
+    relevance_payload = {
+        "intent_keywords": _string_list(selection.get("intent", {}).get("keywords"))[:16],
+        "rejected_context": selection.get("rejected_context", [])[:12],
+        "relevance_scores": selection.get("relevance_scores", {}),
+        "context_source": selection.get("context_source") or "knowledge_relevance_selector",
+    }
     project_payload = {
         "project_summary": _project_summary(profile),
         "project_name": profile["project_name"],
@@ -1517,12 +1545,13 @@ def _context_capsule_payload(capsule_type: str, profile: dict[str, Any], item: d
         "project_type": profile["project_type"],
         "applications": _application_names(profile)[:6],
         "architecture_summary": _truncate_text(_architecture_summary_text(profile, registry), 700),
-        "modules": registry["modules"][:10],
-        "flows": registry["flows"][:10],
-        "standards": _unique([*_flatten_standards(profile["development_standards"]), *registry["standards"]])[:10],
+        "modules": modules or registry["modules"][:4],
+        "flows": flows or registry["flows"][:4],
+        "standards": standards or _unique([*_flatten_standards(profile["development_standards"]), *registry["standards"]])[:8],
         "roles": _users_for_profile(profile),
         "technology_stack": _compact_stack(profile),
         "knowledge_version": _knowledge_version(profile),
+        **relevance_payload,
     }
     if capsule_type == "project":
         return project_payload
@@ -3681,6 +3710,9 @@ def _story_decomposition(feature_title: str, modules: list[str], flows: list[str
             "user_action": action["want"],
             "coverage_area": action["coverage_area"],
             "acceptance_criteria": _story_acceptance_for_action(action, persona),
+            "modules_used": modules[:3],
+            "flows_used": flows[:3],
+            "confidence": 0.82 if modules or flows else 0.58,
             "supporting_context": {
                 "modules": modules[:3],
                 "flows": flows[:3],
@@ -3707,6 +3739,9 @@ def _story_decomposition(feature_title: str, modules: list[str], flows: list[str
                 "user_action": action["want"],
                 "coverage_area": action["coverage_area"],
                 "acceptance_criteria": _story_acceptance_for_action(action, persona),
+                "modules_used": modules[:3],
+                "flows_used": flows[:3],
+                "confidence": 0.82 if modules or flows else 0.58,
                 "supporting_context": {"modules": modules[:3], "flows": flows[:3]},
             }
             story, rejected = _apply_story_quality_gate(story, action, persona)
@@ -4105,6 +4140,298 @@ def _select_relevant_items(items: list[str], title: str, description: str, fallb
         scored.append((score, item))
     selected = [item for score, item in sorted(scored, key=lambda pair: pair[0], reverse=True) if score > 0]
     return _unique(selected or items[:fallback_count])[:fallback_count]
+
+
+def _relevance_keyword_set(text: str) -> set[str]:
+    stop_words = {"with", "from", "that", "this", "into", "when", "then", "they", "their", "want", "user", "users", "story", "feature", "epic"}
+    normalized = _clean_text(text).replace("-", " ").replace("_", " ").lower()
+    return {word.strip(".,:;()[]{}") for word in normalized.split() if len(word.strip(".,:;()[]{}")) > 2 and word.strip(".,:;()[]{}") not in stop_words}
+
+
+class KnowledgeRelevanceSelector:
+    """Selects the smallest useful knowledge slice for a work item intent."""
+
+    POSITIVE_RULES: list[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = [
+        (("fault", "fault event", "critical event"), ("Fault Monitoring", "Telemetry"), ("Fault Event Review",)),
+        (("outage", "investigation", "triage"), ("Fault Monitoring", "Telemetry", "Device Management", "Asset Health"), ("Outage Investigation", "Fault Event Review", "Device Health Review")),
+        (("telemetry", "freshness", "signal"), ("Telemetry",), ("Telemetry Review", "Device Health Review")),
+        (("access", "restriction", "permission", "unauthorized"), ("Authentication", "Authorization"), ("Login",)),
+        (("device health", "asset health"), ("Device Management", "Asset Health", "Telemetry"), ("Device Health Review",)),
+        (("firmware", "version", "rollout", "upgrade", "rollback", "compliance", "device update"), ("Firmware", "Firmware Management", "Firmware Update"), ("Firmware Rollout", "Firmware Review")),
+        (("login", "token", "session", "authentication", "authorization", "auth"), ("Authentication", "Authorization"), ("Login", "Token Refresh")),
+        (("report", "reporting", "trend", "dashboard", "kpi", "metric", "metrics", "analysis", "analytics"), ("Analytics", "Reporting"), ("Analytics", "Reporting", "Dashboard")),
+    ]
+
+    NEGATIVE_RULES: list[tuple[tuple[str, ...], tuple[str, ...], str]] = [
+        (
+            ("firmware", "version", "rollout", "upgrade", "rollback", "compliance", "device update"),
+            ("firmware",),
+            "story does not mention firmware, rollout, version, upgrade, rollback, or compliance",
+        ),
+        (
+            ("session", "login", "token", "authentication", "authorization", "auth"),
+            ("token refresh",),
+            "story does not mention session expiry, login, token, authentication refresh, or authorization failure",
+        ),
+        (
+            ("report", "reporting", "trend", "dashboard", "kpi", "metric", "metrics", "analysis", "analytics"),
+            ("analytics", "reporting"),
+            "story does not mention reporting, trend, dashboard, KPI, metrics, or analysis",
+        ),
+    ]
+
+    def select(
+        self,
+        work_item_text: str,
+        work_item_type: str,
+        parent_context: dict[str, Any] | None,
+        project_id: str,
+        knowledge_registry: dict[str, Any],
+        repository_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        text = _clean_text(work_item_text)
+        parent_text = _clean_text(" ".join(str(value) for value in (parent_context or {}).values()))
+        combined = f"{text} {parent_text}".lower()
+        intent = self.extract_intent(combined, work_item_type, parent_context)
+        rejected: list[dict[str, Any]] = []
+        scores: dict[str, float] = {}
+        modules = self._select_items(
+            _string_list(knowledge_registry.get("modules")),
+            "module",
+            combined,
+            intent,
+            rejected,
+            scores,
+        )
+        flows = self._select_items(
+            _string_list(knowledge_registry.get("flows")),
+            "flow",
+            combined,
+            intent,
+            rejected,
+            scores,
+        )
+        dependencies = self._dependencies(combined, [item["name"] for item in modules], [item["name"] for item in flows])
+        standards = self._standards(combined, knowledge_registry)
+        files = self._ranked_files(combined, repository_snapshot or knowledge_registry)
+        token_estimate = _estimate_tokens(json.dumps({"intent": intent, "modules": modules, "flows": flows, "dependencies": dependencies}, ensure_ascii=True))
+        return {
+            "project_id": project_id,
+            "intent": intent,
+            "relevant_modules": modules,
+            "relevant_flows": flows,
+            "relevant_dependencies": dependencies,
+            "relevant_standards": standards,
+            "relevant_files": files,
+            "rejected_context": rejected,
+            "relevance_scores": scores,
+            "token_estimate": token_estimate,
+            "context_source": "knowledge_relevance_selector",
+        }
+
+    def extract_intent(self, text: str, work_item_type: str = "", parent_context: dict[str, Any] | None = None) -> dict[str, Any]:
+        keywords = sorted(_relevance_keyword_set(text))
+        phrases = [
+            phrase
+            for phrase in [
+                "outage investigation",
+                "fault event",
+                "device health",
+                "telemetry freshness",
+                "token refresh",
+                "firmware rollout",
+                "firmware upgrade",
+                "access restriction",
+            ]
+            if phrase in text
+        ]
+        roles = [role for role in ["operations user", "field technician", "operator", "administrator", "support analyst"] if role in text]
+        actions = [action for action in ["review", "open", "start", "triage", "investigate", "monitor", "filter", "search", "notify", "validate"] if action in text]
+        domain_objects = [obj for obj in ["fault event", "outage", "device", "telemetry", "device health", "firmware", "token", "session", "dashboard"] if obj in text]
+        return {
+            "primary_capability": phrases[0] if phrases else (keywords[0] if keywords else _clean_text(work_item_type).lower()),
+            "user_role": roles[0] if roles else "",
+            "business_action": actions[0] if actions else "",
+            "affected_domain_objects": domain_objects,
+            "explicit_modules": [],
+            "explicit_flows": phrases,
+            "keywords": _unique([*phrases, *roles, *actions, *domain_objects, *keywords])[:24],
+        }
+
+    def _select_items(
+        self,
+        items: list[str],
+        item_type: str,
+        text: str,
+        intent: dict[str, Any],
+        rejected: list[dict[str, Any]],
+        scores: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        selected: list[dict[str, Any]] = []
+        for item in items:
+            name = _clean_text(item)
+            if not name:
+                continue
+            lowered = name.lower()
+            negative_reason = self._negative_reason(lowered, text)
+            if negative_reason:
+                rejected.append(
+                    {
+                        "name": name,
+                        "type": item_type,
+                        "confidence": 0.05,
+                        "reason": f"{name} removed because {negative_reason}.",
+                        "evidence": [],
+                        "source": "negative_relevance_rule",
+                    }
+                )
+                scores[name] = 0.05
+                continue
+            score, evidence, reason = self._score_item(lowered, text, intent)
+            if score >= 0.34:
+                scores[name] = round(score, 2)
+                selected.append(
+                    {
+                        "name": name,
+                        "type": item_type,
+                        "confidence": round(score, 2),
+                        "reason": reason,
+                        "evidence": evidence[:5],
+                        "source": "repository_intelligence",
+                    }
+                )
+            else:
+                scores[name] = round(score, 2)
+        selected.sort(key=lambda item: item["confidence"], reverse=True)
+        return selected[:6]
+
+    def _score_item(self, item_name: str, text: str, intent: dict[str, Any]) -> tuple[float, list[str], str]:
+        evidence: list[str] = []
+        score = 0.0
+        item_tokens = _relevance_keyword_set(item_name)
+        text_tokens = _relevance_keyword_set(text)
+        matches = sorted(item_tokens.intersection(text_tokens))
+        if matches:
+            score += min(0.55, 0.22 * len(matches))
+            evidence.extend(matches)
+        for cues, module_targets, flow_targets in self.POSITIVE_RULES:
+            if any(cue in text for cue in cues):
+                targets = [*module_targets, *flow_targets]
+                if any(target.lower() in item_name or item_name in target.lower() for target in targets):
+                    score += 0.72
+                    evidence.extend([cue for cue in cues if cue in text][:2])
+        if any(keyword in item_name for keyword in _string_list(intent.get("keywords"))):
+            score += 0.2
+        reason = "Matched work item intent through repository knowledge."
+        return min(score, 0.98), _unique(evidence), reason
+
+    def _negative_reason(self, item_name: str, text: str) -> str:
+        for required_cues, blocked_names, reason in self.NEGATIVE_RULES:
+            if any(blocked in item_name for blocked in blocked_names) and not any(cue in text for cue in required_cues):
+                return reason
+        return ""
+
+    def _dependencies(self, text: str, modules: list[str], flows: list[str]) -> list[dict[str, Any]]:
+        impact = {"affected_modules": modules, "affected_flows": flows}
+        keywords = sorted(_relevance_keyword_set(text))
+        deps = []
+        if any(keyword in keywords for keyword in ["otp", "sms"]):
+            deps.extend(["Auth Service", "SMS Provider"])
+        if any(keyword in keywords for keyword in ["fault", "event"]):
+            deps.extend(["Event Repository", "Fault Classification Rules"])
+        if "telemetry" in keywords or any("Telemetry" in module for module in modules):
+            deps.extend(["Telemetry Service", "Device Connectivity"])
+        if any(keyword in keywords for keyword in ["login", "token", "session", "auth"]):
+            deps.extend(["Auth Service", "Session Store"])
+        if "firmware" in keywords:
+            deps.extend(["Firmware Version Service", "Device Update Channel"])
+        deps.extend(f"{module} owner review" for module in impact["affected_modules"][:2])
+        deps.extend(f"{flow} regression coverage" for flow in impact["affected_flows"][:2])
+        return [
+            {"name": dep, "type": "dependency", "confidence": 0.72, "reason": "Derived from selected modules and flows.", "evidence": modules[:2] + flows[:2], "source": "knowledge_relevance_selector"}
+            for dep in _unique(deps)[:8]
+        ]
+
+    def _standards(self, text: str, registry: dict[str, Any]) -> list[dict[str, Any]]:
+        standards = _string_list(registry.get("standards"))
+        selected = []
+        for standard in standards[:8]:
+            selected.append(
+                {"name": standard, "type": "standard", "confidence": 0.45, "reason": "Project standard applies unless contradicted by the work item.", "evidence": [], "source": "knowledge_registry"}
+            )
+        return selected
+
+    def _ranked_files(self, text: str, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_files = snapshot.get("ranked_files") or snapshot.get("repository_file_ranking") or []
+        ranked: list[dict[str, Any]] = []
+        for item in raw_files if isinstance(raw_files, list) else []:
+            if isinstance(item, str):
+                path = item
+                score = 0.4
+            elif isinstance(item, dict):
+                path = _clean_text(item.get("path") or item.get("file") or item.get("name"))
+                score = float(item.get("score") or item.get("confidence") or 0.4)
+            else:
+                continue
+            if path:
+                ranked.append({"name": path, "type": "file", "confidence": round(score, 2), "reason": "Repository-ranked file.", "evidence": [], "source": "repository_file_ranking"})
+        return ranked[:8]
+
+
+KNOWLEDGE_RELEVANCE_SELECTOR = KnowledgeRelevanceSelector()
+
+
+def _selection_names(selection: dict[str, Any], key: str) -> list[str]:
+    return [item["name"] for item in selection.get(key, []) if isinstance(item, dict) and _clean_text(item.get("name"))]
+
+
+def _relevance_metadata(selection: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "intent_keywords": _string_list(selection.get("intent", {}).get("keywords"))[:24],
+        "selected_modules": _selection_names(selection, "relevant_modules"),
+        "selected_flows": _selection_names(selection, "relevant_flows"),
+        "selected_dependencies": _selection_names(selection, "relevant_dependencies"),
+        "rejected_context": selection.get("rejected_context", []),
+        "relevance_scores": selection.get("relevance_scores", {}),
+        "token_estimate": selection.get("token_estimate", 0),
+        "context_source": selection.get("context_source") or "knowledge_relevance_selector",
+    }
+
+
+def _select_knowledge_context(
+    profile: dict[str, Any],
+    work_item: dict[str, Any],
+    work_item_type: str,
+    parent_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    text = " ".join(
+        [
+            _clean_text(work_item.get("title")),
+            _clean_text(work_item.get("description")),
+            " ".join(_string_list(work_item.get("acceptance_criteria"))),
+            " ".join(_string_list(work_item.get("business_outcomes"))),
+        ]
+    )
+    return KNOWLEDGE_RELEVANCE_SELECTOR.select(
+        text,
+        work_item_type,
+        parent_context,
+        _clean_text(profile.get("project_id")),
+        profile.get("knowledge_registry") or {},
+        profile.get("knowledge_registry") or {},
+    )
+
+
+def _profile_with_relevance(profile: dict[str, Any], selection: dict[str, Any]) -> dict[str, Any]:
+    registry = dict(profile.get("knowledge_registry") or {})
+    selected_modules = _selection_names(selection, "relevant_modules")
+    selected_flows = _selection_names(selection, "relevant_flows")
+    selected_standards = _selection_names(selection, "relevant_standards")
+    registry["modules"] = selected_modules
+    registry["flows"] = selected_flows
+    if selected_standards:
+        registry["standards"] = selected_standards
+    return {**profile, "knowledge_registry": registry, "_knowledge_relevance": selection}
 
 
 def _business_outcomes(keywords: list[str], profile: dict[str, Any]) -> list[str]:
@@ -5927,22 +6254,18 @@ def _normalize_story_impact(value: dict[str, Any]) -> dict[str, list[str]]:
 
 
 def _recommended_files(profile: dict[str, Any], impact: dict[str, list[str]], story_title: str = "") -> list[str]:
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    ranked = registry.get("ranked_files") or registry.get("repository_file_ranking") or profile.get("repository_file_ranking") or []
     files: list[str] = []
-    modules = impact["affected_modules"]
-    flows = impact["affected_flows"]
-    components = impact["affected_components"]
-    story_slug = _file_slug(story_title)
-    lowered_story = story_title.lower()
-    if any(app["type"] == "Mobile" for app in profile["applications"]):
-        if "fault" in lowered_story and "detail" in lowered_story:
-            files.extend(["Mobile/FaultEventViewModel.cs", "Mobile/FaultEventDetailsPage.xaml"])
-        files.extend(_file_guess("mobile", components or flows or modules or [story_slug]))
-    if any(app["type"] in ["Backend", "API"] for app in profile["applications"]):
-        if "fault" in lowered_story:
-            files.extend(["Backend/FaultEventController.cs", "Backend/FaultEventRepository.cs"])
-        files.extend(_file_guess("backend", modules or flows or [story_slug]))
-    if any(app["type"] == "Web Portal" for app in profile["applications"]):
-        files.extend(_file_guess("web", components or flows))
+    for item in ranked if isinstance(ranked, list) else []:
+        if isinstance(item, str):
+            path = _clean_text(item)
+        elif isinstance(item, dict):
+            path = _clean_text(item.get("path") or item.get("file") or item.get("name"))
+        else:
+            path = ""
+        if path:
+            files.append(path)
     return _unique(files)[:8]
 
 

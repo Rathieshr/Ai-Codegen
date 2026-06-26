@@ -219,6 +219,23 @@ type ProviderMetadata = {
   deterministic_generation_ms?: number;
   phi_enrichment_ms?: number;
   timeout_used?: boolean;
+  intent_keywords?: string[];
+  selected_modules?: string[];
+  selected_flows?: string[];
+  selected_dependencies?: string[];
+  rejected_context?: RejectedContextItem[];
+  relevance_scores?: Record<string, number>;
+  token_estimate?: number;
+  context_source?: string;
+};
+
+type RejectedContextItem = {
+  name?: string;
+  type?: string;
+  confidence?: number;
+  reason?: string;
+  evidence?: string[];
+  source?: string;
 };
 
 type ProjectProfile = {
@@ -500,6 +517,7 @@ type ExecutionContextResult = ProviderMetadata & {
   ui_guidelines: ProjectProfile['ui_guidelines'];
   development_standards: DevelopmentStandards;
   recommended_files: string[];
+  file_ranking_status?: string;
   acceptance_criteria_mapping: Array<{ acceptance_criterion: string; implementation_task: string }>;
   proposed_tasks?: StoryTask[];
   task_intelligence_diagnostics?: {
@@ -571,6 +589,8 @@ type EpicRefinement = ProviderMetadata & {
     risks?: string[];
     acceptance_criteria_count?: number;
     acceptance_criteria_quality_score?: number;
+    rejected_irrelevant_context?: RejectedContextItem[];
+    confidence?: number;
     status?: string;
   }>;
   generation_review?: GenerationReview;
@@ -582,7 +602,18 @@ type FeatureRefinement = ProviderMetadata & {
   affected_flows: string[];
   dependencies: string[];
   risks: string[];
-  recommended_stories: Array<{ title: string; description: string; acceptance_criteria?: string[]; coverage_area?: string }>;
+  recommended_stories: Array<{
+    title: string;
+    description: string;
+    acceptance_criteria?: string[];
+    coverage_area?: string;
+    modules_used?: string[];
+    flows_used?: string[];
+    affected_modules?: string[];
+    affected_flows?: string[];
+    rejected_irrelevant_context?: RejectedContextItem[];
+    confidence?: number;
+  }>;
   generation_review?: GenerationReview;
   story_generation_diagnostics?: {
     capabilities_identified?: string[];
@@ -746,6 +777,8 @@ type ChildDraft = {
   impactedFlows?: string[];
   dependencies?: string[];
   risks?: string[];
+  rejectedContext?: RejectedContextItem[];
+  relevanceConfidence?: number;
   acceptanceCriteriaCount?: number;
   acceptanceCriteriaQualityScore?: number;
   selected: boolean;
@@ -4175,6 +4208,7 @@ function GeneratedChildWorkItems({
       <div className="planner-label">Generated Child Work Items</div>
       <div className="planner-subtle">Preview generated children before creating them in Azure DevOps under {currentWorkItem ? `${currentWorkItem.type} #${currentWorkItem.id}` : 'the current work item'}.</div>
       <SourceBadge metadata={providerMetadata} />
+      <RelevanceSummary metadata={providerMetadata} />
       {drafts.map((draft) => (
         <div className="planner-task" key={draft.id}>
           <label className="planner-checkbox">
@@ -4187,6 +4221,7 @@ function GeneratedChildWorkItems({
             <strong>{draft.type}: {draft.title}</strong>
           </label>
           <span>{draft.description}</span>
+          <RelevanceSummary draft={draft} />
           <FeatureEnrichmentDetails draft={draft} />
           <ListBlock title="Acceptance Criteria" items={draft.acceptanceCriteria} />
           <div className="planner-subtle">
@@ -4232,6 +4267,39 @@ function FeatureEnrichmentDetails({ draft }: { draft: ChildDraft }) {
       <ListBlock title="Risks" items={draft.risks || []} />
       <Row label="Acceptance Criteria Count" value={formatNumber(draft.acceptanceCriteriaCount || draft.acceptanceCriteria?.length || 0)} />
       <Row label="Acceptance Criteria Quality" value={formatNumber(draft.acceptanceCriteriaQualityScore)} />
+    </div>
+  );
+}
+
+function RelevanceSummary({ metadata, draft }: { metadata?: ProviderMetadata; draft?: ChildDraft }) {
+  const selected = uniqueStrings([
+    ...(metadata?.selected_modules || []),
+    ...(metadata?.selected_flows || []),
+    ...(draft?.impactedModules || []),
+    ...(draft?.impactedFlows || []),
+  ]).slice(0, 8);
+  const rejected = (draft?.rejectedContext || metadata?.rejected_context || []).slice(0, 5);
+  if (!selected.length && !rejected.length) {
+    return null;
+  }
+  return (
+    <div className="planner-relevance">
+      {selected.length ? (
+        <div>
+          <span className="planner-label-inline">Generated using:</span>
+          {selected.map((item) => <span className="planner-chip" key={item}>{item}</span>)}
+        </div>
+      ) : null}
+      {rejected.length ? (
+        <div>
+          <span className="planner-label-inline">Excluded:</span>
+          {rejected.map((item) => (
+            <span className="planner-chip muted" key={`${item.type || 'context'}-${item.name || item.reason}`}>
+              {item.name || 'Context'}{item.reason ? ` - ${item.reason}` : ''}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -4662,10 +4730,12 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
     <section className="planner-card">
       <div className="planner-label">Execution Context</div>
       <SourceBadge metadata={context} />
+      <RelevanceSummary metadata={context} />
       <div className="planner-status-grid">
         <Row label="Story Summary" value={context.story_summary || 'Not generated yet'} />
         <Row label="Execution Readiness" value={`${context.execution_readiness_result || context.execution_readiness || 'Not assessed'} (${context.execution_readiness_score || 0}%)`} />
         <Row label="Technology Stack" value={formatStack(context.technology_stack || EMPTY_STACK) || 'Not captured'} />
+        <Row label="Repository File Ranking" value={context.file_ranking_status || 'Repository file ranking not available'} />
       </div>
       <div className="planner-grid">
         <ListBlock title="Acceptance Criteria" items={context.acceptance_criteria || []} />
@@ -5493,6 +5563,14 @@ function ProjectIntelligenceProviderDiagnostics({ metadata }: { metadata?: Provi
         <Row label="Compression Applied" value={metadata?.compression_applied === undefined ? 'n/a' : metadata.compression_applied ? 'Yes' : 'No'} />
         <Row label="Largest Sections" value={formatLargestSections(metadata?.largest_context_sections)} />
         <Row label="Prompt Too Long Stage" value={metadata?.prompt_too_long_stage || 'n/a'} />
+        <Row label="Intent Keywords" value={(metadata?.intent_keywords || []).join(', ') || 'n/a'} />
+        <Row label="Selected Modules" value={(metadata?.selected_modules || []).join(', ') || 'n/a'} />
+        <Row label="Selected Flows" value={(metadata?.selected_flows || []).join(', ') || 'n/a'} />
+        <Row label="Selected Dependencies" value={(metadata?.selected_dependencies || []).join(', ') || 'n/a'} />
+        <Row label="Rejected Context" value={formatRejectedContext(metadata?.rejected_context)} />
+        <Row label="Relevance Scores" value={formatRelevanceScores(metadata?.relevance_scores)} />
+        <Row label="Relevance Token Estimate" value={formatNumber(metadata?.token_estimate)} />
+        <Row label="Context Source" value={metadata?.context_source || 'n/a'} />
         <Row label="Final Prompt Preview" value={metadata?.final_prompt_preview ? metadata.final_prompt_preview.slice(0, 240) : 'n/a'} />
         <Row label="Fallback Reason" value={String(metadata?.fallback_reason || 'n/a')} />
       </div>
@@ -6281,6 +6359,8 @@ function featureDraftsFromEpic(result: EpicRefinement): ChildDraft[] {
     impactedFlows: feature.impacted_flows || [],
     dependencies: feature.dependencies || [],
     risks: feature.risks || [],
+    rejectedContext: feature.rejected_irrelevant_context || result.rejected_context || [],
+    relevanceConfidence: feature.confidence,
     acceptanceCriteriaCount: feature.acceptance_criteria_count,
     acceptanceCriteriaQualityScore: feature.acceptance_criteria_quality_score,
     selected: true,
@@ -6381,6 +6461,10 @@ function storyDraftsFromFeature(result: FeatureRefinement): ChildDraft[] {
     title: story.title,
     description: story.description,
     acceptanceCriteria: story.acceptance_criteria?.length ? story.acceptance_criteria : storyCriteriaFallback(story),
+    impactedModules: story.modules_used || story.affected_modules || result.affected_modules || [],
+    impactedFlows: story.flows_used || story.affected_flows || result.affected_flows || [],
+    rejectedContext: story.rejected_irrelevant_context || result.rejected_context || [],
+    relevanceConfidence: story.confidence,
     selected: true,
     status: 'preview',
   }));
@@ -6407,6 +6491,9 @@ function taskDraftsFromStory(result: StoryRefinement): ChildDraft[] {
     title: cleanGeneratedTitle(`${task.work_area ? `${task.work_area}: ` : ''}${task.title}`),
     description: task.description,
     acceptanceCriteria: task.acceptance_criteria?.length ? task.acceptance_criteria : result.acceptance_criteria,
+    impactedModules: result.affected_modules || [],
+    impactedFlows: result.affected_flows || [],
+    rejectedContext: result.rejected_context || [],
     selected: true,
     status: 'preview',
   }));
@@ -7870,6 +7957,24 @@ function formatLargestSections(sections?: Array<{ section?: string; tokens?: num
     return 'n/a';
   }
   return sections.map((item) => `${item.section || 'unknown'} ${item.tokens || 0}`).join(', ');
+}
+
+function formatRejectedContext(items?: RejectedContextItem[]): string {
+  if (!items?.length) {
+    return 'n/a';
+  }
+  return items.slice(0, 8).map((item) => `${item.name || 'context'}${item.reason ? `: ${item.reason}` : ''}`).join(' | ');
+}
+
+function formatRelevanceScores(scores?: Record<string, number>): string {
+  if (!scores || !Object.keys(scores).length) {
+    return 'n/a';
+  }
+  return Object.entries(scores)
+    .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))
+    .slice(0, 8)
+    .map(([name, score]) => `${name} ${Number(score || 0).toFixed(2)}`)
+    .join(', ');
 }
 
 function sourceLabel(source?: string): string {

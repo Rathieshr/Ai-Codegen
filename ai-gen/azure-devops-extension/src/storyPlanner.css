@@ -651,6 +651,31 @@ body {
   color: var(--hei-text);
 }
 
+.planner-chip.muted {
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
+.planner-relevance {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.planner-relevance > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.planner-label-inline {
+  color: var(--hei-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .planner-banner {
   color: var(--hei-text);
   background: #fffbeb;

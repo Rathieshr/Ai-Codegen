@@ -1106,6 +1106,97 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Large event history performance", impact["risks"])
         self.assertIn("Connectivity issues", impact["risks"])
 
+    def test_outage_investigation_rejects_irrelevant_firmware_context(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "LineDefender supports fault events, outage investigation, telemetry, firmware rollout, and operations reporting.",
+            "applications": [{"name": "Mobile Application", "type": "Mobile"}, {"name": "Backend API", "type": "Backend"}],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Device Management", "Asset Health", "Firmware Update", "Analytics", "Authentication"],
+                "flows": ["Fault Event Review Flow", "Outage Investigation Flow", "Device Health Review Flow", "Firmware Rollout", "Token Refresh", "Analytics Dashboard"],
+                "components": ["Fault Detail Screen"],
+                "architecture_notes": [],
+                "standards": [],
+            },
+        }
+        story = {
+            "title": "Start outage investigation from a fault event",
+            "description": "As an Operations User, I want to start outage triage from a critical fault event so that I can review telemetry and device health.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            context = ProjectIntelligenceService().build_execution_context(story, profile, options={"force_provider": "deterministic_fallback"})
+
+        self.assertIn("Fault Monitoring", context["affected_modules"])
+        self.assertIn("Telemetry", context["affected_modules"])
+        self.assertIn("Outage Investigation Flow", context["affected_flows"])
+        self.assertNotIn("Firmware Update", context["affected_modules"])
+        self.assertNotIn("Firmware Rollout", context["affected_flows"])
+        rejected = " ".join(item["name"] for item in context["rejected_context"])
+        self.assertIn("Firmware Update", rejected)
+        self.assertIn("Firmware Rollout", rejected)
+        self.assertIn("intent_keywords", context)
+        self.assertIn("relevance_scores", context)
+
+    def test_firmware_rollout_story_includes_firmware_context(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Firmware Management", "Firmware Update"],
+                "flows": ["Fault Event Review Flow", "Firmware Rollout"],
+                "components": [],
+                "architecture_notes": [],
+                "standards": [],
+            },
+        }
+        story = {"title": "Review firmware rollout by device version", "description": "Show firmware upgrade status, rollback risk, and compliance exceptions."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            impact = ProjectIntelligenceService().analyze_story_impact(story, profile)
+
+        self.assertIn("Firmware Management", impact["affected_modules"])
+        self.assertIn("Firmware Rollout", impact["affected_flows"])
+
+    def test_login_story_includes_authentication_and_token_refresh(self) -> None:
+        profile = {
+            "project_name": "Customer Access Platform",
+            "domain": "Retail",
+            "knowledge_registry": {
+                "modules": ["Authentication", "Customer Profile", "Telemetry"],
+                "flows": ["Login", "Token Refresh", "Profile Review"],
+                "components": [],
+                "architecture_notes": [],
+                "standards": [],
+            },
+        }
+        story = {"title": "Handle session expiry during login", "description": "Refresh token after OTP login and show authorization failures clearly."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            impact = ProjectIntelligenceService().analyze_story_impact(story, profile)
+
+        self.assertIn("Authentication", impact["affected_modules"])
+        self.assertIn("Token Refresh", impact["affected_flows"])
+
+    def test_reporting_story_includes_analytics_without_firmware(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Analytics", "Reporting", "Firmware Update"],
+                "flows": ["Fault Event Review Flow", "Analytics Dashboard", "Firmware Rollout"],
+                "components": [],
+                "architecture_notes": [],
+                "standards": [],
+            },
+        }
+        story = {"title": "View reliability trend dashboard", "description": "Operations managers need KPI reporting and metrics for fault trends."}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            impact = ProjectIntelligenceService().analyze_story_impact(story, profile)
+
+        self.assertIn("Analytics", impact["affected_modules"])
+        self.assertIn("Reporting", impact["affected_modules"])
+        self.assertNotIn("Firmware Update", impact["affected_modules"])
+
     def test_feature_and_epic_impact_return_domain_specific_dependencies(self) -> None:
         profile = {
             "project_name": "LineDefender Smart Monitoring Platform",
@@ -1199,10 +1290,8 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(context["execution_readiness"], "Ready")
         self.assertEqual(context["execution_readiness_result"], "Ready")
         self.assertGreaterEqual(context["execution_readiness_score"], 85)
-        self.assertIn("FaultEventViewModel.cs", " ".join(context["recommended_files"]))
-        self.assertIn("FaultEventDetailsPage.xaml", " ".join(context["recommended_files"]))
-        self.assertIn("FaultEventController.cs", " ".join(context["recommended_files"]))
-        self.assertIn("FaultEventRepository.cs", " ".join(context["recommended_files"]))
+        self.assertEqual(context["recommended_files"], [])
+        self.assertEqual(context["file_ranking_status"], "Repository file ranking not available")
         self.assertTrue(context["acceptance_criteria_mapping"])
         self.assertTrue(context["implementation_tasks"])
         self.assertTrue(context["testing_tasks"])

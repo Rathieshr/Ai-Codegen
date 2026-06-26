@@ -1204,6 +1204,109 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("Reporting", impact["affected_modules"])
         self.assertNotIn("Firmware Update", impact["affected_modules"])
 
+    def test_hierarchical_generation_stamps_lineage_and_blocks_unsupported_capabilities(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "project_type": "Multi-System Platform",
+            "project_description": "Operations dashboard for fault events, outage investigation, asset health, and reliability analytics.",
+            "applications": [
+                {"name": "Operations Dashboard", "type": "Web Portal"},
+                {"name": "Mobile Application", "type": "Mobile"},
+                {"name": "Firmware", "type": "Firmware"},
+            ],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Asset Health", "Firmware Update", "Authentication"],
+                "flows": ["Fault Event Review Flow", "Outage Investigation Flow", "Device Health Review Flow", "Firmware Rollout", "Token Refresh"],
+                "components": [],
+                "architecture_notes": [],
+                "standards": [],
+            },
+        }
+        epic = {
+            "id": "epic-ops",
+            "title": "Modernize Operations Dashboard",
+            "description": "Improve live operational awareness, alerting, outage investigation, asset health, and reliability analytics.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            refined = ProjectIntelligenceService().refine_epic(epic, profile, options={"force_provider": "deterministic_fallback"})
+
+        titles = [feature["title"] for feature in refined["recommended_features"]]
+        self.assertIn("Live Operations Awareness", titles)
+        self.assertNotIn("Firmware Rollout Visibility", titles)
+        self.assertTrue(all(feature["parent_id"] == "epic-ops" for feature in refined["recommended_features"]))
+        self.assertTrue(all(feature["parent_type"] == "Epic" for feature in refined["recommended_features"]))
+        self.assertTrue(all(feature["derived_from"] == "epic_intent + knowledge_registry" for feature in refined["recommended_features"]))
+        descriptions = " ".join(feature["description"] for feature in refined["recommended_features"])
+        self.assertNotIn("Firmware", descriptions)
+
+    def test_feature_story_generation_uses_selected_feature_lineage_only(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "applications": [{"name": "Operations Dashboard", "type": "Web Portal"}, {"name": "Firmware", "type": "Firmware"}],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Firmware Update", "Authentication"],
+                "flows": ["Outage Investigation Flow", "Fault Event Review Flow", "Firmware Rollout", "Token Refresh"],
+                "components": [],
+                "architecture_notes": [],
+                "standards": [],
+            },
+        }
+        feature = {
+            "id": "feature-outage",
+            "title": "Outage Investigation Workspace",
+            "description": "Help operations users start outage investigations from fault events and review correlated event and device context.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            refined = ProjectIntelligenceService().refine_feature(feature, profile, options={"force_provider": "deterministic_fallback"})
+
+        text = " ".join(f"{story['title']} {story['description']}" for story in refined["recommended_stories"]).lower()
+        self.assertIn("investigation", text)
+        self.assertNotIn("firmware", text)
+        self.assertNotIn("login", text)
+        self.assertTrue(all(story["parent_id"] == "feature-outage" for story in refined["recommended_stories"]))
+        self.assertTrue(all(story["parent_type"] == "Feature" for story in refined["recommended_stories"]))
+
+    def test_story_tasks_and_execution_prompt_use_story_and_selected_task_lineage(self) -> None:
+        profile = {
+            "project_name": "LineDefender Smart Monitoring Platform",
+            "domain": "Utility Grid Management",
+            "applications": [{"name": "Operations Dashboard", "type": "Web Portal"}, {"name": "Backend API", "type": "Backend"}, {"name": "Firmware", "type": "Firmware"}],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Device Management", "Firmware Update", "Authentication"],
+                "flows": ["Fault Event Review Flow", "Outage Investigation Flow", "Device Health Review Flow", "Firmware Rollout", "Token Refresh"],
+                "components": [],
+                "architecture_notes": [],
+                "standards": [],
+            },
+        }
+        story = {
+            "id": "story-outage-start",
+            "title": "Start outage investigation from fault event",
+            "description": "As an Operations User, I want to start outage investigation from a fault event so that I can triage event, telemetry, and device health context.",
+            "acceptance_criteria": [
+                "User can start an investigation from a fault event.",
+                "Investigation shows fault event and device health context.",
+                "Duplicate refresh does not create duplicate investigation records.",
+            ],
+            "selected_task": {"id": "task-api", "title": "Add Critical Fault Event Detail API", "description": "Add backend API for selected fault event context."},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            refined = service.refine_story(story, profile, options={"force_provider": "deterministic_fallback"})
+            context = service.build_execution_context(story, profile, options={"force_provider": "deterministic_fallback"})
+            prompt = service.build_dev_prompt(story, profile)["prompt"]
+
+        self.assertTrue(all(task["parent_id"] == "story-outage-start" for task in refined["proposed_tasks"]))
+        self.assertTrue(all(task["parent_type"] == "Story" for task in refined["proposed_tasks"]))
+        self.assertEqual(context["selected_task"]["title"], "Add Critical Fault Event Detail API")
+        self.assertIn("Add Critical Fault Event Detail API", prompt)
+        self.assertIn("Start outage investigation from fault event", prompt)
+        self.assertNotIn("Firmware Rollout", prompt)
+        self.assertNotIn("Token Refresh", prompt)
+        self.assertEqual(context["file_ranking_status"], "Repository file ranking not available")
+
     def test_feature_and_epic_impact_return_domain_specific_dependencies(self) -> None:
         profile = {
             "project_name": "LineDefender Smart Monitoring Platform",
@@ -1339,7 +1442,7 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
 
         self.assertIn("Technology Stack: mobile: MAUI; backend: .NET", dev_prompt)
         self.assertIn("Coding Standards: MVVM; Repository Pattern; Unit Tests Required", dev_prompt)
-        self.assertIn("Architecture Rules: Mobile app uses MVVM., Backend APIs use Repository Pattern.", dev_prompt)
+        self.assertIn("Architecture Rules: preserve the boundaries in the selected context capsule.", dev_prompt)
         self.assertIn("Component Library: Hubbell Mobile UI", ui_prompt)
         self.assertIn("Affected User Flows:", ui_prompt)
         self.assertIn("Fault Event Review", ui_prompt)

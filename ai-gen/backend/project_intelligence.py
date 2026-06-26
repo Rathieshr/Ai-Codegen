@@ -817,7 +817,13 @@ class ProjectIntelligenceService:
         keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
         business_goal = _sentence(f"Improve {title}", description or active_profile["project_description"])
         capability_plan = _capability_decomposition(title, business_goal, keywords, relevant_profile)
-        features = capability_plan["recommended_features"]
+        features = [
+            {
+                **feature,
+                **_lineage_metadata(epic, "Epic", "epic_intent + knowledge_registry", selection, float(feature.get("confidence") or 0.84)),
+            }
+            for feature in capability_plan["recommended_features"]
+        ]
         deterministic = {
             "business_goal": business_goal,
             "business_outcomes": _business_outcomes(keywords, relevant_profile),
@@ -846,6 +852,13 @@ class ProjectIntelligenceService:
                 fallback_features=features,
                 diagnostics=merged.get("capability_diagnostics"),
             )
+            merged["recommended_features"] = [
+                {
+                    **feature,
+                    **_lineage_metadata(epic, "Epic", "epic_intent + knowledge_registry", selection, float(feature.get("confidence") or 0.84)),
+                }
+                for feature in merged["recommended_features"]
+            ]
             merged["generation_review"] = _generation_review(active_profile, merged["recommended_features"], [], keywords)
             return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
         if phi["blocked"]:
@@ -867,13 +880,20 @@ class ProjectIntelligenceService:
         modules = _selection_names(selection, "relevant_modules")
         flows = _selection_names(selection, "relevant_flows")
         story_plan = _story_decomposition(title, modules, flows, relevant_profile, feature)
+        recommended_stories = [
+            {
+                **story_item,
+                **_lineage_metadata(feature, "Feature", "feature_intent + knowledge_registry", selection, float(story_item.get("confidence") or 0.82)),
+            }
+            for story_item in story_plan["recommended_stories"]
+        ]
         deterministic = {
             "feature_summary": _sentence(title, description or f"Deliver {title} using project-aware modules and flows."),
             "affected_modules": modules,
             "affected_flows": flows,
             "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
             "risks": _risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
-            "recommended_stories": story_plan["recommended_stories"],
+            "recommended_stories": recommended_stories,
             "story_generation_diagnostics": story_plan["diagnostics"],
             "generation_review": _generation_review(relevant_profile, story_plan["recommended_stories"], modules, _context_keywords(title, description, relevant_profile)),
             **_relevance_metadata(selection),
@@ -882,7 +902,7 @@ class ProjectIntelligenceService:
         phi = _project_phi_json("refine_feature", active_profile, feature, deterministic, options, list(deterministic.keys()))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
-            merged["recommended_stories"] = story_plan["recommended_stories"]
+            merged["recommended_stories"] = recommended_stories
             merged["story_generation_diagnostics"] = story_plan["diagnostics"]
             merged["generation_review"] = deterministic["generation_review"]
             return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
@@ -910,6 +930,13 @@ class ProjectIntelligenceService:
         acceptance_categories = _acceptance_criteria_categories(acceptance)
         acceptance_quality_score = _acceptance_criteria_quality_score(acceptance)
         task_plan = _task_intelligence(title, description, acceptance, impact, relevant_profile)
+        proposed_tasks = [
+            {
+                **task,
+                **_lineage_metadata(story, "Story", "story_acceptance_criteria + knowledge_registry", selection, float(task.get("confidence") or 0.8)),
+            }
+            for task in task_plan["tasks"]
+        ]
         deterministic = {
             "story_summary": _sentence(title, description or f"Implement {title} within the approved project context."),
             "acceptance_criteria": acceptance,
@@ -923,9 +950,9 @@ class ProjectIntelligenceService:
             "ui_considerations": _ui_considerations(relevant_profile, flows),
             "technical_considerations": _technical_considerations(relevant_profile, modules),
             "qa_considerations": _qa_considerations(relevant_profile, flows),
-            "proposed_tasks": task_plan["tasks"],
+            "proposed_tasks": proposed_tasks,
             "task_intelligence_diagnostics": task_plan["diagnostics"],
-            "generation_review": _generation_review(relevant_profile, task_plan["tasks"], modules, _context_keywords(title, description, relevant_profile)),
+            "generation_review": _generation_review(relevant_profile, proposed_tasks, modules, _context_keywords(title, description, relevant_profile)),
             **_relevance_metadata(selection),
         }
         active_profile = self._profile_with_capsule("story", relevant_profile, story)
@@ -935,7 +962,7 @@ class ProjectIntelligenceService:
             merged["acceptance_criteria"] = acceptance
             merged["acceptance_criteria_categories"] = acceptance_categories
             merged["acceptance_criteria_quality_score"] = acceptance_quality_score
-            merged["proposed_tasks"] = task_plan["tasks"]
+            merged["proposed_tasks"] = proposed_tasks
             merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
             merged["generation_review"] = deterministic["generation_review"]
             return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
@@ -1093,12 +1120,26 @@ class ProjectIntelligenceService:
         recommended_files = _recommended_files(relevant_profile, impact, title)
         file_ranking_status = "Repository file ranking available" if recommended_files else "Repository file ranking not available"
         task_plan = _task_intelligence(title, description, acceptance, impact, relevant_profile, recommended_files)
-        generated_tasks = task_plan["tasks"]
+        generated_tasks = [
+            {
+                **task,
+                **_lineage_metadata(story, "Story", "story_acceptance_criteria + context_capsule", selection, float(task.get("confidence") or 0.8)),
+            }
+            for task in task_plan["tasks"]
+        ]
+        selected_task = _selected_execution_task(story, generated_tasks)
         implementation_tasks = _tasks_for_areas(generated_tasks, ["UI Work", "Backend Work", "Data Work", "Analytics Work"])
         testing_tasks = _tasks_for_areas(generated_tasks, ["QA Work"])
         documentation_tasks = _documentation_tasks(title, relevant_profile, impact)
         deterministic = {
             "story_summary": _sentence(title, description or refined_story["story_summary"]),
+            "selected_task": selected_task,
+            "parent_story": {
+                "id": _item_id(story),
+                "title": title,
+                "description": description,
+                "acceptance_criteria": acceptance,
+            },
             "acceptance_criteria": acceptance,
             "affected_applications": impact["affected_applications"] or refined_story["affected_applications"],
             "affected_modules": impact["affected_modules"] or refined_story["affected_modules"],
@@ -1121,6 +1162,7 @@ class ProjectIntelligenceService:
             "execution_readiness_score": readiness["score"],
             "execution_readiness_breakdown": readiness["breakdown"],
             "execution_readiness_result": readiness["result"],
+            **_lineage_metadata(selected_task or story, "Task" if selected_task else "Story", "selected_task + parent_story_context", selection, float((selected_task or {}).get("confidence") or 0.8)),
             **_relevance_metadata(selection),
         }
         active_profile = self._profile_with_capsule("execution", relevant_profile, {**story, "tasks": generated_tasks, "acceptance_criteria": acceptance})
@@ -1157,8 +1199,8 @@ class ProjectIntelligenceService:
                     "Use the affected modules and flows as the primary implementation boundary.",
                     f"Technology Stack: {_format_stack(context['technology_stack']) or 'Confirm stack before implementation.'}",
                     f"Coding Standards: {_format_standards(context['development_standards']) or 'Follow existing project standards.'}",
-                    f"Architecture Rules: {', '.join(active_profile['readme_analysis']['architecture_notes']) or 'Preserve current architecture boundaries.'}",
-                    f"Recommended Files: {', '.join(context['recommended_files']) or 'Inspect the affected modules before editing.'}",
+                    "Architecture Rules: preserve the boundaries in the selected context capsule.",
+                    f"Recommended Files: {', '.join(context['recommended_files']) or context.get('file_ranking_status') or 'Repository file ranking not available.'}",
                     f"Implementation Tasks: {', '.join(context['implementation_tasks']) or 'Break down implementation before coding.'}",
                 ],
             )
@@ -3086,10 +3128,50 @@ CAPABILITY_TAXONOMY = [
 ]
 
 
+def _item_id(item: dict[str, Any], fallback: str = "") -> str:
+    return _clean_text(item.get("id") or item.get("work_item_id") or item.get("draft_id") or item.get("title")) or fallback
+
+
+def _source_intent(selection: dict[str, Any], fallback: list[str] | None = None) -> list[str]:
+    intent = selection.get("intent") if isinstance(selection.get("intent"), dict) else {}
+    return _string_list(intent.get("keywords")) or _string_list(fallback)[:16]
+
+
+def _lineage_metadata(
+    parent: dict[str, Any],
+    parent_type: str,
+    derived_from: str,
+    selection: dict[str, Any],
+    confidence: float = 0.82,
+) -> dict[str, Any]:
+    return {
+        "parent_id": _item_id(parent),
+        "parent_type": parent_type,
+        "derived_from": derived_from,
+        "source_intent": _source_intent(selection),
+        "selected_modules": _selection_names(selection, "relevant_modules"),
+        "selected_flows": _selection_names(selection, "relevant_flows"),
+        "rejected_context": selection.get("rejected_context", []),
+        "confidence": confidence,
+    }
+
+
+def _supported_capabilities_for_intent(keywords: list[str], profile: dict[str, Any]) -> list[str]:
+    allowed = _capabilities_for_epic(keywords, profile)
+    corpus = " ".join([*keywords, *profile["knowledge_registry"].get("modules", []), *profile["knowledge_registry"].get("flows", [])]).lower()
+    if any(token in corpus for token in ["operation", "dashboard", "fault", "outage", "event", "asset", "reliability"]):
+        allowed = _unique([*allowed, "Operational Awareness", "Alerting", "Investigation", "Asset Health", "Analytics"])
+    if "firmware" not in corpus:
+        allowed = [capability for capability in allowed if capability not in {"Firmware Management", "Maintenance", "Compliance"}]
+    if not any(token in corpus for token in ["login", "token", "session", "auth", "register", "registration"]):
+        allowed = [capability for capability in allowed if capability not in {"Commissioning", "Device Management"}]
+    return [capability for capability in _unique(allowed) if capability in CAPABILITY_TAXONOMY]
+
+
 def _capability_decomposition(epic_title: str, business_goal: str, keywords: list[str], profile: dict[str, Any]) -> dict[str, Any]:
     users = _users_for_profile(profile)
     problems = _user_problems_for_epic(keywords, profile)
-    capabilities = _capabilities_for_epic(keywords, profile)
+    capabilities = _supported_capabilities_for_intent(keywords, profile)
     rejected: list[dict[str, Any]] = []
     feature_candidates = [_feature_from_capability(capability, keywords, users, profile) for capability in capabilities]
     features = _validate_capability_features(
@@ -3102,7 +3184,7 @@ def _capability_decomposition(epic_title: str, business_goal: str, keywords: lis
         diagnostics={"rejected_similar_features": rejected},
     )
     if len(features) < 5:
-        supplement = [_feature_from_capability(capability, keywords, users, profile) for capability in CAPABILITY_TAXONOMY if capability not in capabilities]
+        supplement = [_feature_from_capability(capability, keywords, users, profile) for capability in _supported_capabilities_for_intent(keywords, profile) if capability not in capabilities]
         features = _validate_capability_features(
             [*features, *supplement],
             epic_title,
@@ -4436,7 +4518,32 @@ def _profile_with_relevance(profile: dict[str, Any], selection: dict[str, Any]) 
     registry["flows"] = selected_flows
     if selected_standards:
         registry["standards"] = selected_standards
-    return {**profile, "knowledge_registry": registry, "_knowledge_relevance": selection}
+    return {
+        **profile,
+        "applications": _applications_for_selection(profile, selection),
+        "knowledge_registry": registry,
+        "_knowledge_relevance": selection,
+    }
+
+
+def _applications_for_selection(profile: dict[str, Any], selection: dict[str, Any]) -> list[dict[str, str]]:
+    apps = _dedupe_applications(profile.get("applications") or profile.get("knowledge_registry", {}).get("applications") or [])
+    if not apps:
+        return apps
+    context = " ".join([
+        *(_selection_names(selection, "relevant_modules")),
+        *(_selection_names(selection, "relevant_flows")),
+        *(_source_intent(selection)),
+    ]).lower()
+    selected: list[dict[str, str]] = []
+    for app in apps:
+        app_text = f"{app.get('name', '')} {app.get('type', '')}".lower()
+        if "firmware" in app_text and "firmware" not in context:
+            continue
+        if "analytics" in app_text and not any(token in context for token in ["analytics", "report", "trend", "metric", "kpi", "reliability"]):
+            continue
+        selected.append(app)
+    return selected or apps[:1]
 
 
 def _business_outcomes(keywords: list[str], profile: dict[str, Any]) -> list[str]:
@@ -6578,6 +6685,30 @@ def _tasks_for_areas(tasks: list[dict[str, Any]], areas: list[str]) -> list[str]
     return _unique(selected)
 
 
+def _selected_execution_task(story: dict[str, Any], generated_tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    raw = story.get("selected_task") or story.get("task") or story.get("current_task")
+    if isinstance(raw, dict):
+        title = _clean_text(raw.get("title"))
+        if title:
+            for task in generated_tasks:
+                if _clean_text(task.get("title")).lower() == title.lower():
+                    return task
+            return {
+                "id": _item_id(raw),
+                "title": title,
+                "description": _clean_text(raw.get("description")),
+                "acceptance_criteria": _string_list(raw.get("acceptance_criteria")),
+                "work_area": _clean_text(raw.get("work_area")) or "Backend Work",
+                "status": _clean_text(raw.get("status")) or "selected",
+            }
+    raw_title = _clean_text(raw) if isinstance(raw, str) else ""
+    if raw_title:
+        for task in generated_tasks:
+            if raw_title.lower() in _clean_text(task.get("title")).lower():
+                return task
+    return generated_tasks[0] if generated_tasks else {}
+
+
 def _acceptance_criteria_mapping(acceptance: list[str], implementation_tasks: list[str]) -> list[dict[str, str]]:
     if not acceptance:
         return []
@@ -6641,24 +6772,28 @@ def _implementation_notes(profile: dict[str, Any], impact: dict[str, list[str]])
 
 
 def _execution_prompt(title: str, context: dict[str, Any], instructions: list[str]) -> str:
+    selected_task = context.get("selected_task") if isinstance(context.get("selected_task"), dict) else {}
+    parent_story = context.get("parent_story") if isinstance(context.get("parent_story"), dict) else {}
     sections = [
         f"# {title}",
         "",
+        "# Selected Task",
+        f"- Title: {_clean_text(selected_task.get('title')) or 'Use the selected execution task'}",
+        f"- Work Area: {_clean_text(selected_task.get('work_area')) or 'Not specified'}",
+        f"- Description: {_clean_text(selected_task.get('description')) or 'Not specified'}",
+        "",
         "# Story",
-        context["story_summary"],
+        _clean_text(parent_story.get("title")) or context["story_summary"],
+        _clean_text(parent_story.get("description")) or context["story_summary"],
         "",
         "# Acceptance Criteria",
         *_bullet_lines(context["acceptance_criteria"]),
         "",
-        "# Impact Analysis",
-        f"- Applications: {', '.join(context['affected_applications']) or 'Not identified'}",
+        "# Selected Context Capsule",
         f"- Modules: {', '.join(context['affected_modules']) or 'Not identified'}",
         f"- Flows: {', '.join(context['affected_flows']) or 'Not identified'}",
         f"- Dependencies: {', '.join(context['dependencies']) or 'Not identified'}",
-        f"- Risks: {', '.join(context['risks']) or 'Not identified'}",
-        "",
-        "# Project Context",
-        f"- Technology Stack: {_format_stack(context['technology_stack']) or 'Not specified'}",
+        f"- Repository Files: {', '.join(context['recommended_files']) or context.get('file_ranking_status') or 'Repository file ranking not available'}",
         f"- Development Standards: {_format_standards(context['development_standards']) or 'Not specified'}",
         f"- Execution Readiness: {context['execution_readiness']}",
         "",

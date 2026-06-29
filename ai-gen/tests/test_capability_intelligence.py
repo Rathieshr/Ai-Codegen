@@ -65,8 +65,7 @@ class CapabilityIntelligenceTests(unittest.TestCase):
 
         selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
         self.assertIn("Operational Awareness", selected)
-        self.assertIn("Dashboard Monitoring", selected)
-        self.assertIn("Reporting", selected)
+        self.assertIn("Reliability Analytics", selected)
         self.assertIn("Telemetry", names(context["relevantModules"]))
         self.assertIn("Dashboard Monitoring", names(context["relevantFlows"]))
         self.assertGreater(context["confidence"], 0.5)
@@ -83,11 +82,13 @@ class CapabilityIntelligenceTests(unittest.TestCase):
 
         selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
         self.assertIn("Outage Investigation", selected)
-        self.assertIn("Critical Fault Detection", selected)
-        self.assertIn("Telemetry Review", selected)
+        self.assertIn("Fault Monitoring", selected)
         self.assertIn("Fault Monitoring", names(context["relevantModules"]))
         self.assertIn("Telemetry", names(context["relevantModules"]))
         self.assertIn("Investigation", names(context["relevantFlows"]))
+        self.assertIn("Telemetry Review", names(context["relevantFlows"]))
+        self.assertNotIn("Analytics Platform", names(context["relevantFlows"]))
+        self.assertNotIn("Mobile Application", names(context["relevantFlows"]))
 
     def test_firmware_rollout_selects_firmware_management(self) -> None:
         context = self.capability_context(
@@ -146,7 +147,6 @@ class CapabilityIntelligenceTests(unittest.TestCase):
 
         selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
         self.assertIn("Alert Management", selected)
-        self.assertIn("Notification", selected)
         self.assertIn("Audit History", selected)
         self.assertIn("Notification", names(context["relevantModules"]))
         self.assertIn("Alert Review", names(context["relevantFlows"]))
@@ -179,6 +179,65 @@ class CapabilityIntelligenceTests(unittest.TestCase):
         self.assertTrue(context["relevantFlows"])
         self.assertIn("generatedAt", context)
         self.assertEqual(context["primaryCapability"]["type"], "capability")
+
+    def test_critical_fault_detection_maps_to_fault_monitoring_capability(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Critical Fault Detection",
+                "description": "Operations users need to detect critical fault events, review severity, and open fault event details.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Fault Monitoring", selected)
+        self.assertNotIn("Critical Fault Detection", selected)
+        self.assertIn("Fault Monitoring", names(context["relevantModules"]))
+        self.assertIn("Fault Event Review", names(context["relevantFlows"]))
+
+    def test_live_operations_awareness_maps_to_operational_awareness(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Feature",
+                "title": "Live Operations Awareness",
+                "description": "Operations users need live operations status and an operations monitoring view.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Operational Awareness", selected)
+        self.assertNotIn("Fault Monitoring", selected)
+        self.assertIn("Live Status Review", names(context["relevantFlows"]))
+
+    def test_system_names_are_not_selected_as_flows(self) -> None:
+        intent = build_intent(
+            {
+                "type": "Story",
+                "title": "Review faults in Mobile Application and Analytics Platform",
+                "description": "Operations users review critical fault events in the mobile application and analytics platform.",
+            }
+        )
+        intent["inferredFlows"] = ["Mobile Application", "Analytics Platform", "Fault Event Review"]
+        context = buildCapabilityContext(intent, {"project_profile": PROFILE})
+
+        flows = names(context["relevantFlows"])
+        self.assertIn("Fault Event Review", flows)
+        self.assertNotIn("Mobile Application", flows)
+        self.assertNotIn("Analytics Platform", flows)
+
+    def test_application_selection_is_not_all_applications_by_default(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Critical Fault Detection",
+                "description": "Detect and review critical fault events from telemetry and device health.",
+            }
+        )
+
+        applications = names(context["relevantApplications"])
+        self.assertTrue(applications)
+        self.assertLess(len(applications), len(PROFILE["applications"]))
+        self.assertNotIn("Firmware Service", applications)
 
 
 if __name__ == "__main__":

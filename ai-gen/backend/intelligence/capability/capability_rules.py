@@ -2,16 +2,11 @@ from __future__ import annotations
 
 CORE_CAPABILITIES = [
     "Operational Awareness",
-    "Critical Fault Detection",
+    "Fault Monitoring",
     "Alert Management",
     "Outage Investigation",
-    "Asset Health",
-    "Device Health",
-    "Telemetry Review",
-    "Reporting",
     "Reliability Analytics",
-    "Dashboard Monitoring",
-    "Notification",
+    "Asset Health",
     "Authentication",
     "Authorization",
     "Firmware Management",
@@ -23,24 +18,29 @@ CORE_CAPABILITIES = [
 
 CAPABILITY_RULES: dict[str, dict[str, list[str]]] = {
     "Operational Awareness": {
-        "keywords": ["operation", "operational", "live view", "status", "production health", "equipment status", "monitoring"],
-        "modules": ["Fault Monitoring", "Telemetry", "Asset Health"],
-        "flows": ["Dashboard Monitoring", "Fault Review", "Telemetry Review"],
+        "keywords": ["live operations", "live status", "operational status", "dashboard view", "production health", "equipment status", "operations monitoring"],
+        "modules": ["Reporting", "Telemetry", "Dashboard"],
+        "flows": ["Live Status Review", "Operations Monitoring"],
     },
-    "Critical Fault Detection": {
-        "keywords": ["critical fault", "fault event", "fault", "alarm", "outage"],
-        "modules": ["Fault Monitoring", "Telemetry"],
-        "flows": ["Fault Review", "Alert Review"],
+    "Fault Monitoring": {
+        "keywords": ["critical fault", "fault detection", "fault event", "severity", "event status", "fault type"],
+        "modules": ["Fault Monitoring", "Telemetry", "Device Health"],
+        "flows": ["Fault Event Review", "Fault Detail Review"],
     },
     "Alert Management": {
         "keywords": ["alert", "alarm", "acknowledge", "escalation", "response"],
-        "modules": ["Fault Monitoring", "Notification"],
-        "flows": ["Alert Review", "Fault Review"],
+        "modules": ["Fault Monitoring", "Notifications", "Audit"],
+        "flows": ["Alert Review", "Alert Acknowledgement", "Escalation Review"],
     },
     "Outage Investigation": {
         "keywords": ["outage", "investigation", "triage", "fault event", "root cause", "event timeline"],
-        "modules": ["Fault Monitoring", "Telemetry", "Device Health"],
-        "flows": ["Investigation", "Fault Review", "Telemetry Review"],
+        "modules": ["Fault Monitoring", "Telemetry", "Device Health", "Investigation Notes"],
+        "flows": ["Outage Investigation", "Device Health Review", "Event Timeline Review"],
+    },
+    "Reliability Analytics": {
+        "keywords": ["analytics", "trend", "kpi", "metric", "reliability", "analysis", "severity distribution", "response metrics"],
+        "modules": ["Reporting", "Analytics", "Asset Health", "Telemetry Aggregation"],
+        "flows": ["Reliability Trend Review", "Analytics Review"],
     },
     "Asset Health": {
         "keywords": ["asset", "asset health", "device health", "condition", "fleet"],
@@ -61,11 +61,6 @@ CAPABILITY_RULES: dict[str, dict[str, list[str]]] = {
         "keywords": ["report", "summary", "visibility", "status report"],
         "modules": ["Reporting"],
         "flows": ["Export and Reporting"],
-    },
-    "Reliability Analytics": {
-        "keywords": ["analytics", "trend", "kpi", "metric", "reliability", "analysis"],
-        "modules": ["Reporting", "Asset Health", "Telemetry"],
-        "flows": ["Analytics Review", "Telemetry Review"],
     },
     "Dashboard Monitoring": {
         "keywords": ["dashboard", "live view", "workspace", "panel"],
@@ -141,7 +136,7 @@ CAPABILITY_PURPOSE_GROUPS: dict[str, str] = {
     "Alert Management": "alerting",
     "Notification": "alerting",
     "Outage Investigation": "investigation",
-    "Critical Fault Detection": "fault_detection",
+    "Fault Monitoring": "fault_monitoring",
     "Asset Health": "asset_health",
     "Device Health": "asset_health",
     "Authentication": "access",
@@ -149,3 +144,55 @@ CAPABILITY_PURPOSE_GROUPS: dict[str, str] = {
     "Firmware Management": "firmware",
     "Device Management": "device",
 }
+
+SYSTEM_FLOW_NAMES = {
+    "Analytics Platform",
+    "Mobile Application",
+    "Operations Dashboard",
+    "Application",
+    "Backend API",
+    "Mobile App",
+    "Backend",
+    "Web Portal",
+}
+
+VALID_FLOW_NAMES = {
+    "Fault Event Review",
+    "Fault Detail Review",
+    "Alert Review",
+    "Alert Acknowledgement",
+    "Escalation Review",
+    "Outage Investigation",
+    "Device Health Review",
+    "Event Timeline Review",
+    "Live Status Review",
+    "Operations Monitoring",
+    "Reliability Trend Review",
+    "Analytics Review",
+    "Telemetry Review",
+    "Token Refresh",
+    "Access Review",
+    "Firmware Rollout",
+    "Device Registration",
+}
+
+CAPABILITY_CATEGORY_ALIASES = {
+    "Critical Fault Detection": "Fault Monitoring",
+    "Critical Fault Monitoring": "Fault Monitoring",
+    "Monitoring": "Fault Monitoring",
+    "Alerting": "Alert Management",
+    "Notification": "Alert Management",
+    "Investigation": "Outage Investigation",
+    "Analytics": "Reliability Analytics",
+    "Dashboard Monitoring": "Operational Awareness",
+    "Reporting": "Reliability Analytics",
+}
+
+
+def canonical_capability(name: str) -> str:
+    cleaned = " ".join(str(name or "").split())
+    return CAPABILITY_CATEGORY_ALIASES.get(cleaned, cleaned)
+
+
+def is_system_flow_name(name: str) -> bool:
+    return " ".join(str(name or "").split()) in SYSTEM_FLOW_NAMES

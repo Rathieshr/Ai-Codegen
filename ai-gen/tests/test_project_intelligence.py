@@ -336,6 +336,134 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertNotEqual(first["capsules"]["story"]["source_hash"], second["capsules"]["story"]["source_hash"])
         self.assertEqual(second["status"]["capsules"][2]["status"], "ready")
 
+    def test_execution_package_requires_context_capsule_and_preserves_rejections(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "domain": "Utility Grid Management",
+            "applications": [{"name": "Mobile App", "type": "Mobile"}, {"name": "Backend API", "type": "Backend"}],
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Firmware Management", "Authentication"],
+                "flows": ["Outage Investigation Flow", "Fault Event Review Flow", "Firmware Rollout Flow", "Login Flow"],
+            },
+        }
+        story = {
+            "id": "story-101",
+            "title": "Start outage investigation from a fault event",
+            "description": "As an Operations User, I want to start outage investigation from a critical fault event.",
+            "acceptance_criteria": ["User can start investigation from fault event details."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            context = ProjectIntelligenceService().build_execution_context(story, profile, options={"force_provider": "deterministic_fallback"})
+
+        self.assertEqual(context["execution_package_source"], "context_capsule")
+        self.assertTrue(context["context_capsule_required"])
+        self.assertEqual(context["context_capsule"]["capsuleType"], "execution")
+        self.assertIn("Fault Monitoring", context["context_capsule"]["selectedModules"])
+        self.assertNotIn("Firmware Management", context["context_capsule"]["selectedModules"])
+        self.assertTrue(context["context_capsule"]["rejectedContext"])
+        self.assertEqual(context["rejected_context"], context["context_capsule"]["rejectedContext"])
+        self.assertGreater(context["context_capsule"]["tokenEstimate"], 0)
+
+    def test_execution_capsule_includes_firmware_only_when_explicit(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Firmware Management"],
+                "flows": ["Fault Event Review Flow", "Firmware Rollout Flow"],
+            },
+        }
+        story = {
+            "id": "story-fw",
+            "title": "Review firmware rollout status from a device event",
+            "description": "As a Field Technician, I want firmware rollout status and rollback visibility.",
+            "acceptance_criteria": ["Firmware version, rollout state, and rollback eligibility are visible."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            context = ProjectIntelligenceService().build_execution_context(story, profile, options={"force_provider": "deterministic_fallback"})
+
+        self.assertIn("Firmware Management", context["context_capsule"]["selectedModules"])
+        self.assertIn("Firmware Rollout Flow", context["context_capsule"]["selectedFlows"])
+
+    def test_execution_capsule_uses_ranked_files_and_does_not_invent_paths(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review Flow"],
+                "ranked_files": [
+                    {
+                        "path": "src/fault/FaultEventViewModel.cs",
+                        "confidence": 0.91,
+                        "reason": "Fault Monitoring outage investigation implementation file.",
+                        "evidence": "FaultEventViewModel handles fault event details.",
+                    }
+                ],
+            },
+        }
+        story = {"id": "story-file", "title": "Open fault event details", "acceptance_criteria": ["Fault event details are visible."]}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            with_files = ProjectIntelligenceService().build_execution_context(story, profile, options={"force_provider": "deterministic_fallback"})
+            without_files = ProjectIntelligenceService().build_execution_context(
+                story,
+                {"project_name": "LineDefender", "knowledge_registry": {"modules": ["Fault Monitoring"], "flows": ["Fault Event Review Flow"]}},
+                options={"force_provider": "deterministic_fallback"},
+            )
+
+        self.assertEqual(with_files["recommended_files"], ["src/fault/FaultEventViewModel.cs"])
+        self.assertEqual(with_files["context_capsule"]["relevantFiles"][0]["source"], "repository_intelligence")
+        self.assertEqual(without_files["recommended_files"], [])
+        self.assertEqual(without_files["file_ranking_status"], "Repository file ranking not available")
+
+    def test_execution_capsule_freshness_and_refresh_version(self) -> None:
+        profile = {
+            "project_id": "linedefender",
+            "project_name": "LineDefender",
+            "knowledge_registry": {"modules": ["Fault Monitoring"], "flows": ["Fault Event Review Flow"]},
+        }
+        story = {"id": "story-refresh", "title": "Open fault event details", "acceptance_criteria": ["Fault event details are visible."]}
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            first = service.build_execution_context(story, profile, options={"force_provider": "deterministic_fallback"})
+            second = service.build_execution_context({**story, "acceptance_criteria": [*story["acceptance_criteria"], "Device health is visible."]}, profile, options={"force_provider": "deterministic_fallback"})
+            service.refresh_knowledge_cache(
+                {"README.md": "LineDefender fault and telemetry platform.", "modules.md": "Modules: Fault Monitoring, Telemetry."},
+                repository={"repository_id": "repo-ld", "repository_name": "LineDefender", "branch": "main"},
+                profile=profile,
+            )
+            status = service.get_context_capsules()["status"]["capsules"]
+
+        self.assertGreater(second["context_capsule_version"], first["context_capsule_version"])
+        execution_status = next(item for item in status if item["capsule_type"] == "execution")
+        self.assertEqual(execution_status["status"], "refresh_required")
+
+    def test_prompt_builder_uses_execution_package_only_for_phi_enrichment(self) -> None:
+        provider = RecordingPhiProvider({"prompt": "Phi-enriched prompt"})
+        profile = {
+            "project_name": "LineDefender",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Firmware Management"],
+                "flows": ["Outage Investigation Flow", "Firmware Rollout Flow"],
+            },
+        }
+        story = {
+            "id": "story-prompt",
+            "title": "Start outage investigation from a fault event",
+            "description": "As an Operations User, I want outage investigation support from a critical fault event.",
+            "acceptance_criteria": ["Investigation starts from a fault event."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            prompt = ProjectIntelligenceService().build_dev_prompt(story, profile, options={"mode": "enhance_with_ai"})
+
+        self.assertEqual(prompt["phi_status"], "success")
+        self.assertIn("Phi-enriched prompt", prompt["prompt"])
+        self.assertIn("context_capsule", provider.user_prompt)
+        self.assertNotIn("Broad project docs mention Firmware Rollout", provider.user_prompt)
+        self.assertNotIn("Firmware Management", provider.user_prompt)
+
     def test_document_hash_change_marks_refresh_available(self) -> None:
         documents = {"README.md": "LineDefender fault monitoring platform."}
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):

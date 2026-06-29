@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .capability_context import CapabilityMatch, RejectedCapability
 from .capability_diagnostics import CapabilityDiagnostics
-from .capability_rules import CAPABILITY_PURPOSE_GROUPS
+from .capability_rules import CAPABILITY_PURPOSE_GROUPS, canonical_capability
 
 
 def dedupe_capabilities(
@@ -17,7 +17,8 @@ def dedupe_capabilities(
         if match.name in seen_names:
             rejected.append(RejectedCapability(match.name, "Duplicate capability name already selected.", 0.86))
             continue
-        purpose = CAPABILITY_PURPOSE_GROUPS.get(match.name, match.name)
+        canonical = canonical_capability(match.name)
+        purpose = CAPABILITY_PURPOSE_GROUPS.get(canonical, canonical)
         existing = seen_purposes.get(purpose)
         if existing and _can_merge_purpose(existing.name, match.name):
             rejected.append(
@@ -43,4 +44,3 @@ def _can_merge_purpose(existing: str, candidate: str) -> bool:
     if {existing, candidate} == {"Reporting", "Export and Reporting"}:
         return False
     return True
-

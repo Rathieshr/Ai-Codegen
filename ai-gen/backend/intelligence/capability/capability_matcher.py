@@ -4,7 +4,7 @@ from typing import Any
 
 from .capability_context import CapabilityMatch
 from .capability_diagnostics import CapabilityDiagnostics
-from .capability_rules import CAPABILITY_RULES, CORE_CAPABILITIES
+from .capability_rules import CAPABILITY_RULES, CORE_CAPABILITIES, canonical_capability, is_system_flow_name
 
 
 def match_capabilities(intent_model: dict[str, Any], diagnostics: CapabilityDiagnostics) -> list[CapabilityMatch]:
@@ -15,7 +15,7 @@ def match_capabilities(intent_model: dict[str, Any], diagnostics: CapabilityDiag
     for capability in CORE_CAPABILITIES:
         rules = CAPABILITY_RULES.get(capability, {})
         evidence = [keyword for keyword in rules.get("keywords", []) if keyword.lower() in corpus]
-        intent_boost = capability == intent_primary or capability in intent_secondary
+        intent_boost = capability == canonical_capability(intent_primary) or capability in [canonical_capability(item) for item in intent_secondary]
         if not evidence and not intent_boost:
             continue
         confidence = 0.62 + min(len(evidence), 4) * 0.07 + (0.14 if intent_boost else 0)
@@ -56,7 +56,7 @@ def match_modules(
 ) -> list[CapabilityMatch]:
     registry_modules = _list(knowledge_registry.get("modules"))
     intent_modules = _list(intent_model.get("inferredModules"))
-    names = _unique([*intent_modules, *[module for capability in capabilities for module in CAPABILITY_RULES.get(capability.name, {}).get("modules", [])]])
+    names = _unique([*intent_modules, *[module for capability in capabilities for module in CAPABILITY_RULES.get(canonical_capability(capability.name), {}).get("modules", [])]])
     return _match_named_context(names, registry_modules, "module", diagnostics)
 
 
@@ -68,7 +68,11 @@ def match_flows(
 ) -> list[CapabilityMatch]:
     registry_flows = _list(knowledge_registry.get("flows"))
     intent_flows = _list(intent_model.get("inferredFlows"))
-    names = _unique([*intent_flows, *[flow for capability in capabilities for flow in CAPABILITY_RULES.get(capability.name, {}).get("flows", [])]])
+    requested = _unique([*intent_flows, *[flow for capability in capabilities for flow in CAPABILITY_RULES.get(canonical_capability(capability.name), {}).get("flows", [])]])
+    invalid = [name for name in requested if is_system_flow_name(name)]
+    if invalid:
+        diagnostics.add(f"Rejected system/application names from flows: {', '.join(invalid)}.")
+    names = [name for name in requested if not is_system_flow_name(name)]
     return _match_named_context(names, registry_flows, "flow", diagnostics)
 
 
@@ -79,6 +83,10 @@ def match_applications(
 ) -> list[CapabilityMatch]:
     apps = project_profile.get("applications") or []
     corpus = _intent_corpus(intent_model)
+    flow_apps = [item for item in _list(intent_model.get("inferredFlows")) if is_system_flow_name(item)]
+    primary = canonical_capability(_clean(intent_model.get("primaryCapability")))
+    secondary = [canonical_capability(item) for item in _list(intent_model.get("secondaryCapabilities"))]
+    capabilities = [primary, *secondary]
     matches: list[CapabilityMatch] = []
     for app in apps:
         if isinstance(app, dict):
@@ -94,7 +102,9 @@ def match_applications(
             continue
         if "analytics" in app_text and not any(token in corpus for token in ["analytics", "trend", "metric", "kpi", "report", "reliability"]):
             continue
-        confidence = 0.7 if any(token in corpus for token in [name.lower(), app_type.lower()] if token) else 0.52
+        if not (_application_supported_by_capability(name, app_type, capabilities, corpus) or name in flow_apps):
+            continue
+        confidence = 0.78 if any(token in corpus for token in [name.lower(), app_type.lower()] if token) or name in flow_apps else 0.58
         matches.append(
             CapabilityMatch(
                 name=name,
@@ -184,6 +194,19 @@ def _intent_corpus(intent_model: dict[str, Any]) -> str:
     return " ".join(part for part in parts if part).lower()
 
 
+def _application_supported_by_capability(name: str, app_type: str, capabilities: list[str], corpus: str) -> bool:
+    text = f"{name} {app_type}".lower()
+    if "operations dashboard" in text or "web portal" in text:
+        return any(capability in capabilities for capability in ["Operational Awareness", "Fault Monitoring", "Alert Management", "Outage Investigation", "Reliability Analytics"])
+    if "backend" in text or "api" in text:
+        return any(capability in capabilities for capability in ["Fault Monitoring", "Alert Management", "Outage Investigation", "Reliability Analytics", "Authentication", "Authorization"])
+    if "mobile" in text:
+        return any(token in corpus for token in ["mobile", "field technician", "field", "operator review"]) or any(capability in capabilities for capability in ["Alert Management"])
+    if "analytics" in text:
+        return "Reliability Analytics" in capabilities
+    return any(_clean(name).lower() in corpus for _ in [0])
+
+
 def _dedupe_matches(matches: list[CapabilityMatch]) -> list[CapabilityMatch]:
     output: list[CapabilityMatch] = []
     seen: set[str] = set()
@@ -216,4 +239,3 @@ def _unique(values: list[str]) -> list[str]:
         if cleaned and cleaned not in output:
             output.append(cleaned)
     return output
-

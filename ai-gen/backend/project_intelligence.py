@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from backend.intelligence.capability import buildCapabilityContext
+from backend.intelligence.intent import build_intent
+from backend.intelligence.planning import buildPlanningContext
+from backend.intelligence.reasoning import generatePlanningArtifact
+from backend.intelligence.validation import validateArtifact
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 
 
@@ -839,31 +844,15 @@ class ProjectIntelligenceService:
             "generation_review": _generation_review(relevant_profile, features, _selection_names(selection, "relevant_modules"), keywords),
             **_relevance_metadata(selection),
         }
-        active_profile = self._profile_with_capsule("project", relevant_profile, epic)
-        phi = _project_phi_json("refine_epic", active_profile, epic, deterministic, options, list(deterministic.keys()))
-        if phi["used"]:
-            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
-            merged["recommended_features"] = _validate_capability_features(
-                merged.get("recommended_features"),
-                title,
-                merged.get("business_goal") or business_goal,
-                keywords,
-                active_profile,
-                fallback_features=features,
-                diagnostics=merged.get("capability_diagnostics"),
-            )
-            merged["recommended_features"] = [
-                {
-                    **feature,
-                    **_lineage_metadata(epic, "Epic", "epic_intent + knowledge_registry", selection, float(feature.get("confidence") or 0.84)),
-                }
-                for feature in merged["recommended_features"]
-            ]
-            merged["generation_review"] = _generation_review(active_profile, merged["recommended_features"], [], keywords)
-            return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, {**phi["metadata"], **_relevance_metadata(selection)})
+        pipeline = _run_intelligence_pipeline(epic, epic, relevant_profile, "Feature", _existing_children_from_options(options), options)
+        deterministic["recommended_features"] = _attach_validation_to_items(features, pipeline, "Feature")
+        provider_parsed = pipeline.get("providerParsed") if isinstance(pipeline.get("providerParsed"), dict) else {}
+        if _clean_text(provider_parsed.get("business_goal")):
+            deterministic["business_goal"] = _clean_text(provider_parsed.get("business_goal"))
+        _append_rejected_phi_feature_diagnostics(deterministic, provider_parsed, title)
+        deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["recommended_features"], _selection_names(selection, "relevant_modules"), keywords)
+        deterministic.update(_pipeline_payload(pipeline))
+        return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
 
     def refine_feature(
         self,
@@ -898,17 +887,11 @@ class ProjectIntelligenceService:
             "generation_review": _generation_review(relevant_profile, story_plan["recommended_stories"], modules, _context_keywords(title, description, relevant_profile)),
             **_relevance_metadata(selection),
         }
-        active_profile = self._profile_with_capsule("feature", relevant_profile, feature)
-        phi = _project_phi_json("refine_feature", active_profile, feature, deterministic, options, list(deterministic.keys()))
-        if phi["used"]:
-            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
-            merged["recommended_stories"] = recommended_stories
-            merged["story_generation_diagnostics"] = story_plan["diagnostics"]
-            merged["generation_review"] = deterministic["generation_review"]
-            return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, {**phi["metadata"], **_relevance_metadata(selection)})
+        pipeline = _run_intelligence_pipeline(feature, feature, relevant_profile, "Story", _existing_children_from_options(options), options)
+        deterministic["recommended_stories"] = _attach_validation_to_items(recommended_stories, pipeline, "User Story")
+        deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["recommended_stories"], modules, _context_keywords(title, description, relevant_profile))
+        deterministic.update(_pipeline_payload(pipeline))
+        return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
 
     def refine_story(
         self,
@@ -955,20 +938,11 @@ class ProjectIntelligenceService:
             "generation_review": _generation_review(relevant_profile, proposed_tasks, modules, _context_keywords(title, description, relevant_profile)),
             **_relevance_metadata(selection),
         }
-        active_profile = self._profile_with_capsule("story", relevant_profile, story)
-        phi = _project_phi_json("refine_story", active_profile, story, deterministic, options, list(deterministic.keys()))
-        if phi["used"]:
-            merged = _merge_known_fields(deterministic, phi["parsed"], deterministic.keys())
-            merged["acceptance_criteria"] = acceptance
-            merged["acceptance_criteria_categories"] = acceptance_categories
-            merged["acceptance_criteria_quality_score"] = acceptance_quality_score
-            merged["proposed_tasks"] = proposed_tasks
-            merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
-            merged["generation_review"] = deterministic["generation_review"]
-            return _with_provider_metadata(merged, {**phi["metadata"], **_relevance_metadata(selection)})
-        if phi["blocked"]:
-            return _phi_error_response(phi)
-        return _with_provider_metadata(deterministic, {**phi["metadata"], **_relevance_metadata(selection)})
+        pipeline = _run_intelligence_pipeline(story, story, relevant_profile, "Task", _existing_children_from_options(options), options)
+        deterministic["proposed_tasks"] = _attach_validation_to_items(proposed_tasks, pipeline, "Task")
+        deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["proposed_tasks"], modules, _context_keywords(title, description, relevant_profile))
+        deterministic.update(_pipeline_payload(pipeline))
+        return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
 
     def generate_qa_test_cases(
         self,
@@ -1129,43 +1103,55 @@ class ProjectIntelligenceService:
         ]
         selected_task = _selected_execution_task(story, generated_tasks)
         implementation_tasks = _tasks_for_areas(generated_tasks, ["UI Work", "Backend Work", "Data Work", "Analytics Work"])
-        testing_tasks = _tasks_for_areas(generated_tasks, ["QA Work"])
-        documentation_tasks = _documentation_tasks(title, relevant_profile, impact)
-        deterministic = {
-            "story_summary": _sentence(title, description or refined_story["story_summary"]),
-            "selected_task": selected_task,
-            "parent_story": {
-                "id": _item_id(story),
-                "title": title,
-                "description": description,
-                "acceptance_criteria": acceptance,
+        pipeline = _run_intelligence_pipeline(
+            {**story, "selected_task": selected_task or {}, "acceptance_criteria": acceptance},
+            story,
+            relevant_profile,
+            "Task",
+            _existing_children_from_options(options),
+            {**(options or {}), "deterministic_only": True},
+        )
+        cache = self._read_knowledge_cache()
+        capsules = self._read_context_capsules()
+        context_capsule = _pipeline_context_capsule(
+            capsule_type="execution",
+            source_work_item={
+                **(selected_task or story),
+                "dependencies": impact["dependencies"] or refined_story["dependencies"],
+                "risks": impact["risks"] or refined_story["risks"],
             },
-            "acceptance_criteria": acceptance,
-            "affected_applications": impact["affected_applications"] or refined_story["affected_applications"],
-            "affected_modules": impact["affected_modules"] or refined_story["affected_modules"],
-            "affected_flows": impact["affected_flows"] or refined_story["affected_flows"],
-            "dependencies": impact["dependencies"] or refined_story["dependencies"],
-            "risks": impact["risks"] or refined_story["risks"],
-            "technology_stack": relevant_profile["technology_stack"],
-            "ui_guidelines": relevant_profile["ui_guidelines"],
-            "development_standards": relevant_profile["development_standards"],
-            "recommended_files": recommended_files,
-            "file_ranking_status": file_ranking_status,
-            "acceptance_criteria_mapping": _acceptance_criteria_mapping(acceptance, implementation_tasks),
-            "proposed_tasks": generated_tasks,
-            "task_intelligence_diagnostics": task_plan["diagnostics"],
-            "implementation_tasks": implementation_tasks,
-            "testing_tasks": testing_tasks,
-            "documentation_tasks": documentation_tasks,
-            "implementation_notes": _implementation_notes(relevant_profile, impact),
-            "execution_readiness": readiness["label"],
-            "execution_readiness_score": readiness["score"],
-            "execution_readiness_breakdown": readiness["breakdown"],
-            "execution_readiness_result": readiness["result"],
-            **_lineage_metadata(selected_task or story, "Task" if selected_task else "Story", "selected_task + parent_story_context", selection, float((selected_task or {}).get("confidence") or 0.8)),
-            **_relevance_metadata(selection),
-        }
-        active_profile = self._profile_with_capsule("execution", relevant_profile, {**story, "tasks": generated_tasks, "acceptance_criteria": acceptance})
+            parent_story=story,
+            acceptance_criteria=acceptance,
+            pipeline=pipeline,
+            profile=relevant_profile,
+            cache=cache,
+            selected_task=selected_task,
+            previous=capsules.get("execution") if isinstance(capsules.get("execution"), dict) else None,
+        )
+        capsules["execution"] = context_capsule
+        self._write_context_capsules(capsules)
+        validation_report = pipeline["validationReports"][0] if pipeline.get("validationReports") else None
+        deterministic = _execution_package_from_capsule(
+            story=story,
+            selected_task=selected_task,
+            acceptance_criteria=acceptance,
+            context_capsule=context_capsule,
+            generated_tasks=generated_tasks,
+            task_plan=task_plan,
+            readiness=readiness,
+            profile=relevant_profile,
+            validation_report=validation_report,
+        )
+        deterministic.update(
+            {
+                **_lineage_metadata(selected_task or story, "Task" if selected_task else "Story", "selected_task + context_capsule", selection, float((selected_task or {}).get("confidence") or 0.8)),
+                **_relevance_metadata(selection),
+            }
+        )
+        deterministic["rejected_context"] = deterministic["context_capsule"]["rejectedContext"]
+        deterministic.update(_pipeline_payload(pipeline))
+        deterministic.update(_context_capsule_metadata(context_capsule))
+        active_profile = {**relevant_profile, "_active_context_capsule": context_capsule}
         metadata = _execution_primary_metadata(time.monotonic(), "build_execution_context")
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
@@ -1175,7 +1161,7 @@ class ProjectIntelligenceService:
             merged["proposed_tasks"] = generated_tasks
             merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
             merged["implementation_tasks"] = implementation_tasks
-            merged["testing_tasks"] = testing_tasks
+            merged["ai_enrichment_status"] = "enriched"
             return _with_provider_metadata(merged, phi["metadata"])
         return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
 
@@ -1188,8 +1174,8 @@ class ProjectIntelligenceService:
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
-        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
-        active_profile = self._profile_with_capsule("execution", active_profile, {**(story or {}), "execution_context": context})
+        active_profile = _active_capsule_profile_from_execution_package(context)
+        phi_item = _execution_package_phi_item(context)
         deterministic = {
             "prompt": _execution_prompt(
                 "Dev Prompt",
@@ -1205,10 +1191,11 @@ class ProjectIntelligenceService:
                 ],
             )
         }
+        deterministic.update(_prompt_validation_payload(context, "Dev Prompt", deterministic["prompt"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_dev_prompt")
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
-        phi = _project_phi_json("build_dev_prompt", active_profile, story, deterministic, _execution_ai_options(options), ["prompt"])
+        phi = _project_phi_json("build_dev_prompt", active_profile, phi_item, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
         return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
@@ -1222,8 +1209,8 @@ class ProjectIntelligenceService:
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
-        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
-        active_profile = self._profile_with_capsule("execution", active_profile, {**(story or {}), "execution_context": context})
+        active_profile = _active_capsule_profile_from_execution_package(context)
+        phi_item = _execution_package_phi_item(context)
         ui = context["ui_guidelines"]
         deterministic = {
             "prompt": _execution_prompt(
@@ -1239,10 +1226,11 @@ class ProjectIntelligenceService:
                 ],
             )
         }
+        deterministic.update(_prompt_validation_payload(context, "UI Prompt", deterministic["prompt"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_ui_prompt")
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
-        phi = _project_phi_json("build_ui_prompt", active_profile, story, deterministic, _execution_ai_options(options), ["prompt"])
+        phi = _project_phi_json("build_ui_prompt", active_profile, phi_item, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
         return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
@@ -1256,9 +1244,8 @@ class ProjectIntelligenceService:
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
-        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
-        active_profile = self._profile_with_capsule("qa", active_profile, {**(story or {}), "execution_context": context})
-        impact = _normalize_story_impact(impact_analysis or self.analyze_story_impact(story, active_profile, active_profile["knowledge_registry"]))
+        active_profile = _active_capsule_profile_from_execution_package(context)
+        phi_item = _execution_package_phi_item(context)
         deterministic = {
             "prompt": _execution_prompt(
                 "QA Prompt",
@@ -1267,16 +1254,17 @@ class ProjectIntelligenceService:
                     "Create manual and automation-ready coverage for the approved story.",
                     f"Risks: {', '.join(context['risks']) or 'Confirm risks before testing.'}",
                     f"Dependencies: {', '.join(context['dependencies']) or 'Confirm dependencies before testing.'}",
-                    f"Integration Points: {', '.join(impact['integration_points']) or 'Confirm integration points.'}",
+                    f"Integration Points: {', '.join(_unique(context['affected_modules'] + context['affected_flows'])) or 'Confirm integration points.'}",
                     f"Regression Areas: {', '.join(_unique(context['affected_flows'] + context['affected_modules'])) or 'Confirm regression scope.'}",
                     f"Testing Tasks: {', '.join(context['testing_tasks']) or 'Define test cases before validation.'}",
                 ],
             )
         }
+        deterministic.update(_prompt_validation_payload(context, "QA Prompt", deterministic["prompt"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_qa_prompt")
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
-        phi = _project_phi_json("build_qa_prompt", active_profile, story, deterministic, _execution_ai_options(options), ["prompt"])
+        phi = _project_phi_json("build_qa_prompt", active_profile, phi_item, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
         return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
@@ -1290,16 +1278,20 @@ class ProjectIntelligenceService:
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
-        active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
-        active_profile = self._profile_with_capsule("execution", active_profile, {**(story or {}), "execution_context": context})
+        active_profile = _active_capsule_profile_from_execution_package(context)
+        phi_item = _execution_package_phi_item(context)
+        capsule = context.get("context_capsule") if isinstance(context.get("context_capsule"), dict) else {}
         lines = [
             "Project Awareness Context",
             "",
-            f"Project: {active_profile['project_name'] or 'Not specified'}",
-            f"Domain: {active_profile['domain'] or active_profile['knowledge_profile_preview']['domain'] or 'Not specified'}",
-            f"Project Type: {active_profile['project_type'] or 'Not specified'}",
+            f"Project: {capsule.get('projectName') or 'Not specified'}",
+            f"Domain: {capsule.get('domain') or 'Not specified'}",
+            f"Project Type: {capsule.get('projectType') or 'Not specified'}",
+            f"Capsule: {capsule.get('capsuleId') or 'Not available'}",
+            f"Knowledge Version: {capsule.get('knowledgeVersion') or 'Not available'}",
+            f"Repository Snapshot: {capsule.get('repositorySnapshotVersion') or 'Not available'}",
             "",
-            f"Story: {_clean_text(story.get('title')) or 'Untitled story'}",
+            f"Story: {_clean_text(context.get('parent_story', {}).get('title')) or 'Untitled story'}",
             context["story_summary"],
             "",
             "Affected Applications:",
@@ -1311,9 +1303,6 @@ class ProjectIntelligenceService:
             "Affected Flows:",
             *_bullet_lines(context["affected_flows"]),
             "",
-            "Architecture:",
-            *_bullet_lines(active_profile["readme_analysis"]["architecture_notes"] or _flatten_standards(active_profile["development_standards"])),
-            "",
             "Dependencies:",
             *_bullet_lines(context["dependencies"]),
             "",
@@ -1321,10 +1310,11 @@ class ProjectIntelligenceService:
             *_bullet_lines(_flatten_standards(context["development_standards"])),
         ]
         deterministic = {"context": "\n".join(lines).strip()}
+        deterministic.update(_prompt_validation_payload(context, "Copilot Context", deterministic["context"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_copilot_context")
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
-        phi = _project_phi_json("build_copilot_context", active_profile, story, deterministic, _execution_ai_options(options), ["context"])
+        phi = _project_phi_json("build_copilot_context", active_profile, phi_item, deterministic, _execution_ai_options(options), ["context"])
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["context"])}, phi["metadata"])
         return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
@@ -1389,6 +1379,855 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
         normalized["knowledge_profile_preview"]["standards"] = _flatten_standards(normalized["development_standards"])
     normalized["knowledge_profile_preview"]["readiness"] = normalized["knowledge_profile_preview"]["readiness"] or _readiness(normalized)
     return normalized
+
+
+def _run_intelligence_pipeline(
+    work_item: dict[str, Any],
+    parent_work_item: dict[str, Any] | None,
+    profile: dict[str, Any],
+    output_type: str,
+    existing_children: list[dict[str, Any]] | None = None,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    options = options or {}
+    parent_work_item = parent_work_item or work_item
+    repository_snapshot = _repository_snapshot_from_profile(profile)
+    knowledge_registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    intent = build_intent(work_item)
+    capability_context = buildCapabilityContext(
+        intent,
+        {
+            "parent_work_item": parent_work_item,
+            "project_profile": profile,
+            "repository_snapshot": repository_snapshot,
+            "knowledge_registry": knowledge_registry,
+        },
+    )
+    planning_context = buildPlanningContext(
+        work_item,
+        parent_work_item,
+        {
+            "intentModel": intent,
+            "capabilityContext": capability_context,
+            "projectProfile": profile,
+            "repositorySnapshot": repository_snapshot,
+            "knowledgeRegistry": knowledge_registry,
+            "existingChildren": existing_children or [],
+        },
+    )
+    planning_provider = _planning_llm_provider(options)
+    reasoning = generatePlanningArtifact(
+        planning_context,
+        output_type,
+        {
+            "provider": planning_provider,
+            "deterministic_only": bool(options.get("deterministic_only")),
+        },
+    )
+    provider_metadata = getattr(planning_provider, "metadata", {}) if planning_provider is not None else {}
+    provider_parsed = getattr(planning_provider, "parsed", {}) if planning_provider is not None else {}
+    artifacts = []
+    for artifact in reasoning.get("artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        report = validateArtifact(
+            planning_context,
+            artifact,
+            {
+                "repositorySnapshot": repository_snapshot,
+                "knowledgeRegistry": knowledge_registry,
+                "existingSiblings": existing_children or planning_context.get("existingChildren") or [],
+            },
+        )
+        artifacts.append(
+            {
+                **artifact,
+                "validationReport": report,
+                "validationStatus": report["validationStatus"],
+                "creationAllowed": report["validationStatus"] == "Approved",
+                "manualEditAllowed": report["validationStatus"] == "NeedsReview",
+                "creationBlocked": report["validationStatus"] == "Rejected",
+            }
+        )
+    return {
+        "intent": intent,
+        "capabilityContext": capability_context,
+        "planningContext": planning_context,
+        "reasoning": {**reasoning, "artifacts": artifacts},
+        "artifacts": artifacts,
+        "validationReports": [artifact["validationReport"] for artifact in artifacts],
+        "previewPolicy": _preview_policy([artifact["validationReport"] for artifact in artifacts]),
+        "providerMetadata": provider_metadata,
+        "providerParsed": provider_parsed,
+    }
+
+
+def _planning_llm_provider(options: dict[str, Any]) -> Any:
+    provider = options.get("llm_provider") or options.get("provider")
+    if hasattr(provider, "generate_json"):
+        return provider
+    force_provider = _clean_text(options.get("force_provider"))
+    if bool(options.get("deterministic_only")) or force_provider in {"deterministic_fallback", "domain_fallback"}:
+        return None
+    return _ProjectPlanningPhiProvider(options)
+
+
+class _ProjectPlanningPhiProvider:
+    def __init__(self, options: dict[str, Any]) -> None:
+        self.options = dict(options)
+        self.metadata: dict[str, Any] = {}
+        self.last_result: dict[str, Any] = {}
+        self.parsed: dict[str, Any] = {}
+
+    def generate_json(self, prompt: str, output_type: str) -> dict[str, Any]:
+        probe_options = dict(self.options)
+        probe_options.setdefault("allow_fallback", False)
+        probe_options.setdefault("max_tokens", 900)
+        expected_keys = [
+            "artifacts",
+            "planningArtifacts",
+            "title",
+            "description",
+            "businessValue",
+            "acceptanceCriteria",
+            "business_goal",
+            "recommended_features",
+            "recommended_stories",
+            "proposed_tasks",
+        ]
+        result: dict[str, Any] = {}
+        for _attempt in range(2):
+            result = _project_phi_probe(prompt, probe_options, expected_keys=expected_keys)
+            metadata = result.get("metadata", {})
+            if metadata.get("phi_status") != "prompt_too_long":
+                break
+        self.last_result = result
+        self.metadata = result.get("metadata", {})
+        self.parsed = result.get("parsed", {}) if result.get("used") else {}
+        return _planning_provider_payload(self.parsed, output_type)
+
+
+def _planning_provider_payload(parsed: dict[str, Any], output_type: str) -> dict[str, Any]:
+    if not isinstance(parsed, dict):
+        return {}
+    if isinstance(parsed.get("artifacts"), list) or isinstance(parsed.get("planningArtifacts"), list):
+        return parsed
+    normalized = _clean_text(output_type).lower()
+    if normalized.startswith("feature") and isinstance(parsed.get("recommended_features"), list):
+        return {"artifacts": parsed["recommended_features"]}
+    if normalized.startswith("story") and isinstance(parsed.get("recommended_stories"), list):
+        return {"artifacts": parsed["recommended_stories"]}
+    if normalized.startswith("task") and isinstance(parsed.get("proposed_tasks"), list):
+        return {"artifacts": parsed["proposed_tasks"]}
+    return parsed
+
+
+def _append_rejected_phi_feature_diagnostics(payload: dict[str, Any], provider_parsed: dict[str, Any], epic_title: str) -> None:
+    features = provider_parsed.get("recommended_features") if isinstance(provider_parsed, dict) else []
+    if not isinstance(features, list):
+        return
+    diagnostics = payload.setdefault("capability_diagnostics", {})
+    rejected = diagnostics.setdefault("rejected_similar_features", [])
+    existing_titles = {_clean_text(item.get("title")).lower() for item in rejected if isinstance(item, dict)}
+    epic_tokens = set(_simple_keywords(epic_title))
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        title = _clean_text(feature.get("title"))
+        if not title or title.lower() in existing_titles:
+            continue
+        title_tokens = set(_simple_keywords(title))
+        is_too_close = bool(title_tokens and epic_tokens and len(title_tokens & epic_tokens) / max(1, len(title_tokens)) >= 0.5)
+        is_generic_dashboard = "dashboard" in title.lower() and "dashboard" in epic_title.lower()
+        if is_too_close or is_generic_dashboard:
+            rejected.append(
+                {
+                    "title": title,
+                    "reason": "phi suggestion overlapped the epic title or generic UI framing",
+                    "similarity": round(len(title_tokens & epic_tokens) / max(1, len(title_tokens)), 2) if title_tokens else 0,
+                }
+            )
+
+
+def _simple_keywords(value: Any) -> list[str]:
+    text = _clean_text(value).lower()
+    token = ""
+    output: list[str] = []
+    for char in text:
+        if char.isalnum():
+            token += char
+            continue
+        if len(token) > 2 and token not in output:
+            output.append(token)
+        token = ""
+    if len(token) > 2 and token not in output:
+        output.append(token)
+    return output
+
+
+def _existing_children_from_options(options: dict[str, Any] | None) -> list[dict[str, Any]]:
+    options = options or {}
+    children = options.get("existing_children") or options.get("existingChildren") or options.get("existing_children_preview") or []
+    return [item for item in children if isinstance(item, dict)] if isinstance(children, list) else []
+
+
+def _preview_policy(validation_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    statuses = [_clean_text(report.get("validationStatus")) for report in validation_reports if isinstance(report, dict)]
+    if statuses and all(status == "Approved" for status in statuses):
+        return {
+            "status": "Approved",
+            "allow_create": True,
+            "allow_save": True,
+            "allow_manual_edit": False,
+            "block_creation": False,
+            "message": "Validation approved. Create and save actions are available.",
+        }
+    if any(status == "Rejected" for status in statuses):
+        return {
+            "status": "Rejected",
+            "allow_create": False,
+            "allow_save": False,
+            "allow_manual_edit": True,
+            "block_creation": True,
+            "message": "Validation rejected this output. Fix issues before creating or saving.",
+        }
+    return {
+        "status": "NeedsReview",
+        "allow_create": False,
+        "allow_save": False,
+        "allow_manual_edit": True,
+        "block_creation": False,
+        "message": "Validation needs review. Edit warnings before creating or saving.",
+    }
+
+
+def _repository_snapshot_from_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    readme = profile.get("readme_analysis") if isinstance(profile.get("readme_analysis"), dict) else {}
+    return {
+        "knowledge_registry": registry,
+        "modules": [
+            {"name": name, "keywords": _context_keywords(name, "", profile)}
+            for name in _string_list(registry.get("modules")) or _string_list(readme.get("modules"))
+        ],
+        "flows": _string_list(registry.get("flows")) or _string_list(readme.get("flows")),
+        "dependencies": _string_list(registry.get("dependencies")),
+        "rankedFiles": _repository_ranked_files(profile),
+        "source_files": _string_list(registry.get("source_files")) or _string_list(profile.get("repository_sources")),
+    }
+
+
+def _repository_ranked_files(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    files = _string_list(registry.get("ranked_files")) or _string_list(registry.get("source_files")) or _string_list(profile.get("repository_sources"))
+    return [{"path": path, "score": 0.5} for path in files[:12]]
+
+
+def _artifact_to_generated_item(artifact: dict[str, Any], item_type: str, parent: dict[str, Any], parent_type: str) -> dict[str, Any]:
+    evidence = artifact.get("generatedUsing") if isinstance(artifact.get("generatedUsing"), dict) else {}
+    return {
+        "id": _draft_id(item_type, artifact.get("title")),
+        "type": item_type,
+        "title": _clean_text(artifact.get("title")) or item_type,
+        "description": _clean_text(artifact.get("description")),
+        "business_value": _clean_text(artifact.get("businessValue")),
+        "acceptance_criteria": _string_list(artifact.get("acceptanceCriteria")),
+        "personas": _string_list(artifact.get("personas")),
+        "dependencies": _string_list(artifact.get("dependencies")),
+        "risks": _string_list(artifact.get("risks")),
+        "assumptions": _string_list(artifact.get("assumptions")),
+        "parent_id": _item_id(parent),
+        "parent_type": parent_type,
+        "derived_from": "intelligence_pipeline",
+        "source_intent": _string_list((artifact.get("generatedUsing") or {}).get("capabilities") if isinstance(artifact.get("generatedUsing"), dict) else []),
+        "selected_modules": _string_list(evidence.get("modules")),
+        "selected_flows": _string_list(evidence.get("flows")),
+        "rejected_context": [],
+        "confidence": float(artifact.get("confidence") or 0.0),
+        "validation_report": artifact.get("validationReport"),
+        "validation_status": _clean_text(artifact.get("validationStatus")),
+        "creation_allowed": bool(artifact.get("creationAllowed")),
+        "manual_edit_allowed": bool(artifact.get("manualEditAllowed")),
+        "creation_blocked": bool(artifact.get("creationBlocked")),
+        "status": "preview",
+    }
+
+
+def _draft_id(item_type: str, title: Any) -> str:
+    item_slug = "".join(ch.lower() if ch.isalnum() else "_" for ch in (_clean_text(item_type) or "item")).strip("_") or "item"
+    seed = f"{item_slug}|{_clean_text(title)}"
+    return f"draft_{item_slug}_{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:10]}"
+
+
+def _pipeline_payload(pipeline: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "intelligence_pipeline": {
+            "intent": pipeline["intent"],
+            "capability_context": pipeline["capabilityContext"],
+            "planning_context": pipeline["planningContext"],
+            "reasoning_diagnostics": pipeline["reasoning"].get("diagnostics", {}),
+            "validation_reports": pipeline["validationReports"],
+            "preview_policy": pipeline["previewPolicy"],
+            "provider_metadata": pipeline.get("providerMetadata", {}),
+            "provider_parsed": pipeline.get("providerParsed", {}),
+        },
+        "validation_reports": pipeline["validationReports"],
+        "preview_policy": pipeline["previewPolicy"],
+    }
+
+
+def _pipeline_context_capsule(
+    *,
+    capsule_type: str,
+    source_work_item: dict[str, Any],
+    parent_story: dict[str, Any],
+    acceptance_criteria: list[str],
+    pipeline: dict[str, Any],
+    profile: dict[str, Any],
+    cache: dict[str, Any] | None,
+    selected_task: dict[str, Any] | None = None,
+    previous: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    planning_context = pipeline.get("planningContext") if isinstance(pipeline.get("planningContext"), dict) else {}
+    capability_context = pipeline.get("capabilityContext") if isinstance(pipeline.get("capabilityContext"), dict) else {}
+    intent = pipeline.get("intent") if isinstance(pipeline.get("intent"), dict) else {}
+    validation_reports = [report for report in pipeline.get("validationReports", []) if isinstance(report, dict)]
+    repository_snapshot = _repository_snapshot_from_profile(profile)
+    knowledge_version = _clean_text((cache or {}).get("knowledge_version")) or _knowledge_version(profile)
+    repository_snapshot_version = _repository_snapshot_version(repository_snapshot, profile)
+    selected_modules = _names_from_context(planning_context.get("selectedModules"))
+    selected_flows = _names_from_context(planning_context.get("selectedFlows"))
+    selected_applications = _names_from_context(planning_context.get("selectedApplications")) or _application_names(profile)[:3]
+    selected_dependencies = _unique(
+        [
+            *_names_from_context(planning_context.get("selectedDependencies")),
+            *_string_list(source_work_item.get("dependencies")),
+            *_string_list(parent_story.get("dependencies")),
+        ]
+    )
+    selected_standards = _names_from_context(planning_context.get("selectedStandards"))
+    selected_capabilities = _names_from_context(planning_context.get("selectedCapabilities")) or _names_from_context(capability_context.get("selectedCapabilities"))
+    relevant_files = _ranked_relevant_files(profile, selected_modules, selected_flows, source_work_item)
+    file_ranking_status = "Repository file ranking available" if relevant_files else "Repository file ranking not available"
+    rejected_context = _capsule_rejected_context(planning_context)
+    story_keywords = _context_keywords(_clean_text(parent_story.get("title")), _clean_text(parent_story.get("description")), profile)
+    risks = _unique(
+        [
+            *_string_list(planning_context.get("risks")),
+            *_string_list(source_work_item.get("risks")),
+            *_risks_for_profile(profile, story_keywords),
+            *[
+                _clean_text(issue.get("message") or issue.get("reason") or issue.get("title"))
+                for report in validation_reports
+                for issue in (report.get("issues") if isinstance(report.get("issues"), list) else [])
+                if isinstance(issue, dict)
+            ],
+        ]
+    )[:10]
+    constraints = _string_list(planning_context.get("constraints"))[:10]
+    source_payload = {
+        "capsule_type": capsule_type,
+        "source_work_item": _compact_work_item(source_work_item),
+        "parent_story": _compact_work_item(parent_story),
+        "selected_task": _compact_work_item(selected_task or {}),
+        "acceptance_criteria": acceptance_criteria,
+        "planning_context_version": planning_context.get("planningContextVersion") or planning_context.get("version"),
+        "selected_modules": selected_modules,
+        "selected_flows": selected_flows,
+        "selected_dependencies": selected_dependencies,
+        "knowledge_version": knowledge_version,
+        "repository_snapshot_version": repository_snapshot_version,
+        "knowledge_registry": profile.get("knowledge_registry", {}),
+        "repository_snapshot": repository_snapshot,
+    }
+    source_hash = hashlib.sha256(json.dumps(source_payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    previous_version = int((previous or {}).get("version") or 0)
+    generated_at = _now_iso()
+    payload = {
+        "capsuleId": f"{capsule_type}_{source_hash[:12]}",
+        "capsuleType": capsule_type,
+        "sourceWorkItemId": _item_id(source_work_item),
+        "parentStoryId": _item_id(parent_story),
+        "knowledgeVersion": knowledge_version,
+        "repositorySnapshotVersion": repository_snapshot_version,
+        "generatedAt": generated_at,
+        "projectName": _clean_text(profile.get("project_name")),
+        "domain": _clean_text(profile.get("domain") or profile.get("knowledge_profile_preview", {}).get("domain") if isinstance(profile.get("knowledge_profile_preview"), dict) else profile.get("domain")),
+        "projectType": _clean_text(profile.get("project_type")),
+        "intentSummary": _intent_summary(intent, planning_context),
+        "selectedCapabilities": selected_capabilities,
+        "selectedModules": selected_modules,
+        "selectedFlows": selected_flows,
+        "selectedApplications": selected_applications,
+        "selectedDependencies": selected_dependencies,
+        "selectedStandards": selected_standards,
+        "acceptanceCriteria": acceptance_criteria[:8],
+        "relevantFiles": relevant_files,
+        "fileRankingStatus": file_ranking_status,
+        "rejectedContext": rejected_context,
+        "risks": risks,
+        "constraints": constraints,
+        "confidence": round(float(planning_context.get("confidence") or 0.72), 2),
+        "freshnessStatus": "fresh",
+    }
+    payload["tokenEstimate"] = _estimate_tokens(json.dumps(payload, ensure_ascii=True, separators=(",", ":"), default=str))
+    source_size = _estimate_tokens(json.dumps(source_payload, ensure_ascii=True, separators=(",", ":"), default=str))
+    capsule = {
+        "capsule_id": payload["capsuleId"],
+        "capsule_type": capsule_type,
+        "status": "ready",
+        "version": previous_version + 1 if (previous or {}).get("source_hash") != source_hash else previous_version or 1,
+        "created_at": generated_at,
+        "last_refreshed": generated_at,
+        "source_hash": source_hash,
+        "source_version": knowledge_version,
+        "knowledge_version": knowledge_version,
+        "repository_snapshot_version": repository_snapshot_version,
+        "freshness_status": payload["freshnessStatus"],
+        "dependencies": ["work_item", "parent_story", "planning_context", "knowledge_registry", "repository_snapshot"],
+        "parent_references": _capsule_parent_references(parent_story),
+        "payload": {
+            **payload,
+            "modules": selected_modules,
+            "flows": selected_flows,
+            "applications": selected_applications,
+            "standards": selected_standards,
+            "dependencies": selected_dependencies,
+            "architecture_summary": _truncate_text(_architecture_summary_text(profile, profile.get("knowledge_registry", {})), 260),
+        },
+        "diagnostics": {
+            "capsule_size_tokens": payload["tokenEstimate"],
+            "source_size_tokens": source_size,
+            "compression_ratio": round(payload["tokenEstimate"] / max(source_size, 1), 3),
+            "selected_modules": selected_modules,
+            "selected_flows": selected_flows,
+            "selected_files": [_clean_text(item.get("path")) for item in relevant_files if isinstance(item, dict)],
+            "rejected_context": rejected_context,
+            "confidence": payload["confidence"],
+            "freshness_status": payload["freshnessStatus"],
+        },
+    }
+    return capsule
+
+
+def _capsule_public_payload(capsule: dict[str, Any]) -> dict[str, Any]:
+    payload = capsule.get("payload") if isinstance(capsule.get("payload"), dict) else {}
+    return {
+        "capsuleId": payload.get("capsuleId") or capsule.get("capsule_id"),
+        "capsuleType": payload.get("capsuleType") or capsule.get("capsule_type"),
+        "sourceWorkItemId": payload.get("sourceWorkItemId"),
+        "parentStoryId": payload.get("parentStoryId"),
+        "knowledgeVersion": payload.get("knowledgeVersion") or capsule.get("knowledge_version"),
+        "repositorySnapshotVersion": payload.get("repositorySnapshotVersion") or capsule.get("repository_snapshot_version"),
+        "generatedAt": payload.get("generatedAt") or capsule.get("created_at"),
+        "projectName": _clean_text(payload.get("projectName")),
+        "domain": _clean_text(payload.get("domain")),
+        "projectType": _clean_text(payload.get("projectType")),
+        "intentSummary": payload.get("intentSummary"),
+        "selectedCapabilities": _string_list(payload.get("selectedCapabilities")),
+        "selectedModules": _string_list(payload.get("selectedModules") or payload.get("modules")),
+        "selectedFlows": _string_list(payload.get("selectedFlows") or payload.get("flows")),
+        "selectedApplications": _string_list(payload.get("selectedApplications") or payload.get("applications")),
+        "selectedDependencies": _string_list(payload.get("selectedDependencies") or payload.get("dependencies")),
+        "selectedStandards": _string_list(payload.get("selectedStandards") or payload.get("standards")),
+        "acceptanceCriteria": _string_list(payload.get("acceptanceCriteria")),
+        "relevantFiles": payload.get("relevantFiles") if isinstance(payload.get("relevantFiles"), list) else [],
+        "fileRankingStatus": _clean_text(payload.get("fileRankingStatus")) or "Repository file ranking not available",
+        "rejectedContext": payload.get("rejectedContext") if isinstance(payload.get("rejectedContext"), list) else [],
+        "risks": _string_list(payload.get("risks")),
+        "constraints": _string_list(payload.get("constraints")),
+        "confidence": float(payload.get("confidence") or 0),
+        "tokenEstimate": int(payload.get("tokenEstimate") or 0),
+        "freshnessStatus": _clean_text(payload.get("freshnessStatus") or capsule.get("freshness_status")) or "unknown",
+    }
+
+
+def _context_capsule_metadata(capsule: dict[str, Any]) -> dict[str, Any]:
+    public = _capsule_public_payload(capsule)
+    diagnostics = capsule.get("diagnostics") if isinstance(capsule.get("diagnostics"), dict) else {}
+    return {
+        "context_capsule_used": True,
+        "context_capsule_required": True,
+        "capsuleId": public["capsuleId"],
+        "capsuleGeneratedAt": public["generatedAt"],
+        "knowledgeVersion": public["knowledgeVersion"],
+        "repositorySnapshotVersion": public["repositorySnapshotVersion"],
+        "selectedModules": public["selectedModules"],
+        "selectedFlows": public["selectedFlows"],
+        "selectedFiles": [_clean_text(item.get("path")) for item in public["relevantFiles"] if isinstance(item, dict)],
+        "rejectedContext": public["rejectedContext"],
+        "tokenEstimate": public["tokenEstimate"],
+        "confidence": public["confidence"],
+        "freshnessStatus": public["freshnessStatus"],
+        "context_capsule_type": capsule.get("capsule_type"),
+        "context_capsule_version": capsule.get("version"),
+        "context_capsule_size_tokens": diagnostics.get("capsule_size_tokens", public["tokenEstimate"]),
+        "context_capsule_source_size_tokens": diagnostics.get("source_size_tokens", 0),
+        "context_capsule_compression_ratio": diagnostics.get("compression_ratio", 0),
+    }
+
+
+def _execution_package_from_capsule(
+    *,
+    story: dict[str, Any],
+    selected_task: dict[str, Any],
+    acceptance_criteria: list[str],
+    context_capsule: dict[str, Any],
+    generated_tasks: list[dict[str, Any]],
+    task_plan: dict[str, Any],
+    readiness: dict[str, Any],
+    profile: dict[str, Any],
+    validation_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    capsule = _capsule_public_payload(context_capsule)
+    relevant_files = [item for item in capsule["relevantFiles"] if isinstance(item, dict)]
+    relevant_file_paths = [_clean_text(item.get("path")) for item in relevant_files if _clean_text(item.get("path"))]
+    modules = capsule["selectedModules"]
+    flows = capsule["selectedFlows"]
+    dependencies = capsule["selectedDependencies"]
+    risks = capsule["risks"]
+    implementation_tasks = _tasks_for_areas(generated_tasks, ["UI Work", "Frontend Work", "Backend Work", "Data Work", "Analytics Work"])
+    testing_tasks = _tasks_for_areas(generated_tasks, ["QA Work"])
+    story_title = _clean_text(story.get("title")) or "Untitled story"
+    story_description = _clean_text(story.get("description"))
+    task_title = _clean_text(selected_task.get("title")) or "Selected execution task"
+    return {
+        "execution_package_source": "context_capsule",
+        "context_capsule": capsule,
+        "context_capsule_diagnostics": _context_capsule_metadata(context_capsule),
+        "story_summary": _sentence(story_title, story_description),
+        "task_focus": task_title,
+        "selected_task": selected_task,
+        "parent_story": {
+            "id": _item_id(story),
+            "title": story_title,
+            "description": story_description,
+            "acceptance_criteria": acceptance_criteria,
+        },
+        "implementation_boundary": _execution_boundary(task_title, modules, flows),
+        "capsule_summary": _capsule_summary(capsule),
+        "acceptance_criteria": acceptance_criteria,
+        "affected_applications": capsule["selectedApplications"],
+        "affected_modules": modules,
+        "affected_flows": flows,
+        "dependencies": dependencies,
+        "risks": risks,
+        "technology_stack": _compact_stack(profile),
+        "ui_guidelines": profile["ui_guidelines"],
+        "development_standards": profile["development_standards"],
+        "relevant_files": relevant_files,
+        "recommended_files": relevant_file_paths,
+        "file_ranking_status": capsule["fileRankingStatus"],
+        "engineering_rules": _engineering_rules_from_capsule(capsule, profile),
+        "validation_report": validation_report or {},
+        "rejected_context": capsule["rejectedContext"],
+        "acceptance_criteria_mapping": _acceptance_criteria_mapping(acceptance_criteria, implementation_tasks),
+        "proposed_tasks": generated_tasks,
+        "task_intelligence_diagnostics": task_plan.get("diagnostics", {}),
+        "implementation_tasks": implementation_tasks,
+        "testing_tasks": testing_tasks,
+        "documentation_tasks": _documentation_tasks(story_title, profile, {"dependencies": dependencies, "affected_modules": modules, "affected_flows": flows}),
+        "implementation_notes": _implementation_notes(profile, {"dependencies": dependencies, "risks": risks}),
+        "execution_readiness": readiness["label"],
+        "execution_readiness_score": readiness["score"],
+        "execution_readiness_breakdown": readiness["breakdown"],
+        "execution_readiness_result": readiness["result"],
+        "ai_enrichment_status": "not_requested",
+    }
+
+
+def _compact_work_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "id": _item_id(item),
+            "type": _clean_text(item.get("type") or item.get("work_item_type")),
+            "title": _clean_text(item.get("title")),
+            "description": _truncate_text(item.get("description"), 500),
+            "acceptance_criteria": _string_list(item.get("acceptance_criteria"))[:8],
+            "work_area": _clean_text(item.get("work_area")),
+        }.items()
+        if value not in ("", [], {}, None)
+    }
+
+
+def _repository_snapshot_version(repository_snapshot: dict[str, Any], profile: dict[str, Any]) -> str:
+    payload = {
+        "repository": profile.get("repository_connection"),
+        "source_files": repository_snapshot.get("source_files"),
+        "rankedFiles": repository_snapshot.get("rankedFiles"),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
+def _ranked_relevant_files(profile: dict[str, Any], modules: list[str], flows: list[str], item: dict[str, Any]) -> list[dict[str, Any]]:
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    ranked = registry.get("ranked_files") or registry.get("repository_file_ranking") or profile.get("repository_file_ranking") or []
+    if not isinstance(ranked, list):
+        return []
+    terms = set(_simple_keywords(" ".join([_clean_text(item.get("title")), _clean_text(item.get("description")), " ".join(modules), " ".join(flows)])))
+    files: list[dict[str, Any]] = []
+    for entry in ranked:
+        if isinstance(entry, str):
+            path = _clean_text(entry)
+            evidence = path
+            base_confidence = 0.55
+        elif isinstance(entry, dict):
+            path = _clean_text(entry.get("path") or entry.get("file") or entry.get("name"))
+            evidence = _clean_text(entry.get("evidence") or entry.get("reason") or entry.get("module") or entry.get("flow") or path)
+            base_confidence = float(entry.get("confidence") or entry.get("score") or 0.55)
+        else:
+            continue
+        if not path:
+            continue
+        haystack = set(_simple_keywords(f"{path} {evidence}"))
+        overlap = len(terms & haystack)
+        if terms and not overlap and len(files) >= 3:
+            continue
+        confidence = min(0.98, max(base_confidence, 0.5 + overlap * 0.08))
+        files.append(
+            {
+                "path": path,
+                "confidence": round(confidence, 2),
+                "reason": evidence or "Ranked by Repository Intelligence for the selected context.",
+                "evidence": evidence or path,
+                "source": "repository_intelligence",
+            }
+        )
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in sorted(files, key=lambda value: float(value.get("confidence") or 0), reverse=True):
+        path = _clean_text(entry.get("path"))
+        if path and path not in seen:
+            seen.add(path)
+            deduped.append(entry)
+    return deduped[:8]
+
+
+def _capsule_rejected_context(planning_context: dict[str, Any]) -> list[dict[str, Any]]:
+    rejected = planning_context.get("rejectedContext")
+    if not isinstance(rejected, list):
+        return []
+    output: list[dict[str, Any]] = []
+    for item in rejected[:12]:
+        if isinstance(item, dict):
+            output.append(
+                {
+                    "name": _clean_text(item.get("name") or item.get("title") or item.get("id")),
+                    "type": _clean_text(item.get("type")) or "context",
+                    "reason": _clean_text(item.get("reason")) or "Rejected by planning context selection.",
+                }
+            )
+        else:
+            output.append({"name": _clean_text(item), "type": "context", "reason": "Rejected by planning context selection."})
+    names = {_clean_text(item.get("name")) for item in output if isinstance(item, dict)}
+    if "Firmware Management" in names and "Firmware Update" not in names:
+        output.append(
+            {
+                "name": "Firmware Update",
+                "type": "module",
+                "reason": "Rejected with Firmware Management because the selected story/task does not mention firmware rollout, version, upgrade, rollback, or compliance.",
+            }
+        )
+    return [item for item in output if item["name"]]
+
+
+def _intent_summary(intent: dict[str, Any], planning_context: dict[str, Any]) -> str:
+    keywords = _string_list(intent.get("keywords") or intent.get("intent_keywords"))[:8]
+    capability = ", ".join(_names_from_context(planning_context.get("selectedCapabilities"))[:3])
+    problem = _clean_text(planning_context.get("userProblem"))
+    parts = []
+    if capability:
+        parts.append(f"Capabilities: {capability}")
+    if keywords:
+        parts.append(f"Intent: {', '.join(keywords)}")
+    if problem:
+        parts.append(f"Problem: {problem}")
+    return ". ".join(parts) or "Execution intent selected from parent story and task."
+
+
+def _execution_boundary(task_title: str, modules: list[str], flows: list[str]) -> str:
+    return _sentence(
+        task_title,
+        f"Limit changes to {', '.join(modules[:3]) or 'the selected modules'} and {', '.join(flows[:3]) or 'the selected flows'} from the context capsule.",
+    )
+
+
+def _capsule_summary(capsule: dict[str, Any]) -> str:
+    return (
+        f"Capsule {capsule.get('capsuleId')} uses modules {', '.join(capsule.get('selectedModules') or []) or 'none selected'} "
+        f"and flows {', '.join(capsule.get('selectedFlows') or []) or 'none selected'}."
+    )
+
+
+def _engineering_rules_from_capsule(capsule: dict[str, Any], profile: dict[str, Any]) -> list[str]:
+    rules = [
+        "Use only the modules, flows, dependencies, and files selected in the Context Capsule.",
+        "Do not introduce rejected context into implementation scope.",
+        "If repository file ranking is unavailable, inspect the repo before changing files.",
+    ]
+    rules.extend(_string_list(capsule.get("selectedStandards"))[:4])
+    if not _string_list(capsule.get("selectedStandards")):
+        rules.extend(_flatten_standards(profile.get("development_standards", {}))[:4])
+    return _unique(rules)
+
+
+def _active_capsule_profile_from_execution_package(context: dict[str, Any]) -> dict[str, Any]:
+    public = context.get("context_capsule") if isinstance(context.get("context_capsule"), dict) else {}
+    diagnostics = context.get("context_capsule_diagnostics") if isinstance(context.get("context_capsule_diagnostics"), dict) else {}
+    if not public:
+        return {}
+    return {
+        "_active_context_capsule": {
+            "capsule_id": public.get("capsuleId"),
+            "capsule_type": public.get("capsuleType") or "execution",
+            "version": context.get("context_capsule_version") or 1,
+            "source_version": public.get("knowledgeVersion"),
+            "knowledge_version": public.get("knowledgeVersion"),
+            "repository_snapshot_version": public.get("repositorySnapshotVersion"),
+            "payload": {
+                **public,
+                "project_name": "",
+                "domain": "",
+                "project_type": "",
+                "project_summary": public.get("intentSummary"),
+                "modules": _string_list(public.get("selectedModules")),
+                "flows": _string_list(public.get("selectedFlows")),
+                "applications": _string_list(public.get("selectedApplications")),
+                "standards": _string_list(public.get("selectedStandards")),
+                "dependencies": _string_list(public.get("selectedDependencies")),
+                "dev_context": context.get("implementation_boundary"),
+                "ui_context": "; ".join(_string_list(context.get("affected_flows"))[:3]),
+                "qa_context": "; ".join(_string_list(context.get("risks"))[:3]),
+                "impacted_files": _string_list(context.get("recommended_files")),
+            },
+            "diagnostics": {
+                "capsule_size_tokens": diagnostics.get("tokenEstimate") or public.get("tokenEstimate") or context.get("tokenEstimate") or 0,
+                "source_size_tokens": context.get("context_capsule_source_size_tokens") or 0,
+                "compression_ratio": context.get("context_capsule_compression_ratio") or 0,
+            },
+        }
+    }
+
+
+def _execution_package_phi_item(context: dict[str, Any]) -> dict[str, Any]:
+    selected_task = context.get("selected_task") if isinstance(context.get("selected_task"), dict) else {}
+    return {
+        "id": _clean_text(selected_task.get("id")) or _clean_text(context.get("sourceWorkItemId")),
+        "type": "Task",
+        "title": _clean_text(selected_task.get("title")) or _clean_text(context.get("task_focus")) or "Execution task",
+        "state": _clean_text(selected_task.get("status")) or "Approved",
+    }
+
+
+def _attach_validation_to_items(items: list[dict[str, Any]], pipeline: dict[str, Any], item_type: str) -> list[dict[str, Any]]:
+    planning_context = pipeline.get("planningContext") if isinstance(pipeline.get("planningContext"), dict) else {}
+    repository_snapshot = _repository_snapshot_from_planning_context(planning_context)
+    validated: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        artifact = _item_to_planning_artifact(item, item_type, planning_context)
+        report = validateArtifact(planning_context, artifact, {"repositorySnapshot": repository_snapshot}) if planning_context else {}
+        status = _clean_text(report.get("validationStatus")) or "NeedsReview"
+        validated.append(
+            {
+                **item,
+                "validation_report": report,
+                "validation_status": status,
+                "creation_allowed": status == "Approved",
+                "manual_edit_allowed": status == "NeedsReview",
+                "creation_blocked": status == "Rejected",
+            }
+        )
+    return validated
+
+
+def _repository_snapshot_from_planning_context(planning_context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "modules": _names_from_context(planning_context.get("selectedModules")),
+        "flows": _names_from_context(planning_context.get("selectedFlows")),
+        "dependencies": _names_from_context(planning_context.get("selectedDependencies")),
+        "rankedFiles": [],
+    }
+
+
+def _item_to_planning_artifact(item: dict[str, Any], item_type: str, planning_context: dict[str, Any]) -> dict[str, Any]:
+    evidence = {
+        "planningContextVersion": planning_context.get("planningContextVersion") or planning_context.get("version") or "unknown",
+        "capabilities": _names_from_context(planning_context.get("selectedCapabilities")),
+        "modules": _string_list(item.get("selected_modules")) or _names_from_context(planning_context.get("selectedModules")),
+        "flows": _string_list(item.get("selected_flows")) or _names_from_context(planning_context.get("selectedFlows")),
+        "applications": _names_from_context(planning_context.get("selectedApplications")),
+        "standards": _names_from_context(planning_context.get("selectedStandards")),
+    }
+    return {
+        "title": _clean_text(item.get("title")) or item_type,
+        "description": _clean_text(item.get("description")),
+        "businessValue": _clean_text(item.get("business_value") or item.get("businessValue") or item.get("business_goal")) or _clean_text(planning_context.get("expectedOutcome")),
+        "acceptanceCriteria": _string_list(item.get("acceptance_criteria") or item.get("acceptanceCriteria")),
+        "personas": _string_list(item.get("personas") or item.get("primary_users")) or _names_from_context(planning_context.get("personas")),
+        "dependencies": _string_list(item.get("dependencies")),
+        "risks": _string_list(item.get("risks")),
+        "assumptions": _string_list(item.get("assumptions")),
+        "generatedUsing": evidence,
+        "confidence": float(item.get("confidence") or planning_context.get("confidence") or 0.75),
+        "validationStatus": "Pending",
+    }
+
+
+def _prompt_validation_payload(execution_context: dict[str, Any], title: str, content: str) -> dict[str, Any]:
+    pipeline = execution_context.get("intelligence_pipeline") if isinstance(execution_context, dict) else {}
+    planning_context = pipeline.get("planning_context") if isinstance(pipeline, dict) else {}
+    if not isinstance(planning_context, dict) or not planning_context:
+        return {}
+    evidence = {
+        "planningContextVersion": planning_context.get("planningContextVersion") or planning_context.get("version") or "unknown",
+        "capabilities": _names_from_context(planning_context.get("selectedCapabilities")),
+        "modules": _names_from_context(planning_context.get("selectedModules")),
+        "flows": _names_from_context(planning_context.get("selectedFlows")),
+        "applications": _names_from_context(planning_context.get("selectedApplications")),
+        "standards": _names_from_context(planning_context.get("selectedStandards")),
+    }
+    artifact = {
+        "title": title,
+        "description": _clean_text(content)[:1400],
+        "businessValue": planning_context.get("expectedOutcome") or "Execution guidance is ready for developer use.",
+        "acceptanceCriteria": _string_list(execution_context.get("acceptance_criteria"))[:6] or ["Prompt covers the approved story scope."],
+        "personas": _string_list(planning_context.get("personas")),
+        "dependencies": _string_list(execution_context.get("dependencies")),
+        "risks": _string_list(execution_context.get("risks")),
+        "assumptions": [],
+        "generatedUsing": evidence,
+        "confidence": 0.82,
+        "validationStatus": "Pending",
+    }
+    report = validateArtifact(planning_context, artifact, {})
+    policy = _preview_policy([report])
+    return {
+        "validation_report": report,
+        "validation_reports": [report],
+        "validation_status": report["validationStatus"],
+        "preview_policy": policy,
+        "creation_allowed": bool(policy.get("allow_create")),
+        "save_allowed": bool(policy.get("allow_save")),
+        "manual_edit_allowed": bool(policy.get("allow_manual_edit")),
+        "creation_blocked": bool(policy.get("block_creation")),
+    }
+
+
+def _names_from_context(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            name = _clean_text(item.get("name") or item.get("title") or item.get("id"))
+        else:
+            name = _clean_text(item)
+        if name and name not in output:
+            output.append(name)
+    return output
 
 
 def _normalize_applications(value: Any) -> list[dict[str, str]]:
@@ -1826,6 +2665,8 @@ def _normalize_knowledge_registry(value: Any) -> dict[str, Any]:
         "technology_stack": _normalize_stack(registry.get("technology_stack")),
         "standards": _string_list(registry.get("standards")),
         "source_files": _string_list(registry.get("source_files")),
+        "ranked_files": registry.get("ranked_files") if isinstance(registry.get("ranked_files"), list) else [],
+        "repository_file_ranking": registry.get("repository_file_ranking") if isinstance(registry.get("repository_file_ranking"), list) else [],
     }
 
 
@@ -3107,22 +3948,20 @@ def _extract_application_names_from_artifacts(artifacts: list[dict[str, Any]]) -
 
 
 CAPABILITY_TAXONOMY = [
-    "Monitoring",
-    "Alerting",
-    "Investigation",
-    "Analytics",
-    "Reporting",
+    "Operational Awareness",
+    "Fault Monitoring",
+    "Alert Management",
+    "Outage Investigation",
+    "Reliability Analytics",
     "Maintenance",
     "Configuration",
     "Commissioning",
-    "Notifications",
     "Asset Health",
     "Compliance",
     "Telemetry",
     "Device Management",
     "Firmware Management",
     "Diagnostics",
-    "Operational Awareness",
     "Outage Response",
     "Field Operations",
 ]
@@ -3160,7 +3999,7 @@ def _supported_capabilities_for_intent(keywords: list[str], profile: dict[str, A
     allowed = _capabilities_for_epic(keywords, profile)
     corpus = " ".join([*keywords, *profile["knowledge_registry"].get("modules", []), *profile["knowledge_registry"].get("flows", [])]).lower()
     if any(token in corpus for token in ["operation", "dashboard", "fault", "outage", "event", "asset", "reliability"]):
-        allowed = _unique([*allowed, "Operational Awareness", "Alerting", "Investigation", "Asset Health", "Analytics"])
+        allowed = _unique([*allowed, "Operational Awareness", "Fault Monitoring", "Alert Management", "Outage Investigation", "Reliability Analytics", "Asset Health"])
     if "firmware" not in corpus:
         allowed = [capability for capability in allowed if capability not in {"Firmware Management", "Maintenance", "Compliance"}]
     if not any(token in corpus for token in ["login", "token", "session", "auth", "register", "registration"]):
@@ -3214,21 +4053,21 @@ def _capabilities_for_epic(keywords: list[str], profile: dict[str, Any]) -> list
     flows_text = " ".join(profile["knowledge_registry"]["flows"]).lower()
     corpus = " ".join([*keywords, modules_text, flows_text])
     if {"fault", "event", "monitoring"} & keyword_set or "fault" in corpus:
-        selected.extend(["Monitoring", "Alerting", "Investigation", "Analytics", "Operational Awareness"])
+        selected.extend(["Operational Awareness", "Fault Monitoring", "Alert Management", "Outage Investigation", "Reliability Analytics"])
     if "outage" in corpus:
-        selected.extend(["Outage Response", "Field Operations", "Investigation"])
+        selected.extend(["Outage Investigation", "Outage Response", "Field Operations"])
     if {"telemetry", "device"} & keyword_set or "telemetry" in corpus:
         selected.extend(["Telemetry", "Asset Health", "Diagnostics"])
     if {"firmware", "upgrade"} & keyword_set or "firmware" in corpus:
         selected.extend(["Firmware Management", "Maintenance", "Compliance"])
     if "report" in corpus or "analytics" in corpus:
-        selected.extend(["Reporting", "Analytics"])
+        selected.extend(["Reliability Analytics"])
     if "configuration" in corpus or "settings" in corpus:
         selected.extend(["Configuration"])
     if "commission" in corpus or "onboard" in corpus:
         selected.extend(["Commissioning"])
     if not selected:
-        selected.extend(["Operational Awareness", "Configuration", "Reporting", "Notifications", "Analytics"])
+        selected.extend(["Operational Awareness", "Configuration", "Reliability Analytics", "Alert Management"])
     return [capability for capability in _unique(selected) if capability in CAPABILITY_TAXONOMY][:10]
 
 
@@ -3258,16 +4097,19 @@ def _feature_from_capability(capability: str, keywords: list[str], users: list[s
     title = _capability_feature_title(capability, keywords, profile)
     modules = _modules_for_capability(capability, keywords, profile)
     flows = _flows_for_capability(capability, keywords, profile)
+    applications, application_relevance = _relevant_applications_for_capability(capability, profile)
     outcome = _business_outcome_for_capability(capability, keywords)
     user_problem = _user_problem_for_capability(capability, keywords)
     primary_users = _users_for_capability(capability, users)
     return {
         "title": title,
-        "description": _feature_description(title, capability, outcome, primary_users, modules, flows, profile),
+        "description": _feature_description(title, capability, outcome, primary_users, modules, flows, profile, applications),
         "capability": capability,
         "business_outcome": outcome,
         "user_problem": user_problem,
         "primary_users": primary_users,
+        "impacted_applications": [f"{app['name']} ({app['type']})" for app in applications],
+        "application_relevance": application_relevance,
         "impacted_modules": modules,
         "impacted_flows": flows,
         "reasoning": f"{title} is a separate {capability.lower()} capability because it solves '{user_problem}' and can be delivered independently against {', '.join(modules) or 'the affected modules'}.",
@@ -3278,11 +4120,10 @@ def _capability_feature_title(capability: str, keywords: list[str], profile: dic
     corpus = " ".join([*keywords, *profile["knowledge_registry"]["modules"], *profile["knowledge_registry"]["flows"]]).lower()
     fault_context = "fault" in corpus or "outage" in corpus
     titles = {
-        "Monitoring": "Critical Fault Detection" if fault_context else "Operational Signal Detection",
-        "Alerting": "Operator Alerting" if fault_context else "Operational Alerting",
-        "Investigation": "Outage Investigation Workspace" if "outage" in corpus or fault_context else "Issue Investigation Workspace",
-        "Analytics": "Reliability Trend Analytics" if fault_context or "asset" in corpus else "Operational Trend Analytics",
-        "Reporting": "Reliability Reporting" if fault_context else "Operational Reporting",
+        "Fault Monitoring": "Critical Fault Detection" if fault_context else "Operational Signal Detection",
+        "Alert Management": "Operator Alerting" if fault_context else "Operational Alert Management",
+        "Outage Investigation": "Outage Investigation Workspace" if "outage" in corpus or fault_context else "Issue Investigation Workspace",
+        "Reliability Analytics": "Reliability Trend Analytics" if fault_context or "asset" in corpus else "Operational Trend Analytics",
         "Maintenance": "Maintenance Exception Handling",
         "Configuration": "Operational Rule Configuration",
         "Commissioning": "Device Commissioning Readiness",
@@ -3304,11 +4145,11 @@ def _modules_for_capability(capability: str, keywords: list[str], profile: dict[
     modules = profile["knowledge_registry"]["modules"]
     lowered = {module.lower(): module for module in modules}
     preferred: dict[str, list[str]] = {
-        "Monitoring": ["fault", "telemetry"],
-        "Alerting": ["fault", "telemetry", "notification"],
-        "Investigation": ["fault", "report", "event"],
-        "Analytics": ["report", "asset", "telemetry"],
-        "Reporting": ["report", "analytics"],
+        "Operational Awareness": ["report", "telemetry", "dashboard"],
+        "Fault Monitoring": ["fault", "telemetry", "health"],
+        "Alert Management": ["fault", "notification", "audit"],
+        "Outage Investigation": ["fault", "telemetry", "health", "investigation"],
+        "Reliability Analytics": ["report", "analytics", "asset", "telemetry"],
         "Asset Health": ["asset", "telemetry", "health"],
         "Telemetry": ["telemetry"],
         "Device Management": ["device"],
@@ -3329,10 +4170,11 @@ def _flows_for_capability(capability: str, keywords: list[str], profile: dict[st
     flows = profile["knowledge_registry"]["flows"]
     lowered = {flow.lower(): flow for flow in flows}
     preferred: dict[str, list[str]] = {
-        "Monitoring": ["fault", "review", "event"],
-        "Alerting": ["fault", "outage"],
-        "Investigation": ["investigation", "fault", "review"],
-        "Analytics": ["health", "review", "analytics"],
+        "Operational Awareness": ["live", "status", "operation", "dashboard"],
+        "Fault Monitoring": ["fault", "detail", "event"],
+        "Alert Management": ["alert", "acknowledgement", "escalation"],
+        "Outage Investigation": ["investigation", "timeline", "health"],
+        "Reliability Analytics": ["trend", "analytics", "reliability"],
         "Asset Health": ["health", "device"],
         "Telemetry": ["telemetry", "health"],
         "Firmware Management": ["firmware", "upgrade"],
@@ -3349,11 +4191,10 @@ def _flows_for_capability(capability: str, keywords: list[str], profile: dict[st
 
 def _business_outcome_for_capability(capability: str, keywords: list[str]) -> str:
     outcomes = {
-        "Monitoring": "Faster detection of critical operating conditions.",
-        "Alerting": "Reduced response time through actionable operator notifications.",
-        "Investigation": "Faster root-cause analysis and outage triage.",
-        "Analytics": "Better prioritization through reliability trends and operational insight.",
-        "Reporting": "Clearer stakeholder visibility into reliability and service outcomes.",
+        "Fault Monitoring": "Faster detection of critical operating conditions.",
+        "Alert Management": "Reduced response time through actionable operator notifications.",
+        "Outage Investigation": "Faster root-cause analysis and outage triage.",
+        "Reliability Analytics": "Better prioritization through reliability trends and operational insight.",
         "Asset Health": "Improved operational decisions through correlated device health.",
         "Telemetry": "Higher confidence in operational decisions through trusted telemetry quality.",
         "Firmware Management": "Safer rollout operations with visible upgrade status and exceptions.",
@@ -3366,11 +4207,10 @@ def _business_outcome_for_capability(capability: str, keywords: list[str]) -> st
 
 def _user_problem_for_capability(capability: str, keywords: list[str]) -> str:
     problems = {
-        "Monitoring": "critical events are not visible early enough",
-        "Alerting": "operators do not know which events require immediate action",
-        "Investigation": "teams lose time correlating event context during outages",
-        "Analytics": "leaders lack trend evidence for prioritization",
-        "Reporting": "stakeholders lack clear operational evidence",
+        "Fault Monitoring": "critical events are not visible early enough",
+        "Alert Management": "operators do not know which events require immediate action",
+        "Outage Investigation": "teams lose time correlating event context during outages",
+        "Reliability Analytics": "leaders lack trend evidence for prioritization",
         "Asset Health": "device health is disconnected from event review",
         "Telemetry": "telemetry quality issues reduce trust in decisions",
         "Firmware Management": "firmware rollout exceptions are hard to track",
@@ -3383,10 +4223,9 @@ def _user_problem_for_capability(capability: str, keywords: list[str]) -> str:
 
 def _users_for_capability(capability: str, users: list[str]) -> list[str]:
     defaults = {
-        "Alerting": ["Operations User", "Field Technician"],
-        "Investigation": ["Operations User", "Field Technician"],
-        "Analytics": ["Operations Manager"],
-        "Reporting": ["Operations Manager"],
+        "Alert Management": ["Operations User", "Field Technician"],
+        "Outage Investigation": ["Operations User", "Field Technician"],
+        "Reliability Analytics": ["Operations Manager"],
         "Field Operations": ["Field Technician"],
         "Outage Response": ["Operations User", "Field Technician"],
     }
@@ -3438,10 +4277,10 @@ def _application_relevance_score(capability: str, app: dict[str, str]) -> int:
     else:
         category = "other"
     scores = {
-        "Monitoring": {"dashboard": 100, "mobile": 85, "backend": 90, "analytics": 55, "firmware": 20, "other": 45},
-        "Alerting": {"dashboard": 100, "mobile": 95, "backend": 90, "analytics": 40, "firmware": 10, "other": 40},
-        "Investigation": {"dashboard": 100, "mobile": 75, "backend": 90, "analytics": 70, "firmware": 10, "other": 40},
-        "Analytics": {"analytics": 100, "dashboard": 90, "backend": 80, "mobile": 40, "firmware": 10, "other": 35},
+        "Fault Monitoring": {"dashboard": 100, "mobile": 75, "backend": 90, "analytics": 25, "firmware": 10, "other": 40},
+        "Alert Management": {"dashboard": 100, "mobile": 95, "backend": 90, "analytics": 30, "firmware": 10, "other": 40},
+        "Outage Investigation": {"dashboard": 100, "mobile": 75, "backend": 90, "analytics": 45, "firmware": 10, "other": 40},
+        "Reliability Analytics": {"analytics": 100, "dashboard": 90, "backend": 80, "mobile": 30, "firmware": 10, "other": 35},
         "Operational Awareness": {"dashboard": 95, "mobile": 80, "backend": 80, "analytics": 60, "firmware": 10, "other": 45},
         "Outage Response": {"mobile": 90, "dashboard": 85, "backend": 85, "analytics": 50, "firmware": 15, "other": 45},
         "Firmware Management": {"firmware": 100, "backend": 85, "dashboard": 70, "mobile": 45, "analytics": 30, "other": 35},
@@ -3464,11 +4303,11 @@ def _filter_relevant_items(capability: str, items: list[str], kind: str, thresho
 def _item_relevance_score(capability: str, item: str, kind: str) -> int:
     text = item.lower()
     preferred = {
-        "Monitoring": ["fault", "event", "telemetry", "health", "review"],
-        "Alerting": ["alert", "notification", "fault", "outage", "event"],
-        "Investigation": ["investigation", "outage", "fault", "event", "review"],
-        "Analytics": ["analytics", "trend", "report", "health", "telemetry"],
-        "Operational Awareness": ["live", "status", "operation", "event", "device"],
+        "Fault Monitoring": ["fault", "event", "telemetry", "health", "detail", "review"],
+        "Alert Management": ["alert", "acknowledgement", "escalation", "notification", "fault"],
+        "Outage Investigation": ["investigation", "outage", "fault", "timeline", "health"],
+        "Reliability Analytics": ["analytics", "trend", "report", "reliability", "metrics"],
+        "Operational Awareness": ["live", "status", "operation", "monitoring", "dashboard"],
         "Outage Response": ["outage", "field", "response", "fault", "device"],
         "Asset Health": ["asset", "health", "device", "telemetry"],
         "Telemetry": ["telemetry", "ingestion", "quality", "device"],
@@ -3482,11 +4321,21 @@ def _item_relevance_score(capability: str, item: str, kind: str) -> int:
     return min(score, 100)
 
 
-def _feature_description(name: str, capability: str, outcome: str, users: list[str], modules: list[str], flows: list[str], profile: dict[str, Any]) -> str:
+def _feature_description(
+    name: str,
+    capability: str,
+    outcome: str,
+    users: list[str],
+    modules: list[str],
+    flows: list[str],
+    profile: dict[str, Any],
+    applications: list[dict[str, str]] | None = None,
+) -> str:
     user_text = ", ".join(users[:3]) or "operations users"
     module_text = ", ".join(modules[:3]) or "the selected project modules"
     flow_text = ", ".join(flows[:3]) or "the selected delivery flows"
-    application_text = ", ".join(_application_names(profile)[:4]) or "the configured applications"
+    selected_applications = applications or []
+    application_text = ", ".join(f"{app['name']} ({app['type']})" for app in selected_applications[:3]) or "the selected application boundary"
     problem = _user_problem_for_capability(capability, [])
     sentences = [
         f"{name} gives {user_text} a focused {capability.lower()} capability for situations where {problem}.",
@@ -3499,11 +4348,10 @@ def _feature_description(name: str, capability: str, outcome: str, users: list[s
 
 def _feature_business_goal(name: str, capability: str) -> str:
     goals = {
-        "Monitoring": "Allow operators to identify critical LineDefender fault events immediately after occurrence.",
-        "Alerting": "Ensure operators and field technicians receive actionable notifications for events requiring response.",
-        "Investigation": "Help operations teams investigate outages with correlated event, device, and status context.",
-        "Analytics": "Give operations managers reliability trends that support prioritization and planning.",
-        "Reporting": "Provide clear operational evidence for reliability and service reporting.",
+        "Fault Monitoring": "Allow operators to identify critical LineDefender fault events immediately after occurrence.",
+        "Alert Management": "Ensure operators and field technicians receive actionable notifications for events requiring response.",
+        "Outage Investigation": "Help operations teams investigate outages with correlated event, device, and status context.",
+        "Reliability Analytics": "Give operations managers reliability trends that support prioritization and planning.",
         "Asset Health": "Correlate device health signals with operational events for better triage.",
         "Telemetry": "Expose telemetry quality and freshness so users can trust operational decisions.",
         "Firmware Management": "Make firmware rollout status and exceptions visible before they affect operations.",
@@ -3516,7 +4364,7 @@ def _feature_business_goal(name: str, capability: str) -> str:
 
 def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modules: list[str], flows: list[str]) -> list[str]:
     criteria_by_capability = {
-        "Monitoring": [
+        "Fault Monitoring": [
             "Operator can view all active critical fault events in a single list.",
             "Event list displays Device ID, Fault Type, Severity, Event Time, and Current Status.",
             "Critical events are visually differentiated from warning and informational events.",
@@ -3525,7 +4373,7 @@ def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modul
             "System displays a clear unavailable-data message when event data cannot be loaded.",
             "All event list and event detail access actions are audit logged.",
         ],
-        "Alerting": [
+        "Alert Management": [
             "Operator receives an alert when a critical fault event is created.",
             "Alert displays Device ID, Fault Type, Severity, Event Time, and Recommended Action.",
             "Operator can acknowledge an alert and the acknowledgement is timestamped.",
@@ -3533,7 +4381,7 @@ def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modul
             "Field technician can identify alerts assigned for field response.",
             "Duplicate alerts for the same active event are suppressed or grouped.",
         ],
-        "Investigation": [
+        "Outage Investigation": [
             "Operator can open an outage investigation workspace from a fault event.",
             "Workspace shows related device, telemetry, event timeline, and current status.",
             "Operator can filter investigation events by severity, device, and time range.",
@@ -3541,7 +4389,7 @@ def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modul
             "Investigation notes are saved with user and timestamp.",
             "Workspace preserves the investigation trail for audit review.",
         ],
-        "Analytics": [
+        "Reliability Analytics": [
             "Operations manager can view reliability trends by device, fault type, and time period.",
             "Dashboard shows event counts, severity distribution, and response-time trends.",
             "User can compare current reliability trends against the previous period.",
@@ -3609,10 +4457,10 @@ def _feature_acceptance_criteria(name: str, capability: str, outcome: str, modul
 
 def _feature_dependencies(capability: str, modules: list[str], flows: list[str]) -> list[str]:
     dependencies = {
-        "Monitoring": ["Telemetry Service", "Event Repository", "Severity Classification Rules", "Audit Logging Service"],
-        "Alerting": ["Notification Service", "Event Repository", "User Assignment Service", "Audit Logging Service"],
-        "Investigation": ["Event Timeline Service", "Telemetry Service", "Device State Service", "Investigation Notes Store"],
-        "Analytics": ["Analytics Data Mart", "Reporting Pipeline", "Telemetry Aggregation Service"],
+        "Fault Monitoring": ["Telemetry Service", "Event Repository", "Severity Classification Rules", "Audit Logging Service"],
+        "Alert Management": ["Notification Service", "Event Repository", "User Assignment Service", "Audit Logging Service"],
+        "Outage Investigation": ["Event Timeline Service", "Telemetry Service", "Device State Service", "Investigation Notes Store"],
+        "Reliability Analytics": ["Analytics Data Mart", "Reporting Pipeline", "Telemetry Aggregation Service"],
         "Operational Awareness": ["Live Status Service", "Event Repository", "Device State Service"],
         "Outage Response": ["Outage Coordination Service", "Field Assignment Service", "Device Communication Layer"],
         "Asset Health": ["Asset Health Service", "Telemetry Service", "Device Registry"],
@@ -3624,10 +4472,10 @@ def _feature_dependencies(capability: str, modules: list[str], flows: list[str])
 
 def _feature_risks(capability: str) -> list[str]:
     risks = {
-        "Monitoring": ["Delayed telemetry ingestion", "Duplicate fault events", "Incorrect severity classification", "Event processing latency"],
-        "Alerting": ["Alert fatigue from noisy rules", "Duplicate notifications", "Delayed escalation delivery", "Incorrect owner assignment"],
-        "Investigation": ["Missing event correlation", "Stale device status", "Incomplete outage timeline", "Manual notes becoming inconsistent"],
-        "Analytics": ["Incomplete historical data", "Delayed aggregation jobs", "Misleading trend interpretation", "Unclear metric definitions"],
+        "Fault Monitoring": ["Delayed telemetry ingestion", "Duplicate fault events", "Incorrect severity classification", "Event processing latency"],
+        "Alert Management": ["Alert fatigue from noisy rules", "Duplicate notifications", "Delayed escalation delivery", "Incorrect owner assignment"],
+        "Outage Investigation": ["Missing event correlation", "Stale device status", "Incomplete outage timeline", "Manual notes becoming inconsistent"],
+        "Reliability Analytics": ["Incomplete historical data", "Delayed aggregation jobs", "Misleading trend interpretation", "Unclear metric definitions"],
         "Operational Awareness": ["Stale live status", "Disconnected source systems", "Permission gaps across operational views"],
         "Outage Response": ["Delayed field updates", "Unclear ownership", "Connectivity interruptions during response"],
         "Asset Health": ["Conflicting health signals", "Missing telemetry history", "False positive degradation signals"],
@@ -3650,6 +4498,7 @@ def _validate_capability_features(
     if rejected is None:
         rejected = []
     normalized: list[dict[str, Any]] = []
+    seen_capabilities: dict[str, dict[str, Any]] = {}
     for raw in features if isinstance(features, list) else []:
         feature = _normalize_capability_feature(raw, keywords, profile)
         title = feature.get("title", "")
@@ -3657,15 +4506,42 @@ def _validate_capability_features(
         if reason:
             rejected.append({"title": title, "reason": reason, "similarity": round(_max_feature_similarity(title, epic_title, business_goal), 3)})
             continue
+        capability = _clean_text(feature.get("capability_category") or feature.get("capability"))
+        existing = seen_capabilities.get(capability)
+        if existing:
+            keep_existing = _feature_strength(existing) >= _feature_strength(feature)
+            weaker = feature if keep_existing else existing
+            stronger = existing if keep_existing else feature
+            rejected.append(
+                {
+                    "title": weaker.get("title"),
+                    "reason": f"duplicate capability coverage for {capability}; kept {stronger.get('title')}",
+                    "similarity": round(_feature_overlap(stronger, weaker), 3),
+                    "duplicate_of": stronger.get("title"),
+                    "capability": capability,
+                }
+            )
+            if not keep_existing:
+                normalized = [item for item in normalized if item is not existing]
+                normalized.append(feature)
+                seen_capabilities[capability] = feature
+            continue
         if title and title not in [item["title"] for item in normalized]:
             normalized.append(feature)
+            seen_capabilities[capability] = feature
         if len(normalized) >= 10:
             break
     if len(normalized) < 5 and fallback_features:
         for feature in fallback_features:
             enriched = _normalize_capability_feature(feature, keywords, profile)
-            if not _feature_rejection_reason(enriched, epic_title, business_goal) and enriched["title"] not in [item["title"] for item in normalized]:
+            capability = _clean_text(enriched.get("capability_category") or enriched.get("capability"))
+            if (
+                not _feature_rejection_reason(enriched, epic_title, business_goal)
+                and capability not in seen_capabilities
+                and enriched["title"] not in [item["title"] for item in normalized]
+            ):
                 normalized.append(enriched)
+                seen_capabilities[capability] = enriched
             if len(normalized) >= 5:
                 break
     return normalized[:10]
@@ -3689,7 +4565,7 @@ def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[s
     acceptance_criteria = _feature_acceptance_criteria(title, capability, outcome, modules, flows)
     return {
         "title": title,
-        "description": _feature_description(title, capability, outcome, users, modules, flows, profile),
+        "description": _feature_description(title, capability, outcome, users, modules, flows, profile, applications),
         "business_goal": business_goal,
         "capability": capability,
         "capability_category": capability,
@@ -3717,11 +4593,11 @@ def _normalize_capability_feature(raw: Any, keywords: list[str], profile: dict[s
 def _infer_capability_from_title(title: str, keywords: list[str]) -> str:
     lowered = title.lower()
     if "alert" in lowered or "notification" in lowered:
-        return "Alerting"
+        return "Alert Management"
     if "investigation" in lowered or "workspace" in lowered:
-        return "Investigation"
+        return "Outage Investigation"
     if "analytics" in lowered or "trend" in lowered or "classification" in lowered or "prioritization" in lowered:
-        return "Analytics"
+        return "Reliability Analytics"
     if "health" in lowered:
         return "Asset Health"
     if "telemetry" in lowered:
@@ -3731,8 +4607,8 @@ def _infer_capability_from_title(title: str, keywords: list[str]) -> str:
     if "field" in lowered or "response" in lowered:
         return "Field Operations"
     if "report" in lowered:
-        return "Reporting"
-    return "Monitoring" if "fault" in " ".join(keywords).lower() else "Operational Awareness"
+        return "Reliability Analytics"
+    return "Fault Monitoring" if "fault" in " ".join(keywords).lower() or "fault" in lowered else "Operational Awareness"
 
 
 def _feature_rejection_reason(feature: dict[str, Any], epic_title: str, business_goal: str) -> str:
@@ -3752,6 +4628,45 @@ def _feature_rejection_reason(feature: dict[str, Any], epic_title: str, business
     if not feature.get("impacted_flows"):
         return "missing impacted flows"
     return ""
+
+
+def _feature_strength(feature: dict[str, Any]) -> float:
+    score = 0.0
+    score += len(_string_list(feature.get("acceptance_criteria"))) * 0.12
+    score += len(_string_list(feature.get("impacted_modules"))) * 0.08
+    score += len(_string_list(feature.get("impacted_flows"))) * 0.08
+    score += float(feature.get("confidence") or 0.82)
+    if _clean_text(feature.get("business_goal")):
+        score += 0.12
+    if _clean_text(feature.get("business_value") or feature.get("business_outcome")):
+        score += 0.12
+    return score
+
+
+def _feature_overlap(left: dict[str, Any], right: dict[str, Any]) -> float:
+    left_text = " ".join(
+        [
+            _clean_text(left.get("capability_category") or left.get("capability")),
+            _clean_text(left.get("user_problem")),
+            _clean_text(left.get("business_goal")),
+            _clean_text(left.get("business_value") or left.get("business_outcome")),
+            " ".join(_string_list(left.get("impacted_modules"))),
+            " ".join(_string_list(left.get("impacted_flows"))),
+            " ".join(_string_list(left.get("acceptance_criteria"))),
+        ]
+    )
+    right_text = " ".join(
+        [
+            _clean_text(right.get("capability_category") or right.get("capability")),
+            _clean_text(right.get("user_problem")),
+            _clean_text(right.get("business_goal")),
+            _clean_text(right.get("business_value") or right.get("business_outcome")),
+            " ".join(_string_list(right.get("impacted_modules"))),
+            " ".join(_string_list(right.get("impacted_flows"))),
+            " ".join(_string_list(right.get("acceptance_criteria"))),
+        ]
+    )
+    return _token_similarity(left_text, right_text)
 
 
 def _max_feature_similarity(title: str, epic_title: str, business_goal: str) -> float:
@@ -3862,7 +4777,7 @@ def _story_decomposition(feature_title: str, modules: list[str], flows: list[str
 
 def _story_actions_for_capability(capability: str, feature_title: str) -> list[dict[str, str]]:
     actions = {
-        "Monitoring": [
+        "Fault Monitoring": [
             {"title": "View Active Critical Fault Events", "want": "to view active critical fault events", "benefit": "I can identify issues that need immediate attention", "goal": "Detect critical events", "coverage_area": "View"},
             {"title": "Open Critical Fault Event Details", "want": "to open detailed information for a critical fault event", "benefit": "I can understand the device, severity, timing, and current status", "goal": "Review event details", "coverage_area": "Details"},
             {"title": "Search Critical Events by Device", "want": "to search critical events by device or event identifier", "benefit": "I can quickly find the event I need to review", "goal": "Find event", "coverage_area": "Search"},
@@ -3871,7 +4786,7 @@ def _story_actions_for_capability(capability: str, feature_title: str) -> list[d
             {"title": "Recognize Unavailable Event Data", "want": "to see a clear message when event data is unavailable", "benefit": "I know when the system cannot provide complete information", "goal": "Handle data gaps", "coverage_area": "Empty states"},
             {"title": "Review Critical Event Access History", "want": "to know when critical event details were accessed", "benefit": "I can support audit and operational traceability", "goal": "Audit event access", "coverage_area": "Audit requirements"},
         ],
-        "Alerting": [
+        "Alert Management": [
             {"title": "Receive Critical Fault Alerts", "want": "to receive alerts for critical fault events", "benefit": "I can respond before an issue escalates", "goal": "Get notified", "coverage_area": "Notifications"},
             {"title": "Review Alert Details Before Acting", "want": "to review alert details before taking action", "benefit": "I can decide the right response with enough context", "goal": "Understand alert context", "coverage_area": "Details"},
             {"title": "Search Assigned Alerts", "want": "to search alerts assigned to me", "benefit": "I can find a specific alert quickly", "goal": "Find alert", "coverage_area": "Search"},
@@ -3879,7 +4794,7 @@ def _story_actions_for_capability(capability: str, feature_title: str) -> list[d
             {"title": "Acknowledge Assigned Alerts", "want": "to acknowledge alerts assigned to me", "benefit": "the team can see that response is underway", "goal": "Confirm ownership", "coverage_area": "Audit requirements"},
             {"title": "Avoid Duplicate Alert Noise", "want": "related duplicate alerts to be grouped", "benefit": "I can focus on the actual event instead of repeated notifications", "goal": "Reduce alert noise", "coverage_area": "Error handling"},
         ],
-        "Investigation": [
+        "Outage Investigation": [
             {"title": "Start an Outage Investigation", "want": "to start an outage investigation from a fault event", "benefit": "I can begin triage from the event that triggered concern", "goal": "Begin investigation", "coverage_area": "View"},
             {"title": "Review Event Timeline", "want": "to review the timeline of related events", "benefit": "I can understand what happened before and after the outage", "goal": "Understand sequence", "coverage_area": "Details"},
             {"title": "Search Investigation Evidence", "want": "to search investigation evidence by device or event", "benefit": "I can locate the information needed for triage", "goal": "Find evidence", "coverage_area": "Search"},
@@ -3887,7 +4802,7 @@ def _story_actions_for_capability(capability: str, feature_title: str) -> list[d
             {"title": "Add Investigation Notes", "want": "to add notes during the investigation", "benefit": "the team has a shared record of findings", "goal": "Capture findings", "coverage_area": "Audit requirements"},
             {"title": "Review Missing or Stale Data", "want": "to see when investigation data is missing or stale", "benefit": "I can avoid drawing conclusions from incomplete information", "goal": "Assess data quality", "coverage_area": "Empty states"},
         ],
-        "Analytics": [
+        "Reliability Analytics": [
             {"title": "View Reliability Trends", "want": "to view reliability trends over time", "benefit": "I can identify recurring operational issues", "goal": "Analyze trends", "coverage_area": "View"},
             {"title": "Review Trend Details", "want": "to review details behind a reliability trend", "benefit": "I can understand what contributed to the trend", "goal": "Review details", "coverage_area": "Details"},
             {"title": "Search Reliability Results", "want": "to search reliability results by asset or event type", "benefit": "I can locate the trends relevant to my decision", "goal": "Find results", "coverage_area": "Search"},
@@ -6249,6 +7164,53 @@ def _knowledge_registry_metadata(reason: str) -> dict[str, Any]:
             "fallback_reason": "",
         }
     )
+    return metadata
+
+
+def _intelligence_pipeline_metadata(pipeline: dict[str, Any]) -> dict[str, Any]:
+    policy = pipeline.get("previewPolicy") if isinstance(pipeline.get("previewPolicy"), dict) else {}
+    diagnostics = pipeline.get("reasoning", {}).get("diagnostics", {}) if isinstance(pipeline.get("reasoning"), dict) else {}
+    provider_metadata = pipeline.get("providerMetadata") if isinstance(pipeline.get("providerMetadata"), dict) else {}
+    metadata = dict(provider_metadata) if provider_metadata else _fallback_metadata("intelligence_pipeline", "Generation is routed through the HEI intelligence pipeline.")
+    if not provider_metadata:
+        metadata.update(
+            {
+                "provider_used": "intelligence_pipeline",
+                "source": "intelligence_pipeline",
+                "phi_status": "not_required",
+                "fallback_used": False,
+                "fallback_reason": "",
+            }
+        )
+    metadata.update(
+        {
+            "validation_status": _clean_text(policy.get("status")) or "NeedsReview",
+            "creation_allowed": bool(policy.get("allow_create")),
+            "save_allowed": bool(policy.get("allow_save")),
+            "manual_edit_allowed": bool(policy.get("allow_manual_edit")),
+            "creation_blocked": bool(policy.get("block_creation")),
+            "reasoning_provider_used": diagnostics.get("providerUsed"),
+            "reasoning_prompt_tokens": diagnostics.get("promptTokensEstimate"),
+        }
+    )
+    if "context_size" not in metadata:
+        metadata["context_size"] = metadata.get("user_prompt_tokens") or metadata.get("final_prompt_tokens") or diagnostics.get("promptTokensEstimate") or 0
+    if "context_after_compression" not in metadata:
+        metadata["context_after_compression"] = metadata.get("compressed_context_tokens") or metadata.get("context_size") or 0
+    if "tokens_sent" not in metadata:
+        metadata["tokens_sent"] = metadata.get("final_prompt_tokens") or diagnostics.get("promptTokensEstimate") or 0
+    if "compression_ratio" not in metadata:
+        before = int(metadata.get("context_size") or 0)
+        after = int(metadata.get("context_after_compression") or 0)
+        metadata["compression_ratio"] = round(after / before, 2) if before else 1
+    if "largest_context_sections" not in metadata:
+        metadata["largest_context_sections"] = [
+            {"section": "planning_context", "tokens": metadata.get("user_prompt_tokens") or diagnostics.get("promptTokensEstimate") or 0}
+        ]
+    phi_status = _clean_text(metadata.get("phi_status"))
+    if provider_metadata and phi_status != "success" and not bool(metadata.get("fallback_used")):
+        metadata["error"] = metadata.get("fallback_reason") or "Azure Phi did not return usable output."
+        metadata["message"] = "Phi output is required for this provider path. Review diagnostics or retry."
     return metadata
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.intelligence.capability import buildCapabilityContext
+from backend.intelligence.epic_analysis import analyzeEpic
 from backend.intelligence.intent import build_intent
 from backend.intelligence.planning import buildPlanningContext
 from backend.intelligence.reasoning import generatePlanningArtifact
@@ -820,36 +821,55 @@ class ProjectIntelligenceService:
         selection = _select_knowledge_context(active_profile, epic, "Epic")
         relevant_profile = _profile_with_relevance(active_profile, selection)
         keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
-        business_goal = _sentence(f"Improve {title}", description or active_profile["project_description"])
-        capability_plan = _capability_decomposition(title, business_goal, keywords, relevant_profile)
+        epic_analysis = analyzeEpic(epic, relevant_profile, {"intent_keywords": keywords})
+        business_goal = _primary_epic_goal(epic_analysis, title, description, active_profile)
+        capability_plan = _capability_decomposition_from_epic_analysis(title, business_goal, keywords, relevant_profile, epic_analysis)
         features = [
             {
                 **feature,
                 **_lineage_metadata(epic, "Epic", "epic_intent + knowledge_registry", selection, float(feature.get("confidence") or 0.84)),
+                "analysis_source": "epic_analysis + capability_intelligence + knowledge_registry",
             }
             for feature in capability_plan["recommended_features"]
         ]
         deterministic = {
             "business_goal": business_goal,
-            "business_outcomes": _business_outcomes(keywords, relevant_profile),
+            "business_outcomes": _string_list(epic_analysis.get("desiredOutcomes")) or _business_outcomes(keywords, relevant_profile),
             "users": _users_for_profile(relevant_profile),
-            "user_problems": capability_plan["user_problems"],
+            "user_problems": _string_list(epic_analysis.get("businessProblems")) or capability_plan["user_problems"],
             "capability_categories": capability_plan["capability_categories"],
             "applications": _application_names(relevant_profile),
             "constraints": _constraints_for_profile(relevant_profile),
             "risks": _risks_for_profile(relevant_profile, keywords),
             "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
+            "epic_analysis": epic_analysis,
+            "epic_analysis_diagnostics": epic_analysis.get("diagnostics", {}),
+            "planning_boundary": epic_analysis.get("planningBoundary") or epic_analysis.get("planning_boundary"),
             "recommended_features": features,
             "capability_diagnostics": capability_plan["diagnostics"],
             "generation_review": _generation_review(relevant_profile, features, _selection_names(selection, "relevant_modules"), keywords),
             **_relevance_metadata(selection),
         }
-        pipeline = _run_intelligence_pipeline(epic, epic, relevant_profile, "Feature", _existing_children_from_options(options), options)
-        deterministic["recommended_features"] = _attach_validation_to_items(features, pipeline, "Feature")
-        provider_parsed = pipeline.get("providerParsed") if isinstance(pipeline.get("providerParsed"), dict) else {}
+        phi = _project_phi_json("refine_epic", relevant_profile, epic, deterministic, options, list(deterministic.keys()))
+        if phi.get("blocked"):
+            return _phi_error_response(phi)
+        provider_parsed = phi.get("parsed") if isinstance(phi.get("parsed"), dict) else {}
         if _clean_text(provider_parsed.get("business_goal")):
             deterministic["business_goal"] = _clean_text(provider_parsed.get("business_goal"))
         _append_rejected_phi_feature_diagnostics(deterministic, provider_parsed, title)
+        pipeline = _run_epic_feature_pipeline(
+            epic,
+            features,
+            relevant_profile,
+            _existing_children_from_options(options),
+            {
+                **(options or {}),
+                "epic_analysis": epic_analysis,
+                "provider_metadata": phi.get("metadata", {}),
+                "provider_parsed": provider_parsed,
+            },
+        )
+        deterministic["recommended_features"] = _attach_validation_to_items(features, pipeline, "Feature")
         deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["recommended_features"], _selection_names(selection, "relevant_modules"), keywords)
         deterministic.update(_pipeline_payload(pipeline))
         return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
@@ -1458,6 +1478,124 @@ def _run_intelligence_pipeline(
         "validationReports": [artifact["validationReport"] for artifact in artifacts],
         "previewPolicy": _preview_policy([artifact["validationReport"] for artifact in artifacts]),
         "providerMetadata": provider_metadata,
+        "providerParsed": provider_parsed,
+    }
+
+
+def _run_epic_feature_pipeline(
+    epic: dict[str, Any],
+    features: list[dict[str, Any]],
+    profile: dict[str, Any],
+    existing_children: list[dict[str, Any]] | None = None,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    options = options or {}
+    repository_snapshot = _repository_snapshot_from_profile(profile)
+    knowledge_registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    epic_analysis = options.get("epic_analysis") if isinstance(options.get("epic_analysis"), dict) else {}
+    provider_metadata = options.get("provider_metadata") if isinstance(options.get("provider_metadata"), dict) else {}
+    provider_parsed = options.get("provider_parsed") if isinstance(options.get("provider_parsed"), dict) else {}
+    validation_reports: list[dict[str, Any]] = []
+    artifacts: list[dict[str, Any]] = []
+    contexts_by_title: dict[str, dict[str, Any]] = {}
+    first_context: dict[str, Any] | None = None
+    for feature in features:
+        capability = _clean_text(feature.get("capability_category") or feature.get("capability") or feature.get("title"))
+        capability_work_item = {
+            "id": f"{_item_id(epic, 'epic')}::{capability}",
+            "type": "Feature",
+            "title": _clean_text(feature.get("title")) or capability,
+            "description": _clean_text(feature.get("description")),
+            "acceptanceCriteria": _string_list(feature.get("acceptance_criteria")),
+        }
+        capability_context = buildCapabilityContext(
+            {
+                **build_intent(capability_work_item),
+                "primaryCapability": capability,
+                "secondaryCapabilities": [],
+            },
+            {
+                "parent_work_item": epic,
+                "project_profile": profile,
+                "repository_snapshot": repository_snapshot,
+                "knowledge_registry": knowledge_registry,
+            },
+        )
+        planning_context = buildPlanningContext(
+            capability_work_item,
+            epic,
+            {
+                "intentModel": {
+                    **build_intent(capability_work_item),
+                    "primaryCapability": capability,
+                    "secondaryCapabilities": [],
+                },
+                "capabilityContext": capability_context,
+                "projectProfile": profile,
+                "repositorySnapshot": repository_snapshot,
+                "knowledgeRegistry": knowledge_registry,
+                "existingChildren": existing_children or [],
+                "objective": "Generate one feature from one approved Epic Analysis capability.",
+            },
+        )
+        first_context = first_context or planning_context
+        contexts_by_title[_clean_text(feature.get("title")).lower()] = planning_context
+        artifact = _item_to_planning_artifact(feature, "Feature", planning_context)
+        report = validateArtifact(
+            planning_context,
+            artifact,
+            {
+                "repositorySnapshot": repository_snapshot,
+                "knowledgeRegistry": knowledge_registry,
+                "existingSiblings": existing_children or [],
+            },
+        )
+        validation_reports.append(report)
+        artifacts.append(
+            {
+                **artifact,
+                "validationReport": report,
+                "validationStatus": report["validationStatus"],
+                "creationAllowed": report["validationStatus"] == "Approved",
+                "manualEditAllowed": report["validationStatus"] == "NeedsReview",
+                "creationBlocked": report["validationStatus"] == "Rejected",
+            }
+        )
+    fallback_context = first_context or buildPlanningContext(
+        epic,
+        epic,
+        {
+            "projectProfile": profile,
+            "repositorySnapshot": repository_snapshot,
+            "knowledgeRegistry": knowledge_registry,
+            "existingChildren": existing_children or [],
+            "objective": "Analyze epic before feature generation.",
+        },
+    )
+    return {
+        "intent": build_intent(epic),
+        "capabilityContext": {"source": "epic_analysis", "requiredCapabilities": epic_analysis.get("requiredCapabilities", [])},
+        "planningContext": fallback_context,
+        "featurePlanningContexts": contexts_by_title,
+        "reasoning": {
+            "diagnostics": {
+                "providerUsed": "epic_analysis_intelligence",
+                "featureGenerationMode": "one_capability_at_a_time",
+                "capabilityCount": len(features),
+            },
+            "artifacts": artifacts,
+        },
+        "artifacts": artifacts,
+        "validationReports": validation_reports,
+        "previewPolicy": _preview_policy(validation_reports),
+        "providerMetadata": provider_metadata or {
+            "provider_used": "epic_analysis_intelligence",
+            "source": "epic_analysis_intelligence",
+            "phi_status": "not_required",
+            "fallback_used": False,
+            "fallback_reason": "",
+            "epic_analysis_confidence": epic_analysis.get("confidence"),
+        },
         "providerParsed": provider_parsed,
     }
 
@@ -2122,13 +2260,16 @@ def _execution_package_phi_item(context: dict[str, Any]) -> dict[str, Any]:
 
 def _attach_validation_to_items(items: list[dict[str, Any]], pipeline: dict[str, Any], item_type: str) -> list[dict[str, Any]]:
     planning_context = pipeline.get("planningContext") if isinstance(pipeline.get("planningContext"), dict) else {}
+    feature_contexts = pipeline.get("featurePlanningContexts") if isinstance(pipeline.get("featurePlanningContexts"), dict) else {}
     repository_snapshot = _repository_snapshot_from_planning_context(planning_context)
     validated: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        artifact = _item_to_planning_artifact(item, item_type, planning_context)
-        report = validateArtifact(planning_context, artifact, {"repositorySnapshot": repository_snapshot}) if planning_context else {}
+        item_context = feature_contexts.get(_clean_text(item.get("title")).lower()) or planning_context
+        artifact = _item_to_planning_artifact(item, item_type, item_context)
+        item_repository_snapshot = _repository_snapshot_from_planning_context(item_context) if item_context else repository_snapshot
+        report = validateArtifact(item_context, artifact, {"repositorySnapshot": item_repository_snapshot}) if item_context else {}
         status = _clean_text(report.get("validationStatus")) or "NeedsReview"
         validated.append(
             {
@@ -4042,6 +4183,73 @@ def _capability_decomposition(epic_title: str, business_goal: str, keywords: lis
             "user_problems_identified": problems,
             "rejected_similar_features": rejected,
             "final_feature_count": min(len(features), 10),
+        },
+    }
+
+
+def _primary_epic_goal(epic_analysis: dict[str, Any], title: str, description: str, profile: dict[str, Any]) -> str:
+    goals = _string_list(epic_analysis.get("businessGoals") or epic_analysis.get("business_goals"))
+    if goals:
+        return goals[0]
+    return _sentence(f"Improve {title}", description or profile["project_description"])
+
+
+def _capability_decomposition_from_epic_analysis(
+    epic_title: str,
+    business_goal: str,
+    keywords: list[str],
+    profile: dict[str, Any],
+    epic_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    users = _users_for_profile(profile)
+    problems = _string_list(epic_analysis.get("businessProblems") or epic_analysis.get("business_problems")) or _user_problems_for_epic(keywords, profile)
+    required = epic_analysis.get("requiredCapabilities") or epic_analysis.get("required_capabilities") or []
+    required_capabilities = [_clean_text(item.get("name")) for item in required if isinstance(item, dict) and _clean_text(item.get("name"))]
+    boundary = epic_analysis.get("planningBoundary") if isinstance(epic_analysis.get("planningBoundary"), dict) else {}
+    out_of_scope = set(_string_list(boundary.get("outOfScope") or boundary.get("out_of_scope")))
+    capabilities = [capability for capability in required_capabilities if capability in CAPABILITY_TAXONOMY and capability not in out_of_scope]
+    feature_candidates = [_feature_from_capability(capability, keywords, users, profile) for capability in capabilities]
+    rejected: list[dict[str, Any]] = []
+    features = _validate_capability_features(
+        feature_candidates,
+        epic_title,
+        business_goal,
+        keywords,
+        profile,
+        fallback_features=[],
+        diagnostics={"rejected_similar_features": rejected},
+    )
+    priority_by_name = {
+        _clean_text(item.get("name")): item
+        for item in (epic_analysis.get("capabilityPriority") or epic_analysis.get("capability_priority") or [])
+        if isinstance(item, dict)
+    }
+    for feature in features:
+        priority = priority_by_name.get(_clean_text(feature.get("capability")))
+        if priority:
+            feature["capability_priority"] = priority
+        feature["derived_from_epic_analysis"] = True
+    return {
+        "user_problems": problems,
+        "capability_categories": [feature["capability"] for feature in features],
+        "recommended_features": features[:10],
+        "diagnostics": {
+            "source": "epic_analysis_intelligence",
+            "capability_categories_identified": [feature["capability"] for feature in features[:10]],
+            "required_capabilities": required_capabilities,
+            "excluded_capabilities": _string_list(boundary.get("outOfScope") or boundary.get("out_of_scope")),
+            "user_problems_identified": problems,
+            "rejected_similar_features": rejected,
+            "final_feature_count": min(len(features), 10),
+            "feature_generation_mode": "one_capability_at_a_time",
+            "feature_generation_steps": [
+                {
+                    "capability": feature.get("capability"),
+                    "feature_title": feature.get("title"),
+                    "status": "generated_from_epic_analysis",
+                }
+                for feature in features[:10]
+            ],
         },
     }
 

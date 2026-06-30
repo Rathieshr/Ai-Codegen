@@ -98,6 +98,46 @@ class EpicAnalysisIntelligenceTests(unittest.TestCase):
         self.assertNotIn("Firmware Rollout Visibility", titles)
         self.assertIn("Firmware Management", refined["planning_boundary"]["outOfScope"])
 
+    def test_capability_review_loads_from_epic_analysis_with_planning_boundaries(self) -> None:
+        refined = ProjectIntelligenceService().refine_epic(
+            {
+                "id": 109,
+                "type": "Epic",
+                "title": "Modernize LineDefender Operations Dashboard",
+                "description": "Provide live status, critical fault visibility, alert response, outage investigation, and reliability trends.",
+            },
+            PROFILE,
+            options={"force_provider": "deterministic_fallback"},
+        )
+
+        reviews = refined["capability_review"]
+        fault = next(item for item in reviews if item["capabilityName"] == "Fault Monitoring")
+        outage = next(item for item in reviews if item["capabilityName"] == "Outage Investigation")
+
+        self.assertGreaterEqual(len(reviews), 4)
+        self.assertTrue(fault["responsibilities"])
+        self.assertIn("Fault detection", fault["inScope"])
+        self.assertIn("Firmware updates", fault["outOfScope"])
+        self.assertTrue(fault["repositoryEvidence"])
+        self.assertIn("Fault Monitoring", outage["dependencies"])
+        self.assertEqual(refined["capability_review_diagnostics"]["planningReadiness"], "Ready For Review")
+
+    def test_approved_capability_filter_generates_one_feature(self) -> None:
+        refined = ProjectIntelligenceService().refine_epic(
+            {
+                "id": 109,
+                "type": "Epic",
+                "title": "Modernize LineDefender Operations Dashboard",
+                "description": "Provide live status, critical fault visibility, alert response, outage investigation, and reliability trends.",
+            },
+            PROFILE,
+            options={"force_provider": "deterministic_fallback", "approved_capabilities": ["Fault Monitoring"]},
+        )
+
+        self.assertEqual([feature["capability"] for feature in refined["recommended_features"]], ["Fault Monitoring"])
+        self.assertEqual(refined["recommended_features"][0]["title"], "Critical Fault Detection")
+        self.assertEqual(refined["capability_diagnostics"]["approved_capability_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

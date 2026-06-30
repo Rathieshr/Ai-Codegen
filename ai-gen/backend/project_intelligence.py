@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.intelligence.capability import buildCapabilityContext
-from backend.intelligence.epic_analysis import analyzeEpic
+from backend.intelligence.epic_analysis import analyzeEpic, buildCapabilityReview
 from backend.intelligence.intent import build_intent
 from backend.intelligence.planning import buildPlanningContext
 from backend.intelligence.reasoning import generatePlanningArtifact
@@ -822,8 +822,9 @@ class ProjectIntelligenceService:
         relevant_profile = _profile_with_relevance(active_profile, selection)
         keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
         epic_analysis = analyzeEpic(epic, relevant_profile, {"intent_keywords": keywords})
+        capability_review = buildCapabilityReview(epic_analysis, relevant_profile)
         business_goal = _primary_epic_goal(epic_analysis, title, description, active_profile)
-        capability_plan = _capability_decomposition_from_epic_analysis(title, business_goal, keywords, relevant_profile, epic_analysis)
+        capability_plan = _capability_decomposition_from_epic_analysis(title, business_goal, keywords, relevant_profile, epic_analysis, options)
         features = [
             {
                 **feature,
@@ -844,6 +845,9 @@ class ProjectIntelligenceService:
             "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
             "epic_analysis": epic_analysis,
             "epic_analysis_diagnostics": epic_analysis.get("diagnostics", {}),
+            "capability_review": capability_review["capabilities"],
+            "capability_review_diagnostics": capability_review["diagnostics"],
+            "capability_dependency_graph": capability_review["dependencyGraph"],
             "planning_boundary": epic_analysis.get("planningBoundary") or epic_analysis.get("planning_boundary"),
             "recommended_features": features,
             "capability_diagnostics": capability_plan["diagnostics"],
@@ -4200,14 +4204,19 @@ def _capability_decomposition_from_epic_analysis(
     keywords: list[str],
     profile: dict[str, Any],
     epic_analysis: dict[str, Any],
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    options = options or {}
     users = _users_for_profile(profile)
     problems = _string_list(epic_analysis.get("businessProblems") or epic_analysis.get("business_problems")) or _user_problems_for_epic(keywords, profile)
     required = epic_analysis.get("requiredCapabilities") or epic_analysis.get("required_capabilities") or []
     required_capabilities = [_clean_text(item.get("name")) for item in required if isinstance(item, dict) and _clean_text(item.get("name"))]
     boundary = epic_analysis.get("planningBoundary") if isinstance(epic_analysis.get("planningBoundary"), dict) else {}
     out_of_scope = set(_string_list(boundary.get("outOfScope") or boundary.get("out_of_scope")))
+    approved_capabilities = _approved_capabilities_from_options(options)
     capabilities = [capability for capability in required_capabilities if capability in CAPABILITY_TAXONOMY and capability not in out_of_scope]
+    if approved_capabilities:
+        capabilities = [capability for capability in capabilities if capability in approved_capabilities]
     feature_candidates = [_feature_from_capability(capability, keywords, users, profile) for capability in capabilities]
     rejected: list[dict[str, Any]] = []
     features = _validate_capability_features(
@@ -4242,6 +4251,7 @@ def _capability_decomposition_from_epic_analysis(
             "rejected_similar_features": rejected,
             "final_feature_count": min(len(features), 10),
             "feature_generation_mode": "one_capability_at_a_time",
+            "approved_capability_count": len(approved_capabilities),
             "feature_generation_steps": [
                 {
                     "capability": feature.get("capability"),
@@ -4252,6 +4262,18 @@ def _capability_decomposition_from_epic_analysis(
             ],
         },
     }
+
+
+def _approved_capabilities_from_options(options: dict[str, Any]) -> set[str]:
+    explicit = _string_list(options.get("approved_capabilities") or options.get("approvedCapabilityIds"))
+    reviews = options.get("capability_review") or options.get("capabilityReview")
+    if isinstance(reviews, list):
+        explicit.extend(
+            _clean_text(item.get("capabilityName") or item.get("capability_name") or item.get("name"))
+            for item in reviews
+            if isinstance(item, dict) and _clean_text(item.get("status")).lower() == "approved"
+        )
+    return {item for item in explicit if item}
 
 
 def _capabilities_for_epic(keywords: list[str], profile: dict[str, Any]) -> list[str]:

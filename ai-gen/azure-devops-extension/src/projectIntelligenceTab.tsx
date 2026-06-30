@@ -505,8 +505,41 @@ type PromptResult = ProviderMetadata & {
   qa_prompt: string;
 };
 
+type ExecutionContextCapsule = {
+  capsuleId?: string;
+  capsuleType?: string;
+  sourceWorkItemId?: string;
+  parentStoryId?: string;
+  knowledgeVersion?: string;
+  repositorySnapshotVersion?: string;
+  generatedAt?: string;
+  intentSummary?: string;
+  selectedCapabilities?: string[];
+  selectedModules?: string[];
+  selectedFlows?: string[];
+  selectedApplications?: string[];
+  selectedDependencies?: string[];
+  selectedStandards?: string[];
+  acceptanceCriteria?: string[];
+  relevantFiles?: Array<{ path?: string; confidence?: number; reason?: string; evidence?: string; source?: string }>;
+  fileRankingStatus?: string;
+  rejectedContext?: RejectedContextItem[];
+  risks?: string[];
+  constraints?: string[];
+  confidence?: number;
+  tokenEstimate?: number;
+  freshnessStatus?: string;
+};
+
 type ExecutionContextResult = ProviderMetadata & {
+  execution_package_source?: string;
+  context_capsule?: ExecutionContextCapsule;
+  context_capsule_diagnostics?: ProviderMetadata;
   story_summary: string;
+  task_focus?: string;
+  implementation_boundary?: string;
+  capsule_summary?: string;
+  engineering_rules?: string[];
   acceptance_criteria: string[];
   affected_applications: string[];
   affected_modules: string[];
@@ -570,6 +603,18 @@ type EpicRefinement = ProviderMetadata & {
   constraints: string[];
   risks: string[];
   dependencies: string[];
+  capability_review?: CapabilityReview[];
+  capability_review_diagnostics?: {
+    capabilityCount?: number;
+    approved?: number;
+    rejected?: number;
+    averageConfidence?: number;
+    repositoryEvidence?: number;
+    graphRelationships?: number;
+    planningReadiness?: string;
+    validationIssues?: Array<{ severity?: string; capability?: string; reason?: string }>;
+  };
+  capability_dependency_graph?: Array<{ source?: string; relationship?: string; target?: string; reason?: string }>;
   recommended_features: Array<{
     title: string;
     description: string;
@@ -594,6 +639,33 @@ type EpicRefinement = ProviderMetadata & {
     status?: string;
   }>;
   generation_review?: GenerationReview;
+};
+
+type CapabilityReview = {
+  capabilityId: string;
+  capabilityName: string;
+  businessPurpose: string;
+  responsibilities: string[];
+  businessValue: string;
+  priority: 'Critical' | 'High' | 'Medium' | 'Low' | string;
+  inScope: string[];
+  outOfScope: string[];
+  dependencies: string[];
+  supports?: string[];
+  repositoryEvidence: string[];
+  relatedModules: string[];
+  relatedFlows: string[];
+  relatedApplications: string[];
+  estimatedFeatures: number;
+  confidence: number;
+  status: 'Pending' | 'Approved' | 'Rejected' | string;
+  reviewComments: string[];
+  explainability?: {
+    whyExists?: string;
+    whyRequired?: string;
+    businessProblemSolved?: string;
+    excludedScope?: string[];
+  };
 };
 
 type FeatureRefinement = ProviderMetadata & {
@@ -1714,6 +1786,58 @@ function ProjectIntelligenceTab() {
     setChildDrafts((current) => current.map((draft) => draft.id === draftId ? { ...draft, selected } : draft));
   }
 
+  function updateCapabilityReview(capabilityId: string, changes: Partial<CapabilityReview>) {
+    setEpicResult((current) => {
+      if (!current?.capability_review?.length) return current;
+      return {
+        ...current,
+        capability_review: current.capability_review.map((capability) => (
+          capability.capabilityId === capabilityId ? { ...capability, ...changes } : capability
+        )),
+      };
+    });
+  }
+
+  function moveCapabilityReview(capabilityId: string, direction: -1 | 1) {
+    setEpicResult((current) => {
+      if (!current?.capability_review?.length) return current;
+      const next = [...current.capability_review];
+      const index = next.findIndex((item) => item.capabilityId === capabilityId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= next.length) return current;
+      const [item] = next.splice(index, 1);
+      next.splice(target, 0, item);
+      return { ...current, capability_review: next };
+    });
+  }
+
+  function generateFeatureForCapability(capabilityId: string) {
+    if (!epicResult?.capability_review?.length) {
+      setError('Run Epic Analysis before generating a capability Feature.');
+      return;
+    }
+    const nextResult: EpicRefinement = {
+      ...epicResult,
+      capability_review: epicResult.capability_review.map((capability) => (
+        capability.capabilityId === capabilityId ? { ...capability, status: 'Approved' } : capability
+      )),
+    };
+    const drafts = featureDraftsFromEpic(nextResult, true).filter((draft) => {
+      const capability = nextResult.capability_review?.find((item) => item.capabilityId === capabilityId);
+      return capability ? draft.capabilityCategory === capability.capabilityName : true;
+    });
+    if (!drafts.length) {
+      setError('No Feature mapping was found for the selected capability.');
+      return;
+    }
+    setEpicResult(nextResult);
+    setChildDrafts((current) => {
+      const others = current.filter((draft) => !drafts.some((next) => next.capabilityCategory === draft.capabilityCategory));
+      return [...others, ...drafts];
+    });
+    markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
+  }
+
   async function generateChildrenForCurrentType(targetType: WorkItemKind = selectedItemType, forceRegenerate = false) {
     if (!canContribute) {
       setError('Planning generation is restricted to AI Gen Admins and Contributors.');
@@ -1738,10 +1862,25 @@ function ProjectIntelligenceTab() {
     }
     if (targetType === 'Epic') {
       const source = { epic: epicInput, purpose: 'generated_features' };
+      if (epicResult?.capability_review?.length && !epicResult.capability_review.some((capability) => capability.status === 'Approved')) {
+        setError('Approve at least one capability before generating Features.');
+        return;
+      }
       if (!forceRegenerate && await loadReusableArtifact<ChildDraft[]>('Feature', source, (payload) => {
         setChildDrafts(payload);
         markApprovalGenerated('features', qualityScoreForFeatureDrafts(payload));
       })) {
+        return;
+      }
+      if (epicResult && !forceRegenerate) {
+        const drafts = featureDraftsFromEpic(epicResult, true);
+        if (!drafts.length) {
+          setError('Approve at least one capability before generating Features.');
+          return;
+        }
+        setChildDrafts(drafts);
+        markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
+        await saveGeneratedArtifact('Feature', epicInput.title || 'Generated features', drafts, source);
         return;
       }
       const generated = await withLoading('Generating Features from Epic...', () => postJson<EpicRefinement>('/refine-epic', {
@@ -1750,7 +1889,12 @@ function ProjectIntelligenceTab() {
         epic: epicInput,
       }));
       if (!generated) return;
-      const drafts = featureDraftsFromEpic(generated);
+      const drafts = featureDraftsFromEpic(generated, true);
+      if (!drafts.length && generated.capability_review?.length) {
+        setEpicResult(generated);
+        setError('Capability Review is ready. Approve capabilities before generating Features.');
+        return;
+      }
       setEpicResult(generated);
       setChildDrafts(drafts);
       markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
@@ -1843,16 +1987,8 @@ function ProjectIntelligenceTab() {
       return;
     }
     approveArtifact('epic');
-    const drafts = featureDraftsFromEpic(epicResult);
-    if (drafts.length) {
-      setChildDrafts(drafts);
-      markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
-      setMessage('Epic approved. Features are ready for review.');
-      window.setTimeout(() => setMessage(''), 1200);
-      return;
-    }
-    setSelectedItemType('Epic');
-    await generateChildrenForCurrentType();
+    setMessage('Epic approved. Review and approve capabilities before generating Features.');
+    window.setTimeout(() => setMessage(''), 1800);
   }
 
   function approveFeatures() {
@@ -2498,6 +2634,9 @@ function ProjectIntelligenceTab() {
           approveFeatures={() => approveFeatures()}
           approveFeature={() => void approveFeature()}
           approveStories={() => approveStories()}
+          updateCapabilityReview={updateCapabilityReview}
+          moveCapabilityReview={moveCapabilityReview}
+          generateFeatureForCapability={generateFeatureForCapability}
           updateDraftSelection={updateDraftSelection}
           createSelectedChildren={() => void createSelectedChildWorkItems()}
           buildExecutionPackage={() => void buildExecutionPackage(true)}
@@ -3981,6 +4120,9 @@ function AIPlannerWorkspace({
   approveFeatures,
   approveFeature,
   approveStories,
+  updateCapabilityReview,
+  moveCapabilityReview,
+  generateFeatureForCapability,
   updateDraftSelection,
   createSelectedChildren,
   buildExecutionPackage,
@@ -4022,6 +4164,9 @@ function AIPlannerWorkspace({
   approveFeatures: () => void;
   approveFeature: () => void;
   approveStories: () => void;
+  updateCapabilityReview: (capabilityId: string, changes: Partial<CapabilityReview>) => void;
+  moveCapabilityReview: (capabilityId: string, direction: -1 | 1) => void;
+  generateFeatureForCapability: (capabilityId: string) => void;
   updateDraftSelection: (draftId: string, selected: boolean) => void;
   createSelectedChildren: () => void;
   buildExecutionPackage: () => void;
@@ -4082,7 +4227,7 @@ function AIPlannerWorkspace({
             ) : (
               <button className="planner-button" onClick={approveEpic} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.epic)}>Approve Epic</button>
             )}
-            <button className="planner-button" onClick={() => generateChildren(false)} disabled={loading || readOnly || !epicInput.title.trim() || hasGeneratedFeatures}>{hasGeneratedFeatures ? 'Features Already Generated' : 'Generate Features'}</button>
+            <button className="planner-button" onClick={() => generateChildren(false)} disabled={loading || readOnly || !epicInput.title.trim() || hasGeneratedFeatures}>{hasGeneratedFeatures ? 'Features Already Generated' : 'Generate Approved Feature'}</button>
             {epicResult ? <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Epic</button> : null}
             {hasGeneratedFeatures ? <button className="planner-button secondary" onClick={() => generateChildren(true)} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Features</button> : null}
             <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !epicInput.title.trim()}>Impact Analysis</button>
@@ -4094,6 +4239,16 @@ function AIPlannerWorkspace({
           </details>
           {epicResult ? (
             <EpicRefinementResult result={epicResult} />
+          ) : null}
+          {epicResult?.capability_review?.length ? (
+            <CapabilityReviewWorkspace
+              result={epicResult}
+              loading={loading}
+              readOnly={readOnly}
+              onUpdate={updateCapabilityReview}
+              onMove={moveCapabilityReview}
+              onGenerateFeature={generateFeatureForCapability}
+            />
           ) : null}
           {hasGeneratedFeatures ? (
             <div className="planner-actions">
@@ -4245,6 +4400,104 @@ function GeneratedChildWorkItems({
           </ul>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function CapabilityReviewWorkspace({
+  result,
+  loading,
+  readOnly,
+  onUpdate,
+  onMove,
+  onGenerateFeature,
+}: {
+  result: EpicRefinement;
+  loading: boolean;
+  readOnly: boolean;
+  onUpdate: (capabilityId: string, changes: Partial<CapabilityReview>) => void;
+  onMove: (capabilityId: string, direction: -1 | 1) => void;
+  onGenerateFeature: (capabilityId: string) => void;
+}) {
+  const capabilities = result.capability_review || [];
+  const diagnostics = result.capability_review_diagnostics || {};
+  if (!capabilities.length) {
+    return null;
+  }
+  const approvedCount = capabilities.filter((item) => item.status === 'Approved').length;
+  const rejectedCount = capabilities.filter((item) => item.status === 'Rejected').length;
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Capability Review</div>
+      <div className="planner-subtle">Review and approve business capabilities before Feature generation. Each approved capability generates exactly one Feature.</div>
+      <div className="planner-status-grid">
+        <Row label="Capability Count" value={formatNumber(diagnostics.capabilityCount || capabilities.length)} />
+        <Row label="Approved" value={formatNumber(approvedCount)} />
+        <Row label="Rejected" value={formatNumber(rejectedCount)} />
+        <Row label="Average Confidence" value={`${formatNumber(Math.round((diagnostics.averageConfidence || 0) * 100))}%`} />
+        <Row label="Planning Readiness" value={diagnostics.planningReadiness || 'Ready For Review'} />
+        <Row label="Graph Relationships" value={formatNumber(diagnostics.graphRelationships || result.capability_dependency_graph?.length || 0)} />
+      </div>
+      {result.capability_dependency_graph?.length ? (
+        <ListBlock
+          title="Dependency Graph"
+          items={result.capability_dependency_graph.map((edge) => `${edge.source || 'Capability'} ${edge.relationship || 'supports'} ${edge.target || 'Capability'}`)}
+        />
+      ) : null}
+      {diagnostics.validationIssues?.length ? (
+        <ListBlock title="Validation Warnings" items={diagnostics.validationIssues.map((item) => `${item.severity || 'NeedsReview'}: ${item.capability || 'Capability'} - ${item.reason || 'Review required'}`)} />
+      ) : null}
+      {capabilities.map((capability, index) => (
+        <div className="planner-task" key={capability.capabilityId}>
+          <div className="planner-status-grid">
+            <Row label="Name" value={capability.capabilityName} />
+            <Row label="Priority" value={capability.priority} />
+            <Row label="Status" value={capability.status} />
+            <Row label="Estimated Features" value={formatNumber(capability.estimatedFeatures || 1)} />
+            <Row label="Confidence" value={`${formatNumber(Math.round((capability.confidence || 0) * 100))}%`} />
+          </div>
+          <div className="planner-label-inline">Business Purpose</div>
+          <p className="planner-copy">{capability.businessPurpose}</p>
+          <div className="planner-label-inline">Business Value</div>
+          <p className="planner-copy">{capability.businessValue}</p>
+          <ListBlock title="Responsibilities" items={capability.responsibilities} />
+          <ListBlock title="In Scope" items={capability.inScope} />
+          <ListBlock title="Out Of Scope" items={capability.outOfScope} />
+          <ListBlock title="Dependencies" items={capability.dependencies} />
+          <ListBlock title="Supports" items={capability.supports || []} />
+          <ListBlock title="Repository Evidence" items={capability.repositoryEvidence} />
+          <ListBlock title="Related Modules" items={capability.relatedModules} />
+          <ListBlock title="Related Flows" items={capability.relatedFlows} />
+          <ListBlock title="Related Applications" items={capability.relatedApplications} />
+          {capability.explainability ? (
+            <div className="planner-status-grid">
+              <Row label="Why it exists" value={capability.explainability.whyExists || 'Derived from Epic Analysis'} />
+              <Row label="Why required" value={capability.explainability.whyRequired || 'Required for planning readiness'} />
+              <Row label="Problem solved" value={capability.explainability.businessProblemSolved || capability.businessPurpose} />
+            </div>
+          ) : null}
+          {capability.reviewComments?.length ? <ListBlock title="Review Comments" items={capability.reviewComments} /> : null}
+          <div className="planner-actions">
+            <button className="planner-button" disabled={loading || readOnly} onClick={() => onUpdate(capability.capabilityId, { status: 'Approved' })}>Approve</button>
+            <button className="planner-button secondary" disabled={loading || readOnly} onClick={() => onUpdate(capability.capabilityId, { status: 'Rejected' })}>Reject</button>
+            <button
+              className="planner-button secondary"
+              disabled={loading || readOnly}
+              onClick={() => {
+                const comment = window.prompt('Add a review comment for this capability', capability.reviewComments?.[0] || '');
+                if (comment !== null) {
+                  onUpdate(capability.capabilityId, { reviewComments: comment.trim() ? [comment.trim()] : [] });
+                }
+              }}
+            >
+              Edit
+            </button>
+            <button className="planner-button secondary" disabled={loading || readOnly || index === 0} onClick={() => onMove(capability.capabilityId, -1)}>Move Up</button>
+            <button className="planner-button secondary" disabled={loading || readOnly || index === capabilities.length - 1} onClick={() => onMove(capability.capabilityId, 1)}>Move Down</button>
+            <button className="planner-button" disabled={loading || readOnly || capability.status !== 'Approved'} onClick={() => onGenerateFeature(capability.capabilityId)}>Generate Feature</button>
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
@@ -4583,6 +4836,15 @@ function DeveloperWorkspace({
           <div className="planner-subtle">No execution package generated yet. Generate one from this workspace when the scope is ready.</div>
         </section>
       ) : null}
+      {executionContext?.context_capsule ? (
+        <ContextCapsuleCard
+          context={executionContext}
+          loading={loading}
+          readOnly={readOnly}
+          onRefresh={onGenerate}
+          onBuild={onGenerate}
+        />
+      ) : null}
       {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
       {executionContext ? (
         <section className="planner-card">
@@ -4714,6 +4976,58 @@ function QAWorkspace({
   );
 }
 
+function ContextCapsuleCard({
+  context,
+  loading,
+  readOnly,
+  onRefresh,
+  onBuild,
+}: {
+  context: ExecutionContextResult;
+  loading: boolean;
+  readOnly: boolean;
+  onRefresh: () => void;
+  onBuild: () => void;
+}) {
+  const capsule = context.context_capsule;
+  if (!capsule) {
+    return null;
+  }
+  const files = (capsule.relevantFiles || [])
+    .map((file) => file.path ? `${file.path}${file.confidence ? ` (${Math.round(file.confidence * 100)}%)` : ''}` : '')
+    .filter(Boolean);
+  return (
+    <section className="planner-card">
+      <div className="planner-label">Context Capsule</div>
+      <div className="planner-subtle">Execution starts from this selected capsule. Broad project context is intentionally excluded.</div>
+      <div className="planner-status-grid">
+        <Row label="Capsule Type" value={titleCase(capsule.capsuleType || 'execution')} />
+        <Row label="Knowledge Version" value={capsule.knowledgeVersion || 'Not available'} />
+        <Row label="Repository Snapshot" value={capsule.repositorySnapshotVersion || 'Not available'} />
+        <Row label="Token Estimate" value={formatNumber(capsule.tokenEstimate)} />
+        <Row label="Confidence" value={capsule.confidence !== undefined ? `${Math.round(capsule.confidence * 100)}%` : 'n/a'} />
+        <Row label="Freshness" value={titleCase(capsule.freshnessStatus || 'unknown')} />
+      </div>
+      <div className="planner-grid">
+        <ListBlock title="Modules" items={capsule.selectedModules || []} />
+        <ListBlock title="Flows" items={capsule.selectedFlows || []} />
+        <ListBlock title="Dependencies" items={capsule.selectedDependencies || []} />
+        <ListBlock title="Relevant Files" items={files.length ? files : [capsule.fileRankingStatus || 'Repository file ranking not available']} />
+      </div>
+      <details className="planner-task">
+        <summary className="planner-label">View Details</summary>
+        <div className="planner-subtle">{capsule.intentSummary || context.capsule_summary || 'No capsule summary available.'}</div>
+        <ListBlock title="Standards" items={capsule.selectedStandards || []} />
+        <ListBlock title="Rejected Context" items={(capsule.rejectedContext || []).map((item) => `${item.name}${item.reason ? `: ${item.reason}` : ''}`)} />
+      </details>
+      <div className="planner-actions">
+        <button className="planner-button secondary" onClick={onRefresh} disabled={loading || readOnly}>Refresh Capsule</button>
+        <button className="planner-button" onClick={onBuild} disabled={loading || readOnly}>Build Execution Package</button>
+      </div>
+    </section>
+  );
+}
+
 function ExecutionContextBlock({ context }: { context: ExecutionContextResult }) {
   return (
     <section className="planner-card">
@@ -4722,6 +5036,9 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
       <RelevanceSummary metadata={context} />
       <div className="planner-status-grid">
         <Row label="Story Summary" value={context.story_summary || 'Not generated yet'} />
+        <Row label="Package Source" value={titleCase(context.execution_package_source || 'context_capsule')} />
+        <Row label="Task Focus" value={context.task_focus || 'Not selected'} />
+        <Row label="Implementation Boundary" value={context.implementation_boundary || 'Not generated'} />
         <Row label="Execution Readiness" value={`${context.execution_readiness_result || context.execution_readiness || 'Not assessed'} (${context.execution_readiness_score || 0}%)`} />
         <Row label="Technology Stack" value={formatStack(context.technology_stack || EMPTY_STACK) || 'Not captured'} />
         <Row label="Repository File Ranking" value={context.file_ranking_status || 'Repository file ranking not available'} />
@@ -4738,6 +5055,8 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
         <ListBlock title="Testing Tasks" items={context.testing_tasks || []} />
         <ListBlock title="Documentation Tasks" items={context.documentation_tasks || []} />
         <ListBlock title="Implementation Notes" items={context.implementation_notes || []} />
+        <ListBlock title="Engineering Rules" items={context.engineering_rules || []} />
+        <ListBlock title="Rejected Context" items={(context.rejected_context || []).map((item) => `${item.name}${item.reason ? `: ${item.reason}` : ''}`)} />
       </div>
       {context.proposed_tasks?.length ? (
         <div className="planner-task">
@@ -6331,8 +6650,14 @@ async function addAdoComment(workItem: AdoWorkItem, text: string): Promise<void>
   });
 }
 
-function featureDraftsFromEpic(result: EpicRefinement): ChildDraft[] {
-  return result.recommended_features.map((feature, index) => ({
+function featureDraftsFromEpic(result: EpicRefinement, approvedOnly = false): ChildDraft[] {
+  const approvedCapabilities = new Set((result.capability_review || [])
+    .filter((capability) => capability.status === 'Approved')
+    .map((capability) => capability.capabilityName));
+  const features = approvedOnly && result.capability_review?.length
+    ? result.recommended_features.filter((feature) => approvedCapabilities.has(feature.capability_category || feature.capability || feature.title))
+    : result.recommended_features;
+  return features.map((feature, index) => ({
     id: `feature_${index + 1}`,
     type: 'Feature',
     title: feature.title,

@@ -260,6 +260,115 @@ class PhiProviderTests(unittest.TestCase):
         self.assertEqual(response["status"], "success")
         self.assertEqual(response["parsed_json"]["normalized_query"], "Implement login form validation")
 
+    def test_parse_success_response_accepts_ollama_response_shape(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            response = provider._parse_success_response(
+                attempt_number=1,
+                url=provider.final_url(),
+                include_response_format=False,
+                timeout_seconds=60,
+                max_tokens=50,
+                http_status=200,
+                response_body=json.dumps({"response": '{"status":"ok","source":"ollama"}'}),
+                elapsed_ms=100,
+            )
+
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["parsed_json"]["source"], "ollama")
+
+    def test_parse_success_response_accepts_plain_json_body(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            response = provider._parse_success_response(
+                attempt_number=1,
+                url=provider.final_url(),
+                include_response_format=False,
+                timeout_seconds=60,
+                max_tokens=50,
+                http_status=200,
+                response_body='{"status":"ok","shape":"plain_json"}',
+                elapsed_ms=100,
+            )
+
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["parsed_json"]["shape"], "plain_json")
+
+    def test_parse_success_response_accepts_plain_text_with_embedded_json(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            response = provider._parse_success_response(
+                attempt_number=1,
+                url=provider.final_url(),
+                include_response_format=False,
+                timeout_seconds=60,
+                max_tokens=50,
+                http_status=200,
+                response_body='Sure.\n{"status":"ok","shape":"embedded"}',
+                elapsed_ms=100,
+            )
+
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["parsed_json"]["shape"], "embedded")
+
+    def test_parse_success_response_reports_normalized_parse_error(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4",
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            response = provider._parse_success_response(
+                attempt_number=1,
+                url=provider.final_url(),
+                include_response_format=False,
+                timeout_seconds=60,
+                max_tokens=50,
+                http_status=200,
+                response_body="I cannot answer as JSON.",
+                elapsed_ms=100,
+            )
+
+        self.assertEqual(response["status"], "parse_error")
+        self.assertEqual(response["parse_error"], "NoJsonObjectFound")
+        self.assertIn("normalized", response["failure_message"])
+
     def test_debug_curl_hides_key(self) -> None:
         with patch.dict(
             os.environ,

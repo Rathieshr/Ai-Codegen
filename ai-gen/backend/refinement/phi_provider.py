@@ -12,6 +12,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from backend.ai.provider import ProviderParseError, parse_provider_response_json
+
 logger = logging.getLogger("ai_gen.phi")
 
 # Module-level deployment metrics and circuit breaker state
@@ -496,28 +498,13 @@ class AzurePhiProvider:
         elapsed_ms: int,
     ) -> dict[str, Any]:
         try:
-            raw = json.loads(response_body)
-            content = raw["choices"][0]["message"]["content"]
-            parsed_json = json.loads(_normalize_json_content(content))
-            if not isinstance(parsed_json, dict):
-                return self._structured_attempt(
-                    attempt_number=attempt_number,
-                    url=url,
-                    include_response_format=include_response_format,
-                    timeout_seconds=timeout_seconds,
-                    max_tokens=max_tokens,
-                    http_status=http_status,
-                    status="parse_error",
-                    raw_content=content,
-                    parsed_json={},
-                    parse_error="NonDictParsedJson",
-                    elapsed_ms=elapsed_ms,
-                    failure_reason="parse_error",
-                    failure_message="Model returned JSON that was not an object.",
-                    error_type="NonDictParsedJson",
-                    error_message="Model returned JSON that was not an object.",
-                )
-            print("ai-gen phi probe parse_result=dict validation_candidate=yes")
+            parsed = parse_provider_response_json(response_body)
+            content = parsed.normalized.content
+            parsed_json = parsed.parsed_json
+            print(
+                "ai-gen phi probe "
+                f"parse_result=dict validation_candidate=yes source_format={parsed.normalized.source_format}"
+            )
             self._record_success(elapsed_ms)
             return self._structured_attempt(
                 attempt_number=attempt_number,
@@ -536,7 +523,30 @@ class AzurePhiProvider:
                 error_type="",
                 error_message="",
             )
-        except (KeyError, IndexError, TypeError, ValueError) as error:
+        except ProviderParseError as error:
+            print(
+                "ai-gen phi probe "
+                f"parse_result=error validation_candidate=no error={error.code} source_format={error.source_format}"
+            )
+            self._record_failure(elapsed_ms)
+            return self._structured_attempt(
+                attempt_number=attempt_number,
+                url=url,
+                include_response_format=include_response_format,
+                timeout_seconds=timeout_seconds,
+                max_tokens=max_tokens,
+                http_status=http_status,
+                status="parse_error",
+                raw_content=error.raw_preview or response_body[:4000],
+                parsed_json={},
+                parse_error=error.code,
+                elapsed_ms=elapsed_ms,
+                failure_reason="parse_error",
+                failure_message="Model response could not be normalized into a JSON object.",
+                error_type=error.code,
+                error_message=str(error),
+            )
+        except (TypeError, ValueError) as error:
             print(f"ai-gen phi probe parse_result=error validation_candidate=no error={type(error).__name__}")
             self._record_failure(elapsed_ms)
             return self._structured_attempt(
@@ -552,7 +562,7 @@ class AzurePhiProvider:
                 parse_error=type(error).__name__,
                 elapsed_ms=elapsed_ms,
                 failure_reason="parse_error",
-                failure_message="Model response could not be parsed into the expected chat-completions JSON shape.",
+                failure_message="Model response could not be normalized into a JSON object.",
                 error_type=type(error).__name__,
                 error_message=str(error),
             )

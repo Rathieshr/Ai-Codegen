@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from backend.refinement.provider import get_refinement_provider
+from backend.prompt_budget import default_json_sections, refine_json_with_budget
 
 
 QUESTION_VALIDATION_SYSTEM_PROMPT = (
@@ -213,9 +214,17 @@ def _provider_answers_unknown(unknown: str, feedback_comments: list[str], provid
         },
     }
     try:
-        raw = provider.refine_json(
-            QUESTION_VALIDATION_SYSTEM_PROMPT,
-            json.dumps(payload, ensure_ascii=True),
+        raw = refine_json_with_budget(
+            provider,
+            default_json_sections(
+                role="Business analyst clarification validator",
+                objective="Decide whether reviewer feedback answers the open question.",
+                current_work_item=payload,
+                instructions="Return JSON only with answered and confidence.",
+                output_schema=payload["expected_json_schema"],
+            ),
+            operation="ba_question_validation",
+            system_prompt=QUESTION_VALIDATION_SYSTEM_PROMPT,
             max_tokens=120,
         )
     except Exception:

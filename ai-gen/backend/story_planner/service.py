@@ -13,6 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from backend.refinement.provider import get_refinement_provider
+from backend.prompt_budget import default_json_sections, probe_json_with_budget
 
 from .devops_mapping import build_acceptance_html, build_creation_preview, build_story_description
 from .models import PlannerSession, TaskDraft, utc_now
@@ -900,21 +901,26 @@ def _probe_phi_json(system_prompt: str, payload: dict[str, Any], max_tokens: int
     provider = get_refinement_provider()
     if provider is None or not provider.is_enabled():
         return {}
-    probe = getattr(provider, "probe_json", None)
     try:
-        if callable(probe):
-            result = probe(
-                system_prompt,
-                json.dumps(payload, ensure_ascii=True),
-                max_tokens=max_tokens,
-                timeout_seconds=_story_planner_phi_timeout_seconds(),
-                response_format_enabled=False,
-                allow_retry_without_response_format=False,
-            )
-            parsed = result.get("parsed_json") if isinstance(result, dict) else {}
-            return parsed if isinstance(parsed, dict) else {}
-        raw = provider.refine_json(system_prompt, json.dumps(payload, ensure_ascii=True), max_tokens=max_tokens)
-        return raw if isinstance(raw, dict) else {}
+        result = probe_json_with_budget(
+            provider,
+            default_json_sections(
+                role="AI Story Planner",
+                objective="Generate the requested structured planning stage.",
+                current_work_item=payload,
+                instructions="Return JSON only. Match the requested story planner schema.",
+                output_schema=payload.get("expected_json_schema") or payload.get("schema") or {},
+                previous_draft=payload.get("previous") or payload.get("draft"),
+            ),
+            operation="story_planner",
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            timeout_seconds=_story_planner_phi_timeout_seconds(),
+            response_format_enabled=False,
+            allow_retry_without_response_format=False,
+        )
+        parsed = result.get("parsed_json") if isinstance(result, dict) else {}
+        return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
 

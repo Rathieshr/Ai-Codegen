@@ -14,6 +14,7 @@ from backend.refinement.canonical_vocabulary import (
 )
 from backend.refinement.provider import get_refinement_provider
 from backend.refinement.schema_validator import validate_task_refinement
+from backend.prompt_budget import default_json_sections, probe_json_with_budget
 
 
 # ── Prompt engineering note ─────────────────────────────────────────────────
@@ -147,29 +148,23 @@ def refine_task(query: str, context: dict | None = None) -> dict[str, Any]:
     repo_hints = (context or {}).get("repo_hints") or {}
     if repo_hints:
         payload["repo_hints"] = {k: v for k, v in list(repo_hints.items())[:4]}
-    probe = getattr(provider, "probe_json", None)
     probe_result: dict[str, Any] | None = None
-    if callable(probe):
-        candidate = probe(
-            SYSTEM_PROMPT,
-            json.dumps(payload, ensure_ascii=True),
-            max_tokens=500,  # raised slightly: schema now includes ac_gaps list
-        )
-        if isinstance(candidate, dict):
-            probe_result = candidate
-            raw = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
-        else:
-            raw = provider.refine_json(
-                SYSTEM_PROMPT,
-                json.dumps(payload, ensure_ascii=True),
-                max_tokens=500,
-            )
-    else:
-        raw = provider.refine_json(
-            SYSTEM_PROMPT,
-            json.dumps(payload, ensure_ascii=True),
-            max_tokens=500,
-        )
+    sections = default_json_sections(
+        role="Semantic refinement engine",
+        objective="Normalize the work item into canonical engineering metadata.",
+        current_work_item=payload,
+        instructions="Output JSON only. Use only schema keys. Omit uncertain fields.",
+        output_schema=EXPECTED_SCHEMA,
+        knowledge_summary={"canonical_vocabulary": "flows, variants, surfaces, fields, validations, actors, states"},
+    )
+    probe_result = probe_json_with_budget(
+        provider,
+        sections,
+        operation="task_refinement",
+        system_prompt=SYSTEM_PROMPT,
+        max_tokens=500,
+    )
+    raw = probe_result.get("parsed_json") if isinstance(probe_result.get("parsed_json"), dict) else {}
     raw_preview = _preview_probe_result(probe_result, raw)
     validated = validate_task_refinement(raw)
     if not any(validated.get(key) for key in ("base_flows", "variants", "surfaces", "fields", "validations", "scope_hints", "unknowns")):
@@ -298,17 +293,6 @@ def _probe_epic_stage(
     upstream_summary = _compact_upstream(stage, upstream)
     effective_text = (effective_context or {}).get("effective_text", "")[:800]
 
-    user_prompt_parts = [
-        f"Title: {title}",
-        f"Description: {description}" if description else "",
-        f"Acceptance: {acceptance}" if acceptance else "",
-    ]
-    if upstream_summary:
-        user_prompt_parts.append(f"Upstream: {upstream_summary}")
-    if effective_text:
-        user_prompt_parts.append(f"Context: {effective_text}")
-    user_prompt = "\n".join(p for p in user_prompt_parts if p)
-
     system_prompt = _EPIC_STAGE_SYSTEM_PROMPTS.get(
         stage,
         "Output JSON only. Return JSON only.",
@@ -320,9 +304,23 @@ def _probe_epic_stage(
         "story_generation": 160,
         "review": 140,
     }
-    return provider.probe_json(
-        system_prompt,
-        user_prompt,
+    sections = default_json_sections(
+        role="Epic planning stage assistant",
+        objective=f"Generate structured JSON for {stage}.",
+        current_work_item={
+            "title": title,
+            "description": description,
+            "acceptance": acceptance,
+        },
+        instructions="Output JSON only. Use only the requested stage schema.",
+        output_schema=EPIC_STAGE_SCHEMAS.get(stage, {}),
+        previous_draft={"upstream": upstream_summary, "effective_context": effective_text},
+    )
+    return probe_json_with_budget(
+        provider,
+        sections,
+        operation=f"epic_stage_{stage}",
+        system_prompt=system_prompt,
         max_tokens=max_tokens_map.get(stage, 160),
         response_format_enabled=False,  # Phi-4-mini is more reliable without json_object mode
         allow_retry_without_response_format=False,

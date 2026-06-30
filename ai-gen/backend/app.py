@@ -30,6 +30,7 @@ from backend.model_router import detect_execution_target, get_available_targets
 from backend.orchestrator.react_controller import PipelineController
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
+from backend.prompt_budget import default_json_sections, probe_json_with_budget
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 from backend.refinement.refinement_decider import should_use_refiner
 from backend.refinement.schema_validator import validate_task_refinement
@@ -1073,25 +1074,37 @@ def refinement_smoke_test(request: RefinementSmokeTestRequest) -> dict[str, Any]
             "tests": [],
         }
 
-    ping = _run_refinement_probe_with_timeout(
-        probe=provider.probe_json,
+    ping = probe_json_with_budget(
+        provider,
+        default_json_sections(
+            role="Refinement smoke test",
+            objective="Verify provider reachability with a minimal JSON response.",
+            current_work_item={"query": "ping"},
+            instructions='Return this exact JSON: {"status":"ok"}',
+            output_schema={"status": "ok"},
+        ),
+        operation="refinement_smoke_ping",
         system_prompt="Return strict JSON only.",
-        user_prompt='Return this exact JSON: {"status":"ok"}',
         max_tokens=50,
         timeout_seconds=_provider_timeout_for_mode("ping", provider.status_snapshot()),
-        diagnostic_timeout_seconds=_diagnostic_timeout_seconds(provider.status_snapshot(), _provider_timeout_for_mode("ping", provider.status_snapshot())),
         response_format_enabled=False,
         allow_retry_without_response_format=False,
         include_model_field=request.include_model_field,
         api_version_override=request.api_version,
     )
-    small = _run_refinement_probe_with_timeout(
-        probe=provider.probe_json,
+    small = probe_json_with_budget(
+        provider,
+        default_json_sections(
+            role="Refinement smoke test",
+            objective="Extract a tiny domain/features JSON object.",
+            current_work_item={"query": request.query},
+            instructions='Return JSON with: {"domain":"","features":[]}',
+            output_schema={"domain": "", "features": []},
+        ),
+        operation="refinement_smoke_small_refine",
         system_prompt="Return strict JSON only.",
-        user_prompt=f'Return JSON with: {{"domain":"","features":[]}}\\n\\nInput: {request.query}',
         max_tokens=220,
         timeout_seconds=_provider_timeout_for_mode("small_refine", provider.status_snapshot()),
-        diagnostic_timeout_seconds=_diagnostic_timeout_seconds(provider.status_snapshot(), _provider_timeout_for_mode("small_refine", provider.status_snapshot())),
         response_format_enabled=False,
         allow_retry_without_response_format=False,
         include_model_field=request.include_model_field,

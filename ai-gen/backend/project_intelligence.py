@@ -18,6 +18,13 @@ from backend.intelligence.intent import build_intent
 from backend.intelligence.planning import buildPlanningContext
 from backend.intelligence.reasoning import generatePlanningArtifact
 from backend.intelligence.validation import validateArtifact
+from backend.prompt_budget import (
+    PromptSection,
+    budgetProfileForProvider,
+    buildPrompt,
+    estimateTokens as promptBudgetEstimateTokens,
+    probe_json_with_budget,
+)
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 
 
@@ -6794,9 +6801,15 @@ def _project_phi_probe(
             context_diagnostics.get("compressed_context_tokens"),
             context_diagnostics.get("compression_ratio"),
         )
-        probe = provider.probe_json(
-            PROJECT_PHI_SYSTEM_PROMPT,
-            prompt,
+        try:
+            prompt_payload = json.loads(prompt)
+        except (TypeError, ValueError):
+            prompt_payload = {"prompt": prompt}
+        probe = probe_json_with_budget(
+            provider,
+            _prompt_budget_sections(prompt_payload if isinstance(prompt_payload, dict) else {"prompt": prompt}),
+            operation=str(context_diagnostics.get("operation") or "project_intelligence"),
+            system_prompt=PROJECT_PHI_SYSTEM_PROMPT,
             max_tokens=int(options.get("max_tokens") or 900),
             timeout_seconds=int(options.get("timeout_seconds")) if options.get("timeout_seconds") else None,
             response_format_enabled=False,
@@ -6934,6 +6947,165 @@ def _project_phi_prompt_with_diagnostics(
     return attempts[-1]
 
 
+def _apply_prompt_budget_manager(operation: str, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Optimize prompt sections with a provider-aware budget profile."""
+
+    provider_name = os.getenv("AI_GEN_PROJECT_INTELLIGENCE_PROVIDER") or os.getenv("AI_GEN_REFINER_PROVIDER") or "azure_phi"
+    provider_model = os.getenv("AI_GEN_REFINER_DEPLOYMENT") or os.getenv("AI_GEN_REFINER_MODEL") or ""
+    profile = budgetProfileForProvider(
+        provider_name,
+        provider_model,
+        operation=operation,
+        max_prompt_chars=_provider_prompt_char_limit(),
+        context_limit_override=_model_context_limit_tokens(),
+    )
+    sections = _prompt_budget_sections(payload)
+    budget_result = buildPrompt(sections, profile)
+    optimized_payload = _payload_from_prompt_budget_sections(payload, budget_result["sections"])
+    diagnostics = dict(budget_result["diagnostics"])
+    diagnostics.update(
+        {
+            "prompt_budget_manager_used": True,
+            "prompt_budget_estimated_tokens": diagnostics.get("estimated_tokens"),
+            "prompt_budget_remaining_tokens": diagnostics.get("remaining_budget"),
+            "prompt_budget_overflow_tokens": diagnostics.get("overflow_tokens"),
+            "prompt_budget_largest_section": diagnostics.get("largest_section"),
+        }
+    )
+    return optimized_payload, diagnostics
+
+
+def _prompt_budget_sections(payload: dict[str, Any]) -> list[PromptSection]:
+    project_context = payload.get("project_context") if isinstance(payload.get("project_context"), dict) else {}
+    knowledge_registry = project_context.get("knowledge_registry") if isinstance(project_context.get("knowledge_registry"), dict) else {}
+    project_summary = project_context.get("project_summary") if isinstance(project_context.get("project_summary"), dict) else {}
+    draft = payload.get("draft") if isinstance(payload.get("draft"), dict) else {}
+    input_item = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+    repository_evidence = {
+        "context_capsule": project_context.get("context_source") == "context_capsule",
+        "capsule_id": project_context.get("capsule_id"),
+        "capsule_type": project_context.get("capsule_type"),
+        "knowledge_registry": knowledge_registry,
+        "capsule_focus": project_context.get("capsule_focus"),
+        "relevant_files": draft.get("relevant_files") or draft.get("recommended_files") or input_item.get("relevant_files"),
+    }
+    repository_evidence = {key: value for key, value in repository_evidence.items() if value not in (None, "", [], {})}
+    knowledge_summary = {
+        "project_name": project_context.get("project_name"),
+        "domain": project_context.get("domain"),
+        "project_type": project_context.get("project_type"),
+        "description": project_context.get("description"),
+        "project_summary": project_summary,
+        "technology_stack": project_context.get("technology_stack"),
+        "development_standards": project_context.get("development_standards"),
+        "ui_guidelines": project_context.get("ui_guidelines"),
+    }
+    knowledge_summary = {key: value for key, value in knowledge_summary.items() if value not in (None, "", [], {})}
+    sections = [
+        _prompt_budget_section("current_intent", "Current Intent", 100, True, False, "intent", {"operation": payload.get("operation"), "input": input_item}),
+        _prompt_budget_section("current_capability", "Current Capability", 100, True, False, "capability", _current_capability_section(project_context, input_item, draft)),
+        _prompt_budget_section("dna", "DNA", 95, True, False, "dna", _dna_section(input_item, draft)),
+        _prompt_budget_section(
+            "planning_boundary",
+            "Planning Boundary",
+            90,
+            True,
+            False,
+            "planning_boundary",
+            {"expected_json_keys": payload.get("expected_json_keys"), "target_output": draft.get("target_output")},
+        ),
+        _prompt_budget_section("validation", "Validation", 85, True, False, "validation", _validation_section(draft)),
+        _prompt_budget_section("repository_evidence", "Repository Evidence", 80, False, True, "repository", repository_evidence),
+        _prompt_budget_section("knowledge_summary", "Knowledge Summary", 60, False, True, "knowledge", knowledge_summary),
+        _prompt_budget_section("instructions", "Instructions", 100, True, False, "instructions", payload.get("instruction")),
+        _prompt_budget_section("previous_draft_summary", "Previous Draft Summary", 50, False, True, "draft", draft),
+    ]
+    return sections
+
+
+def _prompt_budget_section(
+    section_id: str,
+    name: str,
+    priority: int,
+    required: bool,
+    compressible: bool,
+    source: str,
+    content: Any,
+) -> PromptSection:
+    return PromptSection(
+        id=section_id,
+        name=name,
+        priority=priority,
+        estimatedTokens=promptBudgetEstimateTokens(json.dumps(content, ensure_ascii=True, separators=(",", ":"), default=str)),
+        required=required,
+        compressible=compressible,
+        source=source,
+        content=content,
+    )
+
+
+def _current_capability_section(project_context: dict[str, Any], input_item: dict[str, Any], draft: dict[str, Any]) -> dict[str, Any]:
+    summary = project_context.get("project_summary") if isinstance(project_context.get("project_summary"), dict) else {}
+    return {
+        "title": input_item.get("title") or draft.get("title"),
+        "domain": project_context.get("domain"),
+        "capability": draft.get("capability") or draft.get("business_goal") or summary.get("architecture_summary"),
+        "modules": summary.get("top_modules"),
+        "flows": summary.get("top_flows"),
+    }
+
+
+def _dna_section(input_item: dict[str, Any], draft: dict[str, Any]) -> dict[str, Any]:
+    for key in ["work_item_dna", "dna", "engineering_dna"]:
+        value = input_item.get(key) or draft.get(key)
+        if isinstance(value, dict):
+            return value
+    return {"status": "not_available"}
+
+
+def _validation_section(draft: dict[str, Any]) -> dict[str, Any]:
+    for key in ["validation_report", "validation", "quality_gate", "warnings"]:
+        value = draft.get(key)
+        if value not in (None, "", [], {}):
+            return {key: value}
+    return {"status": "pending"}
+
+
+def _payload_from_prompt_budget_sections(payload: dict[str, Any], sections: list[PromptSection]) -> dict[str, Any]:
+    optimized = json.loads(json.dumps(payload, ensure_ascii=True, default=str))
+    section_map = {section.id: section.content for section in sections}
+    project_context = optimized.get("project_context") if isinstance(optimized.get("project_context"), dict) else {}
+    if "knowledge_summary" in section_map:
+        knowledge_summary = section_map["knowledge_summary"] if isinstance(section_map["knowledge_summary"], dict) else {}
+        for key in ["project_name", "domain", "project_type", "description", "project_summary", "technology_stack", "development_standards", "ui_guidelines"]:
+            if key in knowledge_summary:
+                project_context[key] = knowledge_summary[key]
+    else:
+        for key in ["description", "project_summary", "technology_stack", "development_standards", "ui_guidelines"]:
+            project_context.pop(key, None)
+    if "repository_evidence" in section_map:
+        repository_evidence = section_map["repository_evidence"] if isinstance(section_map["repository_evidence"], dict) else {}
+        if isinstance(repository_evidence.get("knowledge_registry"), dict):
+            project_context["knowledge_registry"] = repository_evidence["knowledge_registry"]
+        elif repository_evidence:
+            project_context["knowledge_registry"] = repository_evidence
+        elif "knowledge_registry" in project_context:
+            project_context["knowledge_registry"] = {}
+        if repository_evidence.get("capsule_focus"):
+            project_context["capsule_focus"] = repository_evidence["capsule_focus"]
+    else:
+        project_context["knowledge_registry"] = {}
+        project_context.pop("capsule_focus", None)
+    optimized["project_context"] = project_context
+    if "previous_draft_summary" in section_map:
+        optimized["draft"] = section_map["previous_draft_summary"]
+    else:
+        optimized["draft"] = {}
+    if "instructions" in section_map:
+        optimized["instruction"] = section_map["instructions"]
+    return optimized
+
+
 def _build_project_phi_prompt(
     operation: str,
     profile: dict[str, Any],
@@ -6958,7 +7130,9 @@ def _build_project_phi_prompt(
         compression_level=compression_level,
         draft_budget_tokens=draft_budget_tokens,
     )
+    payload, prompt_budget_diagnostics = _apply_prompt_budget_manager(operation, payload)
     prompt = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    project_context = payload.get("project_context") if isinstance(payload.get("project_context"), dict) else project_context
     context_tokens = _estimate_tokens(json.dumps(project_context, ensure_ascii=True, separators=(",", ":")))
     diagnostics = {
         "operation": operation,
@@ -6995,6 +7169,12 @@ def _build_project_phi_prompt(
         )
     diagnostics.update(draft_diagnostics)
     diagnostics.update(_section_diagnostics(payload))
+    prompt_budget_removed_sections = _string_list(prompt_budget_diagnostics.get("removed_sections"))
+    prompt_budget_diagnostics["prompt_budget_removed_sections"] = prompt_budget_removed_sections
+    prompt_budget_diagnostics["removed_sections"] = _unique(
+        [*_string_list(draft_diagnostics.get("removed_sections")), *prompt_budget_removed_sections]
+    )
+    diagnostics.update(prompt_budget_diagnostics)
     diagnostics = _with_final_prompt_diagnostics(PROJECT_PHI_SYSTEM_PROMPT, prompt, diagnostics)
     return prompt, diagnostics
 
@@ -7522,6 +7702,7 @@ def _with_final_prompt_diagnostics(system_prompt: str, user_prompt: str, diagnos
     output_schema_tokens = _estimate_tokens(_clean_text(updated.get("output_schema_preview")))
     reserved_tokens = int(updated.get("reserved_tokens") or PROJECT_CONTEXT_RESERVED_TOKENS)
     final_tokens = system_tokens + user_tokens + reserved_tokens
+    model_context_limit = int(updated.get("model_context_limit") or _model_context_limit_tokens())
     updated.update(
         {
             "reserved_tokens": reserved_tokens,
@@ -7529,7 +7710,7 @@ def _with_final_prompt_diagnostics(system_prompt: str, user_prompt: str, diagnos
             "user_prompt_tokens": user_tokens,
             "output_schema_tokens": output_schema_tokens,
             "final_prompt_tokens": final_tokens,
-            "model_context_limit": _model_context_limit_tokens(),
+            "model_context_limit": model_context_limit,
             "final_prompt_preview": user_prompt[:900],
         }
     )

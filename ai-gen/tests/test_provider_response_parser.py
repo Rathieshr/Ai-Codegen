@@ -52,6 +52,22 @@ class ProviderResponseParserTests(unittest.TestCase):
 
         self.assertEqual(parsed.parsed_json, {"status": "ok"})
 
+    def test_repairs_trailing_commas(self) -> None:
+        response = '{"status":"ok","items":["a","b",],}'
+
+        parsed = parse_provider_response_json(response)
+
+        self.assertEqual(parsed.parsed_json["items"], ["a", "b"])
+
+    def test_parses_python_like_dict_response(self) -> None:
+        response = "{'status': 'ok', 'answered': True, 'notes': None}"
+
+        parsed = parse_provider_response_json(response)
+
+        self.assertEqual(parsed.parsed_json["status"], "ok")
+        self.assertTrue(parsed.parsed_json["answered"])
+        self.assertIsNone(parsed.parsed_json["notes"])
+
     def test_rejects_non_json_plain_text(self) -> None:
         with self.assertRaises(ProviderParseError) as ctx:
             parse_provider_response_json("I cannot return JSON right now.")

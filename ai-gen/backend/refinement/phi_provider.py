@@ -528,7 +528,6 @@ class AzurePhiProvider:
                 "ai-gen phi probe "
                 f"parse_result=error validation_candidate=no error={error.code} source_format={error.source_format}"
             )
-            self._record_failure(elapsed_ms)
             return self._structured_attempt(
                 attempt_number=attempt_number,
                 url=url,
@@ -548,7 +547,6 @@ class AzurePhiProvider:
             )
         except (TypeError, ValueError) as error:
             print(f"ai-gen phi probe parse_result=error validation_candidate=no error={type(error).__name__}")
-            self._record_failure(elapsed_ms)
             return self._structured_attempt(
                 attempt_number=attempt_number,
                 url=url,

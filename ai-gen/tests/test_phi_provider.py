@@ -369,6 +369,38 @@ class PhiProviderTests(unittest.TestCase):
         self.assertEqual(response["parse_error"], "NoJsonObjectFound")
         self.assertIn("normalized", response["failure_message"])
 
+    def test_parse_error_does_not_degrade_deployment_health(self) -> None:
+        deployment = "Phi-parse-health-test"
+        with patch.dict(
+            os.environ,
+            {
+                "AI_GEN_REFINER_ENABLED": "1",
+                "AI_GEN_REFINER_PROVIDER": "azure_phi",
+                "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+                "AI_GEN_REFINER_API_KEY": "secret",
+                "AI_GEN_REFINER_MODEL": "Phi-4",
+                "AI_GEN_REFINER_DEPLOYMENT": deployment,
+            },
+            clear=False,
+        ):
+            provider = AzurePhiProvider()
+            for _ in range(5):
+                provider._parse_success_response(
+                    attempt_number=1,
+                    url=provider.final_url(),
+                    include_response_format=False,
+                    timeout_seconds=60,
+                    max_tokens=50,
+                    http_status=200,
+                    response_body="I cannot answer as JSON.",
+                    elapsed_ms=100,
+                )
+
+            health = provider.health_snapshot()
+
+        self.assertEqual(health["health"], "healthy")
+        self.assertEqual(health["consecutive_failures"], 0)
+
     def test_debug_curl_hides_key(self) -> None:
         with patch.dict(
             os.environ,

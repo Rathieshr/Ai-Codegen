@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import ast
 from typing import Any
 
 from .provider_parse_error import ProviderParseError
@@ -35,18 +36,10 @@ class ProviderResponseParser:
         for candidate in candidates:
             if not candidate.strip():
                 continue
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError as error:
+            parsed, error = _parse_json_object_candidate(candidate)
+            if error:
                 last_error = error
                 continue
-            if not isinstance(parsed, dict):
-                raise ProviderParseError(
-                    "NonDictParsedJson",
-                    "Provider returned JSON, but it was not an object.",
-                    raw_preview=content[:1500],
-                    source_format=source_format,
-                )
             return parsed
 
         if "{" not in text:
@@ -111,3 +104,45 @@ def _first_balanced_json_object(text: str) -> str | None:
             if depth == 0:
                 return text[start : index + 1]
     return text[start:]
+
+
+def _parse_json_object_candidate(candidate: str) -> tuple[dict[str, Any], Exception | None]:
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError as first_error:
+        repaired = _repair_json_like(candidate)
+        if repaired != candidate:
+            try:
+                parsed = json.loads(repaired)
+            except json.JSONDecodeError:
+                parsed, literal_error = _parse_python_literal(candidate)
+                if literal_error:
+                    return {}, first_error
+        else:
+            parsed, literal_error = _parse_python_literal(candidate)
+            if literal_error:
+                return {}, first_error
+    if not isinstance(parsed, dict):
+        raise ProviderParseError(
+            "NonDictParsedJson",
+            "Provider returned JSON, but it was not an object.",
+            raw_preview=candidate[:1500],
+            source_format="normalized_content",
+        )
+    return parsed, None
+
+
+def _parse_python_literal(candidate: str) -> tuple[Any, Exception | None]:
+    try:
+        return ast.literal_eval(candidate), None
+    except (SyntaxError, ValueError) as error:
+        return {}, error
+
+
+def _repair_json_like(candidate: str) -> str:
+    repaired = candidate.strip()
+    repaired = re.sub(r",(\s*[}\]])", r"\1", repaired)
+    repaired = re.sub(r"\bNone\b", "null", repaired)
+    repaired = re.sub(r"\bTrue\b", "true", repaired)
+    repaired = re.sub(r"\bFalse\b", "false", repaired)
+    return repaired

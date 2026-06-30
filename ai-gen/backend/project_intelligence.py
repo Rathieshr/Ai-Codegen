@@ -6768,7 +6768,8 @@ def _project_phi_probe(
         metadata = _with_context_diagnostics(metadata, context_diagnostics)
         return _fallback_or_block(metadata, force_provider, allow_fallback)
     health = provider.health_snapshot() if hasattr(provider, "health_snapshot") else {}
-    if force_provider != "azure_phi" and health.get("health") != "healthy":
+    health_status = str(health.get("health") or "").lower()
+    if force_provider != "azure_phi" and health_status == "unhealthy":
         metadata = _fallback_metadata("domain_fallback", f"Azure Phi health is {health.get('health') or 'unknown'}.")
         metadata.update(_provider_status_metadata(provider, {}, health))
         metadata["provider_used"] = "domain_fallback"

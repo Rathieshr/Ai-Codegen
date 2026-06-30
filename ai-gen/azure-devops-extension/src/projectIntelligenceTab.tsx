@@ -521,6 +521,8 @@ type ExecutionContextCapsule = {
   selectedDependencies?: string[];
   selectedStandards?: string[];
   acceptanceCriteria?: string[];
+  inScope?: string[];
+  outOfScope?: string[];
   relevantFiles?: Array<{ path?: string; confidence?: number; reason?: string; evidence?: string; source?: string }>;
   fileRankingStatus?: string;
   rejectedContext?: RejectedContextItem[];
@@ -529,16 +531,84 @@ type ExecutionContextCapsule = {
   confidence?: number;
   tokenEstimate?: number;
   freshnessStatus?: string;
+  workItemDNA?: WorkItemDNA;
+  dnaId?: string;
+  dnaVersion?: number;
+};
+
+type WorkItemDNA = {
+  dnaId?: string;
+  workItemId?: string | number;
+  workItemType?: string;
+  version?: number;
+  parentDNA?: string;
+  businessProblem?: string[];
+  businessGoals?: string[];
+  businessOutcome?: string;
+  capability?: string;
+  responsibilities?: string[];
+  planningBoundary?: { inScope?: string[]; outOfScope?: string[] };
+  repositoryEvidence?: {
+    modules?: string[];
+    flows?: string[];
+    applications?: string[];
+    services?: string[];
+    files?: string[];
+  };
+  dependencies?: string[];
+  constraints?: string[];
+  assumptions?: string[];
+  risks?: string[];
+  engineeringStandards?: string[];
+  acceptanceThemes?: string[];
+  validationSummary?: { score?: number; issues?: string[] };
+  confidence?: number;
+  approved?: boolean;
+  approvedBy?: string;
+  approvedAt?: string;
+};
+
+type WorkItemDNASummary = {
+  dnaId?: string;
+  version?: number;
+  workItemType?: string;
+  parentDNA?: string;
+  businessGoals?: string[];
+  businessOutcome?: string;
+  capability?: string;
+  responsibilities?: string[];
+  inScope?: string[];
+  outOfScope?: string[];
+  modules?: string[];
+  flows?: string[];
+  files?: string[];
+  dependencies?: string[];
+  constraints?: string[];
+  risks?: string[];
+  acceptanceThemes?: string[];
+  validationScore?: number;
+  validationIssues?: string[];
+  confidence?: number;
+  approved?: boolean;
 };
 
 type ExecutionContextResult = ProviderMetadata & {
   execution_package_source?: string;
   context_capsule?: ExecutionContextCapsule;
   context_capsule_diagnostics?: ProviderMetadata;
+  work_item_dna?: WorkItemDNA;
+  parent_work_item_dna?: WorkItemDNA;
+  dna_summary?: WorkItemDNASummary;
+  dna_validation?: { valid?: boolean; status?: string; issues?: string[]; summary?: { score?: number; issues?: string[] } };
   story_summary: string;
   task_focus?: string;
   implementation_boundary?: string;
   capsule_summary?: string;
+  business_outcome?: string;
+  capability?: string;
+  responsibilities?: string[];
+  in_scope?: string[];
+  out_of_scope?: string[];
   engineering_rules?: string[];
   acceptance_criteria: string[];
   affected_applications: string[];
@@ -637,6 +707,9 @@ type EpicRefinement = ProviderMetadata & {
     rejected_irrelevant_context?: RejectedContextItem[];
     confidence?: number;
     status?: string;
+    work_item_dna?: WorkItemDNA;
+    dna_validation?: { valid?: boolean; status?: string; issues?: string[] };
+    dna_diagnostics?: Record<string, unknown>;
   }>;
   generation_review?: GenerationReview;
 };
@@ -685,6 +758,9 @@ type FeatureRefinement = ProviderMetadata & {
     affected_flows?: string[];
     rejected_irrelevant_context?: RejectedContextItem[];
     confidence?: number;
+    work_item_dna?: WorkItemDNA;
+    dna_validation?: { valid?: boolean; status?: string; issues?: string[] };
+    dna_diagnostics?: Record<string, unknown>;
   }>;
   generation_review?: GenerationReview;
   story_generation_diagnostics?: {
@@ -733,6 +809,9 @@ type StoryTask = {
   acceptance_criteria?: string[];
   acceptance_criteria_count?: number;
   task_quality_score?: number;
+  work_item_dna?: WorkItemDNA;
+  dna_validation?: { valid?: boolean; status?: string; issues?: string[] };
+  dna_diagnostics?: Record<string, unknown>;
 };
 
 type QATestCase = {
@@ -4615,6 +4694,7 @@ function StructuredTaskList({ tasks }: { tasks: StoryTask[] }) {
           <span>{task.description}</span>
           <Row label="Task Quality Score" value={formatNumber(task.task_quality_score)} />
           <ListBlock title="Task Acceptance Criteria" items={task.acceptance_criteria || []} />
+          <EngineeringDNADisclosure dna={task.work_item_dna} />
         </div>
       ))}
     </>
@@ -5012,8 +5092,11 @@ function ContextCapsuleCard({
         <ListBlock title="Modules" items={capsule.selectedModules || []} />
         <ListBlock title="Flows" items={capsule.selectedFlows || []} />
         <ListBlock title="Dependencies" items={capsule.selectedDependencies || []} />
+        <ListBlock title="In Scope" items={capsule.inScope || []} />
+        <ListBlock title="Out Of Scope" items={capsule.outOfScope || []} />
         <ListBlock title="Relevant Files" items={files.length ? files : [capsule.fileRankingStatus || 'Repository file ranking not available']} />
       </div>
+      <EngineeringDNASection dna={capsule.workItemDNA} />
       <details className="planner-task">
         <summary className="planner-label">View Details</summary>
         <div className="planner-subtle">{capsule.intentSummary || context.capsule_summary || 'No capsule summary available.'}</div>
@@ -5023,6 +5106,58 @@ function ContextCapsuleCard({
       <div className="planner-actions">
         <button className="planner-button secondary" onClick={onRefresh} disabled={loading || readOnly}>Refresh Capsule</button>
         <button className="planner-button" onClick={onBuild} disabled={loading || readOnly}>Build Execution Package</button>
+      </div>
+    </section>
+  );
+}
+
+function EngineeringDNASection({ dna, summary }: { dna?: WorkItemDNA; summary?: WorkItemDNASummary }) {
+  const evidence = dna?.repositoryEvidence || {};
+  const boundary = dna?.planningBoundary || {};
+  const validation = dna?.validationSummary || {};
+  const businessGoals = summary?.businessGoals || dna?.businessGoals || [];
+  const responsibilities = summary?.responsibilities || dna?.responsibilities || [];
+  const inScope = summary?.inScope || boundary.inScope || [];
+  const outOfScope = summary?.outOfScope || boundary.outOfScope || [];
+  const modules = summary?.modules || evidence.modules || [];
+  const flows = summary?.flows || evidence.flows || [];
+  const files = summary?.files || evidence.files || [];
+  const dependencies = summary?.dependencies || dna?.dependencies || [];
+  const constraints = summary?.constraints || dna?.constraints || [];
+  const risks = summary?.risks || dna?.risks || [];
+  const acceptanceThemes = summary?.acceptanceThemes || dna?.acceptanceThemes || [];
+  const validationIssues = summary?.validationIssues || validation.issues || [];
+  const dnaId = summary?.dnaId || dna?.dnaId;
+  if (!dnaId && !summary?.capability && !dna?.capability) {
+    return null;
+  }
+  return (
+    <section className="planner-task">
+      <div className="planner-label">Engineering DNA</div>
+      <div className="planner-subtle">Canonical engineering identity inherited through planning and execution.</div>
+      <div className="planner-status-grid">
+        <Row label="DNA" value={`${dnaId || 'Not available'}${summary?.version || dna?.version ? ` v${summary?.version || dna?.version}` : ''}`} />
+        <Row label="Type" value={summary?.workItemType || dna?.workItemType || 'Work Item'} />
+        <Row label="Capability" value={summary?.capability || dna?.capability || 'Not captured'} />
+        <Row label="Business Outcome" value={summary?.businessOutcome || dna?.businessOutcome || 'Not captured'} />
+        <Row label="Validation" value={`${summary?.validationScore ?? validation.score ?? 0}%${validationIssues.length ? `, ${validationIssues.length} issue(s)` : ''}`} />
+        <Row label="Confidence" value={summary?.confidence !== undefined || dna?.confidence !== undefined ? `${Math.round((summary?.confidence ?? dna?.confidence ?? 0) * 100)}%` : 'n/a'} />
+        <Row label="Parent DNA" value={summary?.parentDNA || dna?.parentDNA || 'Root DNA'} />
+        <Row label="Approved" value={summary?.approved || dna?.approved ? 'Yes' : 'No'} />
+      </div>
+      <div className="planner-grid">
+        <ListBlock title="Business Goals" items={businessGoals} />
+        <ListBlock title="Responsibilities" items={responsibilities} />
+        <ListBlock title="In Scope" items={inScope} />
+        <ListBlock title="Out Of Scope" items={outOfScope} />
+        <ListBlock title="Modules" items={modules} />
+        <ListBlock title="Flows" items={flows} />
+        <ListBlock title="Files" items={files} />
+        <ListBlock title="Dependencies" items={dependencies} />
+        <ListBlock title="Constraints" items={constraints} />
+        <ListBlock title="Risks" items={risks} />
+        <ListBlock title="Acceptance Themes" items={acceptanceThemes} />
+        <ListBlock title="Validation Issues" items={validationIssues} />
       </div>
     </section>
   );
@@ -5043,6 +5178,7 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
         <Row label="Technology Stack" value={formatStack(context.technology_stack || EMPTY_STACK) || 'Not captured'} />
         <Row label="Repository File Ranking" value={context.file_ranking_status || 'Repository file ranking not available'} />
       </div>
+      <EngineeringDNASection dna={context.work_item_dna} summary={context.dna_summary} />
       <div className="planner-grid">
         <ListBlock title="Acceptance Criteria" items={context.acceptance_criteria || []} />
         <ListBlock title="Affected Applications" items={context.affected_applications || []} />
@@ -6199,7 +6335,7 @@ function ListBlock({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function CardList({ title, items }: { title: string; items: Array<{ title: string; description: string }> }) {
+function CardList({ title, items }: { title: string; items: Array<{ title: string; description: string; work_item_dna?: WorkItemDNA }> }) {
   return (
     <div className="planner-task">
       <div className="planner-label">{title}</div>
@@ -6207,9 +6343,22 @@ function CardList({ title, items }: { title: string; items: Array<{ title: strin
         <div className="planner-task" key={item.title}>
           <strong>{item.title}</strong>
           <span>{item.description}</span>
+          <EngineeringDNADisclosure dna={item.work_item_dna} />
         </div>
       ))}
     </div>
+  );
+}
+
+function EngineeringDNADisclosure({ dna }: { dna?: WorkItemDNA }) {
+  if (!dna?.dnaId) {
+    return null;
+  }
+  return (
+    <details className="planner-task">
+      <summary className="planner-label">View DNA</summary>
+      <EngineeringDNASection dna={dna} />
+    </details>
   );
 }
 

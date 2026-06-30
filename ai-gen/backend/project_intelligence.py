@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.intelligence.capability import buildCapabilityContext
+from backend.intelligence.dna import compareDNA, generateDNA, validateDNA
 from backend.intelligence.epic_analysis import analyzeEpic, buildCapabilityReview
 from backend.intelligence.intent import build_intent
 from backend.intelligence.planning import buildPlanningContext
@@ -854,6 +855,38 @@ class ProjectIntelligenceService:
             "generation_review": _generation_review(relevant_profile, features, _selection_names(selection, "relevant_modules"), keywords),
             **_relevance_metadata(selection),
         }
+        epic_dna_analysis = {
+            **epic_analysis,
+            "planningBoundary": {
+                "inScope": _unique([
+                    *_string_list((epic_analysis.get("planningBoundary") or {}).get("inScope") if isinstance(epic_analysis.get("planningBoundary"), dict) else []),
+                    *[
+                        scope
+                        for review in capability_review["capabilities"]
+                        if isinstance(review, dict)
+                        for scope in _string_list(review.get("inScope"))
+                    ],
+                ]),
+                "outOfScope": _unique([
+                    *_string_list((epic_analysis.get("planningBoundary") or {}).get("outOfScope") if isinstance(epic_analysis.get("planningBoundary"), dict) else []),
+                    *[
+                        scope
+                        for review in capability_review["capabilities"]
+                        if isinstance(review, dict)
+                        for scope in _string_list(review.get("outOfScope"))
+                    ],
+                ]),
+            },
+        }
+        deterministic["work_item_dna"] = generateDNA(
+            epic,
+            "Epic",
+            profile=relevant_profile,
+            epic_analysis=epic_dna_analysis,
+            validation_report={"score": int((epic_analysis.get("confidence") or 0.72) * 100), "issues": capability_review["diagnostics"].get("validationIssues", [])},
+        )
+        deterministic["dna_validation"] = validateDNA(None, deterministic["work_item_dna"])
+        deterministic["dna_diagnostics"] = _dna_diagnostics(None, deterministic["work_item_dna"])
         phi = _project_phi_json("refine_epic", relevant_profile, epic, deterministic, options, list(deterministic.keys()))
         if phi.get("blocked"):
             return _phi_error_response(phi)
@@ -874,6 +907,17 @@ class ProjectIntelligenceService:
             },
         )
         deterministic["recommended_features"] = _attach_validation_to_items(features, pipeline, "Feature")
+        deterministic["recommended_features"] = [
+            _with_child_dna(
+                feature,
+                "Feature",
+                deterministic["work_item_dna"],
+                relevant_profile,
+                capability_review=_capability_review_for_feature(feature, capability_review["capabilities"]),
+                validation_report=feature.get("validationReport"),
+            )
+            for feature in deterministic["recommended_features"]
+        ]
         deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["recommended_features"], _selection_names(selection, "relevant_modules"), keywords)
         deterministic.update(_pipeline_payload(pipeline))
         return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
@@ -886,13 +930,17 @@ class ProjectIntelligenceService:
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
-        title = _clean_text(feature.get("title")) or "Untitled feature"
-        description = _clean_text(feature.get("description"))
-        selection = _select_knowledge_context(active_profile, feature, "Feature")
+        parent_dna = _option_parent_dna(options)
+        current_dna = feature.get("work_item_dna") if isinstance(feature.get("work_item_dna"), dict) else None
+        dna_seed = current_dna or parent_dna or generateDNA(feature, "Feature", profile=active_profile)
+        feature_for_generation = _work_item_from_dna(feature, dna_seed)
+        title = _clean_text(feature_for_generation.get("title")) or "Untitled feature"
+        description = _clean_text(feature_for_generation.get("description"))
+        selection = _select_knowledge_context(active_profile, feature_for_generation, "Feature")
         relevant_profile = _profile_with_relevance(active_profile, selection)
         modules = _selection_names(selection, "relevant_modules")
         flows = _selection_names(selection, "relevant_flows")
-        story_plan = _story_decomposition(title, modules, flows, relevant_profile, feature)
+        story_plan = _story_decomposition(title, modules, flows, relevant_profile, feature_for_generation)
         recommended_stories = [
             {
                 **story_item,
@@ -911,8 +959,24 @@ class ProjectIntelligenceService:
             "generation_review": _generation_review(relevant_profile, story_plan["recommended_stories"], modules, _context_keywords(title, description, relevant_profile)),
             **_relevance_metadata(selection),
         }
-        pipeline = _run_intelligence_pipeline(feature, feature, relevant_profile, "Story", _existing_children_from_options(options), options)
+        deterministic["work_item_dna"] = current_dna or generateDNA(
+            _with_selected_evidence(feature_for_generation, modules, flows, deterministic["dependencies"], deterministic["risks"]),
+            "Feature",
+            profile=relevant_profile,
+            parent_dna=parent_dna,
+            validation_report={"score": _basic_validation_score(modules, flows), "issues": []},
+        )
+        dna_validation = validateDNA(parent_dna, deterministic["work_item_dna"])
+        deterministic["dna_validation"] = dna_validation
+        deterministic["dna_diagnostics"] = _dna_diagnostics(parent_dna, deterministic["work_item_dna"])
+        if not dna_validation["valid"]:
+            return _dna_error_response(deterministic, dna_validation)
+        pipeline = _run_intelligence_pipeline(feature_for_generation, feature_for_generation, relevant_profile, "Story", _existing_children_from_options(options), options)
         deterministic["recommended_stories"] = _attach_validation_to_items(recommended_stories, pipeline, "User Story")
+        deterministic["recommended_stories"] = [
+            _with_child_dna(story_item, "Story", deterministic["work_item_dna"], relevant_profile, validation_report=story_item.get("validationReport"))
+            for story_item in deterministic["recommended_stories"]
+        ]
         deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["recommended_stories"], modules, _context_keywords(title, description, relevant_profile))
         deterministic.update(_pipeline_payload(pipeline))
         return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
@@ -925,14 +989,18 @@ class ProjectIntelligenceService:
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
-        title = _clean_text(story.get("title")) or "Untitled story"
-        description = _clean_text(story.get("description"))
-        selection = _select_knowledge_context(active_profile, story, "Story")
+        parent_dna = _option_parent_dna(options)
+        current_dna = story.get("work_item_dna") if isinstance(story.get("work_item_dna"), dict) else None
+        dna_seed = current_dna or parent_dna or generateDNA(story, "Story", profile=active_profile)
+        story_for_generation = _work_item_from_dna(story, dna_seed)
+        title = _clean_text(story_for_generation.get("title")) or "Untitled story"
+        description = _clean_text(story_for_generation.get("description"))
+        selection = _select_knowledge_context(active_profile, story_for_generation, "Story")
         relevant_profile = _profile_with_relevance(active_profile, selection)
         modules = _selection_names(selection, "relevant_modules")
         flows = _selection_names(selection, "relevant_flows")
         applications = _application_names(relevant_profile)
-        impact = _normalize_story_impact(self.analyze_story_impact(story, relevant_profile, relevant_profile["knowledge_registry"]))
+        impact = _normalize_story_impact(self.analyze_story_impact(story_for_generation, relevant_profile, relevant_profile["knowledge_registry"]))
         acceptance = _acceptance_criteria(title, flows, modules)
         acceptance_categories = _acceptance_criteria_categories(acceptance)
         acceptance_quality_score = _acceptance_criteria_quality_score(acceptance)
@@ -962,8 +1030,24 @@ class ProjectIntelligenceService:
             "generation_review": _generation_review(relevant_profile, proposed_tasks, modules, _context_keywords(title, description, relevant_profile)),
             **_relevance_metadata(selection),
         }
-        pipeline = _run_intelligence_pipeline(story, story, relevant_profile, "Task", _existing_children_from_options(options), options)
+        deterministic["work_item_dna"] = current_dna or generateDNA(
+            _with_selected_evidence(story_for_generation, modules, flows, deterministic["dependencies"], deterministic["risks"]),
+            "Story",
+            profile=relevant_profile,
+            parent_dna=parent_dna,
+            validation_report={"score": acceptance_quality_score, "issues": []},
+        )
+        dna_validation = validateDNA(parent_dna, deterministic["work_item_dna"])
+        deterministic["dna_validation"] = dna_validation
+        deterministic["dna_diagnostics"] = _dna_diagnostics(parent_dna, deterministic["work_item_dna"])
+        if not dna_validation["valid"]:
+            return _dna_error_response(deterministic, dna_validation)
+        pipeline = _run_intelligence_pipeline(story_for_generation, story_for_generation, relevant_profile, "Task", _existing_children_from_options(options), options)
         deterministic["proposed_tasks"] = _attach_validation_to_items(proposed_tasks, pipeline, "Task")
+        deterministic["proposed_tasks"] = [
+            _with_child_dna(task, "Task", deterministic["work_item_dna"], relevant_profile, validation_report=task.get("validationReport"))
+            for task in deterministic["proposed_tasks"]
+        ]
         deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["proposed_tasks"], modules, _context_keywords(title, description, relevant_profile))
         deterministic.update(_pipeline_payload(pipeline))
         return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
@@ -1135,6 +1219,36 @@ class ProjectIntelligenceService:
             _existing_children_from_options(options),
             {**(options or {}), "deterministic_only": True},
         )
+        story_dna_source = {
+            **story,
+            "affected_modules": impact["affected_modules"],
+            "affected_flows": impact["affected_flows"],
+            "affected_applications": impact["affected_applications"],
+            "dependencies": impact["dependencies"] or refined_story["dependencies"],
+            "risks": impact["risks"] or refined_story["risks"],
+        }
+        story_dna = _option_parent_dna(options) or (story.get("work_item_dna") if isinstance(story.get("work_item_dna"), dict) else None) or generateDNA(
+            story_dna_source,
+            "Story",
+            profile=relevant_profile,
+            validation_report={"score": _basic_validation_score(impact["affected_modules"], impact["affected_flows"]), "issues": []},
+        )
+        task_dna_source = {
+            **(selected_task or story),
+            "affected_modules": impact["affected_modules"],
+            "affected_flows": impact["affected_flows"],
+            "affected_applications": impact["affected_applications"],
+            "dependencies": impact["dependencies"] or refined_story["dependencies"],
+            "risks": impact["risks"] or refined_story["risks"],
+        }
+        task_dna = generateDNA(
+            task_dna_source,
+            "Task" if selected_task else "Story",
+            profile=relevant_profile,
+            parent_dna=story_dna if selected_task else _option_parent_dna(options),
+            validation_report=pipeline["validationReports"][0] if pipeline.get("validationReports") else None,
+        )
+        dna_validation = validateDNA(story_dna if selected_task else None, task_dna)
         cache = self._read_knowledge_cache()
         capsules = self._read_context_capsules()
         context_capsule = _pipeline_context_capsule(
@@ -1150,6 +1264,7 @@ class ProjectIntelligenceService:
             profile=relevant_profile,
             cache=cache,
             selected_task=selected_task,
+            work_item_dna=task_dna,
             previous=capsules.get("execution") if isinstance(capsules.get("execution"), dict) else None,
         )
         capsules["execution"] = context_capsule
@@ -1173,6 +1288,9 @@ class ProjectIntelligenceService:
             }
         )
         deterministic["rejected_context"] = deterministic["context_capsule"]["rejectedContext"]
+        deterministic["work_item_dna"] = task_dna
+        deterministic["parent_work_item_dna"] = story_dna
+        deterministic["dna_validation"] = dna_validation
         deterministic.update(_pipeline_payload(pipeline))
         deterministic.update(_context_capsule_metadata(context_capsule))
         active_profile = {**relevant_profile, "_active_context_capsule": context_capsule}
@@ -1197,7 +1315,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {**(options or {}), "force_provider": "deterministic_fallback"})
         active_profile = _active_capsule_profile_from_execution_package(context)
         phi_item = _execution_package_phi_item(context)
         deterministic = {
@@ -1232,7 +1350,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {**(options or {}), "force_provider": "deterministic_fallback"})
         active_profile = _active_capsule_profile_from_execution_package(context)
         phi_item = _execution_package_phi_item(context)
         ui = context["ui_guidelines"]
@@ -1267,7 +1385,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {**(options or {}), "force_provider": "deterministic_fallback"})
         active_profile = _active_capsule_profile_from_execution_package(context)
         phi_item = _execution_package_phi_item(context)
         deterministic = {
@@ -1301,7 +1419,7 @@ class ProjectIntelligenceService:
         impact_analysis: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
-        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {"force_provider": "deterministic_fallback"})
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {**(options or {}), "force_provider": "deterministic_fallback"})
         active_profile = _active_capsule_profile_from_execution_package(context)
         phi_item = _execution_package_phi_item(context)
         capsule = context.get("context_capsule") if isinstance(context.get("context_capsule"), dict) else {}
@@ -1828,33 +1946,38 @@ def _pipeline_context_capsule(
     profile: dict[str, Any],
     cache: dict[str, Any] | None,
     selected_task: dict[str, Any] | None = None,
+    work_item_dna: dict[str, Any] | None = None,
     previous: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     planning_context = pipeline.get("planningContext") if isinstance(pipeline.get("planningContext"), dict) else {}
     capability_context = pipeline.get("capabilityContext") if isinstance(pipeline.get("capabilityContext"), dict) else {}
     intent = pipeline.get("intent") if isinstance(pipeline.get("intent"), dict) else {}
     validation_reports = [report for report in pipeline.get("validationReports", []) if isinstance(report, dict)]
+    dna_evidence = work_item_dna.get("repositoryEvidence") if isinstance(work_item_dna, dict) and isinstance(work_item_dna.get("repositoryEvidence"), dict) else {}
+    dna_boundary = work_item_dna.get("planningBoundary") if isinstance(work_item_dna, dict) and isinstance(work_item_dna.get("planningBoundary"), dict) else {}
     repository_snapshot = _repository_snapshot_from_profile(profile)
     knowledge_version = _clean_text((cache or {}).get("knowledge_version")) or _knowledge_version(profile)
     repository_snapshot_version = _repository_snapshot_version(repository_snapshot, profile)
-    selected_modules = _names_from_context(planning_context.get("selectedModules"))
-    selected_flows = _names_from_context(planning_context.get("selectedFlows"))
-    selected_applications = _names_from_context(planning_context.get("selectedApplications")) or _application_names(profile)[:3]
+    selected_modules = _string_list(dna_evidence.get("modules")) or _names_from_context(planning_context.get("selectedModules"))
+    selected_flows = _string_list(dna_evidence.get("flows")) or _names_from_context(planning_context.get("selectedFlows"))
+    selected_applications = _string_list(dna_evidence.get("applications")) or _names_from_context(planning_context.get("selectedApplications")) or _application_names(profile)[:3]
     selected_dependencies = _unique(
         [
+            *_string_list(work_item_dna.get("dependencies") if isinstance(work_item_dna, dict) else []),
             *_names_from_context(planning_context.get("selectedDependencies")),
             *_string_list(source_work_item.get("dependencies")),
             *_string_list(parent_story.get("dependencies")),
         ]
     )
-    selected_standards = _names_from_context(planning_context.get("selectedStandards"))
-    selected_capabilities = _names_from_context(planning_context.get("selectedCapabilities")) or _names_from_context(capability_context.get("selectedCapabilities"))
+    selected_standards = _string_list(work_item_dna.get("engineeringStandards") if isinstance(work_item_dna, dict) else []) or _names_from_context(planning_context.get("selectedStandards"))
+    selected_capabilities = _string_list(work_item_dna.get("capability") if isinstance(work_item_dna, dict) else "") or _names_from_context(planning_context.get("selectedCapabilities")) or _names_from_context(capability_context.get("selectedCapabilities"))
     relevant_files = _ranked_relevant_files(profile, selected_modules, selected_flows, source_work_item)
     file_ranking_status = "Repository file ranking available" if relevant_files else "Repository file ranking not available"
     rejected_context = _capsule_rejected_context(planning_context)
     story_keywords = _context_keywords(_clean_text(parent_story.get("title")), _clean_text(parent_story.get("description")), profile)
     risks = _unique(
         [
+            *_string_list(work_item_dna.get("risks") if isinstance(work_item_dna, dict) else []),
             *_string_list(planning_context.get("risks")),
             *_string_list(source_work_item.get("risks")),
             *_risks_for_profile(profile, story_keywords),
@@ -1866,13 +1989,15 @@ def _pipeline_context_capsule(
             ],
         ]
     )[:10]
-    constraints = _string_list(planning_context.get("constraints"))[:10]
+    constraints = _unique([*_string_list(work_item_dna.get("constraints") if isinstance(work_item_dna, dict) else []), *_string_list(planning_context.get("constraints"))])[:10]
+    capsule_acceptance = acceptance_criteria or _string_list(work_item_dna.get("acceptanceThemes") if isinstance(work_item_dna, dict) else [])
     source_payload = {
         "capsule_type": capsule_type,
+        "work_item_dna": work_item_dna or {},
         "source_work_item": _compact_work_item(source_work_item),
         "parent_story": _compact_work_item(parent_story),
         "selected_task": _compact_work_item(selected_task or {}),
-        "acceptance_criteria": acceptance_criteria,
+        "acceptance_criteria": capsule_acceptance,
         "planning_context_version": planning_context.get("planningContextVersion") or planning_context.get("version"),
         "selected_modules": selected_modules,
         "selected_flows": selected_flows,
@@ -1903,7 +2028,9 @@ def _pipeline_context_capsule(
         "selectedApplications": selected_applications,
         "selectedDependencies": selected_dependencies,
         "selectedStandards": selected_standards,
-        "acceptanceCriteria": acceptance_criteria[:8],
+        "acceptanceCriteria": capsule_acceptance[:8],
+        "inScope": _string_list(dna_boundary.get("inScope")),
+        "outOfScope": _string_list(dna_boundary.get("outOfScope")),
         "relevantFiles": relevant_files,
         "fileRankingStatus": file_ranking_status,
         "rejectedContext": rejected_context,
@@ -1912,6 +2039,10 @@ def _pipeline_context_capsule(
         "confidence": round(float(planning_context.get("confidence") or 0.72), 2),
         "freshnessStatus": "fresh",
     }
+    if work_item_dna:
+        payload["workItemDNA"] = work_item_dna
+        payload["dnaId"] = work_item_dna.get("dnaId")
+        payload["dnaVersion"] = work_item_dna.get("version")
     payload["tokenEstimate"] = _estimate_tokens(json.dumps(payload, ensure_ascii=True, separators=(",", ":"), default=str))
     source_size = _estimate_tokens(json.dumps(source_payload, ensure_ascii=True, separators=(",", ":"), default=str))
     capsule = {
@@ -1926,7 +2057,7 @@ def _pipeline_context_capsule(
         "knowledge_version": knowledge_version,
         "repository_snapshot_version": repository_snapshot_version,
         "freshness_status": payload["freshnessStatus"],
-        "dependencies": ["work_item", "parent_story", "planning_context", "knowledge_registry", "repository_snapshot"],
+        "dependencies": ["work_item_dna", "work_item", "parent_story", "planning_context", "knowledge_registry", "repository_snapshot"],
         "parent_references": _capsule_parent_references(parent_story),
         "payload": {
             **payload,
@@ -1947,6 +2078,8 @@ def _pipeline_context_capsule(
             "rejected_context": rejected_context,
             "confidence": payload["confidence"],
             "freshness_status": payload["freshnessStatus"],
+            "dna_id": (work_item_dna or {}).get("dnaId"),
+            "dna_version": (work_item_dna or {}).get("version"),
         },
     }
     return capsule
@@ -1973,6 +2106,8 @@ def _capsule_public_payload(capsule: dict[str, Any]) -> dict[str, Any]:
         "selectedDependencies": _string_list(payload.get("selectedDependencies") or payload.get("dependencies")),
         "selectedStandards": _string_list(payload.get("selectedStandards") or payload.get("standards")),
         "acceptanceCriteria": _string_list(payload.get("acceptanceCriteria")),
+        "inScope": _string_list(payload.get("inScope")),
+        "outOfScope": _string_list(payload.get("outOfScope")),
         "relevantFiles": payload.get("relevantFiles") if isinstance(payload.get("relevantFiles"), list) else [],
         "fileRankingStatus": _clean_text(payload.get("fileRankingStatus")) or "Repository file ranking not available",
         "rejectedContext": payload.get("rejectedContext") if isinstance(payload.get("rejectedContext"), list) else [],
@@ -1981,6 +2116,9 @@ def _capsule_public_payload(capsule: dict[str, Any]) -> dict[str, Any]:
         "confidence": float(payload.get("confidence") or 0),
         "tokenEstimate": int(payload.get("tokenEstimate") or 0),
         "freshnessStatus": _clean_text(payload.get("freshnessStatus") or capsule.get("freshness_status")) or "unknown",
+        "workItemDNA": payload.get("workItemDNA") if isinstance(payload.get("workItemDNA"), dict) else {},
+        "dnaId": payload.get("dnaId"),
+        "dnaVersion": payload.get("dnaVersion"),
     }
 
 
@@ -2001,6 +2139,8 @@ def _context_capsule_metadata(capsule: dict[str, Any]) -> dict[str, Any]:
         "tokenEstimate": public["tokenEstimate"],
         "confidence": public["confidence"],
         "freshnessStatus": public["freshnessStatus"],
+        "dnaId": public.get("dnaId"),
+        "dnaVersion": public.get("dnaVersion"),
         "context_capsule_type": capsule.get("capsule_type"),
         "context_capsule_version": capsule.get("version"),
         "context_capsule_size_tokens": diagnostics.get("capsule_size_tokens", public["tokenEstimate"]),
@@ -2024,6 +2164,7 @@ def _execution_package_from_capsule(
     capsule = _capsule_public_payload(context_capsule)
     relevant_files = [item for item in capsule["relevantFiles"] if isinstance(item, dict)]
     relevant_file_paths = [_clean_text(item.get("path")) for item in relevant_files if _clean_text(item.get("path"))]
+    work_item_dna = capsule.get("workItemDNA") if isinstance(capsule.get("workItemDNA"), dict) else {}
     modules = capsule["selectedModules"]
     flows = capsule["selectedFlows"]
     dependencies = capsule["selectedDependencies"]
@@ -2037,6 +2178,8 @@ def _execution_package_from_capsule(
         "execution_package_source": "context_capsule",
         "context_capsule": capsule,
         "context_capsule_diagnostics": _context_capsule_metadata(context_capsule),
+        "work_item_dna": work_item_dna,
+        "dna_summary": _dna_summary(work_item_dna),
         "story_summary": _sentence(story_title, story_description),
         "task_focus": task_title,
         "selected_task": selected_task,
@@ -2048,6 +2191,11 @@ def _execution_package_from_capsule(
         },
         "implementation_boundary": _execution_boundary(task_title, modules, flows),
         "capsule_summary": _capsule_summary(capsule),
+        "business_outcome": _clean_text(work_item_dna.get("businessOutcome")) if work_item_dna else "",
+        "capability": _clean_text(work_item_dna.get("capability")) if work_item_dna else "",
+        "responsibilities": _string_list(work_item_dna.get("responsibilities")) if work_item_dna else [],
+        "in_scope": _string_list(capsule.get("inScope")),
+        "out_of_scope": _string_list(capsule.get("outOfScope")),
         "acceptance_criteria": acceptance_criteria,
         "affected_applications": capsule["selectedApplications"],
         "affected_modules": modules,
@@ -2075,6 +2223,36 @@ def _execution_package_from_capsule(
         "execution_readiness_breakdown": readiness["breakdown"],
         "execution_readiness_result": readiness["result"],
         "ai_enrichment_status": "not_requested",
+    }
+
+
+def _dna_summary(dna: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(dna, dict) or not dna:
+        return {}
+    evidence = dna.get("repositoryEvidence") if isinstance(dna.get("repositoryEvidence"), dict) else {}
+    validation = dna.get("validationSummary") if isinstance(dna.get("validationSummary"), dict) else {}
+    return {
+        "dnaId": dna.get("dnaId"),
+        "version": dna.get("version"),
+        "workItemType": dna.get("workItemType"),
+        "parentDNA": dna.get("parentDNA"),
+        "businessGoals": _string_list(dna.get("businessGoals")),
+        "businessOutcome": _clean_text(dna.get("businessOutcome")),
+        "capability": _clean_text(dna.get("capability")),
+        "responsibilities": _string_list(dna.get("responsibilities")),
+        "inScope": _string_list((dna.get("planningBoundary") or {}).get("inScope") if isinstance(dna.get("planningBoundary"), dict) else []),
+        "outOfScope": _string_list((dna.get("planningBoundary") or {}).get("outOfScope") if isinstance(dna.get("planningBoundary"), dict) else []),
+        "modules": _string_list(evidence.get("modules")),
+        "flows": _string_list(evidence.get("flows")),
+        "files": _string_list(evidence.get("files")),
+        "dependencies": _string_list(dna.get("dependencies")),
+        "constraints": _string_list(dna.get("constraints")),
+        "risks": _string_list(dna.get("risks")),
+        "acceptanceThemes": _string_list(dna.get("acceptanceThemes")),
+        "validationScore": int(validation.get("score") or 0),
+        "validationIssues": _string_list(validation.get("issues")),
+        "confidence": round(float(dna.get("confidence") or 0), 3),
+        "approved": bool(dna.get("approved")),
     }
 
 
@@ -4196,6 +4374,155 @@ def _primary_epic_goal(epic_analysis: dict[str, Any], title: str, description: s
     if goals:
         return goals[0]
     return _sentence(f"Improve {title}", description or profile["project_description"])
+
+
+def _capability_review_for_feature(feature: dict[str, Any], reviews: list[dict[str, Any]]) -> dict[str, Any]:
+    capability = _clean_text(feature.get("capability_category") or feature.get("capability"))
+    for review in reviews:
+        if isinstance(review, dict) and _clean_text(review.get("capabilityName")) == capability:
+            return review
+    return {}
+
+
+def _option_parent_dna(options: dict[str, Any] | None) -> dict[str, Any] | None:
+    options = options or {}
+    dna = options.get("parent_dna") or options.get("parentDNA") or options.get("work_item_dna")
+    return dna if isinstance(dna, dict) else None
+
+
+def _work_item_from_dna(work_item: dict[str, Any], dna: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(dna, dict) or not dna:
+        return work_item
+    evidence = dna.get("repositoryEvidence") if isinstance(dna.get("repositoryEvidence"), dict) else {}
+    boundary = dna.get("planningBoundary") if isinstance(dna.get("planningBoundary"), dict) else {}
+    parts = [
+        _clean_text(dna.get("capability")),
+        _clean_text(dna.get("businessOutcome")),
+        " ".join(_string_list(dna.get("responsibilities"))),
+        " ".join(_string_list(dna.get("acceptanceThemes"))),
+        " ".join(_string_list(boundary.get("inScope"))),
+    ]
+    return {
+        **work_item,
+        "description": _clean_text(" ".join(parts)) or _clean_text(work_item.get("description")),
+        "business_goal": (_string_list(dna.get("businessGoals"))[:1] or [work_item.get("business_goal") or ""])[0],
+        "business_outcome": dna.get("businessOutcome") or work_item.get("business_outcome"),
+        "capability": dna.get("capability") or work_item.get("capability"),
+        "responsibilities": _string_list(dna.get("responsibilities")) or _string_list(work_item.get("responsibilities")),
+        "acceptance_criteria": _string_list(work_item.get("acceptance_criteria")) or _string_list(dna.get("acceptanceThemes")),
+        "affected_modules": _string_list(evidence.get("modules")) or _string_list(work_item.get("affected_modules")),
+        "affected_flows": _string_list(evidence.get("flows")) or _string_list(work_item.get("affected_flows")),
+        "affected_applications": _string_list(evidence.get("applications")) or _string_list(work_item.get("affected_applications")),
+        "files": _string_list(evidence.get("files")) or _string_list(work_item.get("files")),
+        "dependencies": _string_list(dna.get("dependencies")) or _string_list(work_item.get("dependencies")),
+        "constraints": _string_list(dna.get("constraints")) or _string_list(work_item.get("constraints")),
+        "risks": _string_list(dna.get("risks")) or _string_list(work_item.get("risks")),
+        "out_of_scope": _string_list(boundary.get("outOfScope")),
+    }
+
+
+def _with_selected_evidence(work_item: dict[str, Any], modules: list[str], flows: list[str], dependencies: list[str], risks: list[str]) -> dict[str, Any]:
+    return {
+        **work_item,
+        "affected_modules": modules or _string_list(work_item.get("affected_modules")),
+        "affected_flows": flows or _string_list(work_item.get("affected_flows")),
+        "dependencies": dependencies or _string_list(work_item.get("dependencies")),
+        "risks": risks or _string_list(work_item.get("risks")),
+    }
+
+
+def _with_child_dna(
+    item: dict[str, Any],
+    work_item_type: str,
+    parent_dna: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    capability_review: dict[str, Any] | None = None,
+    validation_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    child_dna = generateDNA(
+        item,
+        work_item_type,
+        profile=profile,
+        capability_review=capability_review,
+        parent_dna=parent_dna,
+        validation_report=validation_report,
+    )
+    validation = validateDNA(parent_dna, child_dna)
+    return {
+        **item,
+        "work_item_dna": child_dna,
+        "dna_validation": validation,
+        "dna_diagnostics": _dna_diagnostics(parent_dna, child_dna),
+        "status": "blocked_by_dna_validation" if not validation["valid"] else item.get("status", "preview"),
+    }
+
+
+def _dna_diagnostics(parent_dna: dict[str, Any] | None, child_dna: dict[str, Any]) -> dict[str, Any]:
+    evidence = child_dna.get("repositoryEvidence") if isinstance(child_dna.get("repositoryEvidence"), dict) else {}
+    validation = validateDNA(parent_dna, child_dna)
+    diff = compareDNA(parent_dna, child_dna) if parent_dna else {"changes": {}}
+    inherited_fields = []
+    extended_fields = []
+    for field in ["businessGoals", "businessOutcome", "capability", "planningBoundary", "dependencies", "constraints", "engineeringStandards", "acceptanceThemes"]:
+        if parent_dna and child_dna.get(field) == parent_dna.get(field):
+            inherited_fields.append(field)
+        elif child_dna.get(field):
+            extended_fields.append(field)
+    return {
+        "dnaId": child_dna.get("dnaId"),
+        "parentDNA": child_dna.get("parentDNA"),
+        "dnaVersion": child_dna.get("version"),
+        "inheritanceDepth": _dna_inheritance_depth(child_dna),
+        "dnaValidationStatus": validation["status"],
+        "inheritedFields": inherited_fields,
+        "extendedFields": extended_fields,
+        "rejectedContradictions": validation["issues"],
+        "repositoryEvidenceCount": sum(len(_string_list(evidence.get(key))) for key in ["modules", "flows", "applications", "services", "files"]),
+        "modules": _string_list(evidence.get("modules")),
+        "flows": _string_list(evidence.get("flows")),
+        "files": _string_list(evidence.get("files")),
+        "confidence": child_dna.get("confidence"),
+        "validationScore": child_dna.get("validationSummary", {}).get("score") if isinstance(child_dna.get("validationSummary"), dict) else 0,
+        "changesSinceParent": diff.get("changes", {}),
+    }
+
+
+def _dna_inheritance_depth(dna: dict[str, Any]) -> int:
+    depth = 0
+    current = dna
+    seen: set[str] = set()
+    while isinstance(current, dict) and current.get("parentDNA") and current.get("parentDNA") not in seen:
+        parent_id = str(current.get("parentDNA"))
+        seen.add(parent_id)
+        depth += 1
+        break
+    return depth
+
+
+def _dna_error_response(payload: dict[str, Any], validation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **payload,
+        "blocked": True,
+        "status": "blocked_by_dna_validation",
+        "error": "Work Item DNA validation failed.",
+        "failure_reason": "dna_validation_failed",
+        "dna_validation": validation,
+        "provider_used": "deterministic_fallback",
+        "source": "dna_validation",
+        "phi_status": "skipped",
+        "fallback_used": False,
+        "fallback_reason": "DNA validation blocked generation before provider execution.",
+    }
+
+
+def _basic_validation_score(modules: list[str], flows: list[str]) -> int:
+    score = 70
+    if modules:
+        score += 10
+    if flows:
+        score += 10
+    return min(score, 95)
 
 
 def _capability_decomposition_from_epic_analysis(
@@ -7977,6 +8304,14 @@ def _execution_prompt(title: str, context: dict[str, Any], instructions: list[st
         "# Story",
         _clean_text(parent_story.get("title")) or context["story_summary"],
         _clean_text(parent_story.get("description")) or context["story_summary"],
+        "",
+        "# Engineering DNA",
+        f"- Business Outcome: {_clean_text(context.get('business_outcome')) or 'Not captured'}",
+        f"- Capability: {_clean_text(context.get('capability')) or 'Not captured'}",
+        f"- Responsibilities: {', '.join(_string_list(context.get('responsibilities'))) or 'Not captured'}",
+        f"- In Scope: {', '.join(_string_list(context.get('in_scope'))) or 'Not captured'}",
+        f"- Out Of Scope: {', '.join(_string_list(context.get('out_of_scope'))) or 'Not captured'}",
+        f"- DNA Validation: {(context.get('dna_validation') or {}).get('status') if isinstance(context.get('dna_validation'), dict) else 'Not assessed'}",
         "",
         "# Acceptance Criteria",
         *_bullet_lines(context["acceptance_criteria"]),

@@ -1,4 +1,7 @@
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from backend.intelligence.dna import generateDNA
 from backend.intelligence.story_analysis import StoryAnalysisEngine
@@ -9,8 +12,48 @@ class _TimeoutProvider:
     metadata = {}
     parsed = {}
 
+    def is_enabled(self) -> bool:
+        return True
+
+    def health_snapshot(self) -> dict:
+        return {"deployment": "Phi-4", "health": "healthy"}
+
+    def safe_config(self) -> dict:
+        return {"configured": True, "deployment": "Phi-4"}
+
     def generate_json(self, prompt: str, output_type: str) -> dict:
         raise TimeoutError("feature analysis provider timed out")
+
+    def probe_json(self, *args, **kwargs) -> dict:
+        raise TimeoutError("feature analysis provider timed out")
+
+
+class _TruncatedProvider(_TimeoutProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.user_prompt = ""
+
+    def generate_json(self, prompt: str, output_type: str) -> dict:
+        raise AssertionError("Feature Analysis enrichment must not use generic JSON artifact generation")
+
+    def probe_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        self.calls += 1
+        self.user_prompt = user_prompt
+        return {
+            "status": "parse_error",
+            "http_status": 200,
+            "elapsed_ms": 500,
+            "raw_content": "It appears that you have provided a JSON-like structure with empty or null values.",
+            "raw_response_preview": "It appears that you have provided a JSON-like structure with empty or null values.",
+            "parsed_json": {},
+            "failure_reason": "parse_error",
+            "failure_message": "Model response could not be normalized into a JSON object.",
+            "parse_error": "NoJsonObjectFound",
+            "finish_reason": "length",
+            "completion_tokens": 200,
+            "prompt_tokens": 100,
+            "response_length": 94,
+        }
 
 
 def _profile() -> dict:
@@ -140,6 +183,24 @@ class StoryAnalysisIntelligenceTests(unittest.TestCase):
         self.assertEqual(analysis["validationStatus"], "NeedsReview")
         self.assertTrue(analysis["deterministicDraft"]["storyCandidates"])
         self.assertIn("AI enrichment failed", analysis["warnings"][0])
+        self.assertNotIn("error", result)
+
+    def test_feature_analysis_truncated_phi_response_is_recoverable(self) -> None:
+        provider = _TruncatedProvider()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            result = ProjectIntelligenceService().refine_feature(
+                {"id": 501, "title": "Critical Fault Detection", "work_item_dna": _feature_dna()},
+                _profile(),
+                options={"mode": "retry_ai_enrichment", "llm_provider": provider},
+            )
+
+        analysis = result["feature_analysis_result"]
+        self.assertEqual(provider.calls, 1)
+        self.assertIn("Feature Analysis AI Enrichment", provider.user_prompt)
+        self.assertNotIn("current_intent", provider.user_prompt)
+        self.assertEqual(result["phi_status"], "truncated_response")
+        self.assertEqual(analysis["aiStatus"], "truncated_response")
+        self.assertTrue(analysis["deterministicDraft"]["storyCandidates"])
         self.assertNotIn("error", result)
 
 

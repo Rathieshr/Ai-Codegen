@@ -1009,11 +1009,12 @@ class ProjectIntelligenceService:
         if not dna_validation["valid"]:
             return _dna_error_response(deterministic, dna_validation)
         feature_analysis_options = _feature_analysis_options(options)
+        deterministic_pipeline_options = {**feature_analysis_options, "deterministic_only": True}
         pipeline = _run_feature_analysis_pipeline(
             feature_for_generation,
             relevant_profile,
             _existing_children_from_options(options),
-            feature_analysis_options,
+            deterministic_pipeline_options,
         )
         deterministic["recommended_stories"] = _attach_validation_to_items(recommended_stories, pipeline, "User Story")
         deterministic["recommended_stories"] = [
@@ -1022,7 +1023,11 @@ class ProjectIntelligenceService:
         ]
         deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["recommended_stories"], modules, _context_keywords(title, description, relevant_profile))
         deterministic.update(_pipeline_payload(pipeline))
-        provider_metadata = _feature_analysis_provider_metadata(_intelligence_pipeline_metadata(pipeline))
+        provider_metadata = _feature_analysis_provider_metadata(
+            _run_feature_analysis_ai_enrichment(feature_for_generation, deterministic, relevant_profile, feature_analysis_options)
+            if _feature_analysis_ai_requested(feature_analysis_options)
+            else _intelligence_pipeline_metadata(pipeline)
+        )
         deterministic.update(
             _feature_analysis_payload(
                 feature_for_generation,
@@ -1755,6 +1760,177 @@ def _run_feature_analysis_pipeline(
         return _feature_analysis_pipeline_error(feature, profile, existing_children, status, exc)
 
 
+def _run_feature_analysis_ai_enrichment(
+    feature: dict[str, Any],
+    deterministic: dict[str, Any],
+    profile: dict[str, Any],
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    provider = options.get("llm_provider") or options.get("provider")
+    if not hasattr(provider, "probe_json"):
+        provider = get_refinement_provider()
+    context_diagnostics = {
+        "operation": "refine_feature",
+        "feature_analysis_enrichment": True,
+        "provider_prompt_mode": "plain_text_reasoning",
+    }
+    if provider is None or not provider.is_enabled():
+        metadata = _fallback_metadata("deterministic_feature_analysis", "Azure Phi provider is not configured for optional Feature Analysis enrichment.")
+        metadata.update({"phi_status": "provider_unavailable", "fallback_used": False})
+        return _with_context_diagnostics(metadata, context_diagnostics)
+    health = provider.health_snapshot() if hasattr(provider, "health_snapshot") else {}
+    prompt = _feature_analysis_plain_text_prompt(feature, deterministic, profile)
+    timeout_seconds = int(options.get("timeout_seconds") or os.getenv("AI_GEN_FEATURE_ANALYSIS_PROVIDER_TIMEOUT_SECONDS", os.getenv("AI_GEN_REFINER_TIMEOUT_SECONDS", "60")))
+    max_tokens = int(options.get("max_tokens") or os.getenv("AI_GEN_FEATURE_ANALYSIS_MAX_TOKENS", "700"))
+    try:
+        probe = probe_json_with_budget(
+            provider,
+            _feature_analysis_enrichment_sections(prompt),
+            operation="refine_feature",
+            system_prompt=FEATURE_ANALYSIS_ENRICHMENT_SYSTEM_PROMPT,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            response_format_enabled=False,
+            allow_retry_without_response_format=False,
+        )
+    except TimeoutError as exc:
+        probe = {
+            "status": "timeout",
+            "failure_reason": "provider_timeout",
+            "failure_message": str(exc),
+            "raw_content": "",
+            "parsed_json": {},
+            "elapsed_ms": timeout_seconds * 1000,
+            "http_status": None,
+            "parse_error": "TimeoutError",
+        }
+    except Exception as exc:
+        probe = {
+            "status": "provider_unavailable",
+            "failure_reason": type(exc).__name__,
+            "failure_message": str(exc),
+            "raw_content": "",
+            "parsed_json": {},
+            "elapsed_ms": 0,
+            "http_status": None,
+            "parse_error": type(exc).__name__,
+        }
+    metadata = _with_context_diagnostics(_provider_status_metadata(provider, probe, health), context_diagnostics)
+    raw_text = _clean_text(probe.get("raw_content") or probe.get("raw_response_preview"))
+    finish_reason = _clean_text(probe.get("finish_reason")).lower()
+    status = _clean_text(probe.get("failure_reason") or probe.get("status")).lower()
+    if finish_reason == "length":
+        metadata.update(
+            {
+                "phi_status": "truncated_response",
+                "fallback_used": False,
+                "fallback_reason": "Optional AI enrichment response was truncated before completion.",
+            }
+        )
+    elif status == "success":
+        metadata.update({"phi_status": "success", "fallback_used": False, "fallback_reason": ""})
+    elif raw_text and _feature_ai_reasoning_looks_useful(raw_text):
+        metadata.update(
+            {
+                "phi_status": status or "plain_text_response",
+                "fallback_used": False,
+                "fallback_reason": probe.get("failure_message") or "Optional AI enrichment returned plain text that was captured for review.",
+            }
+        )
+    else:
+        metadata.update(
+            {
+                "phi_status": status or "unusable_response",
+                "fallback_used": False,
+                "fallback_reason": probe.get("failure_message") or "Optional AI enrichment did not return usable reasoning.",
+            }
+        )
+    if _should_persist_feature_generation_failure(context_diagnostics, probe):
+        metadata.update(
+            _persist_feature_generation_failure(
+                prompt=prompt,
+                probe=probe,
+                context_diagnostics=context_diagnostics,
+                provider=provider,
+                expected_keys=["plain_text_feature_analysis_enrichment"],
+            )
+        )
+    return metadata
+
+
+FEATURE_ANALYSIS_ENRICHMENT_SYSTEM_PROMPT = (
+    "You are an engineering planning reviewer. Return concise plain text only. "
+    "Do not return JSON. Do not explain the input format. Do not mention missing template fields."
+)
+
+
+def _feature_analysis_enrichment_sections(prompt: str) -> list[PromptSection]:
+    return [
+        _prompt_budget_section("role", "Role", 100, True, False, "role", "Engineering planning reviewer"),
+        _prompt_budget_section("objective", "Objective", 100, True, False, "objective", "Enrich a deterministic Feature Analysis draft with concise planning observations."),
+        _prompt_budget_section("feature_analysis_context", "Feature Analysis Context", 100, True, True, "feature_analysis", prompt),
+        _prompt_budget_section(
+            "instructions",
+            "Instructions",
+            100,
+            True,
+            False,
+            "instructions",
+            "Return concise plain text bullets only. Do not explain the input format. Do not invent modules, flows, dependencies, or repository files.",
+        ),
+    ]
+
+
+def _feature_analysis_plain_text_prompt(feature: dict[str, Any], deterministic: dict[str, Any], profile: dict[str, Any]) -> str:
+    dna = deterministic.get("work_item_dna") if isinstance(deterministic.get("work_item_dna"), dict) else {}
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    stories = [
+        _clean_text(story.get("title"))
+        for story in deterministic.get("recommended_stories", [])
+        if isinstance(story, dict) and _clean_text(story.get("title"))
+    ][:8]
+    lines = [
+        "Feature Analysis AI Enrichment",
+        "",
+        f"Feature: {_clean_text(feature.get('title')) or 'Untitled feature'}",
+        f"Description: {_truncate_text(_clean_text(feature.get('description') or deterministic.get('feature_summary')), 500)}",
+        f"Capability: {_clean_text(dna.get('capability') or feature.get('capability') or feature.get('title'))}",
+        f"Responsibilities: {', '.join(_string_list(dna.get('responsibilities'))[:6]) or 'Not specified'}",
+        f"In scope: {', '.join(_string_list(deterministic.get('in_scope')) or _string_list(dna.get('inScope'))[:6]) or 'Use the feature boundary only'}",
+        f"Modules: {', '.join(_string_list(deterministic.get('affected_modules'))[:6]) or ', '.join(_string_list(registry.get('modules'))[:4])}",
+        f"Flows: {', '.join(_string_list(deterministic.get('affected_flows'))[:6]) or ', '.join(_string_list(registry.get('flows'))[:4])}",
+        f"Dependencies: {', '.join(_string_list(deterministic.get('dependencies'))[:6]) or 'No dependencies identified'}",
+        f"Current story candidates: {', '.join(stories) or 'No stories generated yet'}",
+        "",
+        "Enrich these sections in concise bullets:",
+        "1. User journeys",
+        "2. Acceptance themes",
+        "3. Story candidates to add or improve",
+        "4. Risks and edge cases",
+        "",
+        "Rules:",
+        "- Use only the feature, modules, flows, and dependencies listed above.",
+        "- Do not introduce unrelated modules or flows.",
+        "- Do not explain that fields are missing.",
+        "- Keep the answer under 250 words.",
+    ]
+    return "\n".join(lines)
+
+
+def _feature_ai_reasoning_looks_useful(text: str) -> bool:
+    normalized = text.lower()
+    if not normalized.strip():
+        return False
+    template_markers = [
+        "json-like structure",
+        "empty or null values",
+        "placeholder for future data",
+        "please provide the relevant details",
+        "if you need assistance",
+    ]
+    return not any(marker in normalized for marker in template_markers)
+
+
 def _feature_analysis_pipeline_error(
     feature: dict[str, Any],
     profile: dict[str, Any],
@@ -1830,6 +2006,8 @@ def _feature_analysis_ai_status(metadata: dict[str, Any], ai_requested: bool) ->
         return "not_requested"
     if phi_status == "success":
         return "success"
+    if phi_status in {"truncated_response", "length"} or "truncated" in fallback_reason:
+        return "truncated_response"
     if "timeout" in phi_status or "timeout" in fallback_reason or phi_status == "provider_timeout":
         return "timeout"
     if "parse" in phi_status or "json" in fallback_reason or "normalized" in fallback_reason or phi_status in {"unusable_response", "invalid_json"}:
@@ -1844,7 +2022,7 @@ def _feature_analysis_validation_status(dna_validation: dict[str, Any], recommen
         return "Blocked"
     if not recommended_stories:
         return "NeedsReview"
-    if ai_status in {"timeout", "parse_error", "provider_unavailable"}:
+    if ai_status in {"timeout", "parse_error", "provider_unavailable", "truncated_response"}:
         return "NeedsReview"
     return "Ready"
 
@@ -1902,15 +2080,16 @@ def _feature_analysis_payload(
         "risks": _string_list(deterministic.get("risks")),
     }
     ai_enrichment = None
-    if ai_status == "success":
+    raw_reasoning = _clean_text(provider_metadata.get("raw_response_preview") or provider_metadata.get("phi_raw_response_preview"))
+    warnings: list[str] = []
+    if raw_reasoning and ai_status in {"success", "parse_error", "truncated_response"}:
         ai_enrichment = {
             "userJourneys": deterministic.get("story_analysis", {}).get("userJourneys", []) if isinstance(deterministic.get("story_analysis"), dict) else [],
             "acceptanceThemes": deterministic.get("story_generation_diagnostics", {}).get("story_coverage_areas", []) if isinstance(deterministic.get("story_generation_diagnostics"), dict) else [],
             "storyCandidates": draft["storyCandidates"],
-            "aiReasoningText": _clean_text(provider_metadata.get("phi_raw_response_preview") or provider_metadata.get("raw_response_preview")),
+            "aiReasoningText": raw_reasoning,
         }
-    warnings: list[str] = []
-    if ai_status in {"timeout", "parse_error", "provider_unavailable"}:
+    if ai_status in {"timeout", "parse_error", "provider_unavailable", "truncated_response"}:
         warnings.append("Feature analysis is available. AI enrichment failed and can be retried.")
     result = {
         "featureId": draft["featureId"],
@@ -8368,7 +8547,11 @@ def _should_persist_feature_generation_failure(context_diagnostics: dict[str, An
     operation = _clean_text(context_diagnostics.get("operation")).lower()
     is_feature_path = operation in {"refine_feature", "generate_features", "generate_stories", "feature_generation"} or "feature" in operation
     failure = _clean_text(probe.get("failure_reason") or probe.get("status") or probe.get("parse_error")).lower()
-    return is_feature_path and failure in {"parse_error", "unusable_response", "jsondecodeerror", "nojsonobjectfound", "nondictparsedjson"}
+    finish_reason = _clean_text(probe.get("finish_reason")).lower()
+    return is_feature_path and (
+        failure in {"parse_error", "unusable_response", "jsondecodeerror", "nojsonobjectfound", "nondictparsedjson", "truncated_response"}
+        or finish_reason == "length"
+    )
 
 
 def _persist_feature_generation_failure(

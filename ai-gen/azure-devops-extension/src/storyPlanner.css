@@ -702,6 +702,19 @@ body {
   padding: 10px;
 }
 
+.planner-code-block {
+  background: #f8fafc;
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  color: var(--hei-text);
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
 .planner-textarea,
 .planner-input {
   width: 100%;

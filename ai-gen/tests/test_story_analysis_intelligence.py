@@ -5,6 +5,14 @@ from backend.intelligence.story_analysis import StoryAnalysisEngine
 from backend.project_intelligence import ProjectIntelligenceService
 
 
+class _TimeoutProvider:
+    metadata = {}
+    parsed = {}
+
+    def generate_json(self, prompt: str, output_type: str) -> dict:
+        raise TimeoutError("feature analysis provider timed out")
+
+
 def _profile() -> dict:
     return {
         "project_name": "LineDefender",
@@ -107,6 +115,32 @@ class StoryAnalysisIntelligenceTests(unittest.TestCase):
         self.assertTrue(result["recommended_stories"])
         self.assertTrue(all(story["work_item_dna"]["parentDNA"] == dna["dnaId"] for story in result["recommended_stories"]))
         self.assertEqual(result["story_analysis"]["validation"]["planningReadiness"], "PASS")
+
+    def test_feature_analysis_returns_deterministic_result_without_ai(self) -> None:
+        result = ProjectIntelligenceService().refine_feature(
+            {"id": 501, "title": "Critical Fault Detection", "work_item_dna": _feature_dna()},
+            _profile(),
+        )
+
+        analysis = result["feature_analysis_result"]
+        self.assertEqual(analysis["aiStatus"], "not_requested")
+        self.assertEqual(analysis["validationStatus"], "Ready")
+        self.assertTrue(analysis["deterministicDraft"]["storyCandidates"])
+        self.assertNotIn("error", result)
+
+    def test_feature_analysis_timeout_keeps_deterministic_draft(self) -> None:
+        result = ProjectIntelligenceService().refine_feature(
+            {"id": 501, "title": "Critical Fault Detection", "work_item_dna": _feature_dna()},
+            _profile(),
+            options={"mode": "retry_ai_enrichment", "llm_provider": _TimeoutProvider()},
+        )
+
+        analysis = result["feature_analysis_result"]
+        self.assertEqual(analysis["aiStatus"], "timeout")
+        self.assertEqual(analysis["validationStatus"], "NeedsReview")
+        self.assertTrue(analysis["deterministicDraft"]["storyCandidates"])
+        self.assertIn("AI enrichment failed", analysis["warnings"][0])
+        self.assertNotIn("error", result)
 
 
 if __name__ == "__main__":

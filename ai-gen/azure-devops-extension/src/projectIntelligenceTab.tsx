@@ -834,6 +834,56 @@ type FeatureRefinement = ProviderMetadata & {
     acceptance_criteria_count?: number;
     rejected_generic_criteria?: string[];
   };
+  feature_analysis_result?: FeatureAnalysisResult;
+  featureAnalysisResult?: FeatureAnalysisResult;
+  ai_status?: FeatureAnalysisResult['aiStatus'];
+  validation_status?: FeatureAnalysisResult['validationStatus'];
+  warnings?: string[];
+};
+
+type FeatureAnalysisResult = {
+  featureId?: string | number;
+  deterministicDraft?: {
+    title?: string;
+    summary?: string;
+    capability?: string;
+    responsibilities?: string[];
+    inScope?: string[];
+    outOfScope?: string[];
+    dependencies?: string[];
+    repositoryEvidence?: {
+      modules?: string[];
+      flows?: string[];
+      dependencies?: string[];
+      rejectedContext?: RejectedContextItem[];
+    };
+    validationSummary?: {
+      dnaValid?: boolean;
+      dnaStatus?: string;
+      issues?: string[];
+    };
+    storyCandidates?: Array<{ title?: string; description?: string; acceptanceCriteria?: string[]; confidence?: number }>;
+    risks?: string[];
+  };
+  aiEnrichment?: {
+    userJourneys?: unknown[];
+    acceptanceThemes?: string[];
+    storyCandidates?: unknown[];
+    aiReasoningText?: string;
+  } | null;
+  aiStatus: 'not_requested' | 'success' | 'timeout' | 'parse_error' | 'provider_unavailable' | string;
+  validationStatus: 'Ready' | 'NeedsReview' | 'Blocked' | string;
+  diagnostics?: {
+    providerTimeoutMs?: number;
+    rawResponsePreview?: string;
+    parseError?: string;
+    deterministicDraftReady?: boolean;
+    storyCandidateCount?: number;
+    selectedModules?: string[];
+    selectedFlows?: string[];
+    providerMetadata?: ProviderMetadata;
+  };
+  warnings?: string[];
 };
 
 type StoryRefinement = ProviderMetadata & {
@@ -1605,21 +1655,22 @@ function ProjectIntelligenceTab() {
     }
   }
 
-  async function refineFeature(forceRefresh = false) {
+  async function refineFeature(forceRefresh = false, mode = '') {
     if (!canContribute) {
       setError('Planning refinement is restricted to AI Gen Admins and Contributors.');
       return;
     }
-    if (!forceRefresh && await loadReusableArtifact<FeatureRefinement>('Feature', featureInput, (payload) => {
+    if (!mode && !forceRefresh && await loadReusableArtifact<FeatureRefinement>('Feature', featureInput, (payload) => {
       setFeatureResult(payload);
       markApprovalGenerated('feature', qualityScoreForFeature(payload));
     })) {
       return;
     }
-    const result = await withLoading('Refining feature with Project Intelligence...', () => postJson<FeatureRefinement>('/refine-feature', {
+    const result = await withLoading(mode ? 'Retrying Feature AI enrichment...' : 'Analyzing feature with Project Intelligence...', () => postJson<FeatureRefinement>('/refine-feature', {
       profile,
       knowledge_profile: profile.knowledge_registry,
       feature: featureInput,
+      mode,
     }));
     if (result) {
       setFeatureResult(result);
@@ -2833,6 +2884,7 @@ function ProjectIntelligenceTab() {
           setAcceptanceCriteria={setAcceptanceCriteria}
           refineEpic={() => void refineEpic(true)}
           refineFeature={() => void refineFeature(true)}
+          retryFeatureAI={() => void refineFeature(true, 'retry_ai_enrichment')}
           refineStory={() => void refineStory(true)}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
           generateChildren={(forceRegenerate) => void generateChildrenForCurrentType(undefined, forceRegenerate)}
@@ -4326,6 +4378,7 @@ function AIPlannerWorkspace({
   setAcceptanceCriteria,
   refineEpic,
   refineFeature,
+  retryFeatureAI,
   refineStory,
   analyzeImpact,
   generateChildren,
@@ -4370,6 +4423,7 @@ function AIPlannerWorkspace({
   setAcceptanceCriteria: (value: string) => void;
   refineEpic: () => void;
   refineFeature: () => void;
+  retryFeatureAI: () => void;
   refineStory: () => void;
   analyzeImpact: () => void;
   generateChildren: (forceRegenerate?: boolean) => void;
@@ -4450,6 +4504,9 @@ function AIPlannerWorkspace({
         ) : null}
         {readOnly ? <div className="planner-error">This work item is Closed. Planning output is read-only.</div> : null}
         {currentWorkItem?.state.toLowerCase() === 'active' ? <div className="planner-banner">This work item is Active. AI Planner will ask before regeneration.</div> : null}
+        {planningType === 'Feature' && featureResult ? (
+          <FeatureAnalysisStatusCard result={featureResult} onRetryAI={retryFeatureAI} onContinue={approveFeature} loading={loading} readOnly={readOnly} />
+        ) : null}
         <div className="planner-pill-row">
           {(['Epic', 'Feature'] as const).map((type) => (
             <button
@@ -7163,10 +7220,70 @@ function EpicRefinementResult({ result }: { result: EpicRefinement }) {
   );
 }
 
+function FeatureAnalysisStatusCard({
+  result,
+  onRetryAI,
+  onContinue,
+  loading,
+  readOnly,
+}: {
+  result: FeatureRefinement;
+  onRetryAI?: () => void;
+  onContinue?: () => void;
+  loading?: boolean;
+  readOnly?: boolean;
+}) {
+  const analysis = result.feature_analysis_result || result.featureAnalysisResult;
+  if (!analysis) {
+    return null;
+  }
+  const aiStatus = String(analysis.aiStatus || result.ai_status || 'not_requested');
+  const aiOk = aiStatus === 'success';
+  const aiFailed = ['timeout', 'parse_error', 'provider_unavailable'].includes(aiStatus);
+  const statusText = aiOk
+    ? 'AI enrichment completed.'
+    : aiFailed
+      ? 'Feature analysis is available. AI enrichment failed and can be retried.'
+      : 'Deterministic analysis ready. AI enrichment has not been requested.';
+  return (
+    <div className={`planner-banner ${aiFailed ? 'planner-provider-failure' : ''}`}>
+      <strong>Feature Analysis</strong>
+      <div>{statusText}</div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Status" value={analysis.validationStatus || result.validation_status || 'Ready'} />
+        <SummaryTile title="AI" value={aiStatus.replace(/_/g, ' ')} />
+        <SummaryTile title="Stories" value={formatNumber(analysis.diagnostics?.storyCandidateCount ?? result.recommended_stories?.length ?? 0)} />
+      </div>
+      {analysis.warnings?.length ? <ListBlock title="Warnings" items={analysis.warnings} /> : null}
+      <div className="planner-actions">
+        {onContinue ? (
+          <button className="planner-button" type="button" onClick={onContinue} disabled={loading || readOnly}>
+            Continue with deterministic analysis
+          </button>
+        ) : null}
+        {onRetryAI ? (
+          <button className="planner-button secondary" type="button" onClick={onRetryAI} disabled={loading || readOnly}>
+            Retry AI Enrichment
+          </button>
+        ) : null}
+        <details className="planner-nested">
+          <summary>View Diagnostics</summary>
+          <Row label="Provider Timeout" value={analysis.diagnostics?.providerTimeoutMs ? `${analysis.diagnostics.providerTimeoutMs} ms` : 'n/a'} />
+          <Row label="Parse Error" value={analysis.diagnostics?.parseError || 'None'} />
+          <ListBlock title="Selected Modules" items={analysis.diagnostics?.selectedModules || []} />
+          <ListBlock title="Selected Flows" items={analysis.diagnostics?.selectedFlows || []} />
+          {analysis.diagnostics?.rawResponsePreview ? <pre className="planner-code-block">{analysis.diagnostics.rawResponsePreview}</pre> : null}
+        </details>
+      </div>
+    </div>
+  );
+}
+
 function FeatureRefinementResult({ result, onRetry }: { result: FeatureRefinement; onRetry?: () => void }) {
   const diagnostics = result.story_generation_diagnostics || {};
   return (
     <div className="planner-status-grid">
+      <FeatureAnalysisStatusCard result={result} onRetryAI={onRetry} />
       <SourceBadge metadata={result} />
       <ProviderParseFailurePanel metadata={result} onRetry={onRetry} />
       <GenerationReviewBlock review={result.generation_review} />

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from backend.prompt_builder import build_developer_prompt_v2
+from backend.prompt_builder import build_developer_prompt_v2, build_execution_plan
 from backend.project_intelligence import ProjectIntelligenceService
 
 
@@ -128,6 +128,63 @@ class DeveloperPromptV2Tests(unittest.TestCase):
         self.assertIn("Developer Prompt V2", result["prompt"])
         self.assertIn("Fault Event Review Flow", result["prompt"])
         self.assertNotIn("Firmware Rollout Flow", result["prompt"])
+        self.assertEqual(result["provider_used"], "deterministic_execution")
+
+    def test_execution_plan_uses_execution_package_and_mode(self) -> None:
+        result = build_execution_plan(_execution_package(), execution_mode="bug_fix", provider="azure_phi")
+
+        plan = result["plan"]
+        self.assertEqual(result["packageId"], "execpkg_fault_details")
+        self.assertEqual(result["executionMode"], "bug_fix")
+        self.assertIn("# Execution Plan", plan)
+        self.assertIn("Mode: Bug Fix", plan)
+        self.assertIn("Identify root cause before editing", plan)
+        self.assertIn("Fault Event Review Flow", plan)
+        self.assertIn("Repository file ranking", plan)
+        self.assertNotIn("Copilot", plan)
+        self.assertGreater(result["estimatedTokens"], 0)
+        self.assertIn("finalPlanTokens", result["diagnostics"])
+
+    def test_execution_plan_review_mode_avoids_broad_changes(self) -> None:
+        result = build_execution_plan(_execution_package(), execution_mode="review_existing_code", provider="azure_phi")
+
+        self.assertIn("Review first", result["plan"])
+        self.assertIn("Report alignment, gaps, and risks", result["plan"])
+        self.assertIn("Do not regenerate planning content", result["plan"])
+
+    def test_project_intelligence_build_execution_plan_returns_primary_plan(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "development_standards": {"security_requirements": ["Role-based access"]},
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry", "Firmware Management"],
+                "flows": ["Fault Event Review Flow", "Firmware Rollout Flow"],
+                "ranked_files": [
+                    {
+                        "path": "src/fault/FaultEventViewModel.cs",
+                        "confidence": 0.91,
+                        "reason": "Fault detail UI file.",
+                        "evidence": "Fault details are rendered here.",
+                    }
+                ],
+            },
+        }
+        story = {
+            "id": "story-exec-plan",
+            "title": "Open critical fault event details",
+            "description": "As an Operations User, I want to open critical fault event details.",
+            "acceptance_criteria": ["Fault event details show severity and device health."],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            result = ProjectIntelligenceService().build_execution_plan(story, profile, options={"execution_mode": "refactor"})
+
+        self.assertIn("execution_plan", result)
+        self.assertIn("execution_package_v2", result)
+        self.assertEqual(result["plan"], result["execution_plan"]["finalPlan"])
+        self.assertEqual(result["executionMode"], "refactor")
+        self.assertIn("Mode: Refactor", result["plan"])
+        self.assertNotIn("Copilot", result["plan"])
         self.assertEqual(result["provider_used"], "deterministic_execution")
 
 

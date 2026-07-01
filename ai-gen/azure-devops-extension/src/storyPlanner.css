@@ -1467,6 +1467,176 @@ button.hei-story-list-card {
   line-height: 1.4;
 }
 
+.hei-lifecycle-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.hei-lifecycle-stage {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+  background: var(--hei-surface-subtle);
+}
+
+.hei-lifecycle-stage span {
+  font-weight: 800;
+  font-size: 12px;
+  color: var(--hei-black);
+}
+
+.hei-lifecycle-stage small {
+  color: var(--hei-muted);
+  font-size: 11px;
+}
+
+.hei-lifecycle-stage.complete {
+  border-color: #b7ebc6;
+  background: #f0fdf4;
+}
+
+.hei-lifecycle-stage.current {
+  border-color: var(--hei-yellow);
+  box-shadow: inset 0 -3px 0 var(--hei-yellow);
+}
+
+.hei-lifecycle-stage.blocked {
+  border-color: var(--hei-error);
+  background: #fff1f2;
+}
+
+.hei-qa-cockpit {
+  gap: 12px;
+}
+
+.hei-qa-top-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.hei-qa-status-tile,
+.hei-qa-card {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  background: var(--hei-surface);
+  padding: 12px;
+}
+
+.hei-qa-status-tile {
+  display: grid;
+  gap: 6px;
+  border-left: 4px solid var(--hei-border);
+}
+
+.hei-qa-status-tile span {
+  color: var(--hei-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.hei-qa-status-tile strong {
+  color: var(--hei-black);
+  font-size: 15px;
+}
+
+.hei-qa-status-tile.success {
+  border-left-color: var(--hei-success);
+}
+
+.hei-qa-status-tile.warning {
+  border-left-color: var(--hei-warning);
+}
+
+.hei-qa-status-tile.error {
+  border-left-color: var(--hei-error);
+}
+
+.hei-qa-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hei-qa-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.hei-qa-card.primary {
+  border-left: 4px solid var(--hei-yellow);
+}
+
+.hei-qa-card.wide {
+  grid-column: 1 / -1;
+}
+
+.hei-qa-card > strong {
+  font-size: 18px;
+  color: var(--hei-black);
+}
+
+.hei-qa-card > p {
+  margin: 0;
+  color: var(--hei-text);
+  line-height: 1.45;
+}
+
+.hei-qa-ac-list {
+  display: grid;
+  gap: 8px;
+}
+
+.hei-qa-ac-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  gap: 10px;
+  border: 1px solid var(--hei-border-soft);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--hei-surface-subtle);
+}
+
+.hei-qa-ac-row p {
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.hei-qa-ac-row small,
+.hei-qa-test-row span,
+.hei-qa-test-row small,
+.hei-risk-row small {
+  color: var(--hei-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.hei-qa-test-row {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--hei-border-soft);
+  padding: 8px 0;
+}
+
+.hei-risk-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  border-top: 1px solid var(--hei-border-soft);
+  padding: 8px 0;
+}
+
+.hei-risk-row p {
+  margin: 3px 0;
+  line-height: 1.4;
+}
+
 .hei-queue-empty {
   border: 1px dashed var(--hei-border);
   border-radius: 6px;
@@ -1547,6 +1717,9 @@ button.hei-story-list-card {
   .hei-planning-header,
   .hei-planning-grid,
   .hei-business-grid,
+  .hei-lifecycle-strip,
+  .hei-qa-grid,
+  .hei-qa-ac-row,
   .hei-stage-progress,
   .hei-progress-summary {
     grid-template-columns: 1fr;

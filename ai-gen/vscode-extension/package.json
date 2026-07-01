@@ -44,6 +44,18 @@
       {
         "command": "ai-gen.refreshBackendResolution",
         "title": "ai-gen: Refresh Backend Resolution"
+      },
+      {
+        "command": "ai-gen.openExecution",
+        "title": "ai-gen: Open Execution Workspace"
+      },
+      {
+        "command": "ai-gen.generateExecutionPlan",
+        "title": "ai-gen: Generate Execution Plan"
+      },
+      {
+        "command": "ai-gen.openContextCapsule",
+        "title": "ai-gen: Open Context Capsule"
       }
     ],
     "configuration": {

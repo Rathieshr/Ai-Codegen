@@ -14,6 +14,7 @@ Cursor, or any LLM-based code assistant.
 
 from .dev_prompt import build_dev_prompt
 from .developer_prompt_v2 import build_developer_prompt_v2
+from .execution_plan import build_execution_plan
 from .ui_prompt import build_ui_prompt
 
-__all__ = ["build_dev_prompt", "build_developer_prompt_v2", "build_ui_prompt"]
+__all__ = ["build_dev_prompt", "build_developer_prompt_v2", "build_execution_plan", "build_ui_prompt"]

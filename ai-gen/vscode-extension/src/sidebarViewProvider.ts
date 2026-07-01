@@ -46,6 +46,22 @@ export type PlannerViewState = {
   loadingMessage: string;
   errorMessage: string;
   session?: PlannerSession;
+  executionWorkspace?: ExecutionWorkspaceState;
+};
+
+export type ExecutionWorkspaceState = {
+  artifactType: string;
+  artifactId: string;
+  title: string;
+  status: 'ready' | 'missing' | 'error';
+  statusMessage: string;
+  executionPackage?: Record<string, unknown>;
+  executionContext?: Record<string, unknown>;
+  contextCapsule?: Record<string, unknown>;
+  executionPlan?: string;
+  repositoryContext?: Record<string, unknown>;
+  relatedFiles: string[];
+  currentBranch?: string;
 };
 
 type SidebarHandlers = {
@@ -55,6 +71,9 @@ type SidebarHandlers = {
   approve(stage: string): Promise<PlannerViewState>;
   copyPrompt(): Promise<PlannerViewState>;
   createWorkItems(): Promise<PlannerViewState>;
+  generateExecutionPlan(): Promise<PlannerViewState>;
+  rebuildExecutionPackage(): Promise<PlannerViewState>;
+  openPlanning(): Promise<PlannerViewState>;
   refreshState(): Promise<PlannerViewState>;
   getState(): PlannerViewState;
 };
@@ -126,6 +145,15 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'createWorkItems':
         state = await this.handlers.createWorkItems();
+        break;
+      case 'generateExecutionPlan':
+        state = await this.handlers.generateExecutionPlan();
+        break;
+      case 'rebuildExecutionPackage':
+        state = await this.handlers.rebuildExecutionPackage();
+        break;
+      case 'openPlanning':
+        state = await this.handlers.openPlanning();
         break;
       case 'refreshState':
         state = await this.handlers.refreshState();
@@ -326,6 +354,42 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       \`;
     }
 
+    function executionWorkspaceView(workspace) {
+      if (!workspace) return '';
+      const packageJson = workspace.executionPackage ? JSON.stringify(workspace.executionPackage, null, 2) : '';
+      const contextCapsule = workspace.contextCapsule ? JSON.stringify(workspace.contextCapsule, null, 2) : '';
+      const relatedFiles = (workspace.relatedFiles || []).map((file) => '<li>' + escapeHtml(file) + '</li>').join('');
+      const plan = workspace.executionPlan || '';
+      const missing = workspace.status === 'missing';
+      return \`
+        <div class="card">
+          <div class="hero">
+            <h1>Execution Workspace</h1>
+            <div class="muted">HEI execution context loaded from Azure DevOps.</div>
+          </div>
+          <div class="stage-row">
+            <div class="stage-chip done"><strong>Artifact</strong><div class="status">\${escapeHtml(workspace.artifactType || 'Artifact')} #\${escapeHtml(workspace.artifactId || '')}</div></div>
+            <div class="stage-chip \${workspace.executionPackage ? 'done' : ''}"><strong>Execution Package</strong><div class="status">\${workspace.executionPackage ? 'Loaded' : missing ? 'Missing' : 'Pending'}</div></div>
+            <div class="stage-chip \${workspace.contextCapsule ? 'done' : ''}"><strong>Context Capsule</strong><div class="status">\${workspace.contextCapsule ? 'Loaded' : 'Pending'}</div></div>
+            <div class="stage-chip \${plan ? 'done' : ''}"><strong>Execution Plan</strong><div class="status">\${plan ? 'Ready' : 'Not generated'}</div></div>
+          </div>
+          <div><div class="label">Current Artifact</div><strong>\${escapeHtml(workspace.title || 'Selected execution artifact')}</strong></div>
+          <div class="status">\${escapeHtml(workspace.statusMessage || '')}</div>
+          \${missing ? '<div class="error">Execution Package not found.</div>' : ''}
+          <div class="actions">
+            <button id="generateExecutionPlanBtn" \${workspace.executionPackage ? '' : 'disabled'}>Generate Execution Plan</button>
+            <button class="secondary" id="rebuildExecutionPackageBtn">Rebuild Package</button>
+            <button class="secondary" id="refreshExecutionWorkspaceBtn">Reload</button>
+            <button class="secondary" id="openPlanningBtn">Open Planning</button>
+          </div>
+          \${relatedFiles ? \`<div><div class="label">Related Files</div><ul>\${relatedFiles}</ul></div>\` : ''}
+          \${plan ? \`<div><div class="label">Execution Plan</div><div class="actions"><button class="secondary" id="copyExecutionPlanBtn">Copy Execution Plan</button></div><div class="readout">\${escapeHtml(plan)}</div></div>\` : ''}
+          \${contextCapsule ? \`<details><summary>Context Capsule</summary><div class="readout">\${escapeHtml(contextCapsule)}</div></details>\` : ''}
+          \${packageJson ? \`<details><summary>Execution Package</summary><div class="readout">\${escapeHtml(packageJson)}</div></details>\` : ''}
+        </div>
+      \`;
+    }
+
     function actionButtons(session) {
       if (session.current_stage === 'refined_story') {
         return \`
@@ -401,7 +465,7 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
     function render() {
       const error = latestState.errorMessage ? '<div class="error">' + escapeHtml(latestState.errorMessage) + '</div>' : '';
       const loading = latestState.loading ? '<div class="status">' + escapeHtml(latestState.loadingMessage || 'Working...') + '</div>' : '';
-      app.innerHTML = error + loading + (latestState.session ? sessionView(latestState.session) : renderRequirementStart());
+      app.innerHTML = error + loading + (latestState.executionWorkspace ? executionWorkspaceView(latestState.executionWorkspace) : latestState.session ? sessionView(latestState.session) : renderRequirementStart());
       wireEvents();
     }
 
@@ -415,6 +479,11 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       if (refreshBtn) {
         refreshBtn.onclick = () => post('refreshState');
       }
+      byId('generateExecutionPlanBtn')?.addEventListener('click', () => post('generateExecutionPlan'));
+      byId('rebuildExecutionPackageBtn')?.addEventListener('click', () => post('rebuildExecutionPackage'));
+      byId('refreshExecutionWorkspaceBtn')?.addEventListener('click', () => post('refreshState'));
+      byId('openPlanningBtn')?.addEventListener('click', () => post('openPlanning'));
+      byId('copyExecutionPlanBtn')?.addEventListener('click', () => post('copyPrompt'));
       const session = latestState.session;
       if (!session) {
         return;

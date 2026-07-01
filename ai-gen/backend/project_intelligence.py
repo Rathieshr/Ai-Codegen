@@ -30,7 +30,8 @@ from backend.prompt_budget import (
     estimateTokens as promptBudgetEstimateTokens,
     probe_json_with_budget,
 )
-from backend.prompt_builder import build_developer_prompt_v2
+from backend.prompt_builder import build_developer_prompt_v2, build_execution_plan
+from backend.qa import QAWorkspaceService
 from backend.pr_review import PRReviewEngine, review_pr
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 
@@ -1139,6 +1140,9 @@ class ProjectIntelligenceService:
         profile: dict[str, Any] | None = None,
         knowledge_profile: dict[str, Any] | None = None,
         impact_analysis: dict[str, Any] | None = None,
+        execution_package: dict[str, Any] | None = None,
+        execution_plan: dict[str, Any] | str | None = None,
+        implementation_validation: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
@@ -1180,10 +1184,10 @@ class ProjectIntelligenceService:
                 ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps", "generation_review"],
             )
             merged["generation_review"] = suite["generation_review"]
-            return _with_provider_metadata(merged, phi["metadata"])
+            return _with_provider_metadata(_attach_qa_intelligence(merged, story, active_profile, execution_package, execution_plan, implementation_validation), phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
-        return _with_provider_metadata(suite, phi["metadata"])
+        return _with_provider_metadata(_attach_qa_intelligence(suite, story, active_profile, execution_package, execution_plan, implementation_validation), phi["metadata"])
 
     def analyze_story_impact(
         self,
@@ -1435,6 +1439,40 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
         return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
+
+    def build_execution_plan(
+        self,
+        story: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        knowledge_profile: dict[str, Any] | None = None,
+        impact_analysis: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {**(options or {}), "force_provider": "deterministic_fallback"})
+        provider_name = _clean_text((options or {}).get("provider") or "azure_phi")
+        provider_model = _clean_text((options or {}).get("model"))
+        execution_mode = _clean_text((options or {}).get("execution_mode") or (options or {}).get("executionMode") or "implement")
+        deterministic = build_execution_plan(
+            context.get("execution_package_v2") if isinstance(context.get("execution_package_v2"), dict) else {},
+            execution_mode=execution_mode,
+            provider=provider_name,
+            model=provider_model,
+        )
+        deterministic["execution_plan"] = {
+            key: value
+            for key, value in deterministic.items()
+            if key not in {"execution_plan"}
+        }
+        deterministic["execution_package_v2"] = context.get("execution_package_v2", {})
+        deterministic["execution_context"] = {
+            "packageId": context.get("execution_package_v2", {}).get("packageId") if isinstance(context.get("execution_package_v2"), dict) else context.get("package_id"),
+            "artifactId": context.get("artifact_id"),
+            "artifactType": context.get("artifact_type"),
+            "executionSource": context.get("execution_source"),
+        }
+        deterministic.update(_prompt_validation_payload(context, "Execution Plan", deterministic["plan"]))
+        metadata = _execution_primary_metadata(time.monotonic(), "build_execution_plan")
+        return _with_provider_metadata(deterministic, metadata)
 
     def build_ui_prompt(
         self,
@@ -7527,6 +7565,42 @@ def _qa_test_suite(
         "coverage_breakdown": breakdown,
         "generated_test_count": len(tests),
         "coverage_gaps": coverage["uncovered_acceptance_criteria"],
+    }
+
+
+def _attach_qa_intelligence(
+    suite: dict[str, Any],
+    story: dict[str, Any],
+    profile: dict[str, Any],
+    execution_package: dict[str, Any] | None = None,
+    execution_plan: dict[str, Any] | str | None = None,
+    implementation_validation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    test_suite = suite.get("test_suite") if isinstance(suite.get("test_suite"), dict) else {}
+    tests = test_suite.get("test_cases") if isinstance(test_suite.get("test_cases"), list) else []
+    acceptance = _string_list(story.get("acceptance_criteria")) or _string_list(test_suite.get("acceptance_criteria"))
+    if not acceptance:
+        acceptance = _string_list(test_suite.get("story", {}).get("acceptance_criteria") if isinstance(test_suite.get("story"), dict) else [])
+    qa_artifact = QAWorkspaceService().evaluate(
+        story=story,
+        acceptance_criteria=acceptance,
+        execution_package=execution_package or {},
+        execution_plan=execution_plan,
+        repository_snapshot=profile.get("repository_snapshot") if isinstance(profile.get("repository_snapshot"), dict) else {},
+        knowledge_registry=profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {},
+        engineering_graph=profile.get("engineering_graph") if isinstance(profile.get("engineering_graph"), dict) else {},
+        implementation_validation=implementation_validation or {},
+        tests=tests,
+    )
+    readiness = qa_artifact.get("qaReadiness", {})
+    recommendation = qa_artifact.get("releaseRecommendation", {})
+    return {
+        **suite,
+        "qa_intelligence": qa_artifact,
+        "qa_readiness": readiness,
+        "release_recommendation": recommendation,
+        "qa_status": readiness.get("status") or "Needs Review",
+        "release_status": recommendation.get("recommendation") or "Needs More Testing",
     }
 
 

@@ -103,9 +103,11 @@ type ArtifactType =
   | 'Task'
   | 'Acceptance Criteria'
   | 'Execution Package'
+  | 'Execution Plan'
   | 'Dev Prompt'
   | 'UI Prompt'
   | 'QA Prompt'
+  | 'Context Capsule'
   | 'Copilot Context'
   | 'Test Suite'
   | 'Test Plan'
@@ -661,6 +663,17 @@ type PromptBuilderResult = ProviderMetadata & {
   developer_prompt_v2?: Record<string, unknown>;
 };
 
+type ExecutionMode = 'implement' | 'review_existing_code' | 'refactor' | 'bug_fix' | 'spike_investigation';
+
+type ExecutionPlanResult = ProviderMetadata & {
+  plan: string;
+  prompt?: string;
+  finalPlan?: string;
+  executionMode: ExecutionMode | string;
+  executionModeLabel?: string;
+  execution_plan?: Record<string, unknown>;
+};
+
 type CopilotContextResult = ProviderMetadata & {
   context: string;
 };
@@ -939,6 +952,23 @@ type QATestCase = {
   covers_acceptance_criteria?: number[];
 };
 
+type QAReadinessSummary = {
+  acceptanceCoverage?: number;
+  testCompleteness?: number;
+  repositoryCoverage?: number;
+  validationStatus?: string;
+  regressionRisk?: string;
+  overallReadiness?: number;
+  status?: string;
+  blockers?: string[];
+};
+
+type QAReleaseRecommendation = {
+  recommendation?: string;
+  reason?: string;
+  recommendedActions?: string[];
+};
+
 type QATestSuiteResult = ProviderMetadata & {
   test_suite: {
     title: string;
@@ -969,6 +999,64 @@ type QATestSuiteResult = ProviderMetadata & {
   };
   generated_test_count: number;
   coverage_gaps: string[];
+  qa_intelligence?: {
+    acceptanceCoverage?: {
+      coveragePercent?: number;
+      missingCount?: number;
+      acceptanceCriteria?: Array<{ acceptanceCriteriaId?: string; acceptanceText?: string; coverageStatus?: string; mappedTests?: Array<{ title?: string; testId?: string }> }>;
+      validationNotes?: string[];
+    };
+    testIntelligence?: {
+      generatedTestCount?: number;
+      categories?: string[];
+    };
+    regressionIntelligence?: {
+      changedModules?: string[];
+      affectedServices?: string[];
+      affectedAPIs?: string[];
+      affectedFlows?: string[];
+      relatedFeatures?: string[];
+      relatedStories?: string[];
+      potentialRegressionAreas?: string[];
+      recommendedRegressionTests?: string[];
+      regressionPriority?: string;
+    };
+    riskIntelligence?: {
+      highestRisk?: string;
+      risks?: Array<{ name?: string; level?: string; reason?: string; mitigation?: string }>;
+      mitigations?: string[];
+    };
+    testGapAnalysis?: {
+      missingTests?: string[];
+      duplicateTests?: string[];
+      weakTests?: string[];
+      untestedAcceptanceCriteria?: string[];
+      validationGaps?: string[];
+    };
+    qaReadiness?: {
+      acceptanceCoverage?: number;
+      testCompleteness?: number;
+      repositoryCoverage?: number;
+      validationStatus?: string;
+      regressionRisk?: string;
+      overallReadiness?: number;
+      status?: string;
+      blockers?: string[];
+    };
+    releaseRecommendation?: QAReleaseRecommendation;
+    diagnostics?: {
+      repositorySnapshotAvailable?: boolean;
+      knowledgeRegistryAvailable?: boolean;
+      engineeringGraphAvailable?: boolean;
+      consumedExecutionPackage?: boolean;
+      consumedExecutionPlan?: boolean;
+      consumedImplementationValidation?: boolean;
+    };
+  };
+  qa_readiness?: QAReadinessSummary;
+  release_recommendation?: QAReleaseRecommendation;
+  qa_status?: string;
+  release_status?: string;
 };
 
 type StoryImpact = ProviderMetadata & {
@@ -1135,6 +1223,8 @@ function ProjectIntelligenceTab() {
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [prompts, setPrompts] = useState<PromptResult | undefined>();
   const [executionContext, setExecutionContext] = useState<ExecutionContextResult | undefined>();
+  const [executionPlan, setExecutionPlan] = useState<ExecutionPlanResult | undefined>();
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('implement');
   const [devPrompt, setDevPrompt] = useState<PromptBuilderResult | undefined>();
   const [uiPrompt, setUiPrompt] = useState<PromptBuilderResult | undefined>();
   const [qaPrompt, setQaPrompt] = useState<PromptBuilderResult | undefined>();
@@ -1185,7 +1275,7 @@ function ProjectIntelligenceTab() {
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'error'>('saved');
   const initializedRef = useRef(false);
   const lastSavedProfileRef = useRef('');
-  const latestProvider = latestProviderMetadata([qaTestSuite, copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
+  const latestProvider = latestProviderMetadata([qaTestSuite, executionPlan, copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
   const canAdmin = permissionState.role === 'admin';
   const canContribute = permissionState.role === 'admin' || permissionState.role === 'contributor';
   const isViewer = permissionState.role === 'viewer';
@@ -1725,6 +1815,9 @@ function ProjectIntelligenceTab() {
       knowledge_profile: profile.knowledge_registry,
       story,
       impact_analysis: storyImpact || {},
+      execution_package: executionContext?.execution_package_v2 || executionContext?.executionPackageV2 || {},
+      execution_plan: executionPlan?.execution_plan || executionPlan || {},
+      implementation_validation: implementationValidation || {},
     }));
     if (result) {
       setQaTestSuite(result);
@@ -1808,6 +1901,7 @@ function ProjectIntelligenceTab() {
     });
     if (context) {
       setExecutionContext(context);
+      setExecutionPlan(undefined);
       setDevPrompt(undefined);
       setUiPrompt(undefined);
       setQaPrompt(undefined);
@@ -1828,7 +1922,29 @@ function ProjectIntelligenceTab() {
       story: currentStoryPayload(),
       impact_analysis: storyImpact || {},
       mode,
+      execution_mode: executionMode,
     };
+  }
+
+  async function buildExecutionPlan(mode: ExecutionMode = executionMode) {
+    if (!canContribute) {
+      setError('Execution Plan generation is restricted to AI Gen Admins and Contributors.');
+      return;
+    }
+    const result = await withLoading('Generating Execution Plan...', async () => {
+      if (!executionContext) {
+        await buildExecutionPackage();
+      }
+      return postJson<ExecutionPlanResult>('/build-execution-plan', {
+        ...executionBasePayload('deterministic_only'),
+        execution_mode: mode,
+      });
+    });
+    if (result) {
+      setExecutionPlan(result);
+      setMessage('Execution Plan generated.');
+      window.setTimeout(() => setMessage(''), 1800);
+    }
   }
 
   async function buildExecutionPrompt(kind: 'dev' | 'ui' | 'qa' | 'copilot', mode = 'deterministic_only') {
@@ -1846,7 +1962,7 @@ function ProjectIntelligenceTab() {
       dev: 'Dev Prompt',
       ui: 'UI Prompt',
       qa: 'QA Prompt',
-      copilot: 'Copilot Context',
+      copilot: 'Context Capsule',
     };
     const result = await withLoading(`${mode === 'enhance_with_ai' ? 'Enhancing' : 'Generating'} ${labelByKind[kind]}...`, async () => {
       if (!executionContext) {
@@ -1946,7 +2062,7 @@ function ProjectIntelligenceTab() {
       void buildExecutionPackage();
       return;
     }
-    const uri = buildVsCodeExecutionPackageUri(executionContext, devPrompt, uiPrompt, qaPrompt, copilotContext);
+    const uri = buildVsCodeExecutionPackageUri(executionContext, executionPlan, devPrompt, uiPrompt, qaPrompt, copilotContext);
     if (uri) {
       window.open(uri, '_blank');
     }
@@ -2919,19 +3035,24 @@ function ProjectIntelligenceTab() {
           generateQATestCases={() => void generateQATestCases(true)}
           artifactRecords={artifactRecords}
           artifactReuseStatus={artifactReuseStatus}
+          workflow={workflowOrchestration}
         />
       ) : null}
 
       {activeTab === 'execution' ? (
         <DeveloperWorkspace
           executionContext={executionContext}
+          executionPlan={executionPlan}
+          executionMode={executionMode}
           devPrompt={devPrompt}
           uiPrompt={uiPrompt}
           qaPrompt={qaPrompt}
           copilotContext={copilotContext}
           onGenerate={() => void buildExecutionPackage()}
+          onGenerateExecutionPlan={() => void buildExecutionPlan()}
           onGeneratePrompt={(kind) => void buildExecutionPrompt(kind)}
           onEnhanceWithAi={() => void enhanceExecutionWithAi()}
+          setExecutionMode={setExecutionMode}
           loading={loading}
           canContribute={canContribute}
           itemType={currentItemType}
@@ -2951,6 +3072,7 @@ function ProjectIntelligenceTab() {
           setImplementationChangedFiles={setImplementationChangedFiles}
           prReview={prReview}
           approvalWorkflow={approvalWorkflow}
+          workflow={workflowOrchestration}
           refineStory={() => void refineStory()}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
           generateChildren={(forceRegenerate) => void generateChildrenForCurrentType('Story', forceRegenerate)}
@@ -2961,6 +3083,7 @@ function ProjectIntelligenceTab() {
           updateDraftSelection={updateDraftSelection}
           createSelectedChildren={() => void createSelectedChildWorkItems()}
           onOpenVsCode={() => openVsCodeExecutionPackage()}
+          onOpenQA={() => setActiveTab('qa')}
           validateImplementation={() => void validateImplementation()}
           runPRReview={() => void runPRReview()}
           postPRReviewComment={() => void postPRReviewComment()}
@@ -2983,8 +3106,12 @@ function ProjectIntelligenceTab() {
           itemType={currentItemType}
           currentWorkItem={currentWorkItem}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
+          executionContext={executionContext}
+          implementationValidation={implementationValidation}
+          prReview={prReview}
           coverageReport={coverageReport}
           graphSummary={graphSummary}
+          workflow={workflowOrchestration}
         />
       ) : null}
 
@@ -3811,6 +3938,37 @@ function WorkflowTimeline({ workflow }: { workflow: WorkflowOrchestrationState }
   );
 }
 
+function LifecycleStrip({ workflow }: { workflow: WorkflowOrchestrationState }) {
+  const validationStatus = workflow.statuses.execution === 'complete'
+    ? (workflow.statuses.tests === 'complete' ? 'complete' : 'current')
+    : 'pending';
+  const releaseStatus = workflow.statuses.tests === 'complete' ? 'current' : 'pending';
+  const stages: Array<{ label: string; status: 'complete' | 'current' | 'pending' | 'blocked'; detail: string }> = [
+    { label: 'Planning', status: workflow.statuses.features === 'complete' || workflow.statuses.stories === 'complete' || workflow.statuses.tasks === 'complete' ? 'complete' : workflow.statuses.epic === 'current' || workflow.statuses.features === 'current' || workflow.statuses.stories === 'current' || workflow.statuses.tasks === 'current' ? 'current' : 'pending', detail: workflow.planningHealth },
+    { label: 'Execution', status: workflow.statuses.execution, detail: workflow.executionHealth },
+    { label: 'Validation', status: validationStatus, detail: workflow.statuses.execution === 'complete' ? 'Implementation validation' : 'Waiting for execution' },
+    { label: 'QA', status: workflow.statuses.tests, detail: workflow.qaHealth },
+    { label: 'Release', status: releaseStatus, detail: workflow.statuses.tests === 'complete' ? 'Recommendation ready' : 'Waiting for QA' },
+  ];
+  return (
+    <div className="hei-lifecycle-strip" aria-label="Engineering lifecycle">
+      {stages.map((stage) => (
+        <div className={`hei-lifecycle-stage ${stage.status}`} key={stage.label}>
+          <span>{lifecycleIcon(stage.status)} {stage.label}</span>
+          <small>{stage.detail}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function lifecycleIcon(status: string): string {
+  if (status === 'complete') return '✓';
+  if (status === 'current') return '▶';
+  if (status === 'blocked') return '!';
+  return '○';
+}
+
 function recommendedActionsForItemType(
   itemType: WorkItemKind,
   handlers: {
@@ -4414,6 +4572,7 @@ function AIPlannerWorkspace({
   generateQATestCases,
   artifactRecords,
   artifactReuseStatus,
+  workflow,
 }: {
   profile: ProjectProfile;
   loading: boolean;
@@ -4460,6 +4619,7 @@ function AIPlannerWorkspace({
   generateQATestCases: () => void;
   artifactRecords: ArtifactRecord[];
   artifactReuseStatus: string;
+  workflow: WorkflowOrchestrationState;
 }) {
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
   const planningType = itemType === 'Epic' || itemType === 'Feature' ? itemType : selectedItemType;
@@ -4496,6 +4656,7 @@ function AIPlannerWorkspace({
     return (
       <>
         <section className="planner-card hei-planning-workspace">
+          <LifecycleStrip workflow={workflow} />
           <div className="hei-planning-header">
             <div>
               <div className="planner-label">Story Planning</div>
@@ -4616,8 +4777,9 @@ function AIPlannerWorkspace({
   if (itemType !== 'Epic' && itemType !== 'Feature' && currentWorkItem) {
     return (
       <>
-        <section className="planner-card">
-          <div className="planner-label">Planning Workspace</div>
+      <section className="planner-card">
+        <LifecycleStrip workflow={workflow} />
+        <div className="planner-label">Planning Workspace</div>
           <div className="planner-subtle">{itemType} work items are routed to {workspaceLabel(recommendedWorkspaceForItem(itemType))}. Planning actions are hidden for this item type.</div>
         </section>
       </>
@@ -4626,6 +4788,7 @@ function AIPlannerWorkspace({
   return (
     <>
       <section className="planner-card hei-planning-workspace">
+        <LifecycleStrip workflow={workflow} />
         <div className="hei-planning-header">
           <div>
             <div className="planner-label">{planningType} Planning</div>
@@ -5674,45 +5837,248 @@ function GeneratedTasksPreview({ story }: { story: StoryRefinement }) {
 
 function QAIntelligencePanel({ result }: { result: QATestSuiteResult }) {
   const cases = result.test_suite?.test_cases || [];
-  const categories = Array.from(new Set(cases.map((test) => test.category)));
+  const categories = groupQATestsByCategory(cases);
+  const intelligence = result.qa_intelligence || {};
+  const readiness = intelligence.qaReadiness || result.qa_readiness || {};
+  const release = intelligence.releaseRecommendation || result.release_recommendation || {};
+  const coverage = intelligence.acceptanceCoverage;
+  const regression = intelligence.regressionIntelligence;
+  const risk = intelligence.riskIntelligence;
+  const gaps = intelligence.testGapAnalysis;
+  const diagnostics = intelligence.diagnostics || {};
   return (
-    <section className="planner-card">
-      <div className="planner-label">QA Intelligence</div>
-      <div className="planner-subtle">Generated structured test cases from the story, acceptance criteria, modules, flows, dependencies, and domain.</div>
-      <SourceBadge metadata={result} />
-      <div className="planner-status-grid">
-        <Row label="Test Suite" value={result.test_suite?.title || 'QA Test Suite'} />
-        <Row label="Coverage Score" value={formatNumber(result.coverage_score)} />
-        <Row label="Coverage %" value={`${formatNumber(result.coverage_summary?.coverage_percent)}%`} />
-        <Row label="Generated Test Count" value={formatNumber(result.generated_test_count || cases.length)} />
-        <Row label="Covered Acceptance Criteria" value={`${formatNumber(result.coverage_summary?.covered_acceptance_criteria_count)} / ${formatNumber(result.coverage_summary?.acceptance_criteria_count)}`} />
-      </div>
-      <div className="planner-status-grid">
-        <Row label="Positive Tests" value={formatNumber(result.coverage_breakdown?.positive_coverage)} />
-        <Row label="Negative Tests" value={formatNumber(result.coverage_breakdown?.negative_coverage)} />
-        <Row label="Boundary Tests" value={formatNumber(result.coverage_breakdown?.boundary_coverage)} />
-        <Row label="Permission Tests" value={formatNumber(result.coverage_breakdown?.permission_coverage)} />
-        <Row label="Error Tests" value={formatNumber(result.coverage_breakdown?.error_coverage)} />
-        <Row label="Regression Candidates" value={formatNumber(result.coverage_breakdown?.regression_coverage)} />
-      </div>
-      <ListBlock title="Coverage Gaps" items={result.coverage_gaps || []} />
-      {categories.map((category) => (
-        <div className="planner-task" key={category}>
-          <div className="planner-label">{category}</div>
-          {cases.filter((test) => test.category === category).map((test) => (
-            <div className="planner-task" key={test.test_id}>
-              <strong>{test.test_id}: {test.title}</strong>
-              <Row label="Priority" value={test.priority} />
-              <Row label="Risk Level" value={test.risk_level} />
-              <ListBlock title="Preconditions" items={test.preconditions || []} />
-              <ListBlock title="Steps" items={test.steps || []} />
-              <Row label="Expected Result" value={test.expected_result} />
-            </div>
-          ))}
+    <section className="planner-card hei-qa-cockpit">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">QA Intelligence</div>
+          <div className="planner-subtle">Release-readiness cockpit for coverage, tests, regression, risk, gaps, and recommendation.</div>
         </div>
-      ))}
+        <SourceBadge metadata={result} />
+      </div>
+      <div className="hei-qa-top-strip">
+        <QAStatusTile title="QA Readiness" value={readiness.status || result.qa_status || 'Needs Review'} tone={qaTone(readiness.status || result.qa_status)} />
+        <QAStatusTile title="Release Recommendation" value={release.recommendation || result.release_status || 'Needs More Testing'} tone={qaTone(release.recommendation || result.release_status)} />
+        <QAStatusTile title="Acceptance Coverage" value={`${formatNumber(readiness.acceptanceCoverage ?? result.coverage_summary?.coverage_percent)}%`} tone={scoreTone(readiness.acceptanceCoverage ?? result.coverage_summary?.coverage_percent)} />
+        <QAStatusTile title="Regression Risk" value={readiness.regressionRisk || regression?.regressionPriority || 'Medium'} tone={qaTone(readiness.regressionRisk || regression?.regressionPriority)} />
+      </div>
+
+      <div className="hei-qa-grid">
+        <div className="hei-qa-card primary">
+          <div className="planner-label">QA Readiness</div>
+          <div className="planner-status-grid">
+            <Row label="Overall" value={readiness.overallReadiness !== undefined ? `${readiness.overallReadiness}%` : `${result.coverage_score}%`} />
+            <Row label="Test Completeness" value={`${formatNumber(readiness.testCompleteness)}%`} />
+            <Row label="Repository Alignment" value={`${formatNumber(readiness.repositoryCoverage)}%`} />
+            <Row label="Validation" value={readiness.validationStatus || 'Run Implementation Validation to improve QA accuracy.'} />
+          </div>
+          <ListBlock title="Blockers" items={readiness.blockers || []} empty="No release blockers identified." />
+        </div>
+
+        <div className="hei-qa-card primary">
+          <div className="planner-label">Release Recommendation</div>
+          <strong>{release.recommendation || result.release_status || 'Needs More Testing'}</strong>
+          <p>{release.reason || 'Run QA Analysis to calculate release recommendation from coverage, validation, regression, and risk.'}</p>
+          <ListBlock title="Recommended Next Action" items={release.recommendedActions || qaRecommendedActions(result)} empty="No additional action required." />
+        </div>
+
+        <div className="hei-qa-card wide">
+          <div className="planner-label">Acceptance Coverage</div>
+          {coverage?.acceptanceCriteria?.length ? (
+            <div className="hei-qa-ac-list">
+              {coverage.acceptanceCriteria.map((item) => (
+                <div className="hei-qa-ac-row" key={item.acceptanceCriteriaId || item.acceptanceText}>
+                  <div>
+                    <strong>{item.acceptanceCriteriaId || 'AC'} - {item.coverageStatus || 'Pending'}</strong>
+                    <p>{item.acceptanceText}</p>
+                  </div>
+                  <div>
+                    <span className={`hei-status-badge ${qaBadgeClass(item.coverageStatus)}`}>{item.coverageStatus || 'Pending'}</span>
+                    <small>{(item.mappedTests || []).map((test) => test.title || test.testId || '').filter(Boolean).join(', ') || 'No mapped tests yet.'}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No Acceptance Coverage" detail="Run QA Analysis after acceptance criteria and tests are available." />
+          )}
+        </div>
+
+        <div className="hei-qa-card">
+          <div className="planner-label">Test Intelligence</div>
+          <div className="planner-status-grid">
+            <Row label="Generated Tests" value={formatNumber(result.generated_test_count || cases.length)} />
+            <Row label="Coverage Score" value={`${formatNumber(result.coverage_score)}%`} />
+          </div>
+          {Object.entries(categories).map(([category, tests]) => (
+            <details className="planner-nested" key={category}>
+              <summary>{category} ({tests.length})</summary>
+              {tests.map((test) => (
+                <div className="hei-qa-test-row" key={test.test_id}>
+                  <strong>{test.test_id}: {test.title}</strong>
+                  <span>{test.priority || 'Medium'} priority · {test.risk_level || 'Medium'} risk</span>
+                  <small>{test.expected_result || 'Expected result pending.'}</small>
+                </div>
+              ))}
+            </details>
+          ))}
+          {!cases.length ? <EmptyState title="No tests generated yet" detail="Generate tests to evaluate coverage." /> : null}
+        </div>
+
+        <div className="hei-qa-card">
+          <div className="planner-label">Regression Intelligence</div>
+          <Row label="Priority" value={regression?.regressionPriority || 'Medium'} />
+          <ListBlock title="Changed Modules" items={regression?.changedModules || []} empty="No changed modules identified." />
+          <ListBlock title="Affected Services" items={regression?.affectedServices || []} empty="No affected services identified." />
+          <ListBlock title="Affected APIs" items={regression?.affectedAPIs || []} empty="No affected APIs identified." />
+          <ListBlock title="Related Features / Stories" items={[...(regression?.relatedFeatures || []), ...(regression?.relatedStories || [])]} empty="No related work item impact identified." />
+          <ListBlock title="Recommended Regression Tests" items={regression?.recommendedRegressionTests || []} empty="No regression tests recommended yet." />
+        </div>
+
+        <div className="hei-qa-card">
+          <div className="planner-label">Risk Intelligence</div>
+          <Row label="Highest Risk" value={risk?.highestRisk || 'Medium'} />
+          {(risk?.risks || []).length ? (risk?.risks || []).map((item) => (
+            <div className="hei-risk-row" key={item.name}>
+              <span className={`hei-status-badge ${qaBadgeClass(item.level)}`}>{item.level || 'Medium'}</span>
+              <div>
+                <strong>{item.name}</strong>
+                <p>{item.reason || 'Risk reasoning pending.'}</p>
+                <small>{item.mitigation || 'Mitigation pending.'}</small>
+              </div>
+            </div>
+          )) : <EmptyState title="No risk matrix yet" detail="Run QA Analysis to calculate implementation, integration, security, regression, repository, and dependency risk." />}
+        </div>
+
+        <div className="hei-qa-card">
+          <div className="planner-label">Test Gap Analysis</div>
+          <ListBlock title="Missing Tests" items={gaps?.missingTests || []} empty="No missing test categories detected." />
+          <ListBlock title="Untested Acceptance Criteria" items={gaps?.untestedAcceptanceCriteria || []} empty="No untested acceptance criteria detected." />
+          <ListBlock title="Weak Tests" items={gaps?.weakTests || []} empty="No weak tests detected." />
+          <ListBlock title="Duplicate Tests" items={gaps?.duplicateTests || []} empty="No duplicate tests detected." />
+          <ListBlock title="Validation Gaps" items={gaps?.validationGaps || []} empty="No implementation validation gaps reported." />
+        </div>
+
+        <div className="hei-qa-card wide">
+          <details>
+            <summary className="planner-label">QA Diagnostics</summary>
+            <div className="planner-status-grid">
+              <Row label="Repository Snapshot" value={diagnostics.repositorySnapshotAvailable ? 'Available' : 'Not provided'} />
+              <Row label="Knowledge Version" value={diagnostics.knowledgeRegistryAvailable ? 'Available' : 'Not provided'} />
+              <Row label="Graph Nodes Used" value={diagnostics.engineeringGraphAvailable ? 'Available' : 'Not provided'} />
+              <Row label="Execution Package" value={diagnostics.consumedExecutionPackage ? 'Consumed' : 'Missing'} />
+              <Row label="Implementation Validation" value={diagnostics.consumedImplementationValidation ? 'Consumed' : 'Not provided'} />
+              <Row label="Coverage Calculation" value={`${formatNumber(result.coverage_summary?.covered_acceptance_criteria_count)} / ${formatNumber(result.coverage_summary?.acceptance_criteria_count)} AC covered`} />
+            </div>
+          </details>
+        </div>
+      </div>
     </section>
   );
+}
+
+function QAStatusTile({ title, value, tone }: { title: string; value: string | number; tone?: string }) {
+  return (
+    <div className={`hei-qa-status-tile ${tone || 'neutral'}`}>
+      <span>{title}</span>
+      <strong>{value || 'Pending'}</strong>
+    </div>
+  );
+}
+
+function EmptyState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="hei-queue-empty">
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </div>
+  );
+}
+
+function groupQATestsByCategory(cases: QATestCase[]): Record<string, QATestCase[]> {
+  return cases.reduce<Record<string, QATestCase[]>>((groups, test) => {
+    const category = normalizedQACategoryLabel(test.category);
+    groups[category] = [...(groups[category] || []), test];
+    return groups;
+  }, {});
+}
+
+function normalizedQACategoryLabel(value?: string): string {
+  const lowered = String(value || '').toLowerCase();
+  if (lowered.includes('integration')) return 'Integration';
+  if (lowered.includes('negative')) return 'Negative';
+  if (lowered.includes('boundary') || lowered.includes('edge')) return 'Boundary';
+  if (lowered.includes('permission') || lowered.includes('role') || lowered.includes('access')) return 'Permission';
+  if (lowered.includes('security') || lowered.includes('auth')) return 'Security';
+  if (lowered.includes('performance') || lowered.includes('load')) return 'Performance';
+  if (lowered.includes('regression')) return 'Regression';
+  if (lowered.includes('error') || lowered.includes('failure')) return 'Error Handling';
+  return 'Functional';
+}
+
+function qaTone(value?: string): string {
+  const lowered = String(value || '').toLowerCase();
+  if (lowered.includes('ready') && !lowered.includes('not')) return 'success';
+  if (lowered.includes('pass') || lowered.includes('low')) return 'success';
+  if (lowered.includes('block') || lowered.includes('critical') || lowered.includes('high')) return 'error';
+  if (lowered.includes('review') || lowered.includes('warning') || lowered.includes('medium') || lowered.includes('missing')) return 'warning';
+  return 'neutral';
+}
+
+function scoreTone(value?: number): string {
+  const score = Number(value || 0);
+  if (score >= 85) return 'success';
+  if (score >= 60) return 'warning';
+  return 'error';
+}
+
+function qaBadgeClass(value?: string): string {
+  const tone = qaTone(value);
+  if (tone === 'success') return 'success';
+  if (tone === 'error') return 'error';
+  if (tone === 'warning') return 'warning';
+  return 'neutral';
+}
+
+function qaRecommendedActions(result: QATestSuiteResult): string[] {
+  if (result.coverage_gaps?.length) {
+    return ['Generate missing tests.', 'Review uncovered acceptance criteria.', 'Repeat QA Analysis.'];
+  }
+  if ((result.qa_readiness?.status || result.qa_status || '').toLowerCase().includes('ready')) {
+    return ['Export QA report.', 'Prepare release review.'];
+  }
+  return ['Run Implementation Validation.', 'Review QA gaps.', 'Generate missing tests.'];
+}
+
+function qaPrimaryAction({
+  hasSuite,
+  hasExecutionPackage,
+  allowWithoutExecutionPackage,
+  hasValidation,
+  gaps,
+  release,
+}: {
+  hasSuite: boolean;
+  hasExecutionPackage: boolean;
+  allowWithoutExecutionPackage?: boolean;
+  hasValidation: boolean;
+  gaps?: NonNullable<QATestSuiteResult['qa_intelligence']>['testGapAnalysis'];
+  release?: QAReleaseRecommendation;
+}): { label: string; onRun: 'analyze' | 'copy'; disabled?: boolean } {
+  if (!hasExecutionPackage && !allowWithoutExecutionPackage) {
+    return { label: 'Run QA Analysis', onRun: 'analyze', disabled: true };
+  }
+  if (!hasSuite) {
+    return { label: 'Run QA Analysis', onRun: 'analyze' };
+  }
+  const hasMissingTests = Boolean(gaps?.missingTests?.length || gaps?.untestedAcceptanceCriteria?.length);
+  if (hasMissingTests) {
+    return { label: 'Generate Missing Tests', onRun: 'analyze' };
+  }
+  const recommendation = String(release?.recommendation || '').toLowerCase();
+  if (recommendation.includes('blocked') || recommendation.includes('testing') || recommendation.includes('warning') || !hasValidation) {
+    return { label: 'Review Gaps', onRun: 'analyze' };
+  }
+  return { label: 'Export QA Report', onRun: 'copy' };
 }
 
 function StructuredTaskList({ tasks }: { tasks: StoryTask[] }) {
@@ -5785,13 +6151,17 @@ function KnowledgeRegistryNotice({ profile }: { profile: ProjectProfile }) {
 
 function DeveloperWorkspace({
   executionContext,
+  executionPlan,
+  executionMode,
   devPrompt,
   uiPrompt,
   qaPrompt,
   copilotContext,
   onGenerate,
+  onGenerateExecutionPlan,
   onGeneratePrompt,
   onEnhanceWithAi,
+  setExecutionMode,
   loading,
   canContribute,
   itemType,
@@ -5811,6 +6181,7 @@ function DeveloperWorkspace({
   setImplementationChangedFiles,
   prReview,
   approvalWorkflow,
+  workflow,
   refineStory,
   analyzeImpact,
   generateChildren,
@@ -5821,18 +6192,23 @@ function DeveloperWorkspace({
   updateDraftSelection,
   createSelectedChildren,
   onOpenVsCode,
+  onOpenQA,
   validateImplementation,
   runPRReview,
   postPRReviewComment,
 }: {
   executionContext?: ExecutionContextResult;
+  executionPlan?: ExecutionPlanResult;
+  executionMode: ExecutionMode;
   devPrompt?: PromptBuilderResult;
   uiPrompt?: PromptBuilderResult;
   qaPrompt?: PromptBuilderResult;
   copilotContext?: CopilotContextResult;
   onGenerate: () => void;
+  onGenerateExecutionPlan: () => void;
   onGeneratePrompt: (kind: 'dev' | 'ui' | 'qa' | 'copilot') => void;
   onEnhanceWithAi: () => void;
+  setExecutionMode: (value: ExecutionMode) => void;
   loading: boolean;
   canContribute: boolean;
   itemType: WorkItemKind;
@@ -5852,6 +6228,7 @@ function DeveloperWorkspace({
   setImplementationChangedFiles: (value: string) => void;
   prReview?: PRReviewReport;
   approvalWorkflow: ApprovalWorkflowState;
+  workflow: WorkflowOrchestrationState;
   refineStory: () => void;
   analyzeImpact: () => void;
   generateChildren: (forceRegenerate?: boolean) => void;
@@ -5862,12 +6239,13 @@ function DeveloperWorkspace({
   updateDraftSelection: (draftId: string, selected: boolean) => void;
   createSelectedChildren: () => void;
   onOpenVsCode: () => void;
+  onOpenQA: () => void;
   validateImplementation: () => void;
   runPRReview: () => void;
   postPRReviewComment: () => void;
 }) {
-  const hasPackage = Boolean(executionContext || devPrompt || uiPrompt || qaPrompt || copilotContext);
-  const vsCodeUri = executionContext ? buildVsCodeExecutionPackageUri(executionContext, devPrompt, uiPrompt, qaPrompt, copilotContext) : '';
+  const hasPackage = Boolean(executionContext || executionPlan || devPrompt || uiPrompt || qaPrompt || copilotContext);
+  const vsCodeUri = executionContext ? buildVsCodeExecutionPackageUri(executionContext, executionPlan, devPrompt, uiPrompt, qaPrompt, copilotContext) : '';
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
   const isStory = itemType === 'Story';
   const isTask = itemType === 'Task';
@@ -5886,6 +6264,7 @@ function DeveloperWorkspace({
   return (
     <>
       <section className="planner-card hei-execution-workspace">
+        <LifecycleStrip workflow={workflow} />
         <div className="planner-label">{isBug ? 'Bug Fix Workspace' : 'Execution Workspace'}</div>
         <div className="planner-subtle">
           {isBug
@@ -5909,13 +6288,27 @@ function DeveloperWorkspace({
         />
         {isStory ? <ApprovalStatusStrip label="Story" status={approvalWorkflow.story} qualityScore={qualityScoreForStory(storyResult)} /> : null}
         {isTask || isBug ? <ApprovalStatusStrip label={isBug ? 'Fix Context' : 'Execution Package'} status={approvalWorkflow.execution} qualityScore={executionContext?.execution_readiness_score} /> : null}
+        <div className="planner-summary-grid">
+          <label className="planner-field">
+            <span className="planner-label">Execution Mode</span>
+            <select className="planner-input" value={executionMode} onChange={(event) => setExecutionMode(event.target.value as ExecutionMode)} disabled={loading || readOnly}>
+              <option value="implement">Implement</option>
+              <option value="review_existing_code">Review Existing Code</option>
+              <option value="refactor">Refactor</option>
+              <option value="bug_fix">Bug Fix</option>
+              <option value="spike_investigation">Spike / Investigation</option>
+            </select>
+          </label>
+          <SummaryTile title="Plan" value={executionPlan ? `${executionPlan.executionModeLabel || executionPlan.executionMode} ready` : 'Not Generated'} />
+        </div>
         <div className="planner-actions">
           <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : 'Build Execution Package'}</button>
+          <button className="planner-button" onClick={onGenerateExecutionPlan} disabled={loading || readOnly || !storyInput.title.trim()}>{executionPlan ? 'Regenerate Execution Plan' : 'Generate Execution Plan'}</button>
           {isBug ? <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>Root Cause / Execution Impact</button> : null}
           {executionContext ? <button className="planner-button secondary" onClick={onEnhanceWithAi} disabled={loading || readOnly}>Enhance with AI</button> : null}
           {hasPackage ? <button className="planner-button secondary" onClick={approveExecutionPackage} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.execution)}>Approve Package</button> : null}
           {vsCodeUri ? (
-            <button className="planner-button secondary" onClick={onOpenVsCode} disabled={loading}>Open in VS Code</button>
+            <button className="planner-button secondary" onClick={onOpenVsCode} disabled={loading}>Open Execution Workspace</button>
           ) : null}
         </div>
       </section>
@@ -5935,6 +6328,7 @@ function DeveloperWorkspace({
         />
       ) : null}
       {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
+      {executionPlan ? <PromptBlock title="Execution Plan" value={executionPlan.plan || executionPlan.finalPlan || executionPlan.prompt || ''} metadata={executionPlan} copyable /> : null}
       {executionContext ? (
         <ImplementationValidationPanel
           report={implementationValidation}
@@ -5956,22 +6350,23 @@ function DeveloperWorkspace({
       ) : null}
       {executionContext ? (
         <section className="planner-card">
-          <div className="planner-label">Lazy Execution Outputs</div>
-          <div className="planner-subtle">The execution package is available immediately. Generate each prompt only when needed.</div>
-          <div className="planner-actions">
-            <button className="planner-button secondary" onClick={() => onGeneratePrompt('dev')} disabled={loading || readOnly}>Generate Dev Prompt</button>
-            <button className="planner-button secondary" onClick={() => onGeneratePrompt('ui')} disabled={loading || readOnly}>Generate UI Prompt</button>
-            <button className="planner-button secondary" onClick={() => onGeneratePrompt('qa')} disabled={loading || readOnly}>Generate QA Prompt</button>
-            <button className="planner-button secondary" onClick={() => onGeneratePrompt('copilot')} disabled={loading || readOnly}>Generate Copilot Context</button>
-          </div>
+          <details>
+            <summary className="planner-label">Advanced Execution Artifacts</summary>
+            <div className="planner-subtle">Optional artifacts for specialized review. Most implementation work should use the Execution Plan.</div>
+            <div className="planner-actions">
+              <button className="planner-button secondary" onClick={() => onGeneratePrompt('copilot')} disabled={loading || readOnly}>Generate Context Capsule</button>
+              <button className="planner-button secondary" onClick={() => onGeneratePrompt('ui')} disabled={loading || readOnly}>Generate UI Refinement Prompt</button>
+              <button className="planner-button secondary" onClick={onOpenQA}>Open QA Intelligence</button>
+              <button className="planner-button secondary" onClick={() => void copyText(JSON.stringify(executionContext.execution_package_v2 || executionContext.executionPackageV2 || executionContext, null, 2))}>Export Execution Package</button>
+            </div>
+          </details>
         </section>
       ) : null}
       {devPrompt ? <PromptBlock title="Dev Prompt" value={devPrompt.prompt} metadata={devPrompt} copyable /> : null}
       {uiPrompt ? <PromptBlock title="UI Prompt" value={uiPrompt.prompt} metadata={uiPrompt} copyable /> : null}
-      {qaPrompt ? <PromptBlock title="QA Prompt" value={qaPrompt.prompt} metadata={qaPrompt} copyable /> : null}
       {copilotContext ? (
         <div className="planner-task">
-          <div className="planner-label">Copilot Context</div>
+          <div className="planner-label">Context Capsule</div>
           <SourceBadge metadata={copilotContext} />
           <div className="planner-actions">
             <button className="planner-button secondary" onClick={() => void copyText(copilotContext.context)}>Copy</button>
@@ -5998,8 +6393,12 @@ function QAWorkspace({
   itemType,
   currentWorkItem,
   analyzeImpact,
+  executionContext,
+  implementationValidation,
+  prReview,
   coverageReport,
   graphSummary,
+  workflow,
 }: {
   loading: boolean;
   storyInput: { title: string; description: string };
@@ -6015,11 +6414,26 @@ function QAWorkspace({
   itemType: WorkItemKind;
   currentWorkItem?: AdoWorkItem;
   analyzeImpact: () => void;
+  executionContext?: ExecutionContextResult;
+  implementationValidation?: ImplementationValidationReport;
+  prReview?: PRReviewReport;
   coverageReport?: CoverageIntelligenceReport;
   graphSummary?: GraphSummary;
+  workflow: WorkflowOrchestrationState;
 }) {
   const isTestCase = itemType === 'Test Case';
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
+  const hasExecutionPackage = Boolean(executionContext);
+  const hasValidation = Boolean(implementationValidation);
+  const qaInputReady = isTestCase || hasExecutionPackage;
+  const primary = qaPrimaryAction({
+    hasSuite: Boolean(qaTestSuite),
+    hasExecutionPackage,
+    allowWithoutExecutionPackage: isTestCase,
+    hasValidation,
+    gaps: qaTestSuite?.qa_intelligence?.testGapAnalysis,
+    release: qaTestSuite?.release_recommendation || qaTestSuite?.qa_intelligence?.releaseRecommendation,
+  });
   if (itemType !== 'Test Case' && itemType !== 'Story' && itemType !== 'Bug') {
     return (
       <section className="planner-card">
@@ -6033,22 +6447,31 @@ function QAWorkspace({
       <RelationshipSummaryCard summary={graphSummary} />
       <CoverageIntelligenceCard report={coverageReport} />
       <section className="planner-card hei-qa-workspace">
+        <LifecycleStrip workflow={workflow} />
         <div className="planner-section-header">
           <div>
             <div className="planner-label">{isTestCase ? 'Test Case Workspace' : 'QA Workspace'}</div>
             <div className="planner-subtle">
               {isTestCase
                 ? 'Analyze coverage, regression scope, and execution notes for the selected test case.'
-                : 'Generate structured test cases, coverage analysis, regression scope, and QA readiness from an approved story.'}
+                : 'Assess release readiness through acceptance coverage, test intelligence, regression scope, risk, gaps, and release recommendation.'}
             </div>
           </div>
-          <button className="planner-button" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>{isTestCase ? 'Coverage Analysis' : 'Generate Test Cases'}</button>
+          <button className="planner-button" onClick={primary.onRun === 'copy' ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite)) : generateQATestCases} disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()}>{primary.label}</button>
         </div>
         <div className="hei-workspace-topline">
           <SummaryTile title="Selected Item" value={currentWorkItem ? `${currentWorkItem.type} #${currentWorkItem.id}` : 'Story / Task'} />
-          <SummaryTile title="QA Readiness" value={qaTestSuite ? 'Test Suite Ready' : storyInput.title.trim() ? 'Ready To Generate' : 'Select Story'} />
-          <SummaryTile title="Coverage" value={qaTestSuite ? `${qaTestSuite.coverage_score}%` : 'Not Generated'} />
+          <SummaryTile title="QA Readiness" value={qaTestSuite?.qa_status || qaTestSuite?.qa_readiness?.status || (hasExecutionPackage ? 'Ready To Analyze' : 'Execution Package Required')} />
+          <SummaryTile title="Release" value={qaTestSuite?.release_status || qaTestSuite?.release_recommendation?.recommendation || 'Not Assessed'} />
+          <SummaryTile title="Acceptance Coverage" value={qaTestSuite ? `${qaTestSuite.qa_readiness?.acceptanceCoverage ?? qaTestSuite.coverage_score}%` : 'Not Assessed'} />
+          <SummaryTile title="Regression Risk" value={qaTestSuite?.qa_readiness?.regressionRisk || 'Pending'} />
         </div>
+        {!hasExecutionPackage && !isTestCase ? (
+          <div className="planner-banner">Build an Execution Package before running QA Intelligence.</div>
+        ) : null}
+        {!hasValidation ? (
+          <div className="planner-banner">Run Implementation Validation to improve QA accuracy.</div>
+        ) : null}
         <details className="planner-nested">
           <summary>QA Input</summary>
           <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Story description or outcome for QA validation." />
@@ -6060,12 +6483,12 @@ function QAWorkspace({
           />
         </details>
         <div className="hei-action-grid">
-          <ActionTile title="Test Case Generation" detail={qaTestSuite ? `${qaTestSuite.generated_test_count || qaTestSuite.test_suite.test_cases.length} test cases generated.` : 'Generate positive, negative, boundary, permission, and regression tests.'} action={qaTestSuite ? 'Regenerate Test Suite' : 'Generate Test Cases'} onRun={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()} primary />
-          <ActionTile title="Acceptance Coverage" detail={qaTestSuite ? `${qaTestSuite.coverage_score}% coverage score.` : 'Map acceptance criteria to test cases.'} action="Coverage Analysis" onRun={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()} />
+          <ActionTile title="QA Intelligence" detail={qaTestSuite ? `${qaTestSuite.qa_status || 'QA'} with ${qaTestSuite.generated_test_count || qaTestSuite.test_suite.test_cases.length} tests.` : 'Assess coverage, tests, risk, regression, gaps, and release readiness.'} action={primary.label} onRun={primary.onRun === 'copy' ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite)) : generateQATestCases} disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()} primary />
+          <ActionTile title="Acceptance Coverage" detail={qaTestSuite ? `${qaTestSuite.coverage_score}% coverage score.` : 'Map acceptance criteria to test cases.'} action="Run QA Analysis" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
           <ActionTile title="Regression Risk" detail="Identify impacted flows, modules, and regression candidates." action="Regression Scope" onRun={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()} />
-          <ActionTile title="Permission Tests" detail="Review access-restricted, unauthorized, and role-based scenarios." action="Generate Permission Tests" onRun={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()} />
-          <ActionTile title="Negative Tests" detail="Generate missing data, invalid input, backend error, and timeout scenarios." action="Generate Negative Tests" onRun={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()} />
-          <ActionTile title="Export / Review" detail="Copy QA suite for review or export preparation." action="Copy Test Cases" onRun={() => void copyText(formatQATestSuiteForCopy(qaTestSuite))} disabled={!qaTestSuite} />
+          <ActionTile title="Test Intelligence" detail="Functional, integration, negative, boundary, permission, security, performance, and regression tests." action={qaTestSuite ? 'Generate Missing Tests' : 'Generate Tests'} onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
+          <ActionTile title="Export / Review" detail="Copy the QA suite and release recommendation for review." action="Export QA Report" onRun={() => void copyText(formatQATestSuiteForCopy(qaTestSuite))} disabled={!qaTestSuite} />
+          <ActionTile title="PR Review Signal" detail={prReview ? `${prReview.status || 'PR Review'} available.` : 'PR Review report not available yet.'} action="Review Gaps" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !qaTestSuite} />
         </div>
       </section>
       {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
@@ -6083,12 +6506,12 @@ function QAWorkspace({
       ) : (
         <section className="planner-card">
           <div className="planner-label">QA Readiness</div>
-          <div className="planner-subtle">No test suite generated yet. Add or load a story, then generate test cases.</div>
+          <div className="planner-subtle">{hasExecutionPackage ? 'No tests generated yet. Generate tests to evaluate coverage.' : 'Build an Execution Package before running QA Intelligence.'}</div>
           <div className="planner-summary-grid">
-            <SummaryTile title="Test Case Generator" value="Ready" />
-            <SummaryTile title="Coverage Analysis" value="Ready" />
-            <SummaryTile title="Regression Scope" value="Ready" />
-            <SummaryTile title="Defect Radar" value="Coming next" />
+            <SummaryTile title="Execution Package" value={hasExecutionPackage ? 'Ready' : 'Missing'} />
+            <SummaryTile title="Implementation Validation" value={hasValidation ? 'Ready' : 'Recommended'} />
+            <SummaryTile title="Repository Intelligence" value={executionContext ? 'Available' : 'Pending'} />
+            <SummaryTile title="QA Analysis" value="Not Run" />
           </div>
         </section>
       )}
@@ -7989,13 +8412,13 @@ function GenerationReviewBlock({ review }: { review?: GenerationReview }) {
   );
 }
 
-function ListBlock({ title, items }: { title: string; items: string[] }) {
+function ListBlock({ title, items, empty }: { title: string; items: string[]; empty?: string }) {
   const normalizedItems = Array.isArray(items) ? items : [String(items || '')].filter(Boolean);
   return (
     <div className="planner-task">
       <div className="planner-label">{title}</div>
       <ul className="planner-list">
-        {(normalizedItems.length ? normalizedItems : ['Not identified yet']).map((item) => <li key={item}>{item}</li>)}
+        {(normalizedItems.length ? normalizedItems : [empty || 'Not identified yet']).map((item) => <li key={item}>{item}</li>)}
       </ul>
     </div>
   );
@@ -8227,6 +8650,7 @@ function PromptBlock({ title, value, metadata, copyable }: { title: string; valu
 
 function buildVsCodeExecutionPackageUri(
   executionContext: ExecutionContextResult,
+  executionPlan?: ExecutionPlanResult,
   devPrompt?: PromptBuilderResult,
   uiPrompt?: PromptBuilderResult,
   qaPrompt?: PromptBuilderResult,
@@ -8234,7 +8658,8 @@ function buildVsCodeExecutionPackageUri(
 ): string {
   const payload = {
     execution_context: executionContext,
-    dev_prompt: devPrompt?.prompt || '',
+    execution_plan: executionPlan?.plan || executionPlan?.finalPlan || executionPlan?.prompt || '',
+    dev_prompt: devPrompt?.prompt || executionPlan?.plan || executionPlan?.finalPlan || executionPlan?.prompt || '',
     ui_prompt: uiPrompt?.prompt || '',
     qa_prompt: qaPrompt?.prompt || '',
     copilot_context: copilotContext?.context || '',
@@ -8242,7 +8667,7 @@ function buildVsCodeExecutionPackageUri(
   const params = new URLSearchParams({
     payload: btoa(unescape(encodeURIComponent(JSON.stringify(payload)))),
   });
-  return `vscode://rathiesh.ai-gen-vscode/loadExecutionPackage?${params.toString()}`;
+  return `vscode://rathiesh.ai-gen-vscode/openExecution?${params.toString()}`;
 }
 
 async function copyText(value: string): Promise<void> {

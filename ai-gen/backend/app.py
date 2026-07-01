@@ -23,6 +23,7 @@ logger = logging.getLogger("ai_gen.app")
 
 from backend.execution_corrector import build_corrected_execution_prompt, generate_retry_plan
 from backend.handoff.storage import list_handoffs, load_handoff_markdown
+from backend.lifecycle import EngineeringLifecycleManager
 from backend.execution_mode import detect_prompt_mode, score_execution_confidence
 from backend.execution_validator import ExecutionContext, snapshot_selected_files, validate_execution
 from backend.intent_detector import detect_intent
@@ -87,6 +88,7 @@ repo_context_manager = RepoContextManager(
 )
 pipeline_controller = PipelineController(Path(os.getenv("AI_GEN_PIPELINE_ROOT", ".ai_gen_pipelines")))
 ado_automation = AdoAutomation()
+lifecycle_manager = EngineeringLifecycleManager()
 
 class ContextRequest(BaseModel):
     """Request body accepted by POST /context."""
@@ -334,6 +336,13 @@ class ProjectIntelligenceArtifactApproveRequest(BaseModel):
     approved_by: str = ""
 
 
+class ProjectIntelligenceLifecycleRequest(BaseModel):
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+    target_state: str = ""
+    actor: str = ""
+
+
 class ProjectIntelligenceGraphIngestRequest(BaseModel):
     project: dict[str, Any] = Field(default_factory=dict)
     epic: dict[str, Any] = Field(default_factory=dict)
@@ -394,9 +403,13 @@ class ProjectIntelligenceExecutionRequest(BaseModel):
     knowledge_profile: dict[str, Any] = Field(default_factory=dict)
     story: dict[str, Any] = Field(default_factory=dict)
     impact_analysis: dict[str, Any] = Field(default_factory=dict)
+    execution_package: dict[str, Any] = Field(default_factory=dict)
+    execution_plan: dict[str, Any] | str = Field(default_factory=dict)
+    implementation_validation: dict[str, Any] = Field(default_factory=dict)
     force_provider: str = ""
     allow_fallback: bool = False
     mode: str = ""
+    execution_mode: str = ""
 
 
 class ProjectIntelligenceImplementationValidationRequest(BaseModel):
@@ -555,6 +568,31 @@ def archive_project_intelligence_artifact(artifact_id: str) -> dict:
         return JSONResponse(status_code=404, content={"error": str(error)})
 
 
+@app.post("/project-intelligence/lifecycle")
+def get_project_intelligence_lifecycle(request: ProjectIntelligenceLifecycleRequest) -> dict:
+    return lifecycle_manager.get_lifecycle(request.artifact, request.context)
+
+
+@app.post("/project-intelligence/lifecycle/advance")
+def advance_project_intelligence_lifecycle(request: ProjectIntelligenceLifecycleRequest) -> dict:
+    return lifecycle_manager.advance(request.artifact, request.target_state, request.actor, request.context)
+
+
+@app.post("/project-intelligence/lifecycle/rollback")
+def rollback_project_intelligence_lifecycle(request: ProjectIntelligenceLifecycleRequest) -> dict:
+    return lifecycle_manager.rollback(request.artifact, request.actor, request.context)
+
+
+@app.get("/project-intelligence/lifecycle/history/{artifact_id}")
+def get_project_intelligence_lifecycle_history(artifact_id: str) -> dict:
+    return lifecycle_manager.history_for(artifact_id)
+
+
+@app.post("/project-intelligence/lifecycle/diagnostics")
+def get_project_intelligence_lifecycle_diagnostics(request: ProjectIntelligenceLifecycleRequest) -> dict:
+    return lifecycle_manager.diagnostics_for(request.artifact, request.context)
+
+
 @app.get("/project-intelligence/graph")
 def get_project_intelligence_graph() -> dict:
     return project_knowledge_graph_service.get_graph()
@@ -648,6 +686,9 @@ def generate_project_qa_test_cases(request: ProjectIntelligenceExecutionRequest)
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
+        request.execution_package,
+        request.execution_plan,
+        request.implementation_validation,
         _project_intelligence_options(request),
     )
 
@@ -681,6 +722,17 @@ def build_project_execution_context(request: ProjectIntelligenceExecutionRequest
 @app.post("/project-intelligence/build-dev-prompt")
 def build_project_dev_prompt(request: ProjectIntelligenceExecutionRequest) -> dict:
     return project_intelligence_service.build_dev_prompt(
+        request.story,
+        request.profile,
+        request.knowledge_profile,
+        request.impact_analysis,
+        _project_intelligence_options(request),
+    )
+
+
+@app.post("/project-intelligence/build-execution-plan")
+def build_project_execution_plan(request: ProjectIntelligenceExecutionRequest) -> dict:
+    return project_intelligence_service.build_execution_plan(
         request.story,
         request.profile,
         request.knowledge_profile,
@@ -871,6 +923,7 @@ def _project_intelligence_options(request: Any) -> dict[str, Any]:
         "force_provider": getattr(request, "force_provider", ""),
         "allow_fallback": bool(getattr(request, "allow_fallback", False)),
         "mode": getattr(request, "mode", ""),
+        "execution_mode": getattr(request, "execution_mode", ""),
     }
 
 

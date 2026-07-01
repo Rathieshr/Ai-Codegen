@@ -1432,6 +1432,41 @@ button.hei-story-list-card {
   line-height: 1.45;
 }
 
+.hei-execution-workspace,
+.hei-qa-workspace {
+  gap: 12px;
+}
+
+.hei-workspace-topline,
+.hei-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.hei-action-tile {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--hei-surface);
+  display: grid;
+  gap: 12px;
+  align-content: space-between;
+  min-height: 142px;
+}
+
+.hei-action-tile strong {
+  color: var(--hei-black);
+  font-size: 13px;
+}
+
+.hei-action-tile p {
+  margin: 5px 0 0;
+  color: var(--hei-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .hei-queue-empty {
   border: 1px dashed var(--hei-border);
   border-radius: 6px;

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from backend.project_intelligence import (
@@ -67,6 +69,27 @@ class FailingPhiProvider(HealthyPhiProvider):
             "failure_reason": "provider_timeout",
             "failure_message": "Azure Phi request timed out.",
             "parse_error": "TimeoutError",
+        }
+
+
+class ParseErrorPhiProvider(HealthyPhiProvider):
+    def probe_json(self, *args, **kwargs) -> dict:
+        self.calls += 1
+        return {
+            "status": "parse_error",
+            "http_status": 200,
+            "elapsed_ms": 321,
+            "raw_content": "Here is the feature plan:\n- Story one\n- Story two",
+            "raw_provider_response": '{"choices":[{"finish_reason":"stop","message":{"content":"Here is the feature plan:\\n- Story one"}}],"usage":{"prompt_tokens":111,"completion_tokens":22}}',
+            "raw_response_preview": "Here is the feature plan:\n- Story one\n- Story two",
+            "parsed_json": {},
+            "failure_reason": "parse_error",
+            "failure_message": "Model response could not be normalized into a JSON object.",
+            "parse_error": "NoJsonObjectFound",
+            "prompt_tokens": 111,
+            "completion_tokens": 22,
+            "finish_reason": "stop",
+            "response_length": 142,
         }
 
 
@@ -1991,6 +2014,44 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(refined["provider_used"], "azure_phi")
         self.assertEqual(refined["phi_status"], "success")
         self.assertFalse(refined["fallback_used"])
+
+    def test_feature_generation_parse_error_persists_diagnostics(self) -> None:
+        provider = ParseErrorPhiProvider()
+        profile = {
+            "project_name": "LineDefender",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review", "Outage Investigation"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            refined = ProjectIntelligenceService().refine_feature({"title": "Fault Event Monitoring"}, profile)
+
+            diagnostics_root = Path(temp_dir) / "diagnostics" / "failed-feature-generation"
+            incident_dirs = [path for path in diagnostics_root.iterdir() if path.is_dir()]
+            self.assertEqual(len(incident_dirs), 1)
+            incident_dir = incident_dirs[0]
+            self.assertTrue((incident_dir / "prompt.txt").exists())
+            self.assertTrue((incident_dir / "response.txt").exists())
+            metadata = json.loads((incident_dir / "metadata.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(refined["phi_status"], "parse_error")
+        self.assertTrue(refined["diagnostics_available"])
+        self.assertTrue(refined["diagnostics_path"])
+        self.assertEqual(sorted(refined["diagnostics_files"]), ["metadata.json", "prompt.txt", "response.txt"])
+        self.assertEqual(metadata["provider"], "azure_phi")
+        self.assertEqual(metadata["model"], "Phi-4")
+        self.assertEqual(metadata["prompt_tokens"], 111)
+        self.assertEqual(metadata["completion_tokens"], 22)
+        self.assertEqual(metadata["finish_reason"], "stop")
+        self.assertEqual(metadata["failure_reason"], "parse_error")
+        self.assertIn("Model response could not be normalized", metadata["failure_message"])
 
     def test_project_phi_metadata_includes_context_diagnostics(self) -> None:
         provider = HealthyPhiProvider({"story_summary": "Phi story", "acceptance_criteria": ["AC 1"]})

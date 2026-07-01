@@ -399,6 +399,34 @@ class ProjectIntelligenceExecutionRequest(BaseModel):
     mode: str = ""
 
 
+class ProjectIntelligenceImplementationValidationRequest(BaseModel):
+    execution_package: dict[str, Any] = Field(default_factory=dict)
+    developer_prompt: dict[str, Any] = Field(default_factory=dict)
+    task_dna: dict[str, Any] = Field(default_factory=dict)
+    story_dna: dict[str, Any] = Field(default_factory=dict)
+    repository_diff: dict[str, Any] = Field(default_factory=dict)
+    changed_files: list[Any] = Field(default_factory=list)
+    test_results: dict[str, Any] = Field(default_factory=dict)
+    build_result: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligencePRReviewRequest(BaseModel):
+    pull_request: dict[str, Any] = Field(default_factory=dict)
+    linked_work_items: list[Any] = Field(default_factory=list)
+    execution_package: dict[str, Any] = Field(default_factory=dict)
+    developer_prompt: dict[str, Any] = Field(default_factory=dict)
+    task_dna: dict[str, Any] = Field(default_factory=dict)
+    story_dna: dict[str, Any] = Field(default_factory=dict)
+    repository_diff: dict[str, Any] = Field(default_factory=dict)
+    changed_files: list[Any] = Field(default_factory=list)
+    test_results: dict[str, Any] = Field(default_factory=dict)
+    build_result: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligencePRReviewCommentRequest(BaseModel):
+    report: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProjectIntelligenceProviderProbeRequest(BaseModel):
     prompt: str = ""
     force_provider: str = ""
@@ -692,6 +720,41 @@ def build_project_copilot_context(request: ProjectIntelligenceExecutionRequest) 
         request.impact_analysis,
         _project_intelligence_options(request),
     )
+
+
+@app.post("/project-intelligence/validate-implementation")
+def validate_project_implementation(request: ProjectIntelligenceImplementationValidationRequest) -> dict:
+    return project_intelligence_service.validate_implementation(
+        execution_package=request.execution_package,
+        developer_prompt=request.developer_prompt,
+        task_dna=request.task_dna,
+        story_dna=request.story_dna,
+        repository_diff=request.repository_diff,
+        changed_files=request.changed_files,
+        test_results=request.test_results,
+        build_result=request.build_result,
+    )
+
+
+@app.post("/project-intelligence/pr-review")
+def review_project_pull_request(request: ProjectIntelligencePRReviewRequest) -> dict:
+    return project_intelligence_service.review_pr(
+        pull_request=request.pull_request,
+        linked_work_items=request.linked_work_items,
+        execution_package=request.execution_package,
+        developer_prompt=request.developer_prompt,
+        task_dna=request.task_dna,
+        story_dna=request.story_dna,
+        repository_diff=request.repository_diff,
+        changed_files=request.changed_files,
+        test_results=request.test_results,
+        build_result=request.build_result,
+    )
+
+
+@app.post("/project-intelligence/pr-review/comment")
+def post_project_pull_request_review_comment(request: ProjectIntelligencePRReviewCommentRequest) -> dict:
+    return project_intelligence_service.post_pr_review_comment(request.report)
 
 
 @app.post("/project-intelligence/provider-probe")

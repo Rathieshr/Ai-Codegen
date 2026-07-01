@@ -180,6 +180,16 @@ type ProviderMetadata = {
   phi_latency_ms?: number;
   phi_raw_response_preview?: string;
   phi_parsed_response_preview?: string;
+  phi_prompt_tokens?: number;
+  phi_completion_tokens?: number;
+  phi_finish_reason?: string;
+  phi_response_length?: number;
+  diagnostics_available?: boolean;
+  diagnostics_path?: string;
+  diagnostics_files?: string[];
+  diagnostics_error?: string;
+  raw_response_available?: boolean;
+  raw_response_preview?: string;
   provider_configured?: boolean;
   provider_deployment?: string;
   provider_health?: string;
@@ -594,6 +604,8 @@ type WorkItemDNASummary = {
 
 type ExecutionContextResult = ProviderMetadata & {
   execution_package_source?: string;
+  execution_package_v2?: Record<string, unknown>;
+  executionPackageV2?: Record<string, unknown>;
   context_capsule?: ExecutionContextCapsule;
   context_capsule_diagnostics?: ProviderMetadata;
   work_item_dna?: WorkItemDNA;
@@ -642,10 +654,57 @@ type ExecutionContextResult = ProviderMetadata & {
 
 type PromptBuilderResult = ProviderMetadata & {
   prompt: string;
+  developer_prompt_v2?: Record<string, unknown>;
 };
 
 type CopilotContextResult = ProviderMetadata & {
   context: string;
+};
+
+type ImplementationValidationReport = {
+  reportId: string;
+  packageId: string;
+  taskId?: number | string;
+  storyId?: number | string;
+  status: 'Passed' | 'NeedsReview' | 'Failed' | string;
+  acceptanceCoverageScore: number;
+  scopeComplianceScore: number;
+  repositoryAlignmentScore: number;
+  standardsComplianceScore: number;
+  testCoverageScore: number;
+  riskScore: number;
+  changedFiles: Array<{ path?: string; status?: string; matchedEvidence?: string[] }>;
+  acceptanceResults: Array<{ acceptanceCriteriaId?: string; acceptanceText?: string; status?: string; evidence?: string[] }>;
+  scopeCompliance?: { score?: number; touchedBlockedScope?: string[] };
+  standards?: Array<{ standard?: string; status?: string; evidence?: string[] }>;
+  tests?: Array<{ testType?: string; status?: string; evidence?: string[] }>;
+  violations: Array<{ rule?: string; severity?: string; category?: string; message?: string; file?: string; recommendation?: string }>;
+  recommendations: string[];
+  generatedAt: string;
+};
+
+type PRReviewReport = {
+  reportId: string;
+  pullRequestId?: number | string;
+  status: 'Passed' | 'NeedsReview' | 'Blocked' | string;
+  summary: string;
+  linkedWorkItems: Array<{ id?: number | string; type?: string; title?: string; url?: string }>;
+  validationScore: number;
+  scores: {
+    acceptanceCoverage: number;
+    scopeCompliance: number;
+    repositoryAlignment: number;
+    standards: number;
+    tests: number;
+  };
+  blockingIssues: string[];
+  warnings: string[];
+  changedFiles: Array<{ path?: string; status?: string; matchedEvidence?: string[] }>;
+  generatedReviewComment: string;
+  recommendations: string[];
+  commentPostingEnabled: boolean;
+  implementationValidation?: ImplementationValidationReport;
+  diagnostics?: Record<string, unknown>;
 };
 
 type GenerationReview = {
@@ -1026,6 +1085,9 @@ function ProjectIntelligenceTab() {
   const [uiPrompt, setUiPrompt] = useState<PromptBuilderResult | undefined>();
   const [qaPrompt, setQaPrompt] = useState<PromptBuilderResult | undefined>();
   const [copilotContext, setCopilotContext] = useState<CopilotContextResult | undefined>();
+  const [implementationValidation, setImplementationValidation] = useState<ImplementationValidationReport | undefined>();
+  const [implementationChangedFiles, setImplementationChangedFiles] = useState('');
+  const [prReview, setPrReview] = useState<PRReviewReport | undefined>();
   const [epicInput, setEpicInput] = useState({ title: '', description: '' });
   const [featureInput, setFeatureInput] = useState({ title: '', description: '' });
   const [storyInput, setStoryInput] = useState({ title: '', description: '' });
@@ -1695,6 +1757,8 @@ function ProjectIntelligenceTab() {
       setUiPrompt(undefined);
       setQaPrompt(undefined);
       setCopilotContext(undefined);
+      setImplementationValidation(undefined);
+      setPrReview(undefined);
       markApprovalGenerated('execution', context.execution_readiness_score);
       await saveGeneratedArtifact('Execution Package', story.title || 'Execution package', { context }, source);
       await refreshContextCapsules(profile, ['story', 'execution', 'qa']);
@@ -1742,6 +1806,69 @@ function ProjectIntelligenceTab() {
     if (kind === 'ui') setUiPrompt(result as PromptBuilderResult);
     if (kind === 'qa') setQaPrompt(result as PromptBuilderResult);
     if (kind === 'copilot') setCopilotContext(result as CopilotContextResult);
+  }
+
+  async function validateImplementation() {
+    if (!executionContext?.execution_package_v2 && !executionContext?.executionPackageV2) {
+      setError('Build the execution package before validating implementation.');
+      return;
+    }
+    const changedFiles = parseChangedFilesInput(implementationChangedFiles);
+    const result = await withLoading('Validating implementation alignment...', () => {
+      return postJson<ImplementationValidationReport>('/validate-implementation', {
+        execution_package: executionContext.execution_package_v2 || executionContext.executionPackageV2 || {},
+        developer_prompt: devPrompt?.developer_prompt_v2 || devPrompt || {},
+        task_dna: executionContext.work_item_dna || {},
+        story_dna: executionContext.parent_work_item_dna || {},
+        changed_files: changedFiles,
+        repository_diff: { changed_files: changedFiles },
+      });
+    });
+    if (result) {
+      setImplementationValidation(result);
+      setMessage(`Implementation validation ${result.status}.`);
+      window.setTimeout(() => setMessage(''), 1800);
+    }
+  }
+
+  async function runPRReview() {
+    if (!executionContext?.execution_package_v2 && !executionContext?.executionPackageV2) {
+      setError('Build the execution package before running PR Review.');
+      return;
+    }
+    const changedFiles = parseChangedFilesInput(implementationChangedFiles);
+    const result = await withLoading('Running HEI PR Review...', () => {
+      return postJson<PRReviewReport>('/pr-review', {
+        pull_request: { title: currentWorkItem?.title || storyInput.title || 'Current implementation changes' },
+        linked_work_items: currentWorkItem ? [{ id: currentWorkItem.id, type: currentWorkItem.type, title: currentWorkItem.title }] : [],
+        execution_package: executionContext.execution_package_v2 || executionContext.executionPackageV2 || {},
+        developer_prompt: devPrompt?.developer_prompt_v2 || devPrompt || {},
+        task_dna: executionContext.work_item_dna || {},
+        story_dna: executionContext.parent_work_item_dna || {},
+        changed_files: changedFiles,
+        repository_diff: { changed_files: changedFiles },
+      });
+    });
+    if (result) {
+      setPrReview(result);
+      if (result.implementationValidation) {
+        setImplementationValidation(result.implementationValidation);
+      }
+      setMessage(`PR Review ${result.status}.`);
+      window.setTimeout(() => setMessage(''), 1800);
+    }
+  }
+
+  async function postPRReviewComment() {
+    if (!prReview) {
+      setError('Run PR Review before posting a review comment.');
+      return;
+    }
+    const result = await withLoading('Posting PR Review comment...', () => postJson<{ posted?: boolean; disabled?: boolean; message?: string }>('/pr-review/comment', { report: prReview as unknown as Record<string, unknown> }));
+    if (result) {
+      setMessage(result.message || (result.posted ? 'PR Review comment posted.' : 'PR Review comment was not posted.'));
+      window.setTimeout(() => setMessage(''), 2400);
+    }
   }
 
   async function enhanceExecutionWithAi() {
@@ -2749,6 +2876,10 @@ function ProjectIntelligenceTab() {
           childDrafts={childDrafts}
           creationLog={creationLog}
           providerMetadata={latestProvider}
+          implementationValidation={implementationValidation}
+          implementationChangedFiles={implementationChangedFiles}
+          setImplementationChangedFiles={setImplementationChangedFiles}
+          prReview={prReview}
           approvalWorkflow={approvalWorkflow}
           refineStory={() => void refineStory()}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
@@ -2760,6 +2891,9 @@ function ProjectIntelligenceTab() {
           updateDraftSelection={updateDraftSelection}
           createSelectedChildren={() => void createSelectedChildWorkItems()}
           onOpenVsCode={() => openVsCodeExecutionPackage()}
+          validateImplementation={() => void validateImplementation()}
+          runPRReview={() => void runPRReview()}
+          postPRReviewComment={() => void postPRReviewComment()}
         />
       ) : null}
 
@@ -4257,6 +4391,31 @@ function AIPlannerWorkspace({
   const planningType = itemType === 'Epic' || itemType === 'Feature' ? itemType : selectedItemType;
   const hasGeneratedFeatures = childDrafts.some((draft) => draft.type === 'Feature');
   const hasGeneratedStories = childDrafts.some((draft) => draft.type === 'User Story');
+  const [selectedPlanningItemId, setSelectedPlanningItemId] = useState('');
+  const [selectedPlanningDetailTab, setSelectedPlanningDetailTab] = useState<PlanningDetailTab>('overview');
+  const planningModel = buildPlanningWorkspaceModel({
+    planningType,
+    epicResult,
+    featureResult,
+    childDrafts,
+    approvalWorkflow,
+    loading,
+    readOnly,
+    epicTitle: epicInput.title,
+    featureTitle: featureInput.title,
+    refineEpic,
+    refineFeature,
+    approveEpic,
+    approveFeature,
+    approveFeatures,
+    approveStories,
+    generateChildren,
+    analyzeImpact,
+    hasGeneratedFeatures,
+    hasGeneratedStories,
+    selectedId: selectedPlanningItemId,
+    setSelectedId: setSelectedPlanningItemId,
+  });
   if (itemType !== 'Epic' && itemType !== 'Feature' && currentWorkItem) {
     return (
       <>
@@ -4269,11 +4428,22 @@ function AIPlannerWorkspace({
   }
   return (
     <>
-      <ApprovalWorkflowDashboard state={approvalWorkflow} itemType={planningType} />
-      <ArtifactLifecyclePanel artifacts={artifactRecords} reuseStatus={artifactReuseStatus} />
-      <section className="planner-card">
-        <div className="planner-label">Planning Workflow</div>
-        <div className="planner-subtle">Work through planning in delivery order: Epic, Feature, Story, then Task execution.</div>
+      <section className="planner-card hei-planning-workspace">
+        <div className="hei-planning-header">
+          <div>
+            <div className="planner-label">{planningType} Planning</div>
+            <h2>{planningModel.title}</h2>
+            <p>{planningModel.subtitle}</p>
+          </div>
+          <div className="hei-planning-primary">
+            <span>{planningModel.stageLabel}</span>
+            <button className="planner-button" onClick={planningModel.primaryAction.run} disabled={planningModel.primaryAction.disabled}>
+              {planningModel.primaryAction.label}
+            </button>
+            {planningModel.primaryAction.disabledReason ? <small>{planningModel.primaryAction.disabledReason}</small> : null}
+          </div>
+        </div>
+        <PlanningProgressBar stages={planningModel.stages} metrics={planningModel.progressMetrics} />
         <KnowledgeRegistryNotice profile={profile} />
         {!profileCompletion(profile).complete ? (
           <div className="planner-banner">Project profile is incomplete. Results may be less accurate, but you can continue planning.</div>
@@ -4292,90 +4462,70 @@ function AIPlannerWorkspace({
             </button>
           ))}
         </div>
-      </section>
-
-      {planningType === 'Epic' ? (
-        <section className="planner-card">
-          <div className="planner-label">Epic Workflow</div>
-          <div className="planner-subtle">Refine the epic, approve it, then generate feature recommendations.</div>
-          <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
-          <ApprovalStatusStrip label="Epic" status={approvalWorkflow.epic} qualityScore={qualityScoreForEpic(epicResult)} />
-          <div className="planner-actions">
-            {!epicResult ? (
-              <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Refine Epic</button>
+        <div className="hei-planning-grid">
+          <section className="hei-planning-list" aria-label={`${planningModel.listTitle} list`}>
+            <div className="planner-label">{planningModel.listTitle}</div>
+            <PlanningItemList
+              items={planningModel.items}
+              selectedId={planningModel.selectedId}
+              onSelect={planningModel.setSelectedId}
+            />
+          </section>
+          <section className="hei-planning-detail">
+            {planningType === 'Epic' ? (
+              <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
             ) : (
-              <button className="planner-button" onClick={approveEpic} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.epic)}>Approve Epic</button>
+              <RefinementInput input={featureInput} setInput={setFeatureInput} titlePlaceholder="Order visibility" descriptionPlaceholder="Describe feature behavior, affected users, and delivery scope." />
             )}
-            <button className="planner-button" onClick={() => generateChildren(false)} disabled={loading || readOnly || !epicInput.title.trim() || hasGeneratedFeatures}>{hasGeneratedFeatures ? 'Features Already Generated' : 'Generate Approved Feature'}</button>
-            {epicResult ? <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Epic</button> : null}
-            {hasGeneratedFeatures ? <button className="planner-button secondary" onClick={() => generateChildren(true)} disabled={loading || readOnly || !epicInput.title.trim()}>Regenerate Features</button> : null}
-            <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !epicInput.title.trim()}>Impact Analysis</button>
-          </div>
-          <details className="planner-task">
-            <summary className="planner-label">Advanced Refine</summary>
-            <div className="planner-subtle">Use only when the generated draft needs custom revision. This calls Phi again.</div>
-            <button className="planner-button secondary" onClick={refineEpic} disabled={loading || readOnly || !epicInput.title.trim()}>Custom Refine Epic</button>
-          </details>
-          {epicResult ? (
-            <EpicRefinementResult result={epicResult} />
-          ) : null}
-          {epicResult?.capability_review?.length ? (
-            <CapabilityReviewWorkspace
-              result={epicResult}
+            <PlanningSelectedDetail
+              item={planningModel.selectedItem}
+              emptyTitle={planningModel.emptyTitle}
+              emptyText={planningModel.emptyText}
               loading={loading}
               readOnly={readOnly}
-              onUpdate={updateCapabilityReview}
-              onMove={moveCapabilityReview}
-              onGenerateFeature={generateFeatureForCapability}
+              onApprove={planningModel.selectedItem?.kind === 'capability' ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Approved' }) : undefined}
+              onReject={planningModel.selectedItem?.kind === 'capability' ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Rejected' }) : undefined}
+              onEdit={planningModel.selectedItem?.kind === 'capability' ? () => {
+                const comment = window.prompt('Add a review comment for this capability', planningModel.selectedItem?.comments?.[0] || '');
+                if (comment !== null && planningModel.selectedItem) {
+                  updateCapabilityReview(planningModel.selectedItem.id, { reviewComments: comment.trim() ? [comment.trim()] : [] });
+                }
+              } : undefined}
+              onMoveUp={planningModel.selectedItem?.kind === 'capability' ? () => moveCapabilityReview(planningModel.selectedItem!.id, -1) : undefined}
+              onMoveDown={planningModel.selectedItem?.kind === 'capability' ? () => moveCapabilityReview(planningModel.selectedItem!.id, 1) : undefined}
+              selectedTab={selectedPlanningDetailTab}
+              onTabChange={setSelectedPlanningDetailTab}
             />
-          ) : null}
-          {hasGeneratedFeatures ? (
-            <div className="planner-actions">
-              <ApprovalStatusStrip label="Features" status={approvalWorkflow.features} qualityScore={qualityScoreForFeatureDrafts(childDrafts.filter((draft) => draft.type === 'Feature'))} />
-              <button className="planner-button" onClick={approveFeatures} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.features)}>Approve Features</button>
-            </div>
-          ) : null}
-          {epicImpact ? <EpicImpactResult result={epicImpact} /> : null}
-        </section>
-      ) : null}
-
-      {planningType === 'Feature' ? (
-        <section className="planner-card">
-          <div className="planner-label">Feature Workflow</div>
-          <div className="planner-subtle">Refine the feature, approve it, then generate user stories.</div>
-          <RefinementInput input={featureInput} setInput={setFeatureInput} titlePlaceholder="Order visibility" descriptionPlaceholder="Describe feature behavior, affected users, and delivery scope." />
-          <ApprovalStatusStrip label="Feature" status={approvalWorkflow.feature} qualityScore={qualityScoreForFeature(featureResult)} />
+          </section>
+          <aside className="hei-planning-insights">
+            <PlanningInsights
+              planningType={planningType}
+              epicResult={epicResult}
+              featureResult={featureResult}
+              epicImpact={epicImpact}
+              featureImpact={featureImpact}
+              childDrafts={childDrafts}
+              artifactRecords={artifactRecords}
+              artifactReuseStatus={artifactReuseStatus}
+              approvalWorkflow={approvalWorkflow}
+            />
+          </aside>
+        </div>
+        <details className="planner-nested">
+          <summary>Advanced Planning Actions</summary>
           <div className="planner-actions">
-            {!featureResult ? (
-              <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Refine Feature</button>
-            ) : (
-              <button className="planner-button" onClick={approveFeature} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.feature)}>Approve Feature</button>
-            )}
-            <button className="planner-button" onClick={() => generateChildren(false)} disabled={loading || readOnly || !featureInput.title.trim() || hasGeneratedStories}>{hasGeneratedStories ? 'Stories Already Generated' : 'Generate Stories'}</button>
-            {featureResult ? <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Regenerate Feature</button> : null}
-            {hasGeneratedStories ? <button className="planner-button secondary" onClick={() => generateChildren(true)} disabled={loading || readOnly || !featureInput.title.trim()}>Regenerate Stories</button> : null}
-            <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !featureInput.title.trim()}>Impact Analysis</button>
+            <button className="planner-button secondary" onClick={planningType === 'Epic' ? refineEpic : refineFeature} disabled={planningType === 'Epic' ? loading || readOnly || !epicInput.title.trim() : loading || readOnly || !featureInput.title.trim()}>
+              {planningType === 'Epic' ? 'Regenerate Epic Analysis' : 'Regenerate Feature Analysis'}
+            </button>
+            <button className="planner-button secondary" onClick={() => generateChildren(true)} disabled={planningType === 'Epic' ? loading || readOnly || !epicInput.title.trim() || !hasGeneratedFeatures : loading || readOnly || !featureInput.title.trim() || !hasGeneratedStories}>
+              {planningType === 'Epic' ? 'Regenerate Features' : 'Regenerate Stories'}
+            </button>
+            <button className="planner-button secondary" onClick={analyzeImpact} disabled={planningType === 'Epic' ? loading || readOnly || !epicInput.title.trim() : loading || readOnly || !featureInput.title.trim()}>
+              Impact Analysis
+            </button>
           </div>
-          <details className="planner-task">
-            <summary className="planner-label">Advanced Refine</summary>
-            <div className="planner-subtle">Use only when the generated draft needs custom revision. This calls Phi again.</div>
-            <button className="planner-button secondary" onClick={refineFeature} disabled={loading || readOnly || !featureInput.title.trim()}>Custom Refine Feature</button>
-          </details>
-          {featureResult ? (
-            <div className="planner-status-grid">
-              <FeatureRefinementResult result={featureResult} />
-              <CardList title="Generated Stories" items={featureResult.recommended_stories} />
-            </div>
-          ) : null}
-          {hasGeneratedStories ? (
-            <div className="planner-actions">
-              <ApprovalStatusStrip label="Stories" status={approvalWorkflow.stories} qualityScore={qualityScoreForFeature(featureResult)} />
-              <button className="planner-button" onClick={approveStories} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.stories)}>Approve Stories</button>
-            </div>
-          ) : null}
-          {featureImpact ? <FeatureImpactResult result={featureImpact} /> : null}
-        </section>
-      ) : null}
+        </details>
+      </section>
       <GeneratedChildWorkItems
         drafts={childDrafts}
         creationLog={creationLog}
@@ -4412,6 +4562,589 @@ function WorkItemContextCard({ workItem }: { workItem?: AdoWorkItem }) {
       </div>
     </section>
   );
+}
+
+type PlanningStageStatus = 'complete' | 'current' | 'locked';
+type PlanningStage = { label: string; status: PlanningStageStatus };
+type PlanningDetailTab = 'overview' | 'responsibilities' | 'scope' | 'repository' | 'knowledge' | 'dna' | 'history';
+type PlanningProgressMetric = { label: string; percent?: number; status?: string };
+type PlanningReviewItem = {
+  id: string;
+  kind: 'capability' | 'feature' | 'story';
+  title: string;
+  subtitle: string;
+  status?: string;
+  priority?: string;
+  confidence?: number;
+  description?: string;
+  businessValue?: string;
+  responsibilities?: string[];
+  scope?: string[];
+  outOfScope?: string[];
+  dependencies?: string[];
+  evidence?: string[];
+  modules?: string[];
+  flows?: string[];
+  applications?: string[];
+  acceptanceCriteria?: string[];
+  comments?: string[];
+  repositoryCoverage?: number;
+  generatedCount?: number;
+  validation?: string;
+};
+
+function buildPlanningWorkspaceModel({
+  planningType,
+  epicResult,
+  featureResult,
+  childDrafts,
+  approvalWorkflow,
+  loading,
+  readOnly,
+  epicTitle,
+  featureTitle,
+  refineEpic,
+  refineFeature,
+  approveEpic,
+  approveFeature,
+  approveFeatures,
+  approveStories,
+  generateChildren,
+  analyzeImpact,
+  hasGeneratedFeatures,
+  hasGeneratedStories,
+  selectedId,
+  setSelectedId,
+}: {
+  planningType: WorkItemKind;
+  epicResult?: EpicRefinement;
+  featureResult?: FeatureRefinement;
+  childDrafts: ChildDraft[];
+  approvalWorkflow: ApprovalWorkflowState;
+  loading: boolean;
+  readOnly: boolean;
+  epicTitle: string;
+  featureTitle: string;
+  refineEpic: () => void;
+  refineFeature: () => void;
+  approveEpic: () => void;
+  approveFeature: () => void;
+  approveFeatures: () => void;
+  approveStories: () => void;
+  generateChildren: (forceRegenerate?: boolean) => void;
+  analyzeImpact: () => void;
+  hasGeneratedFeatures: boolean;
+  hasGeneratedStories: boolean;
+  selectedId: string;
+  setSelectedId: (value: string) => void;
+}) {
+  const isEpic = planningType === 'Epic';
+  const featureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
+  const storyDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
+  const capabilities = epicResult?.capability_review || [];
+  const items = isEpic
+    ? capabilities.length
+      ? capabilities.map(capabilityToReviewItem)
+      : featureDrafts.map(draftToReviewItem)
+    : storyDrafts.length
+      ? storyDrafts.map(draftToReviewItem)
+      : (featureResult?.recommended_stories || []).map(storyToReviewItem);
+  const effectiveSelectedId = items.some((item) => item.id === selectedId) ? selectedId : items[0]?.id || '';
+  const selectedItem = items.find((item) => item.id === effectiveSelectedId);
+  const epicApproved = approvalWorkflow.epic === 'approved';
+  const featureApproved = approvalWorkflow.feature === 'approved';
+  const featuresApproved = approvalWorkflow.features === 'approved' || featureDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const storiesApproved = approvalWorkflow.stories === 'approved' || storyDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const allCapabilitiesReviewed = !capabilities.length || capabilities.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
+  const approvedCapabilities = capabilities.filter((capability) => capability.status === 'Approved').length;
+  const pendingCapabilities = capabilities.filter((capability) => !['Approved', 'Rejected'].includes(String(capability.status)));
+  const pendingFeatureDrafts = featureDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
+  const pendingStoryDrafts = storyDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
+  const primaryAction = isEpic
+    ? !epicResult
+      ? { label: 'Analyze Epic →', run: refineEpic, disabled: loading || readOnly || !epicTitle.trim(), disabledReason: !epicTitle.trim() ? 'Epic title is required before analysis.' : '' }
+      : !epicApproved && isApprovalPending(approvalWorkflow.epic)
+        ? { label: 'Approve Epic →', run: approveEpic, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents approval.' : '' }
+        : capabilities.length && !allCapabilitiesReviewed
+          ? { label: 'Review Remaining Capabilities →', run: () => setSelectedId(pendingCapabilities[0]?.capabilityId || selectedId), disabled: loading || readOnly || !pendingCapabilities.length, disabledReason: `${pendingCapabilities.length} capabilities still require approval.` }
+          : !hasGeneratedFeatures
+            ? { label: 'Generate Features →', run: () => generateChildren(false), disabled: loading || readOnly || !epicTitle.trim() || (capabilities.length > 0 && approvedCapabilities === 0), disabledReason: capabilities.length > 0 && approvedCapabilities === 0 ? 'Approve at least one capability before generating Features.' : '' }
+            : !featuresApproved && isApprovalPending(approvalWorkflow.features)
+              ? { label: 'Approve Features →', run: approveFeatures, disabled: loading || readOnly || pendingFeatureDrafts.length === 0, disabledReason: pendingFeatureDrafts.length ? `${pendingFeatureDrafts.length} Features still require approval.` : '' }
+              : { label: 'Open Feature Review →', run: analyzeImpact, disabled: loading || readOnly || !epicTitle.trim(), disabledReason: '' }
+    : !featureResult
+      ? { label: 'Analyze Feature →', run: refineFeature, disabled: loading || readOnly || !featureTitle.trim(), disabledReason: !featureTitle.trim() ? 'Feature title is required before analysis.' : '' }
+      : !featureApproved && isApprovalPending(approvalWorkflow.feature)
+        ? { label: 'Approve Feature →', run: approveFeature, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents approval.' : '' }
+        : !hasGeneratedStories
+          ? { label: 'Generate Stories →', run: () => generateChildren(false), disabled: loading || readOnly || !featureTitle.trim(), disabledReason: !featureApproved ? 'Approve the Feature before generating Stories.' : '' }
+          : !storiesApproved && isApprovalPending(approvalWorkflow.stories)
+            ? { label: 'Approve Stories →', run: approveStories, disabled: loading || readOnly || pendingStoryDrafts.length === 0, disabledReason: pendingStoryDrafts.length ? `${pendingStoryDrafts.length} Stories still require approval.` : '' }
+            : { label: 'Generate Tasks →', run: () => generateChildren(false), disabled: loading || readOnly || !featureTitle.trim(), disabledReason: '' };
+  const currentStage = isEpic
+    ? !epicResult
+      ? 'Epic'
+      : capabilities.length && !allCapabilitiesReviewed
+        ? 'Capability Review'
+        : !hasGeneratedFeatures || !featuresApproved
+          ? 'Feature Review'
+          : 'Story Review'
+    : !featureResult
+      ? 'Feature'
+      : !hasGeneratedStories || !storiesApproved
+        ? 'Story Review'
+        : 'Task Review';
+  const stages = buildSingleCurrentStages(
+    isEpic ? ['Epic', 'Capability Review', 'Feature Review', 'Story Review', 'Task Review'] : ['Feature', 'Story Review', 'Task Review', 'Execution'],
+    currentStage,
+    isEpic
+      ? {
+          Epic: Boolean(epicResult),
+          'Capability Review': Boolean(capabilities.length && allCapabilitiesReviewed),
+          'Feature Review': Boolean(hasGeneratedFeatures && featuresApproved),
+          'Story Review': false,
+          'Task Review': false,
+        }
+      : {
+          Feature: Boolean(featureResult),
+          'Story Review': Boolean(hasGeneratedStories && storiesApproved),
+          'Task Review': false,
+          Execution: false,
+        }
+  );
+  const progressMetrics = isEpic
+    ? [
+        { label: 'Epic', percent: epicResult ? 100 : 0 },
+        { label: 'Capability Review', percent: capabilities.length ? Math.round(((capabilities.length - pendingCapabilities.length) / capabilities.length) * 100) : undefined, status: epicResult ? 'Pending' : 'Locked' },
+        { label: 'Feature Review', percent: featureDrafts.length ? Math.round(((featureDrafts.length - pendingFeatureDrafts.length) / featureDrafts.length) * 100) : undefined, status: hasGeneratedFeatures ? undefined : 'Locked' },
+        { label: 'Story Review', status: currentStage === 'Story Review' ? 'Ready' : 'Locked' },
+        { label: 'Task Review', status: 'Locked' },
+      ]
+    : [
+        { label: 'Feature', percent: featureResult ? 100 : 0 },
+        { label: 'Story Review', percent: storyDrafts.length ? Math.round(((storyDrafts.length - pendingStoryDrafts.length) / storyDrafts.length) * 100) : undefined, status: hasGeneratedStories ? undefined : 'Pending' },
+        { label: 'Task Review', status: currentStage === 'Task Review' ? 'Ready' : 'Locked' },
+        { label: 'Execution', status: 'Locked' },
+      ];
+  return {
+    title: isEpic ? 'Epic Planning Workspace' : 'Feature Planning Workspace',
+    subtitle: isEpic ? 'Analyze the epic, review capabilities, then generate feature recommendations.' : 'Review the feature, generate stories, and prepare the next planning level.',
+    stageLabel: primaryAction.label,
+    primaryAction,
+    stages,
+    progressMetrics,
+    items,
+    selectedId: effectiveSelectedId,
+    setSelectedId,
+    selectedItem,
+    listTitle: capabilities.length ? 'Capabilities' : isEpic ? 'Features' : 'Stories',
+    emptyTitle: isEpic ? 'No planning items yet' : 'No story candidates yet',
+    emptyText: isEpic ? 'Analyze the Epic to reveal capability review items.' : 'Analyze the Feature or generate Stories to populate this workspace.',
+  };
+}
+
+function buildSingleCurrentStages(labels: string[], currentLabel: string, completed: Record<string, boolean>): PlanningStage[] {
+  const currentIndex = Math.max(0, labels.indexOf(currentLabel));
+  return labels.map((label, index) => {
+    if (index < currentIndex && completed[label]) {
+      return { label, status: 'complete' };
+    }
+    if (index === currentIndex) {
+      return { label, status: 'current' };
+    }
+    return { label, status: 'locked' };
+  });
+}
+
+function PlanningProgressBar({ stages, metrics }: { stages: PlanningStage[]; metrics: PlanningProgressMetric[] }) {
+  return (
+    <div className="hei-stage-progress">
+      {stages.map((stage) => {
+        const metric = metrics.find((item) => item.label === stage.label);
+        const percent = typeof metric?.percent === 'number' ? Math.max(0, Math.min(100, metric.percent)) : undefined;
+        return (
+          <div className={`hei-stage ${stage.status}`} key={stage.label}>
+            <span>{stage.status === 'complete' ? 'Done' : stage.status === 'current' ? 'Active' : 'Locked'}</span>
+            <strong>{stage.label}</strong>
+            <small>{metric?.status || (typeof percent === 'number' ? `${percent}%` : stage.status === 'locked' ? 'Locked' : 'Pending')}</small>
+            {typeof percent === 'number' ? (
+              <div className="hei-progress-track">
+                <i style={{ width: `${percent}%` }} />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PlanningProgressSummary({ metrics }: { metrics: PlanningProgressMetric[] }) {
+  return (
+    <div className="hei-progress-summary">
+      {metrics.map((metric) => {
+        const percent = Math.max(0, Math.min(100, metric.percent ?? 0));
+        return (
+          <div className="hei-progress-card" key={metric.label}>
+            <div>
+              <strong>{metric.label}</strong>
+              <span>{metric.status || `${percent}%`}</span>
+            </div>
+            {typeof metric.percent === 'number' ? (
+              <div className="hei-progress-track">
+                <span style={{ width: `${percent}%` }} />
+              </div>
+            ) : (
+              <div className="hei-progress-track muted">
+                <span />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PlanningItemList({ items, selectedId, onSelect }: { items: PlanningReviewItem[]; selectedId: string; onSelect: (value: string) => void }) {
+  if (!items.length) {
+    return (
+      <div className="hei-queue-empty">
+        <strong>No review items yet.</strong>
+        <span>Run the current planning action to populate this queue.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="hei-review-list">
+      {items.map((item) => (
+        <button className={`hei-review-list-item ${item.id === selectedId ? 'active' : ''}`} key={item.id} onClick={() => onSelect(item.id)} type="button">
+          <div>
+            <strong>{item.title}</strong>
+            <small>
+              <b className={`hei-dot ${statusTone(item.status)}`} />
+              {item.status || 'Pending'} · {item.confidence ? `${Math.round(item.confidence * 100)}%` : 'Not scored'}
+            </small>
+          </div>
+          <span>{item.validation || item.priority || item.kind} · Repository {typeof item.repositoryCoverage === 'number' ? `${item.repositoryCoverage}%` : 'Pending'}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function statusTone(status?: string): 'success' | 'warning' | 'neutral' {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'approved' || normalized === 'created' || normalized === 'pass') {
+    return 'success';
+  }
+  if (normalized === 'rejected' || normalized === 'failed' || normalized.includes('review')) {
+    return 'warning';
+  }
+  return 'neutral';
+}
+
+function PlanningSelectedDetail({
+  item,
+  emptyTitle,
+  emptyText,
+  loading,
+  readOnly,
+  onApprove,
+  onReject,
+  onEdit,
+  onMoveUp,
+  onMoveDown,
+  selectedTab,
+  onTabChange,
+}: {
+  item?: PlanningReviewItem;
+  emptyTitle: string;
+  emptyText: string;
+  loading: boolean;
+  readOnly: boolean;
+  onApprove?: () => void;
+  onReject?: () => void;
+  onEdit?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  selectedTab: PlanningDetailTab;
+  onTabChange: (tab: PlanningDetailTab) => void;
+}) {
+  if (!item) {
+    return (
+      <div className="hei-selected-empty">
+        <strong>{emptyTitle}</strong>
+        <span>{emptyText}</span>
+      </div>
+    );
+  }
+  return (
+    <article className="hei-selected-detail">
+      <div className="hei-selected-title">
+        <div>
+          <div className="planner-label">{item.kind}</div>
+          <h3>{item.title}</h3>
+          <p>{item.subtitle}</p>
+        </div>
+        <span className="hei-status-badge neutral">{item.status || 'Draft'}</span>
+      </div>
+      <PlanningDetailTabs selected={selectedTab} onSelect={onTabChange} />
+      {selectedTab === 'overview' ? (
+        <>
+          <div className="hei-business-grid">
+            <InfoBlock title="Business Goal" value={item.description || item.subtitle} empty="Loading business goal..." />
+            <InfoBlock title="Business Value" value={item.businessValue} empty="Business value pending review." />
+            <InfoBlock title="Problem Solved" value={item.subtitle} empty="Problem statement pending validation." />
+            <InfoBlock title="Primary Dependencies" items={item.dependencies || []} empty={dependencyEmptyState(item)} />
+          </div>
+          <StageSummaryCard item={item} />
+        </>
+      ) : null}
+      {selectedTab === 'responsibilities' ? <InfoBlock title="Responsibilities" items={item.responsibilities || []} empty="Responsibilities pending analysis." /> : null}
+      {selectedTab === 'scope' ? (
+        <div className="hei-business-grid">
+          <InfoBlock title="In Scope" items={item.scope || []} empty="Scope pending validation." />
+          <InfoBlock title="Acceptance Summary" items={item.acceptanceCriteria || []} empty="Acceptance criteria pending generation." />
+        </div>
+      ) : null}
+      {selectedTab === 'repository' ? (
+        <div className="hei-business-grid">
+          <InfoBlock title="Repository Evidence" items={item.evidence || []} empty="Run Repository Intelligence to load evidence." />
+          <InfoBlock title="Applications" items={item.applications || []} empty="No applications identified for this item." />
+        </div>
+      ) : null}
+      {selectedTab === 'knowledge' ? (
+        <div className="hei-business-grid">
+          <InfoBlock title="Modules" items={item.modules || []} empty="No modules selected by Knowledge Registry." />
+          <InfoBlock title="Flows" items={item.flows || []} empty="No flows selected by Knowledge Registry." />
+        </div>
+      ) : null}
+      {selectedTab === 'dna' ? (
+        <div className="hei-selected-empty">
+          <strong>DNA details are available in Engineering Details.</strong>
+          <span>DNA stays collapsed by default so planning remains business-first.</span>
+        </div>
+      ) : null}
+      {selectedTab === 'history' ? (
+        <InfoBlock title="Review History" items={item.comments || []} empty="No review history yet. Approve, reject, or edit to record history." />
+      ) : null}
+      {onApprove || onReject || onEdit ? (
+        <div className="planner-actions">
+          {onApprove ? <button className="planner-button" onClick={onApprove} disabled={loading || readOnly}>Approve</button> : null}
+          {onReject ? <button className="planner-button secondary" onClick={onReject} disabled={loading || readOnly}>Reject</button> : null}
+          {onEdit ? <button className="planner-button secondary" onClick={onEdit} disabled={loading || readOnly}>Edit</button> : null}
+          {onMoveUp ? <button className="planner-button secondary" onClick={onMoveUp} disabled={loading || readOnly}>Move Up</button> : null}
+          {onMoveDown ? <button className="planner-button secondary" onClick={onMoveDown} disabled={loading || readOnly}>Move Down</button> : null}
+        </div>
+      ) : null}
+      <details className="planner-nested">
+        <summary>Engineering Details</summary>
+        <div className="planner-status-grid">
+          <Row label="Confidence" value={item.confidence ? `${Math.round(item.confidence * 100)}%` : 'Not scored'} />
+          <Row label="Priority" value={item.priority || 'Not set'} />
+          <Row label="Kind" value={item.kind} />
+        </div>
+        <ListBlock title="Repository Evidence" items={item.evidence || []} />
+        <ListBlock title="Modules" items={item.modules || []} />
+        <ListBlock title="Flows" items={item.flows || []} />
+        <ListBlock title="Applications" items={item.applications || []} />
+        <ListBlock title="Out Of Scope" items={item.outOfScope || []} />
+        <ListBlock title="Review Comments" items={item.comments || []} />
+      </details>
+    </article>
+  );
+}
+
+function PlanningDetailTabs({ selected, onSelect }: { selected: PlanningDetailTab; onSelect: (tab: PlanningDetailTab) => void }) {
+  const tabs: Array<{ id: PlanningDetailTab; label: string }> = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'responsibilities', label: 'Responsibilities' },
+    { id: 'scope', label: 'Scope' },
+    { id: 'repository', label: 'Repository' },
+    { id: 'knowledge', label: 'Knowledge' },
+    { id: 'dna', label: 'DNA' },
+    { id: 'history', label: 'History' },
+  ];
+  return (
+    <div className="hei-detail-tabs">
+      {tabs.map((tab) => (
+        <button key={tab.id} className={selected === tab.id ? 'active' : ''} type="button" onClick={() => onSelect(tab.id)}>
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StageSummaryCard({ item }: { item: PlanningReviewItem }) {
+  return (
+    <div className="hei-stage-summary-card">
+      <div>
+        <span>Stage Summary</span>
+        <strong>{item.status === 'Approved' || item.status === 'approved' ? 'Ready for next planning level' : 'Review required'}</strong>
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Validation" value={item.validation || 'Pending Validation'} />
+        <Row label="Confidence" value={item.confidence ? `${Math.round(item.confidence * 100)}%` : 'Pending'} />
+        <Row label="Repository Coverage" value={typeof item.repositoryCoverage === 'number' ? `${item.repositoryCoverage}%` : 'Run Repository Analysis'} />
+        <Row label="Generated Items" value={formatNumber(item.generatedCount)} />
+      </div>
+    </div>
+  );
+}
+
+function dependencyEmptyState(item: PlanningReviewItem): string {
+  if ((item.evidence || []).length || (item.modules || []).length || (item.flows || []).length) {
+    return 'No dependencies identified';
+  }
+  return 'Dependencies Pending Validation';
+}
+
+function InfoBlock({ title, value, items, empty }: { title: string; value?: string; items?: string[]; empty?: string }) {
+  const cleanItems = (items || []).filter(Boolean);
+  return (
+    <div className="hei-info-block">
+      <span>{title}</span>
+      {value ? <p>{value}</p> : cleanItems.length ? <ul>{cleanItems.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{empty || 'Run analysis to populate this section.'}</p>}
+    </div>
+  );
+}
+
+function PlanningInsights({
+  planningType,
+  epicResult,
+  featureResult,
+  epicImpact,
+  featureImpact,
+  childDrafts,
+  artifactRecords,
+  artifactReuseStatus,
+  approvalWorkflow,
+}: {
+  planningType: WorkItemKind;
+  epicResult?: EpicRefinement;
+  featureResult?: FeatureRefinement;
+  epicImpact?: EpicImpact;
+  featureImpact?: FeatureImpact;
+  childDrafts: ChildDraft[];
+  artifactRecords: ArtifactRecord[];
+  artifactReuseStatus: string;
+  approvalWorkflow: ApprovalWorkflowState;
+}) {
+  const featureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
+  const storyDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
+  return (
+    <>
+      <div className="planner-label">Engineering Insights</div>
+      <div className="planner-status-grid">
+        <Row label="Features" value={formatNumber(featureDrafts.length)} />
+        <Row label="Stories" value={formatNumber(storyDrafts.length)} />
+        <Row label="Lifecycle" value={artifactReuseStatus || 'Not available'} />
+      </div>
+      <details className="planner-nested">
+        <summary>Validation</summary>
+        <div className="planner-status-grid">
+          <Row label="Epic" value={approvalWorkflow.epic} />
+          <Row label="Features" value={approvalWorkflow.features} />
+          <Row label="Stories" value={approvalWorkflow.stories} />
+        </div>
+      </details>
+      <details className="planner-nested">
+        <summary>Repository & Knowledge</summary>
+        <ListBlock title="Modules" items={planningType === 'Epic' ? epicResult?.generation_review?.modules_used || [] : featureResult?.affected_modules || []} />
+        <ListBlock title="Flows" items={planningType === 'Epic' ? epicResult?.generation_review?.flows_used || [] : featureResult?.affected_flows || []} />
+        <ListBlock title="Dependencies" items={planningType === 'Epic' ? epicResult?.dependencies || [] : featureResult?.dependencies || []} />
+      </details>
+      <details className="planner-nested">
+        <summary>Impact & Risk</summary>
+        <ListBlock title="Risks" items={planningType === 'Epic' ? epicResult?.risks || epicImpact?.risks || [] : featureResult?.risks || featureImpact?.risks || []} />
+        <ListBlock title="Constraints" items={epicResult?.constraints || []} />
+      </details>
+      <details className="planner-nested">
+        <summary>Artifact History</summary>
+        {artifactRecords.slice(0, 4).map((artifact) => (
+          <Row key={artifact.artifact_id} label={`${artifact.artifact_type} v${artifact.version}`} value={artifact.state} />
+        ))}
+        {!artifactRecords.length ? <div className="planner-subtle">No reusable artifacts yet.</div> : null}
+      </details>
+      <details className="planner-nested">
+        <summary>Future</summary>
+        <ListBlock title="Coming Signals" items={['Engineering Graph', 'DNA', 'Prompt History', 'Execution Trace']} />
+      </details>
+    </>
+  );
+}
+
+function capabilityToReviewItem(capability: CapabilityReview): PlanningReviewItem {
+  return {
+    id: capability.capabilityId,
+    kind: 'capability',
+    title: capability.capabilityName,
+    subtitle: capability.businessPurpose || capability.businessValue || 'Capability under review',
+    status: capability.status,
+    priority: capability.priority,
+    confidence: capability.confidence,
+    description: capability.businessPurpose,
+    businessValue: capability.businessValue,
+    responsibilities: capability.responsibilities,
+    scope: capability.inScope,
+    outOfScope: capability.outOfScope,
+    dependencies: capability.dependencies,
+    evidence: capability.repositoryEvidence,
+    modules: capability.relatedModules,
+    flows: capability.relatedFlows,
+    applications: capability.relatedApplications,
+    acceptanceCriteria: capability.supports,
+    comments: capability.reviewComments,
+    repositoryCoverage: Math.round(Math.min(100, ((capability.repositoryEvidence?.length || 0) + (capability.relatedModules?.length || 0) + (capability.relatedFlows?.length || 0)) * 12)),
+    generatedCount: capability.estimatedFeatures || 1,
+    validation: capability.status === 'Approved' ? 'PASS' : capability.status === 'Rejected' ? 'Rejected' : 'Needs Review',
+  };
+}
+
+function draftToReviewItem(draft: ChildDraft): PlanningReviewItem {
+  return {
+    id: draft.id,
+    kind: draft.type === 'Feature' ? 'feature' : 'story',
+    title: draft.title,
+    subtitle: draft.description || 'Generated child work item',
+    status: draft.status,
+    confidence: draft.relevanceConfidence,
+    description: draft.description,
+    businessValue: draft.businessValue || draft.businessGoal,
+    responsibilities: draft.primaryPersonas,
+    scope: draft.impactedApplications,
+    dependencies: draft.dependencies,
+    modules: draft.impactedModules,
+    flows: draft.impactedFlows,
+    applications: draft.impactedApplications,
+    acceptanceCriteria: draft.acceptanceCriteria,
+    repositoryCoverage: Math.round(Math.min(100, ((draft.impactedModules?.length || 0) + (draft.impactedFlows?.length || 0)) * 18)),
+    generatedCount: draft.type === 'Feature' ? 1 : 0,
+    validation: draft.status === 'approved' || draft.status === 'created' ? 'PASS' : draft.status === 'failed' ? 'Needs Review' : 'Pending',
+  };
+}
+
+function storyToReviewItem(story: FeatureRefinement['recommended_stories'][number], index: number): PlanningReviewItem {
+  return {
+    id: `story_${index}_${story.title}`,
+    kind: 'story',
+    title: story.title,
+    subtitle: story.description || story.coverage_area || 'Generated story candidate',
+    status: 'Preview',
+    confidence: story.confidence,
+    description: story.description,
+    businessValue: story.coverage_area,
+    responsibilities: story.coverage_area ? [story.coverage_area] : [],
+    dependencies: [],
+    modules: story.modules_used || story.affected_modules,
+    flows: story.flows_used || story.affected_flows,
+    acceptanceCriteria: story.acceptance_criteria,
+    repositoryCoverage: Math.round(Math.min(100, ((story.modules_used?.length || story.affected_modules?.length || 0) + (story.flows_used?.length || story.affected_flows?.length || 0)) * 18)),
+    generatedCount: 0,
+    validation: story.dna_validation?.status || 'Pending',
+  };
 }
 
 function GeneratedChildWorkItems({
@@ -4776,6 +5509,10 @@ function DeveloperWorkspace({
   childDrafts,
   creationLog,
   providerMetadata,
+  implementationValidation,
+  implementationChangedFiles,
+  setImplementationChangedFiles,
+  prReview,
   approvalWorkflow,
   refineStory,
   analyzeImpact,
@@ -4787,6 +5524,9 @@ function DeveloperWorkspace({
   updateDraftSelection,
   createSelectedChildren,
   onOpenVsCode,
+  validateImplementation,
+  runPRReview,
+  postPRReviewComment,
 }: {
   executionContext?: ExecutionContextResult;
   devPrompt?: PromptBuilderResult;
@@ -4810,6 +5550,10 @@ function DeveloperWorkspace({
   childDrafts: ChildDraft[];
   creationLog: string[];
   providerMetadata?: ProviderMetadata;
+  implementationValidation?: ImplementationValidationReport;
+  implementationChangedFiles: string;
+  setImplementationChangedFiles: (value: string) => void;
+  prReview?: PRReviewReport;
   approvalWorkflow: ApprovalWorkflowState;
   refineStory: () => void;
   analyzeImpact: () => void;
@@ -4821,6 +5565,9 @@ function DeveloperWorkspace({
   updateDraftSelection: (draftId: string, selected: boolean) => void;
   createSelectedChildren: () => void;
   onOpenVsCode: () => void;
+  validateImplementation: () => void;
+  runPRReview: () => void;
+  postPRReviewComment: () => void;
 }) {
   const hasPackage = Boolean(executionContext || devPrompt || uiPrompt || qaPrompt || copilotContext);
   const vsCodeUri = executionContext ? buildVsCodeExecutionPackageUri(executionContext, devPrompt, uiPrompt, qaPrompt, copilotContext) : '';
@@ -4926,6 +5673,25 @@ function DeveloperWorkspace({
         />
       ) : null}
       {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
+      {executionContext ? (
+        <ImplementationValidationPanel
+          report={implementationValidation}
+          changedFilesInput={implementationChangedFiles}
+          setChangedFilesInput={setImplementationChangedFiles}
+          loading={loading}
+          readOnly={readOnly}
+          onValidate={validateImplementation}
+        />
+      ) : null}
+      {executionContext ? (
+        <PRReviewPanel
+          report={prReview}
+          loading={loading}
+          readOnly={readOnly}
+          onRun={runPRReview}
+          onPost={postPRReviewComment}
+        />
+      ) : null}
       {executionContext ? (
         <section className="planner-card">
           <div className="planner-label">Lazy Execution Outputs</div>
@@ -5224,6 +5990,148 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
       </div>
     </section>
   );
+}
+
+function ImplementationValidationPanel({
+  report,
+  changedFilesInput,
+  setChangedFilesInput,
+  loading,
+  readOnly,
+  onValidate,
+}: {
+  report?: ImplementationValidationReport;
+  changedFilesInput: string;
+  setChangedFilesInput: (value: string) => void;
+  loading: boolean;
+  readOnly: boolean;
+  onValidate: () => void;
+}) {
+  const changedFiles = report?.changedFiles || [];
+  const violations = report?.violations || [];
+  const summary = report ? implementationValidationSummary(report) : '';
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Implementation Validation</div>
+          <div className="planner-subtle">Validate completed code changes against the approved task, story, execution package, and developer prompt.</div>
+        </div>
+        <StatusBadge label={report?.status || 'Not Run'} tone={report?.status === 'Passed' ? 'success' : report?.status === 'Failed' ? 'error' : 'warning'} />
+      </div>
+      <textarea
+        className="planner-textarea compact"
+        value={changedFilesInput}
+        onChange={(event) => setChangedFilesInput(event.target.value)}
+        placeholder={'Changed files, one per line. Optional format: path | status | diff summary\nsrc/fault/FaultEventController.cs | modified | added validation, authorization, and device health mapping'}
+      />
+      <div className="planner-actions">
+        <button className="planner-button" onClick={onValidate} disabled={loading || readOnly}>Validate Implementation</button>
+        <button className="planner-button secondary" onClick={() => void copyText(changedFiles.map((file) => `${file.path || ''} - ${file.status || ''}`).join('\n'))} disabled={!changedFiles.length}>View Changed Files</button>
+        <button className="planner-button secondary" onClick={() => void copyText(violations.map((item) => `${item.severity || 'issue'}: ${item.message || item.rule || ''}${item.file ? ` (${item.file})` : ''}`).join('\n'))} disabled={!violations.length}>View Violations</button>
+        <button className="planner-button secondary" onClick={() => void copyText(summary)} disabled={!report}>Copy Review Summary</button>
+      </div>
+      {report ? (
+        <>
+          <div className="planner-summary-grid">
+            <SummaryTile title="Acceptance Coverage" value={`${report.acceptanceCoverageScore}%`} />
+            <SummaryTile title="Scope Compliance" value={`${report.scopeComplianceScore}%`} />
+            <SummaryTile title="Repository Alignment" value={`${report.repositoryAlignmentScore}%`} />
+            <SummaryTile title="Standards" value={`${report.standardsComplianceScore}%`} />
+            <SummaryTile title="Tests" value={`${report.testCoverageScore}%`} />
+            <SummaryTile title="Risk" value={`${report.riskScore}%`} />
+          </div>
+          <div className="planner-grid">
+            <ListBlock title="Acceptance Results" items={(report.acceptanceResults || []).map((item) => `${item.acceptanceCriteriaId || 'AC'}: ${titleCase(item.status || 'unknown')} - ${item.acceptanceText || ''}`)} />
+            <ListBlock title="Changed Files" items={changedFiles.length ? changedFiles.map((file) => `${file.path || 'unknown'} - ${titleCase(file.status || 'needs review')}`) : ['No changed files supplied.']} />
+            <ListBlock title="Standards" items={(report.standards || []).map((item) => `${item.standard || 'Standard'} - ${titleCase(item.status || 'unknown')}`)} />
+            <ListBlock title="Tests" items={(report.tests || []).map((item) => `${item.testType || 'Test'} - ${titleCase(item.status || 'unknown')}`)} />
+            <ListBlock title="Violations" items={violations.length ? violations.map((item) => `${titleCase(item.severity || 'issue')}: ${item.message || item.rule || ''}`) : ['No violations detected.']} />
+            <ListBlock title="Recommendations" items={report.recommendations?.length ? report.recommendations : ['No recommendations.']} />
+          </div>
+        </>
+      ) : (
+        <div className="planner-subtle">No implementation validation report yet. Add changed files or diff summaries, then validate.</div>
+      )}
+    </section>
+  );
+}
+
+function PRReviewPanel({
+  report,
+  loading,
+  readOnly,
+  onRun,
+  onPost,
+}: {
+  report?: PRReviewReport;
+  loading: boolean;
+  readOnly: boolean;
+  onRun: () => void;
+  onPost: () => void;
+}) {
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">PR Review</div>
+          <div className="planner-subtle">Review a PR against its linked work item, Execution Package, standards, tests, and approved scope.</div>
+        </div>
+        <StatusBadge label={report?.status || 'Not Run'} tone={report?.status === 'Passed' ? 'success' : report?.status === 'Blocked' ? 'error' : 'warning'} />
+      </div>
+      <div className="planner-actions">
+        <button className="planner-button" onClick={onRun} disabled={loading || readOnly}>Run PR Review</button>
+        <button className="planner-button secondary" onClick={() => void copyText(report?.generatedReviewComment || '')} disabled={!report?.generatedReviewComment}>Copy Review Comment</button>
+        <button className="planner-button secondary" onClick={onPost} disabled={!report || loading || !report.commentPostingEnabled}>Post to Azure DevOps PR</button>
+        <button className="planner-button secondary" onClick={onRun} disabled={loading || readOnly}>Re-run After Changes</button>
+      </div>
+      {!report ? (
+        <div className="planner-subtle">No PR Review report yet. Add changed files above, then run PR Review.</div>
+      ) : (
+        <>
+          {!report.commentPostingEnabled ? <div className="planner-warning">PR comment posting is disabled by feature flag.</div> : null}
+          <div className="planner-status-grid">
+            <Row label="Validation Score" value={`${report.validationScore}%`} />
+            <Row label="Linked Work Items" value={String(report.linkedWorkItems?.length || 0)} />
+            <Row label="Changed Files" value={String(report.changedFiles?.length || 0)} />
+            <Row label="Acceptance Coverage" value={`${report.scores?.acceptanceCoverage || 0}%`} />
+            <Row label="Tests" value={`${report.scores?.tests || 0}%`} />
+            <Row label="Repository Alignment" value={`${report.scores?.repositoryAlignment || 0}%`} />
+          </div>
+          <div className="planner-grid">
+            <ListBlock title="Linked Work Items" items={(report.linkedWorkItems || []).map((item) => `#${item.id || 'n/a'} ${item.type || ''} ${item.title || ''}`.trim())} />
+            <ListBlock title="Blocking Issues" items={report.blockingIssues?.length ? report.blockingIssues : ['None']} />
+            <ListBlock title="Warnings" items={report.warnings?.length ? report.warnings : ['None']} />
+            <ListBlock title="Changed Files" items={(report.changedFiles || []).map((file) => `${file.path || 'unknown'} - ${titleCase(file.status || 'needs review')}`)} />
+            <ListBlock title="Recommendations" items={report.recommendations?.length ? report.recommendations : ['No recommendations.']} />
+          </div>
+          <details className="planner-task">
+            <summary className="planner-label">Generated Review Comment</summary>
+            <pre className="planner-prompt">{report.generatedReviewComment}</pre>
+          </details>
+        </>
+      )}
+    </section>
+  );
+}
+
+function implementationValidationSummary(report: ImplementationValidationReport): string {
+  return [
+    `Implementation Validation: ${report.status}`,
+    `Package: ${report.packageId}`,
+    `Acceptance Coverage: ${report.acceptanceCoverageScore}%`,
+    `Scope Compliance: ${report.scopeComplianceScore}%`,
+    `Repository Alignment: ${report.repositoryAlignmentScore}%`,
+    `Standards: ${report.standardsComplianceScore}%`,
+    `Tests: ${report.testCoverageScore}%`,
+    `Risk: ${report.riskScore}%`,
+    '',
+    'Violations:',
+    ...(report.violations.length ? report.violations.map((item) => `- ${item.severity || 'issue'}: ${item.message || item.rule || ''}${item.file ? ` (${item.file})` : ''}`) : ['- None']),
+    '',
+    'Recommendations:',
+    ...(report.recommendations.length ? report.recommendations.map((item) => `- ${item}`) : ['- None']),
+  ].join('\n');
 }
 
 function QuickStartSetup({
@@ -5983,6 +6891,11 @@ function ProjectIntelligenceProviderDiagnostics({ metadata }: { metadata?: Provi
         <Row label="Current Response Source" value={sourceLabel(metadata?.source || metadata?.provider_used)} />
         <Row label="Phi Status" value={String(metadata?.phi_status || 'Not run')} />
         <Row label="Phi Latency" value={metadata?.phi_latency_ms ? `${metadata.phi_latency_ms} ms` : 'n/a'} />
+        <Row label="Phi Prompt Tokens" value={formatNumber(metadata?.phi_prompt_tokens)} />
+        <Row label="Phi Completion Tokens" value={formatNumber(metadata?.phi_completion_tokens)} />
+        <Row label="Phi Finish Reason" value={metadata?.phi_finish_reason || 'n/a'} />
+        <Row label="Phi Response Length" value={formatNumber(metadata?.phi_response_length)} />
+        <Row label="Diagnostics Path" value={metadata?.diagnostics_path || 'n/a'} />
         <Row label="Context Size" value={formatNumber(metadata?.context_size)} />
         <Row label="Context After Compression" value={formatNumber(metadata?.context_after_compression)} />
         <Row label="Tokens Sent" value={metadata?.tokens_sent ? `${metadata.tokens_sent} / ${metadata.context_budget_tokens || 2500}` : 'n/a'} />
@@ -6199,7 +7112,7 @@ function ProjectRefinementCards({
         <div className="planner-actions">
           <button className="planner-button" onClick={refineFeature} disabled={loading || !featureInput.title.trim()}>Refine Feature</button>
         </div>
-        {featureResult ? <FeatureRefinementResult result={featureResult} /> : null}
+        {featureResult ? <FeatureRefinementResult result={featureResult} onRetry={refineFeature} /> : null}
       </section>
 
       <section className="planner-card">
@@ -6250,11 +7163,12 @@ function EpicRefinementResult({ result }: { result: EpicRefinement }) {
   );
 }
 
-function FeatureRefinementResult({ result }: { result: FeatureRefinement }) {
+function FeatureRefinementResult({ result, onRetry }: { result: FeatureRefinement; onRetry?: () => void }) {
   const diagnostics = result.story_generation_diagnostics || {};
   return (
     <div className="planner-status-grid">
       <SourceBadge metadata={result} />
+      <ProviderParseFailurePanel metadata={result} onRetry={onRetry} />
       <GenerationReviewBlock review={result.generation_review} />
       <Row label="Feature Summary" value={result.feature_summary} />
       <Row label="Capability Count" value={formatNumber(diagnostics.capability_count)} />
@@ -6272,6 +7186,48 @@ function FeatureRefinementResult({ result }: { result: FeatureRefinement }) {
       <ListBlock title="Dependencies" items={result.dependencies} />
       <ListBlock title="Risks" items={result.risks} />
       <CardList title="Recommended Stories" items={result.recommended_stories} />
+    </div>
+  );
+}
+
+function ProviderParseFailurePanel({ metadata, onRetry }: { metadata?: ProviderMetadata; onRetry?: () => void }) {
+  const phiStatus = String(metadata?.phi_status || '').toLowerCase();
+  const fallbackReason = String(metadata?.fallback_reason || '').toLowerCase();
+  const isParseFailure = phiStatus === 'parse_error' || fallbackReason.includes('normalized into a json object') || fallbackReason.includes('parse');
+  if (!isParseFailure) {
+    return null;
+  }
+  const rawResponse = metadata?.raw_response_preview || metadata?.phi_raw_response_preview || '';
+  return (
+    <div className="planner-error planner-provider-failure">
+      <strong>Feature generation failed.</strong>
+      <div>Phi returned a response that could not be parsed into the required JSON shape.</div>
+      {metadata?.diagnostics_path ? (
+        <details className="planner-nested">
+          <summary>View Diagnostics</summary>
+          <Row label="Diagnostics Path" value={metadata.diagnostics_path} />
+          <Row label="Files" value={metadata.diagnostics_files?.join(', ') || 'prompt.txt, response.txt, metadata.json'} />
+          <Row label="Prompt Tokens" value={formatNumber(metadata.phi_prompt_tokens)} />
+          <Row label="Completion Tokens" value={formatNumber(metadata.phi_completion_tokens)} />
+          <Row label="Finish Reason" value={metadata.phi_finish_reason || 'n/a'} />
+          <Row label="Response Length" value={formatNumber(metadata.phi_response_length)} />
+        </details>
+      ) : null}
+      <div className="planner-actions">
+        {metadata?.diagnostics_path ? (
+          <button className="planner-button secondary" type="button" onClick={() => void navigator.clipboard?.writeText(metadata.diagnostics_path || '')}>
+            Copy Diagnostics Path
+          </button>
+        ) : null}
+        <button className="planner-button secondary" type="button" disabled={!rawResponse} onClick={() => void navigator.clipboard?.writeText(rawResponse)}>
+          Copy Raw Response
+        </button>
+        {onRetry ? (
+          <button className="planner-button" type="button" onClick={onRetry}>
+            Retry
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -6992,6 +7948,21 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function parseChangedFilesInput(value: string): Array<{ path: string; status: string; diff: string }> {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      if (line.includes('|')) {
+        const [path, status, ...diffParts] = line.split('|').map((part) => part.trim());
+        return { path, status: status || 'modified', diff: diffParts.join(' ') };
+      }
+      return { path: line, status: 'modified', diff: '' };
+    })
+    .filter((item) => item.path);
 }
 
 function getReusableArtifact(artifactType: ArtifactType, fingerprint: string, sourceItemId: string): Promise<ReusableArtifactResponse> {

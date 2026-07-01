@@ -11,12 +11,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from backend.artifacts import ArtifactEngine
+from backend.execution import build_execution_package_v2
+from backend.implementation_validation import validate_implementation
 from backend.intelligence.capability import buildCapabilityContext
 from backend.intelligence.dna import compareDNA, generateDNA, validateDNA
 from backend.intelligence.epic_analysis import analyzeEpic, buildCapabilityReview
 from backend.intelligence.intent import build_intent
 from backend.intelligence.planning import buildPlanningContext
 from backend.intelligence.reasoning import generatePlanningArtifact
+from backend.intelligence.story_analysis import StoryAnalysisEngine, analyzeFeatureStories
 from backend.intelligence.validation import validateArtifact
 from backend.prompt_budget import (
     PromptSection,
@@ -25,6 +29,8 @@ from backend.prompt_budget import (
     estimateTokens as promptBudgetEstimateTokens,
     probe_json_with_budget,
 )
+from backend.prompt_builder import build_developer_prompt_v2
+from backend.pr_review import PRReviewEngine, review_pr
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 
 
@@ -51,8 +57,15 @@ PROJECT_EXECUTION_BUDGET_ATTEMPTS = [
 PROJECT_EXECUTION_DRAFT_DEFAULT_TOKENS = 200
 PROJECT_EXECUTION_DRAFT_MAX_TOKENS = 300
 PROJECT_EXECUTION_SCHEMA_BUDGET_TOKENS = 100
-PROJECT_PHI_SYSTEM_PROMPT = "Return strict JSON only."
-PROJECT_PHI_INSTRUCTION = "Use the compact project context. Return only the requested JSON keys."
+PROJECT_PHI_SYSTEM_PROMPT = (
+    "Return ONLY valid JSON. No markdown. No explanation. No prose. No code fences. "
+    'If unable, return {"error":"..."} as valid JSON.'
+)
+PROJECT_PHI_INSTRUCTION = (
+    "Use the compact project context. Return only the requested JSON keys. "
+    "Return ONLY valid JSON with no markdown, no prose, and no code fences. "
+    'If unable, return {"error":"..."} as valid JSON.'
+)
 PROJECT_PROVIDER_PROMPT_CHAR_LIMIT = 4800
 
 
@@ -947,20 +960,37 @@ class ProjectIntelligenceService:
         relevant_profile = _profile_with_relevance(active_profile, selection)
         modules = _selection_names(selection, "relevant_modules")
         flows = _selection_names(selection, "relevant_flows")
-        story_plan = _story_decomposition(title, modules, flows, relevant_profile, feature_for_generation)
-        recommended_stories = [
-            {
-                **story_item,
-                **_lineage_metadata(feature, "Feature", "feature_intent + knowledge_registry", selection, float(story_item.get("confidence") or 0.82)),
-            }
-            for story_item in story_plan["recommended_stories"]
-        ]
+        story_analysis = analyzeFeatureStories(feature_for_generation, dna_seed, relevant_profile)
+        reviewed_journeys = _review_story_journeys(story_analysis.get("userJourneys", []), options)
+        story_engine = StoryAnalysisEngine()
+        recommended_stories: list[dict[str, Any]] = []
+        for journey in reviewed_journeys:
+            if str(journey.get("status") or "").lower() not in {"approved", "draft"}:
+                continue
+            existing_responsibilities = [
+                existing.get("business_responsibility") or existing.get("businessResponsibility") or existing.get("title") or ""
+                for existing in recommended_stories
+            ]
+            story_item = story_engine.generate_story_for_journey(journey, dna_seed, existing_responsibilities=existing_responsibilities)
+            recommended_stories.append(
+                {
+                    **story_item,
+                    **_lineage_metadata(feature, "Feature", "feature_dna + story_analysis_journey", selection, float(journey.get("confidence") or 0.82)),
+                }
+            )
+        story_plan = _story_plan_from_analysis(story_analysis, recommended_stories)
         deterministic = {
             "feature_summary": _sentence(title, description or f"Deliver {title} using project-aware modules and flows."),
             "affected_modules": modules,
             "affected_flows": flows,
             "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
             "risks": _risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
+            "story_analysis": story_analysis,
+            "story_review": {
+                "journeys": reviewed_journeys,
+                "actions": ["approve", "reject", "edit", "generate_story", "move_up", "move_down"],
+                "generation_rule": "one_story_per_approved_journey",
+            },
             "recommended_stories": recommended_stories,
             "story_generation_diagnostics": story_plan["diagnostics"],
             "generation_review": _generation_review(relevant_profile, story_plan["recommended_stories"], modules, _context_keywords(title, description, relevant_profile)),
@@ -1325,21 +1355,19 @@ class ProjectIntelligenceService:
         context = self.build_execution_context(story, profile, knowledge_profile, impact_analysis, {**(options or {}), "force_provider": "deterministic_fallback"})
         active_profile = _active_capsule_profile_from_execution_package(context)
         phi_item = _execution_package_phi_item(context)
-        deterministic = {
-            "prompt": _execution_prompt(
-                "Dev Prompt",
-                context,
-                [
-                    "Implement the approved story without changing unrelated behavior.",
-                    "Use the affected modules and flows as the primary implementation boundary.",
-                    f"Technology Stack: {_format_stack(context['technology_stack']) or 'Confirm stack before implementation.'}",
-                    f"Coding Standards: {_format_standards(context['development_standards']) or 'Follow existing project standards.'}",
-                    "Architecture Rules: preserve the boundaries in the selected context capsule.",
-                    f"Recommended Files: {', '.join(context['recommended_files']) or context.get('file_ranking_status') or 'Repository file ranking not available.'}",
-                    f"Implementation Tasks: {', '.join(context['implementation_tasks']) or 'Break down implementation before coding.'}",
-                ],
-            )
+        provider_name = _clean_text((options or {}).get("provider") or "azure_phi")
+        provider_model = _clean_text((options or {}).get("model"))
+        deterministic = build_developer_prompt_v2(
+            context.get("execution_package_v2") if isinstance(context.get("execution_package_v2"), dict) else {},
+            provider=provider_name,
+            model=provider_model,
+        )
+        deterministic["developer_prompt_v2"] = {
+            key: value
+            for key, value in deterministic.items()
+            if key not in {"developer_prompt_v2"}
         }
+        deterministic["execution_package_v2"] = context.get("execution_package_v2", {})
         deterministic.update(_prompt_validation_payload(context, "Dev Prompt", deterministic["prompt"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_dev_prompt")
         if not _execution_ai_enrichment_enabled(options):
@@ -1467,6 +1495,57 @@ class ProjectIntelligenceService:
         if phi["used"]:
             return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["context"])}, phi["metadata"])
         return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
+
+    def validate_implementation(
+        self,
+        execution_package: dict[str, Any],
+        developer_prompt: dict[str, Any] | None = None,
+        task_dna: dict[str, Any] | None = None,
+        story_dna: dict[str, Any] | None = None,
+        repository_diff: dict[str, Any] | None = None,
+        changed_files: list[Any] | None = None,
+        test_results: dict[str, Any] | None = None,
+        build_result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return validate_implementation(
+            execution_package=execution_package or {},
+            developer_prompt=developer_prompt or {},
+            task_dna=task_dna or {},
+            story_dna=story_dna or {},
+            repository_diff=repository_diff or {},
+            changed_files=changed_files or [],
+            test_results=test_results or {},
+            build_result=build_result or {},
+        )
+
+    def review_pr(
+        self,
+        pull_request: dict[str, Any] | None = None,
+        linked_work_items: list[Any] | None = None,
+        execution_package: dict[str, Any] | None = None,
+        developer_prompt: dict[str, Any] | None = None,
+        task_dna: dict[str, Any] | None = None,
+        story_dna: dict[str, Any] | None = None,
+        repository_diff: dict[str, Any] | None = None,
+        changed_files: list[Any] | None = None,
+        test_results: dict[str, Any] | None = None,
+        build_result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return review_pr(
+            pull_request=pull_request or {},
+            linked_work_items=linked_work_items or [],
+            execution_package=execution_package or {},
+            developer_prompt=developer_prompt or {},
+            task_dna=task_dna or {},
+            story_dna=story_dna or {},
+            repository_diff=repository_diff or {},
+            changed_files=changed_files or [],
+            test_results=test_results or {},
+            build_result=build_result or {},
+        )
+
+    def post_pr_review_comment(self, report: dict[str, Any]) -> dict[str, Any]:
+        return PRReviewEngine().post_comment(report or {})
 
     def provider_probe(self, prompt: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         options = options or {}
@@ -1598,12 +1677,14 @@ def _run_intelligence_pipeline(
                 "creationBlocked": report["validationStatus"] == "Rejected",
             }
         )
+    generic_artifacts = _generic_artifacts_from_pipeline(artifacts, work_item, output_type)
     return {
         "intent": intent,
         "capabilityContext": capability_context,
         "planningContext": planning_context,
         "reasoning": {**reasoning, "artifacts": artifacts},
         "artifacts": artifacts,
+        "genericArtifacts": generic_artifacts,
         "validationReports": [artifact["validationReport"] for artifact in artifacts],
         "previewPolicy": _preview_policy([artifact["validationReport"] for artifact in artifacts]),
         "providerMetadata": provider_metadata,
@@ -1750,6 +1831,7 @@ class _ProjectPlanningPhiProvider:
         probe_options = dict(self.options)
         probe_options.setdefault("allow_fallback", False)
         probe_options.setdefault("max_tokens", 900)
+        probe_options.setdefault("operation", _planning_operation_for_output_type(output_type))
         expected_keys = [
             "artifacts",
             "planningArtifacts",
@@ -1787,6 +1869,17 @@ def _planning_provider_payload(parsed: dict[str, Any], output_type: str) -> dict
     if normalized.startswith("task") and isinstance(parsed.get("proposed_tasks"), list):
         return {"artifacts": parsed["proposed_tasks"]}
     return parsed
+
+
+def _planning_operation_for_output_type(output_type: str) -> str:
+    normalized = _clean_text(output_type).lower()
+    if normalized.startswith("feature"):
+        return "generate_features"
+    if normalized.startswith("story"):
+        return "refine_feature"
+    if normalized.startswith("task"):
+        return "generate_tasks"
+    return "refine_epic"
 
 
 def _append_rejected_phi_feature_diagnostics(payload: dict[str, Any], provider_parsed: dict[str, Any], epic_title: str) -> None:
@@ -1920,6 +2013,53 @@ def _artifact_to_generated_item(artifact: dict[str, Any], item_type: str, parent
     }
 
 
+def _generic_artifacts_from_pipeline(artifacts: list[dict[str, Any]], parent: dict[str, Any], output_type: str) -> list[dict[str, Any]]:
+    engine = ArtifactEngine()
+    artifact_type = _generic_artifact_type(output_type)
+    output: list[dict[str, Any]] = []
+    parent_id = _item_id(parent)
+    for item in artifacts:
+        if not isinstance(item, dict):
+            continue
+        source = {
+            "id": item.get("id"),
+            "parentId": parent_id,
+            "title": item.get("title"),
+            "description": item.get("description"),
+            "businessGoal": item.get("businessGoal"),
+            "businessValue": item.get("businessValue"),
+            "repositoryEvidence": (item.get("generatedUsing") or {}).get("modules") if isinstance(item.get("generatedUsing"), dict) else [],
+            "knowledgeReferences": (item.get("generatedUsing") or {}).get("flows") if isinstance(item.get("generatedUsing"), dict) else [],
+            "dependencies": item.get("dependencies"),
+            "responsibilities": item.get("personas"),
+            "acceptanceThemes": item.get("acceptanceCriteria"),
+            "dna": item.get("work_item_dna") or item.get("dna"),
+            "validation": item.get("validationReport"),
+            "confidence": item.get("confidence"),
+        }
+        artifact = engine.create(artifact_type, source, {"parentId": parent_id})
+        artifact = engine.analyze(artifact, {"parentId": parent_id})
+        artifact = engine.generate(artifact, {"parentId": parent_id})
+        artifact = engine.validate(artifact, {"parentId": parent_id})
+        artifact = engine.build_dna(artifact, {"parentId": parent_id})
+        artifact = engine.version(artifact)
+        output.append(artifact)
+    return output
+
+
+def _generic_artifact_type(output_type: str) -> str:
+    normalized = _clean_text(output_type).lower()
+    if normalized.startswith("feature"):
+        return "Feature"
+    if normalized.startswith("story"):
+        return "Story"
+    if normalized.startswith("task"):
+        return "Task"
+    if normalized.startswith("execution"):
+        return "Execution Package"
+    return "Epic"
+
+
 def _draft_id(item_type: str, title: Any) -> str:
     item_slug = "".join(ch.lower() if ch.isalnum() else "_" for ch in (_clean_text(item_type) or "item")).strip("_") or "item"
     seed = f"{item_slug}|{_clean_text(title)}"
@@ -1937,6 +2077,7 @@ def _pipeline_payload(pipeline: dict[str, Any]) -> dict[str, Any]:
             "preview_policy": pipeline["previewPolicy"],
             "provider_metadata": pipeline.get("providerMetadata", {}),
             "provider_parsed": pipeline.get("providerParsed", {}),
+            "generic_artifacts": pipeline.get("genericArtifacts", []),
         },
         "validation_reports": pipeline["validationReports"],
         "preview_policy": pipeline["previewPolicy"],
@@ -2181,7 +2322,7 @@ def _execution_package_from_capsule(
     story_title = _clean_text(story.get("title")) or "Untitled story"
     story_description = _clean_text(story.get("description"))
     task_title = _clean_text(selected_task.get("title")) or "Selected execution task"
-    return {
+    package = {
         "execution_package_source": "context_capsule",
         "context_capsule": capsule,
         "context_capsule_diagnostics": _context_capsule_metadata(context_capsule),
@@ -2231,6 +2372,20 @@ def _execution_package_from_capsule(
         "execution_readiness_result": readiness["result"],
         "ai_enrichment_status": "not_requested",
     }
+    package["execution_package_v2"] = build_execution_package_v2(
+        story=story,
+        selected_task=selected_task,
+        acceptance_criteria=acceptance_criteria,
+        context_capsule=capsule,
+        generated_tasks=generated_tasks,
+        task_plan=task_plan,
+        readiness=readiness,
+        profile=profile,
+        validation_report=validation_report,
+    )
+    package["executionPackageV2"] = package["execution_package_v2"]
+    package["execution_package_version"] = "v2"
+    return package
 
 
 def _dna_summary(dna: dict[str, Any]) -> dict[str, Any]:
@@ -5259,6 +5414,66 @@ def _recommended_stories(feature_title: str, modules: list[str], flows: list[str
     return _story_decomposition(feature_title, modules, flows, profile, {})["recommended_stories"]
 
 
+def _review_story_journeys(journeys: list[dict[str, Any]], options: dict[str, Any] | None) -> list[dict[str, Any]]:
+    options = options or {}
+    approved = {str(item) for item in _string_list(options.get("approved_journey_ids") or options.get("approvedJourneyIds"))}
+    rejected = {str(item) for item in _string_list(options.get("rejected_journey_ids") or options.get("rejectedJourneyIds"))}
+    edits = options.get("journey_edits") or options.get("journeyEdits") or {}
+    edits = edits if isinstance(edits, dict) else {}
+    reviewed: list[dict[str, Any]] = []
+    for index, journey in enumerate(journeys):
+        if not isinstance(journey, dict):
+            continue
+        journey_id = str(journey.get("journeyId") or journey.get("journey_id") or "")
+        edited = dict(journey)
+        edit_payload = edits.get(journey_id) if journey_id else None
+        if isinstance(edit_payload, dict):
+            for key in ["journeyName", "businessResponsibility", "businessValue", "persona", "acceptanceThemes"]:
+                if key in edit_payload:
+                    edited[key] = edit_payload[key]
+        if journey_id in rejected:
+            edited["status"] = "rejected"
+        elif not approved or journey_id in approved:
+            edited["status"] = "approved"
+        else:
+            edited["status"] = "draft"
+        edited["order"] = int(edited.get("order") or index + 1)
+        reviewed.append(edited)
+    return reviewed
+
+
+def _story_plan_from_analysis(story_analysis: dict[str, Any], stories: list[dict[str, Any]]) -> dict[str, Any]:
+    diagnostics = story_analysis.get("diagnostics") if isinstance(story_analysis.get("diagnostics"), dict) else {}
+    coverage: list[str] = []
+    for story in stories:
+        coverage.extend(_string_list(story.get("coverage_area") or story.get("business_responsibility")))
+    coverage = _unique(coverage)
+    quality_scores = [int(story.get("story_quality_score") or story.get("validationReport", {}).get("summary", {}).get("score") or 80) for story in stories]
+    return {
+        "recommended_stories": stories,
+        "diagnostics": {
+            "capabilities_identified": _unique([story.get("business_responsibility") or story.get("user_goal") or story.get("title") for story in stories]),
+            "user_actions_identified": _unique([story.get("goal") or story.get("user_action") or story.get("title") for story in stories]),
+            "capability_count": int(diagnostics.get("journeyCount") or len(stories)),
+            "action_count": int(diagnostics.get("journeyCount") or len(stories)),
+            "generated_story_count": len(stories),
+            "story_coverage_areas": coverage,
+            "story_quality_score": round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else 0,
+            "acceptance_criteria_quality_score": 85 if stories else 0,
+            "acceptance_criteria_count": sum(len(story.get("acceptance_criteria") or []) for story in stories),
+            "rejected_generic_criteria": [],
+            "minimum_story_count": 1,
+            "small_feature": False,
+            "journey_count": int(diagnostics.get("journeyCount") or len(stories)),
+            "repository_coverage": int(diagnostics.get("repositoryCoverage") or 0),
+            "knowledge_coverage": int(diagnostics.get("knowledgeCoverage") or 0),
+            "dependency_count": int(diagnostics.get("dependencyCount") or 0),
+            "validation_score": int(diagnostics.get("validationScore") or 0),
+            "story_readiness": diagnostics.get("storyReadiness") or "NEEDS_REVIEW",
+        },
+    }
+
+
 def _story_decomposition(feature_title: str, modules: list[str], flows: list[str], profile: dict[str, Any], feature: dict[str, Any]) -> dict[str, Any]:
     capability = _infer_capability_from_title(feature_title, _context_keywords(feature_title, "", profile))
     actions = _story_actions_for_capability(capability, feature_title)
@@ -6780,8 +6995,11 @@ def _project_phi_probe(
         return _fallback_or_block(metadata, force_provider, allow_fallback)
     last_guard_diagnostics: dict[str, Any] | None = None
     last_probe: dict[str, Any] = {}
+    last_failure_diagnostics: dict[str, Any] = {}
     for prompt, attempt_diagnostics in attempts:
-        context_diagnostics = attempt_diagnostics
+        context_diagnostics = dict(attempt_diagnostics or {})
+        if not context_diagnostics.get("operation") and options.get("operation"):
+            context_diagnostics["operation"] = _clean_text(options.get("operation"))
         if int(context_diagnostics.get("final_prompt_tokens") or 0) > int(context_diagnostics.get("model_context_limit") or 0):
             last_guard_diagnostics = context_diagnostics
             logger.warning(
@@ -6831,6 +7049,15 @@ def _project_phi_probe(
                 }
             )
             return {"used": True, "blocked": False, "parsed": parsed, "metadata": metadata}
+        if _should_persist_feature_generation_failure(context_diagnostics, probe):
+            last_failure_diagnostics = _persist_feature_generation_failure(
+                prompt=prompt,
+                probe=probe,
+                context_diagnostics=context_diagnostics,
+                provider=provider,
+                expected_keys=expected_keys or [],
+            )
+            metadata.update(last_failure_diagnostics)
         if (probe.get("failure_reason") or probe.get("status")) != "prompt_too_long":
             break
     if last_guard_diagnostics and not last_probe:
@@ -6869,6 +7096,17 @@ def _project_phi_probe(
             "prompt_too_long_stage": _prompt_too_long_stage(probe),
         }
     )
+    if _should_persist_feature_generation_failure(context_diagnostics, probe) and not metadata.get("diagnostics_path"):
+        metadata.update(
+            last_failure_diagnostics
+            or _persist_feature_generation_failure(
+                prompt=attempts[-1][0] if attempts else "",
+                probe=probe,
+                context_diagnostics=context_diagnostics,
+                provider=provider,
+                expected_keys=expected_keys or [],
+            )
+        )
     if metadata.get("phi_status") == "prompt_too_long":
         logger.warning(
             "project-intelligence phi prompt_too_long_stage=%s final_prompt_tokens=%s model_context_limit=%s fallback_reason=%s",
@@ -7865,11 +8103,94 @@ def _provider_status_metadata(provider: Any, probe: dict[str, Any], health: dict
         "phi_latency_ms": int(probe.get("elapsed_ms") or 0),
         "phi_raw_response_preview": raw_preview,
         "phi_parsed_response_preview": json.dumps(parsed, ensure_ascii=True)[:1500] if parsed else "",
+        "phi_prompt_tokens": int(probe.get("prompt_tokens") or 0),
+        "phi_completion_tokens": int(probe.get("completion_tokens") or 0),
+        "phi_finish_reason": probe.get("finish_reason") or "",
+        "phi_response_length": int(probe.get("response_length") or len(raw_preview)),
         "provider_configured": bool(config.get("configured", provider.is_enabled() if hasattr(provider, "is_enabled") else False)),
         "provider_deployment": health.get("deployment") or config.get("deployment"),
         "provider_health": health.get("health") or config.get("deployment_health") or "unknown",
         "provider_last_success": health.get("last_success"),
         "provider_last_failure": health.get("last_failure"),
+    }
+
+
+def _should_persist_feature_generation_failure(context_diagnostics: dict[str, Any], probe: dict[str, Any]) -> bool:
+    operation = _clean_text(context_diagnostics.get("operation")).lower()
+    is_feature_path = operation in {"refine_feature", "generate_features", "generate_stories", "feature_generation"} or "feature" in operation
+    failure = _clean_text(probe.get("failure_reason") or probe.get("status") or probe.get("parse_error")).lower()
+    return is_feature_path and failure in {"parse_error", "unusable_response", "jsondecodeerror", "nojsonobjectfound", "nondictparsedjson"}
+
+
+def _persist_feature_generation_failure(
+    *,
+    prompt: str,
+    probe: dict[str, Any],
+    context_diagnostics: dict[str, Any],
+    provider: Any,
+    expected_keys: list[str],
+) -> dict[str, Any]:
+    data_dir = Path(os.getenv("AI_GEN_DATA_DIR", str(Path(__file__).parent.parent / "data")))
+    root = data_dir / "diagnostics" / "failed-feature-generation"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    operation = _clean_text(context_diagnostics.get("operation")) or "feature_generation"
+    incident_dir = root / f"{timestamp}-{_safe_profile_id(operation)}"
+    response_text = str(probe.get("raw_provider_response") or probe.get("raw_content") or probe.get("raw_response_preview") or "")
+    metadata = {
+        "provider": "azure_phi",
+        "model": "",
+        "operation": operation,
+        "expected_keys": expected_keys,
+        "prompt_tokens": int(probe.get("prompt_tokens") or context_diagnostics.get("final_prompt_tokens") or 0),
+        "completion_tokens": int(probe.get("completion_tokens") or 0),
+        "finish_reason": probe.get("finish_reason") or "",
+        "latency": int(probe.get("elapsed_ms") or 0),
+        "temperature": 0,
+        "prompt_budget": probe.get("prompt_budget") or context_diagnostics,
+        "response_length": int(probe.get("response_length") or len(response_text)),
+        "http_status": probe.get("http_status"),
+        "failure_reason": probe.get("failure_reason") or probe.get("status") or "parse_error",
+        "failure_message": probe.get("failure_message") or probe.get("parse_error") or "Model response could not be normalized into a JSON object.",
+        "parse_error": probe.get("parse_error") or "",
+        "raw_response_preview": response_text[:4000],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        config = provider.safe_config() if hasattr(provider, "safe_config") else {}
+        health = provider.health_snapshot() if hasattr(provider, "health_snapshot") else {}
+        metadata["provider"] = str(config.get("provider") or "azure_phi")
+        metadata["model"] = str(config.get("deployment") or health.get("deployment") or config.get("model") or "")
+    except Exception:
+        pass
+    try:
+        incident_dir.mkdir(parents=True, exist_ok=True)
+        (incident_dir / "prompt.txt").write_text(prompt or "", encoding="utf-8")
+        (incident_dir / "response.txt").write_text(response_text, encoding="utf-8")
+        (incident_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.warning(
+            "project-intelligence feature_generation_parse_failure provider=%s model=%s prompt_tokens=%s completion_tokens=%s finish_reason=%s response_length=%s diagnostics=%s",
+            metadata.get("provider"),
+            metadata.get("model"),
+            metadata.get("prompt_tokens"),
+            metadata.get("completion_tokens"),
+            metadata.get("finish_reason"),
+            metadata.get("response_length"),
+            incident_dir,
+        )
+    except OSError as error:
+        logger.warning("project-intelligence failed_to_persist_feature_generation_diagnostics error=%s", error)
+        return {
+            "diagnostics_error": str(error),
+            "diagnostics_available": False,
+            "raw_response_available": bool(response_text),
+            "raw_response_preview": response_text[:1500],
+        }
+    return {
+        "diagnostics_available": True,
+        "diagnostics_path": str(incident_dir),
+        "diagnostics_files": ["prompt.txt", "response.txt", "metadata.json"],
+        "raw_response_available": bool(response_text),
+        "raw_response_preview": response_text[:1500],
     }
 
 

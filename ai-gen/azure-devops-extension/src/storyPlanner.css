@@ -512,6 +512,16 @@ body {
   background: #fff8df;
 }
 
+.planner-warning {
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fff8df;
+  color: #7a4a00;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .hei-status-badge.error {
   color: var(--hei-error);
   border-color: #fecaca;
@@ -922,6 +932,406 @@ body {
   font-size: 22px;
 }
 
+.hei-planning-workspace {
+  gap: 12px;
+}
+
+.hei-planning-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--hei-border-soft);
+  padding-bottom: 10px;
+}
+
+.hei-planning-header h2 {
+  margin: 2px 0 4px;
+  font-size: 22px;
+  color: var(--hei-black);
+}
+
+.hei-planning-header p {
+  margin: 0;
+  color: var(--hei-muted);
+}
+
+.hei-planning-primary {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  min-width: 210px;
+}
+
+.hei-planning-primary span {
+  color: var(--hei-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hei-planning-primary small {
+  max-width: 260px;
+  color: var(--hei-warning);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.hei-stage-progress {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hei-stage {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  padding: 8px;
+  display: grid;
+  gap: 3px;
+  background: var(--hei-surface-subtle);
+  min-width: 0;
+}
+
+.hei-stage span {
+  color: var(--hei-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.hei-stage strong {
+  overflow: hidden;
+  color: var(--hei-text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hei-stage small {
+  color: var(--hei-muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+.hei-stage.complete {
+  border-color: #bbf7d0;
+  background: #ecfdf3;
+}
+
+.hei-stage.current {
+  border-color: var(--hei-yellow);
+  background: #fffdf0;
+  box-shadow: inset 0 -3px 0 var(--hei-yellow);
+}
+
+.hei-stage.locked {
+  color: var(--hei-muted);
+  opacity: 0.72;
+}
+
+.hei-progress-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hei-progress-card {
+  border: 1px solid var(--hei-border-soft);
+  border-radius: 6px;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  background: var(--hei-surface-subtle);
+}
+
+.hei-progress-card > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--hei-muted);
+  font-size: 12px;
+}
+
+.hei-progress-card strong {
+  color: var(--hei-text);
+}
+
+.hei-progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f7;
+}
+
+.hei-progress-track span,
+.hei-progress-track i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--hei-yellow);
+}
+
+.hei-progress-track.muted span {
+  width: 100%;
+  background: #e5e7eb;
+}
+
+.hei-planning-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 25%) minmax(360px, 1fr) minmax(240px, 25%);
+  gap: 12px;
+  align-items: stretch;
+  min-height: 520px;
+}
+
+.hei-planning-list,
+.hei-planning-detail,
+.hei-planning-insights {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  background: var(--hei-surface);
+  padding: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.hei-planning-list,
+.hei-planning-insights {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.hei-planning-detail {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.hei-review-list {
+  display: grid;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.hei-review-list-item {
+  width: 100%;
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  padding: 9px;
+  display: grid;
+  gap: 4px;
+  background: var(--hei-surface-subtle);
+  color: var(--hei-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.hei-review-list-item > div {
+  display: grid;
+  gap: 3px;
+}
+
+.hei-review-list-item strong,
+.hei-review-list-item span,
+.hei-review-list-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hei-review-list-item strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.hei-review-list-item span {
+  color: var(--hei-muted);
+  display: -webkit-box;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.hei-review-list-item small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--hei-muted);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hei-review-list-item.active {
+  border-color: var(--hei-black);
+  background: #fffdf0;
+  box-shadow: inset 3px 0 0 var(--hei-yellow);
+}
+
+.hei-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.hei-dot.success {
+  background: var(--hei-success);
+}
+
+.hei-dot.warning {
+  background: var(--hei-warning);
+}
+
+.hei-dot.neutral {
+  background: #94a3b8;
+}
+
+.hei-selected-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.hei-detail-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.hei-detail-tabs button {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: var(--hei-surface);
+  color: var(--hei-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.hei-detail-tabs button.active {
+  border-color: var(--hei-black);
+  background: #fffdf0;
+  box-shadow: inset 0 -3px 0 var(--hei-yellow);
+}
+
+.hei-selected-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--hei-border-soft);
+  padding-bottom: 8px;
+}
+
+.hei-selected-title h3 {
+  margin: 2px 0 4px;
+  font-size: 20px;
+  color: var(--hei-black);
+}
+
+.hei-selected-title p {
+  margin: 0;
+  color: var(--hei-muted);
+}
+
+.hei-business-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hei-info-block {
+  border: 1px solid var(--hei-border-soft);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--hei-surface-subtle);
+  min-width: 0;
+}
+
+.hei-info-block span {
+  color: var(--hei-muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.hei-info-block p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.hei-info-block ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.hei-stage-summary-card {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  background: #fffdf0;
+}
+
+.hei-stage-summary-card > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.hei-stage-summary-card span {
+  color: var(--hei-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.hei-stage-summary-card strong {
+  color: var(--hei-black);
+}
+
+.hei-selected-empty {
+  border: 1px dashed var(--hei-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 6px;
+  min-height: 180px;
+  padding: 20px;
+  place-content: center;
+  text-align: center;
+}
+
+.hei-selected-empty strong {
+  font-size: 18px;
+}
+
+.hei-queue-empty {
+  border: 1px dashed var(--hei-border);
+  border-radius: 6px;
+  padding: 14px;
+  display: grid;
+  gap: 5px;
+  background: var(--hei-surface-subtle);
+}
+
+.hei-queue-empty strong {
+  color: var(--hei-black);
+}
+
+.hei-queue-empty span {
+  color: var(--hei-muted);
+  font-size: 12px;
+}
+
 .planner-timeline {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -980,8 +1390,22 @@ body {
   .planner-health-grid.compact,
   .planner-step-row,
   .planner-checkbox-grid,
-  .planner-document-columns {
+  .planner-document-columns,
+  .hei-planning-header,
+  .hei-planning-grid,
+  .hei-business-grid,
+  .hei-stage-progress,
+  .hei-progress-summary {
     grid-template-columns: 1fr;
+  }
+
+  .hei-planning-primary {
+    justify-items: stretch;
+  }
+
+  .hei-planning-primary small {
+    max-width: none;
+    text-align: left;
   }
 
   .planner-header,

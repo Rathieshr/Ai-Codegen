@@ -164,6 +164,11 @@ class AzurePhiProvider:
             "raw_response_preview": final_attempt.get("raw_response_preview", ""),
             "parsed_json": final_attempt.get("parsed_json", {}),
             "parse_error": final_attempt.get("parse_error", ""),
+            "prompt_tokens": int(final_attempt.get("prompt_tokens") or 0),
+            "completion_tokens": int(final_attempt.get("completion_tokens") or 0),
+            "finish_reason": final_attempt.get("finish_reason", ""),
+            "response_length": int(final_attempt.get("response_length") or len(final_attempt.get("raw_content", "") or "")),
+            "raw_provider_response": final_attempt.get("raw_provider_response", ""),
             "elapsed_ms": int(final_attempt.get("elapsed_ms") or 0),
             "timeout_seconds": int(final_attempt.get("timeout_seconds") or request_timeout),
             "attempted_url_preview": final_attempt.get("url_preview", ""),
@@ -497,6 +502,7 @@ class AzurePhiProvider:
         response_body: str,
         elapsed_ms: int,
     ) -> dict[str, Any]:
+        response_metadata = _provider_response_metadata(response_body)
         try:
             parsed = parse_provider_response_json(response_body)
             content = parsed.normalized.content
@@ -506,7 +512,7 @@ class AzurePhiProvider:
                 f"parse_result=dict validation_candidate=yes source_format={parsed.normalized.source_format}"
             )
             self._record_success(elapsed_ms)
-            return self._structured_attempt(
+            attempt = self._structured_attempt(
                 attempt_number=attempt_number,
                 url=url,
                 include_response_format=include_response_format,
@@ -523,12 +529,14 @@ class AzurePhiProvider:
                 error_type="",
                 error_message="",
             )
+            attempt.update(response_metadata)
+            return attempt
         except ProviderParseError as error:
             print(
                 "ai-gen phi probe "
                 f"parse_result=error validation_candidate=no error={error.code} source_format={error.source_format}"
             )
-            return self._structured_attempt(
+            attempt = self._structured_attempt(
                 attempt_number=attempt_number,
                 url=url,
                 include_response_format=include_response_format,
@@ -545,9 +553,11 @@ class AzurePhiProvider:
                 error_type=error.code,
                 error_message=str(error),
             )
+            attempt.update(response_metadata)
+            return attempt
         except (TypeError, ValueError) as error:
             print(f"ai-gen phi probe parse_result=error validation_candidate=no error={type(error).__name__}")
-            return self._structured_attempt(
+            attempt = self._structured_attempt(
                 attempt_number=attempt_number,
                 url=url,
                 include_response_format=include_response_format,
@@ -564,6 +574,8 @@ class AzurePhiProvider:
                 error_type=type(error).__name__,
                 error_message=str(error),
             )
+            attempt.update(response_metadata)
+            return attempt
 
     def _error_attempt(
         self,
@@ -636,6 +648,11 @@ class AzurePhiProvider:
             "raw_content": raw_content,
             "parsed_json": parsed_json,
             "parse_error": parse_error,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "finish_reason": "",
+            "response_length": len(raw_content or ""),
+            "raw_provider_response": "",
             "max_tokens": max_tokens,
             "error_type": error_type,
             "error_message": error_message,
@@ -937,6 +954,31 @@ def _int_env(name: str, default: int) -> int:
         return max(1, int(os.getenv(name, str(default))))
     except ValueError:
         return default
+
+
+def _provider_response_metadata(response_body: str) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "finish_reason": "",
+        "response_length": len(response_body or ""),
+        "raw_provider_response": response_body or "",
+    }
+    try:
+        envelope = json.loads(response_body)
+    except (TypeError, ValueError):
+        return metadata
+    if not isinstance(envelope, dict):
+        return metadata
+    usage = envelope.get("usage") if isinstance(envelope.get("usage"), dict) else {}
+    metadata["prompt_tokens"] = int(usage.get("prompt_tokens") or 0)
+    metadata["completion_tokens"] = int(usage.get("completion_tokens") or 0)
+    choices = envelope.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            metadata["finish_reason"] = str(first.get("finish_reason") or "")
+    return metadata
 
 
 def _utc_now() -> str:

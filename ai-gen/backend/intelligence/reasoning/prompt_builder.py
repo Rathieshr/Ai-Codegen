@@ -58,7 +58,9 @@ def planning_evidence(planning_context: dict[str, Any]) -> dict[str, list[str] |
 def _generation_rules(output_type: str) -> list[str]:
     normalized = "".join(part.capitalize() for part in str(output_type or "").replace("_", " ").split())
     base = [
-        "Return strict JSON only.",
+        "Return ONLY valid JSON.",
+        "Do not include markdown, explanations, prose, code fences, or extra text.",
+        'If unable to produce the requested artifact, return {"error":"..."} as valid JSON.',
         "Use only the supplied PlanningContext sections.",
         "Do not invent modules, flows, applications, dependencies, standards, or repository files.",
         "If additional capability is needed, return suggestedCapability instead of pretending it exists.",
@@ -128,4 +130,3 @@ def _clean(value: Any) -> str:
     if value is None:
         return ""
     return " ".join(str(value).strip().split())
-

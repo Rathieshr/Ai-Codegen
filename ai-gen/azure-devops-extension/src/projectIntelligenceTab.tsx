@@ -4623,7 +4623,8 @@ function WorkItemContextCard({ workItem }: { workItem?: AdoWorkItem }) {
 
 type PlanningStageStatus = 'complete' | 'current' | 'locked';
 type PlanningStage = { label: string; status: PlanningStageStatus };
-type PlanningDetailTab = 'overview' | 'responsibilities' | 'scope' | 'repository' | 'knowledge' | 'dna' | 'history';
+type PlanningDetailTab = 'overview' | 'responsibilities' | 'scope' | 'repository' | 'knowledge' | 'history';
+type StoryPlanningTab = 'overview' | 'acceptance' | 'implementation' | 'repository' | 'knowledge' | 'history';
 type PlanningProgressMetric = { label: string; percent?: number; status?: string };
 type PlanningReviewItem = {
   id: string;
@@ -4977,12 +4978,6 @@ function PlanningSelectedDetail({
           <InfoBlock title="Flows" items={item.flows || []} empty="No flows selected by Knowledge Registry." />
         </div>
       ) : null}
-      {selectedTab === 'dna' ? (
-        <div className="hei-selected-empty">
-          <strong>DNA details are available in Engineering Details.</strong>
-          <span>DNA stays collapsed by default so planning remains business-first.</span>
-        </div>
-      ) : null}
       {selectedTab === 'history' ? (
         <InfoBlock title="Review History" items={item.comments || []} empty="No review history yet. Approve, reject, or edit to record history." />
       ) : null}
@@ -5020,7 +5015,6 @@ function PlanningDetailTabs({ selected, onSelect }: { selected: PlanningDetailTa
     { id: 'scope', label: 'Scope' },
     { id: 'repository', label: 'Repository' },
     { id: 'knowledge', label: 'Knowledge' },
-    { id: 'dna', label: 'DNA' },
     { id: 'history', label: 'History' },
   ];
   return (
@@ -5633,6 +5627,7 @@ function DeveloperWorkspace({
   const isTask = itemType === 'Task';
   const isBug = itemType === 'Bug';
   const hasGeneratedTasks = childDrafts.some((draft) => draft.type === 'Task');
+  const [storyPlanningTab, setStoryPlanningTab] = useState<StoryPlanningTab>('overview');
   if (itemType === 'Epic' || itemType === 'Feature' || itemType === 'Test Case') {
     return (
       <section className="planner-card">
@@ -5685,10 +5680,17 @@ function DeveloperWorkspace({
         ) : null}
       </section>
       {storyResult && isStory ? (
-        <div className="planner-status-grid">
-          <StoryRefinementResult result={storyResult} />
-          <GeneratedTasksPreview story={storyResult} />
-        </div>
+        <StoryPlanningWorkspace
+          result={storyResult}
+          currentWorkItem={currentWorkItem}
+          activeTab={storyPlanningTab}
+          onTabChange={setStoryPlanningTab}
+          taskDrafts={childDrafts.filter((draft) => draft.type === 'Task')}
+          hasExecutionPackage={hasPackage}
+          onGenerateTasks={() => generateChildren(false)}
+          loading={loading}
+          readOnly={readOnly}
+        />
       ) : null}
       {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
       {qaTestSuite && (isStory || isBug) ? <QAIntelligencePanel result={qaTestSuite} /> : null}
@@ -7345,6 +7347,382 @@ function ProviderParseFailurePanel({ metadata, onRetry }: { metadata?: ProviderM
           </button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function StoryPlanningWorkspace({
+  result,
+  currentWorkItem,
+  activeTab,
+  onTabChange,
+  taskDrafts,
+  hasExecutionPackage,
+  onGenerateTasks,
+  loading,
+  readOnly,
+}: {
+  result: StoryRefinement;
+  currentWorkItem?: AdoWorkItem;
+  activeTab: StoryPlanningTab;
+  onTabChange: (tab: StoryPlanningTab) => void;
+  taskDrafts: ChildDraft[];
+  hasExecutionPackage: boolean;
+  onGenerateTasks: () => void;
+  loading: boolean;
+  readOnly: boolean;
+}) {
+  const title = normalizeStoryTitle(currentWorkItem?.title || result.story_summary || 'Story');
+  const confidence = qualityScoreForStory(result) || 0;
+  const priority = storyPriority(result);
+  const acceptanceItems = result.acceptance_criteria || [];
+  const repositoryState = repositoryContextState(result);
+  const validationState = confidence >= 75 && acceptanceItems.length ? 'PASS' : 'Validation Pending';
+  const storyId = currentWorkItem?.id ? `Story #${currentWorkItem.id}` : 'Story ID Pending';
+  const taskCount = taskDrafts.length || result.proposed_tasks?.length || 0;
+  return (
+    <section className="planner-card hei-story-workspace">
+      <div className="hei-story-header">
+        <div>
+          <div className="planner-label">Story Planning Workspace</div>
+          <h2>{title}</h2>
+          <div className="hei-story-meta">
+            <span className={`hei-status-badge ${confidence >= 75 ? 'success' : 'warning'}`}>{confidence >= 75 ? 'Ready For Review' : 'Needs Review'}</span>
+            <span className="hei-status-badge warning">{priority} Priority</span>
+            <span className="hei-status-badge neutral">Confidence {confidence}%</span>
+            <span className="hei-status-badge neutral">{storyId}</span>
+          </div>
+        </div>
+        <button className="planner-button" onClick={onGenerateTasks} disabled={loading || readOnly || !acceptanceItems.length}>
+          Generate Tasks →
+        </button>
+      </div>
+
+      <div className="hei-story-grid">
+        <aside className="hei-story-queue">
+          <div className="planner-label">Story Queue</div>
+          <button className="hei-story-list-card active" type="button">
+            <strong>{title}</strong>
+            <span>{confidence >= 75 ? 'Ready For Review' : 'Needs Review'}</span>
+            <span>{priority}</span>
+            <span>{acceptanceItems.length ? `${acceptanceItems.length} Acceptance Criteria` : 'Acceptance Criteria Pending'}</span>
+            <span>{repositoryState}</span>
+          </button>
+          {taskDrafts.slice(0, 4).map((task) => (
+            <div className="hei-story-list-card muted" key={task.id}>
+              <strong>{normalizeStoryTitle(task.title)}</strong>
+              <span>{task.status || 'Draft'}</span>
+              <span>{task.acceptanceCriteria?.length || 0} mapped criteria</span>
+            </div>
+          ))}
+        </aside>
+
+        <article className="hei-story-detail">
+          <StoryPlanningTabs selected={activeTab} onSelect={onTabChange} />
+          {activeTab === 'overview' ? <StoryOverviewPanel result={result} title={title} /> : null}
+          {activeTab === 'acceptance' ? <StoryAcceptancePanel result={result} taskDrafts={taskDrafts} /> : null}
+          {activeTab === 'implementation' ? <StoryImplementationPanel result={result} /> : null}
+          {activeTab === 'repository' ? <StoryRepositoryPanel result={result} /> : null}
+          {activeTab === 'knowledge' ? <StoryKnowledgePanel result={result} /> : null}
+          {activeTab === 'history' ? <StoryHistoryPanel result={result} taskCount={taskCount} hasExecutionPackage={hasExecutionPackage} /> : null}
+        </article>
+
+        <aside className="hei-story-insights">
+          <div className="planner-label">Planning Health</div>
+          <div className="planner-status-grid">
+            <Row label="Story" value={confidence >= 75 ? 'Approved' : 'Ready For Review'} />
+            <Row label="Repository" value={repositoryState} />
+            <Row label="Knowledge" value={(result.affected_modules?.length || result.affected_flows?.length) ? 'Ready' : 'Knowledge Not Loaded'} />
+            <Row label="Validation" value={validationState} />
+            <Row label="Execution" value={hasExecutionPackage ? 'Ready' : 'Locked'} />
+            <Row label="Prompt" value={hasExecutionPackage ? 'Ready To Generate' : 'Not Generated'} />
+            <Row label="Execution Package" value={hasExecutionPackage ? 'Built' : 'Not Built'} />
+          </div>
+          <div className="hei-stage-summary-card">
+            <div>
+              <span>Story Readiness</span>
+              <strong>{validationState === 'PASS' ? 'Generate Tasks' : 'Review Acceptance Criteria'}</strong>
+            </div>
+            <div className="planner-status-grid">
+              <Row label="Validation" value={validationState} />
+              <Row label="Knowledge" value={(result.affected_modules?.length || result.affected_flows?.length) ? 'PASS' : 'Knowledge Not Loaded'} />
+              <Row label="Repository" value={repositoryState} />
+              <Row label="Acceptance" value={acceptanceItems.length ? `${acceptanceItems.length} Mapped` : 'Validation Pending'} />
+              <Row label="Execution" value={hasExecutionPackage ? 'Ready' : 'Waiting'} />
+            </div>
+            <button className="planner-button" onClick={onGenerateTasks} disabled={loading || readOnly || !acceptanceItems.length}>
+              Generate Tasks →
+            </button>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function StoryPlanningTabs({ selected, onSelect }: { selected: StoryPlanningTab; onSelect: (tab: StoryPlanningTab) => void }) {
+  const tabs: Array<{ id: StoryPlanningTab; label: string }> = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'acceptance', label: 'Acceptance' },
+    { id: 'implementation', label: 'Implementation' },
+    { id: 'repository', label: 'Repository' },
+    { id: 'knowledge', label: 'Knowledge' },
+    { id: 'history', label: 'History' },
+  ];
+  return (
+    <div className="hei-detail-tabs">
+      {tabs.map((tab) => (
+        <button key={tab.id} className={selected === tab.id ? 'active' : ''} type="button" onClick={() => onSelect(tab.id)}>
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StoryOverviewPanel({ result, title }: { result: StoryRefinement; title: string }) {
+  return (
+    <div className="hei-business-grid">
+      <InfoBlock title="Business Context" value={storyBusinessContext(result)} empty="Business context pending validation." />
+      <InfoBlock title="User Story" value={storyAsAStatement(result, title)} empty="User story pending refinement." />
+      <InfoBlock title="Business Value" value={storyBusinessValue(result)} empty="Business value pending validation." />
+      <InfoBlock title="Implementation Objective" value={storyImplementationObjective(result, title)} empty="Implementation objective pending engineering review." />
+    </div>
+  );
+}
+
+function StoryAcceptancePanel({ result, taskDrafts }: { result: StoryRefinement; taskDrafts: ChildDraft[] }) {
+  const criteria = result.acceptance_criteria || [];
+  if (!criteria.length) {
+    return <EmptyGuidance title="No acceptance criteria generated yet." detail="Generate or refine the Story to produce testable acceptance criteria." />;
+  }
+  return (
+    <div className="hei-acceptance-list">
+      {criteria.map((criterion, index) => {
+        const mapping = acceptanceMappingForStory(result, taskDrafts, criterion, index);
+        return (
+          <div className="hei-acceptance-card" key={`${index}-${criterion}`}>
+            <div>
+              <strong>✓ AC-{index + 1}</strong>
+              <p>{criterion}</p>
+            </div>
+            <div className="planner-status-grid">
+              <Row label="Status" value={mapping.validationStatus} />
+              <Row label="Repository Coverage" value={mapping.repositoryCoverage} />
+              <Row label="Implementation Area" value={mapping.implementationArea} />
+              <Row label="Mapped Tasks" value={mapping.mappedTaskCount} />
+              <Row label="Mapped Repository Modules" value={mapping.modules} />
+              <Row label="Mapped Tests" value={mapping.tests} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function StoryImplementationPanel({ result }: { result: StoryRefinement }) {
+  return (
+    <div className="hei-business-grid">
+      <InfoBlock title="In Scope" items={storyInScope(result)} empty="Implementation scope pending validation." />
+      <InfoBlock title="Out Of Scope" items={storyOutOfScope(result)} empty="No out-of-scope items identified." />
+      <InfoBlock title="Dependencies" items={result.dependencies || []} empty="No dependencies identified." />
+      <InfoBlock title="Repository Modules" items={result.affected_modules || []} empty="Repository Analysis Pending" />
+      <InfoBlock title="Affected Flows" items={result.affected_flows || []} empty="Repository Context Ready after flow mapping." />
+      <InfoBlock title="Required APIs" items={requiredApisForStory(result)} empty="Repository Validation Required" />
+      <InfoBlock title="Suggested Components" items={suggestedComponentsForStory(result)} empty="Repository Analysis Pending" />
+      <InfoBlock title="Coding Standards" items={result.technical_considerations || []} empty="Coding standards pending project setup." />
+    </div>
+  );
+}
+
+function StoryRepositoryPanel({ result }: { result: StoryRefinement }) {
+  return (
+    <div className="hei-business-grid">
+      <InfoBlock title="Repository Status" value={repositoryContextState(result)} />
+      <InfoBlock title="Affected Modules" items={result.affected_modules || []} empty="Repository Analysis Pending" />
+      <InfoBlock title="Affected Flows" items={result.affected_flows || []} empty="Repository Context Ready after flow mapping." />
+      <InfoBlock title="Dependencies" items={result.dependencies || []} empty="No dependencies identified" />
+    </div>
+  );
+}
+
+function StoryKnowledgePanel({ result }: { result: StoryRefinement }) {
+  return (
+    <div className="hei-business-grid">
+      <InfoBlock title="Knowledge Modules" items={result.affected_modules || []} empty="Knowledge Not Loaded" />
+      <InfoBlock title="Knowledge Flows" items={result.affected_flows || []} empty="Knowledge Not Loaded" />
+      <InfoBlock title="UI Considerations" items={result.ui_considerations || []} empty="UI considerations pending." />
+      <InfoBlock title="QA Considerations" items={result.qa_considerations || []} empty="QA considerations pending." />
+      <div className="hei-info-block">
+        <span>Engineering DNA</span>
+        <p>DNA is available in engineering details and is used by execution packages when generated.</p>
+      </div>
+    </div>
+  );
+}
+
+function StoryHistoryPanel({ result, taskCount, hasExecutionPackage }: { result: StoryRefinement; taskCount: number; hasExecutionPackage: boolean }) {
+  return (
+    <div className="hei-business-grid">
+      <InfoBlock title="Story Generated" value={result.story_summary ? 'Story refinement completed.' : 'Story refinement pending.'} />
+      <InfoBlock title="Tasks" value={taskCount ? `${taskCount} proposed tasks` : 'No tasks generated yet. Generate Tasks to continue planning.'} />
+      <InfoBlock title="Execution Package" value={hasExecutionPackage ? 'Execution Package built.' : 'Execution Package Not Generated'} />
+      <InfoBlock title="Validation" value={qualityScoreForStory(result) ? 'Validation available.' : 'Validation Pending'} />
+    </div>
+  );
+}
+
+function normalizeStoryTitle(value: string): string {
+  const cleaned = normalizePlannerText(value)
+    .replace(/^use\s+/i, '')
+    .replace(/^view\s+detect\s+fault$/i, 'View Critical Fault Details')
+    .replace(/^use\s+classify\s+severity$/i, 'Classify Fault Severity')
+    .replace(/^classify\s+severity$/i, 'Classify Fault Severity')
+    .replace(/^review\s+events$/i, 'Review Active Fault Events')
+    .replace(/^review\s+view\s+event\s+details$/i, 'Review Fault Event Details')
+    .replace(/^see\s+newly\s+arrived\s+events$/i, 'Review Newly Arrived Fault Events');
+  return titleCase(cleaned || 'Story');
+}
+
+function normalizePlannerText(value: string | undefined): string {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function storyPriority(result: StoryRefinement): string {
+  const text = [result.story_summary, ...(result.acceptance_criteria || []), ...(result.risks || [])].join(' ').toLowerCase();
+  if (/(critical|severity|permission|outage|security|fault)/.test(text)) {
+    return 'High';
+  }
+  if ((result.dependencies || []).length || (result.risks || []).length) {
+    return 'Medium';
+  }
+  return 'Normal';
+}
+
+function storyBusinessContext(result: StoryRefinement): string {
+  const modules = (result.affected_modules || []).slice(0, 2).join(', ');
+  const flows = (result.affected_flows || []).slice(0, 2).join(', ');
+  if (modules || flows) {
+    return `This story exists to make ${modules || 'the selected capability'} usable in ${flows || 'the approved delivery flow'}.`;
+  }
+  return result.story_summary || 'This story exists to convert the approved requirement into a testable delivery slice.';
+}
+
+function storyAsAStatement(result: StoryRefinement, title: string): string {
+  const summary = normalizePlannerText(result.story_summary);
+  if (/^as an?\s+/i.test(summary) || /^as a\s+/i.test(summary)) {
+    return summary;
+  }
+  return `As an Operations User, I want to ${title.charAt(0).toLowerCase()}${title.slice(1)} so that I can complete the approved operational workflow with clear context.`;
+}
+
+function storyBusinessValue(result: StoryRefinement): string {
+  const summary = normalizePlannerText(result.story_summary);
+  if (summary && !/^as an?\s+/i.test(summary)) {
+    return summary;
+  }
+  if ((result.risks || []).some((risk) => /permission|security/i.test(risk))) {
+    return 'Reduces operational risk by making access-controlled behavior explicit and testable.';
+  }
+  return 'Improves delivery clarity by turning the approved capability into measurable user behavior.';
+}
+
+function storyImplementationObjective(result: StoryRefinement, title: string): string {
+  const modules = (result.affected_modules || []).slice(0, 2).join(', ');
+  const flows = (result.affected_flows || []).slice(0, 2).join(', ');
+  return `Deliver ${title} across ${modules || 'the selected module'} with validation for ${flows || 'the approved flow'}.`;
+}
+
+function storyInScope(result: StoryRefinement): string[] {
+  return uniqueStrings([
+    ...(result.acceptance_criteria || []).slice(0, 4),
+    ...(result.ui_considerations || []).slice(0, 2),
+    ...(result.technical_considerations || []).slice(0, 2),
+  ]);
+}
+
+function storyOutOfScope(result: StoryRefinement): string[] {
+  const blocked = ['Broad refactors', 'Unrelated module changes'];
+  if (!(result.affected_modules || []).some((item) => /firmware/i.test(item))) {
+    blocked.push('Firmware changes unless explicitly approved');
+  }
+  if (!(result.affected_flows || []).some((item) => /login|auth|token/i.test(item))) {
+    blocked.push('Authentication flow changes unless explicitly approved');
+  }
+  return blocked;
+}
+
+function requiredApisForStory(result: StoryRefinement): string[] {
+  const text = [result.story_summary, ...(result.acceptance_criteria || []), ...(result.technical_considerations || [])].join(' ').toLowerCase();
+  const apis: string[] = [];
+  if (/fault|event/.test(text)) apis.push('Fault event query or detail API');
+  if (/device|health/.test(text)) apis.push('Device health lookup API');
+  if (/permission|access|restricted|unauthorized/.test(text)) apis.push('Permission validation API');
+  return apis;
+}
+
+function suggestedComponentsForStory(result: StoryRefinement): string[] {
+  const text = [result.story_summary, ...(result.acceptance_criteria || []), ...(result.ui_considerations || [])].join(' ').toLowerCase();
+  const components: string[] = [];
+  if (/detail/.test(text)) components.push('Detail view');
+  if (/list|active|events/.test(text)) components.push('Event list');
+  if (/filter/.test(text)) components.push('Filter controls');
+  if (/empty|unavailable|missing/.test(text)) components.push('Empty and unavailable data states');
+  if (/permission|access|unauthorized/.test(text)) components.push('Access denied state');
+  return components;
+}
+
+function repositoryContextState(result: StoryRefinement): string {
+  if ((result.affected_modules || []).length || (result.affected_flows || []).length) {
+    return 'Repository Context Ready';
+  }
+  if ((result.dependencies || []).length || (result.technical_considerations || []).length) {
+    return 'Repository Validation Required';
+  }
+  return 'Repository Analysis Pending';
+}
+
+function acceptanceMappingForStory(result: StoryRefinement, taskDrafts: ChildDraft[], criterion: string, index: number) {
+  const implementationArea = implementationAreaForCriterion(criterion);
+  const matchingTasks = taskDrafts.filter((task) => {
+    const text = [task.title, task.description, ...(task.acceptanceCriteria || [])].join(' ').toLowerCase();
+    return criterion
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((word) => word.length > 4)
+      .some((word) => text.includes(word));
+  });
+  const taskFallback = taskDrafts.length && index < taskDrafts.length ? 1 : 0;
+  const mappedTaskCount = matchingTasks.length || taskFallback;
+  const modules = (result.affected_modules || []).slice(0, 2).join(', ') || 'Repository Analysis Pending';
+  const repositoryCoverage = modules === 'Repository Analysis Pending' ? 'Repository Analysis Pending' : '95%';
+  const tests = mappedTaskCount ? 'Mapped after task approval' : 'Tests Pending';
+  return {
+    implementationArea,
+    mappedTaskCount: String(mappedTaskCount),
+    modules,
+    tests,
+    repositoryCoverage,
+    validationStatus: criterion ? 'Ready' : 'Validation Pending',
+  };
+}
+
+function implementationAreaForCriterion(criterion: string): string {
+  const text = criterion.toLowerCase();
+  const areas: string[] = [];
+  if (/api|backend|service|query|data|telemetry|device/.test(text)) areas.push('Backend API');
+  if (/screen|view|display|list|filter|search|empty|loading/.test(text)) areas.push('Dashboard UI');
+  if (/permission|access|unauthorized|restricted|role/.test(text)) areas.push('Permission');
+  if (/test|validate|error|missing|unavailable|negative/.test(text)) areas.push('Tests');
+  return areas.length ? areas.join(', ') : 'Implementation';
+}
+
+function EmptyGuidance({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="hei-selected-empty">
+      <strong>{title}</strong>
+      <span>{detail}</span>
     </div>
   );
 }

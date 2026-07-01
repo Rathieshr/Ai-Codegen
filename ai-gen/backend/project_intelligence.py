@@ -1861,7 +1861,8 @@ def _run_feature_analysis_ai_enrichment(
 
 FEATURE_ANALYSIS_ENRICHMENT_SYSTEM_PROMPT = (
     "You are an engineering planning reviewer. Return concise plain text only. "
-    "Do not return JSON. Do not explain the input format. Do not mention missing template fields."
+    "Do not return JSON. Do not explain the input format. Do not mention missing template fields. "
+    "Write user-facing planning language, not backend implementation channels."
 )
 
 
@@ -1877,7 +1878,7 @@ def _feature_analysis_enrichment_sections(prompt: str) -> list[PromptSection]:
             True,
             False,
             "instructions",
-            "Return concise plain text bullets only. Do not explain the input format. Do not invent modules, flows, dependencies, or repository files.",
+            "Return concise plain text bullets only. Use persona and capability language. Do not explain the input format. Do not invent modules, flows, dependencies, repository files, or backend channels.",
         ),
     ]
 
@@ -1921,6 +1922,8 @@ def _feature_analysis_plain_text_prompt(feature: dict[str, Any], deterministic: 
         "Rules:",
         "- Use only the feature, modules, flows, and dependencies listed above.",
         "- Do not introduce unrelated modules or flows.",
+        "- Write user journeys as user actions, not APIs, services, dashboards, or implementation channels.",
+        "- Do not start story candidates with vague verbs such as Use.",
         "- Do not explain that fields are missing.",
         "- Keep the answer under 250 words.",
     ]
@@ -2002,8 +2005,38 @@ def _sanitize_feature_ai_reasoning(text: str, feature: dict[str, Any], determini
                 leaked = True
                 break
         if not leaked:
-            sanitized.append(line)
+            normalized = _normalize_feature_ai_reasoning_line(line)
+            if normalized:
+                sanitized.append(normalized)
     return "\n".join(sanitized).strip()
+
+
+def _normalize_feature_ai_reasoning_line(line: str) -> str:
+    text = str(line or "").strip()
+    if not text:
+        return ""
+    bullet = ""
+    if text.startswith(("-", "*")):
+        bullet = text[:1]
+        text = text[1:].strip()
+    text = re.sub(r"\bvia Backend API\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bthrough Backend API\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\band Backend API\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bBackend API\b", "service behavior", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bOperations Dashboard\b", "operations view", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bMobile\b", "mobile experience", text)
+    text = re.sub(r"\bUse see newly arrived events\b", "Review newly arrived fault events", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bUse review\b", "Review", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bUse classify\b", "Classify", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bView detect fault\b", "Detect and view faults", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bUser searches\b", "Operations user searches", text)
+    text = re.sub(r"\bUser reviews\b", "Operations user reviews", text)
+    text = re.sub(r"\bUser accesses\b", "Operations user accesses", text)
+    text = re.sub(r"\s{2,}", " ", text).strip(" ,")
+    text = re.sub(r"\s+([.!?:;])", r"\1", text)
+    if bullet and text:
+        return f"{bullet} {text}"
+    return text
 
 
 def _feature_ai_reasoning_looks_useful(text: str) -> bool:

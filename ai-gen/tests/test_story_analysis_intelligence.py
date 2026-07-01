@@ -77,6 +77,36 @@ class _LeakyReasoningProvider(_TruncatedProvider):
         }
 
 
+class _RoughFeatureReasoningProvider(_TruncatedProvider):
+    def probe_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        self.calls += 1
+        self.user_prompt = user_prompt
+        raw = (
+            "1. User journeys:\n"
+            "   - Operations user views critical fault events in Mobile.\n"
+            "   - User searches and filters fault events via Backend API.\n"
+            "   - User reviews fault events and their details on Operations Dashboard.\n"
+            "   - User accesses new fault events through Mobile and Backend API.\n\n"
+            "3. Story candidates to add or improve:\n"
+            "   - Add \"Use see newly arrived events\" to Operations Dashboard.\n"
+        )
+        return {
+            "status": "parse_error",
+            "http_status": 200,
+            "elapsed_ms": 500,
+            "raw_content": raw,
+            "raw_response_preview": raw,
+            "parsed_json": {},
+            "failure_reason": "parse_error",
+            "failure_message": "Model response could not be normalized into a JSON object.",
+            "parse_error": "NoJsonObjectFound",
+            "finish_reason": "stop",
+            "completion_tokens": 187,
+            "prompt_tokens": 355,
+            "response_length": len(raw),
+        }
+
+
 def _profile() -> dict:
     return {
         "project_name": "LineDefender",
@@ -247,6 +277,23 @@ class StoryAnalysisIntelligenceTests(unittest.TestCase):
         self.assertIn("Fault Event Review Flow", reasoning)
         self.assertNotIn("Login Flow", reasoning)
         self.assertNotIn("Analytics Platform", reasoning)
+
+    def test_feature_analysis_enrichment_normalizes_phi_planning_language(self) -> None:
+        provider = _RoughFeatureReasoningProvider()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            result = ProjectIntelligenceService().refine_feature(
+                {"id": 501, "title": "Critical Fault Detection", "work_item_dna": _feature_dna()},
+                _profile(),
+                options={"mode": "retry_ai_enrichment", "llm_provider": provider},
+            )
+
+        reasoning = result["feature_analysis_result"]["aiEnrichment"]["aiReasoningText"]
+        self.assertIn("mobile experience", reasoning)
+        self.assertIn("operations view", reasoning)
+        self.assertIn("Operations user searches and filters fault events.", reasoning)
+        self.assertIn("Review newly arrived fault events", reasoning)
+        self.assertNotIn("Backend API", reasoning)
+        self.assertNotIn("Use see newly arrived events", reasoning)
 
 
 if __name__ == "__main__":

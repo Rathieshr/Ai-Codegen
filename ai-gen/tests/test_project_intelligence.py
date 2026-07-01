@@ -2041,7 +2041,9 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             metadata = json.loads((incident_dir / "metadata.json").read_text(encoding="utf-8"))
 
         self.assertEqual(provider.calls, 1)
-        self.assertEqual(refined["phi_status"], "parse_error")
+        self.assertEqual(refined["phi_status"], "plain_text_response")
+        self.assertEqual(refined["feature_analysis_result"]["aiStatus"], "plain_text_response")
+        self.assertIn("Story one", refined["feature_analysis_result"]["aiEnrichment"]["aiReasoningText"])
         self.assertTrue(refined["diagnostics_available"])
         self.assertTrue(refined["diagnostics_path"])
         self.assertEqual(sorted(refined["diagnostics_files"]), ["metadata.json", "prompt.txt", "response.txt"])

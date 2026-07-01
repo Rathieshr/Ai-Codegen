@@ -56,6 +56,27 @@ class _TruncatedProvider(_TimeoutProvider):
         }
 
 
+class _LeakyReasoningProvider(_TruncatedProvider):
+    def probe_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        self.calls += 1
+        self.user_prompt = user_prompt
+        return {
+            "status": "parse_error",
+            "http_status": 200,
+            "elapsed_ms": 500,
+            "raw_content": "User journeys:\n- Fault Event Review Flow\n- Login Flow\n- Analytics Platform\nRisks:\n- Permission issues accessing fault events.",
+            "raw_response_preview": "User journeys:\n- Fault Event Review Flow\n- Login Flow\n- Analytics Platform\nRisks:\n- Permission issues accessing fault events.",
+            "parsed_json": {},
+            "failure_reason": "parse_error",
+            "failure_message": "Model response could not be normalized into a JSON object.",
+            "parse_error": "NoJsonObjectFound",
+            "finish_reason": "stop",
+            "completion_tokens": 40,
+            "prompt_tokens": 100,
+            "response_length": 120,
+        }
+
+
 def _profile() -> dict:
     return {
         "project_name": "LineDefender",
@@ -202,6 +223,30 @@ class StoryAnalysisIntelligenceTests(unittest.TestCase):
         self.assertEqual(analysis["aiStatus"], "truncated_response")
         self.assertTrue(analysis["deterministicDraft"]["storyCandidates"])
         self.assertNotIn("error", result)
+
+    def test_feature_analysis_enrichment_filters_irrelevant_context_leakage(self) -> None:
+        provider = _LeakyReasoningProvider()
+        profile = _profile()
+        profile["knowledge_registry"]["flows"] = [
+            "Fault Event Review Flow",
+            "Device Health Review Flow",
+            "Login Flow",
+            "Analytics Platform",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            result = ProjectIntelligenceService().refine_feature(
+                {"id": 501, "title": "Critical Fault Detection", "work_item_dna": _feature_dna()},
+                profile,
+                options={"mode": "retry_ai_enrichment", "llm_provider": provider},
+            )
+
+        self.assertIn("Fault Event Review Flow", provider.user_prompt)
+        self.assertNotIn("Login Flow", provider.user_prompt)
+        self.assertNotIn("Analytics Platform", provider.user_prompt)
+        reasoning = result["feature_analysis_result"]["aiEnrichment"]["aiReasoningText"]
+        self.assertIn("Fault Event Review Flow", reasoning)
+        self.assertNotIn("Login Flow", reasoning)
+        self.assertNotIn("Analytics Platform", reasoning)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import hashlib
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1832,7 +1833,7 @@ def _run_feature_analysis_ai_enrichment(
     elif raw_text and _feature_ai_reasoning_looks_useful(raw_text):
         metadata.update(
             {
-                "phi_status": status or "plain_text_response",
+                "phi_status": "plain_text_response",
                 "fallback_used": False,
                 "fallback_reason": probe.get("failure_message") or "Optional AI enrichment returned plain text that was captured for review.",
             }
@@ -1884,6 +1885,15 @@ def _feature_analysis_enrichment_sections(prompt: str) -> list[PromptSection]:
 def _feature_analysis_plain_text_prompt(feature: dict[str, Any], deterministic: dict[str, Any], profile: dict[str, Any]) -> str:
     dna = deterministic.get("work_item_dna") if isinstance(deterministic.get("work_item_dna"), dict) else {}
     registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    relevance_text = _feature_analysis_relevance_text(feature, deterministic)
+    modules = _feature_analysis_relevant_names(
+        _string_list(deterministic.get("affected_modules")) or _string_list(registry.get("modules"))[:4],
+        relevance_text,
+    )
+    flows = _feature_analysis_relevant_names(
+        _string_list(deterministic.get("affected_flows")) or _string_list(registry.get("flows"))[:4],
+        relevance_text,
+    )
     stories = [
         _clean_text(story.get("title"))
         for story in deterministic.get("recommended_stories", [])
@@ -1897,8 +1907,8 @@ def _feature_analysis_plain_text_prompt(feature: dict[str, Any], deterministic: 
         f"Capability: {_clean_text(dna.get('capability') or feature.get('capability') or feature.get('title'))}",
         f"Responsibilities: {', '.join(_string_list(dna.get('responsibilities'))[:6]) or 'Not specified'}",
         f"In scope: {', '.join(_string_list(deterministic.get('in_scope')) or _string_list(dna.get('inScope'))[:6]) or 'Use the feature boundary only'}",
-        f"Modules: {', '.join(_string_list(deterministic.get('affected_modules'))[:6]) or ', '.join(_string_list(registry.get('modules'))[:4])}",
-        f"Flows: {', '.join(_string_list(deterministic.get('affected_flows'))[:6]) or ', '.join(_string_list(registry.get('flows'))[:4])}",
+        f"Modules: {', '.join(modules[:6])}",
+        f"Flows: {', '.join(flows[:6])}",
         f"Dependencies: {', '.join(_string_list(deterministic.get('dependencies'))[:6]) or 'No dependencies identified'}",
         f"Current story candidates: {', '.join(stories) or 'No stories generated yet'}",
         "",
@@ -1915,6 +1925,85 @@ def _feature_analysis_plain_text_prompt(feature: dict[str, Any], deterministic: 
         "- Keep the answer under 250 words.",
     ]
     return "\n".join(lines)
+
+
+def _feature_analysis_relevance_text(feature: dict[str, Any], deterministic: dict[str, Any]) -> str:
+    parts = [
+        feature.get("title"),
+        feature.get("description"),
+        deterministic.get("feature_summary"),
+    ]
+    dna = deterministic.get("work_item_dna") if isinstance(deterministic.get("work_item_dna"), dict) else {}
+    parts.extend(_string_list(dna.get("businessGoals")))
+    parts.extend(_string_list(dna.get("responsibilities")))
+    for story in deterministic.get("recommended_stories", []):
+        if isinstance(story, dict):
+            parts.extend([story.get("title"), story.get("description")])
+            parts.extend(_string_list(story.get("acceptance_criteria")))
+    return " ".join(_clean_text(part).lower() for part in parts if _clean_text(part))
+
+
+def _feature_analysis_relevant_names(names: list[str], relevance_text: str) -> list[str]:
+    selected: list[str] = []
+    for name in names:
+        text = _clean_text(name)
+        if not text or _feature_analysis_blocked_context_reason(text, relevance_text):
+            continue
+        if _feature_analysis_name_matches(text, relevance_text):
+            selected.append(text)
+    return selected or [_clean_text(name) for name in names[:2] if _clean_text(name) and not _feature_analysis_blocked_context_reason(name, relevance_text)]
+
+
+def _feature_analysis_name_matches(name: str, relevance_text: str) -> bool:
+    tokens = [
+        token
+        for token in _feature_analysis_token_set(name)
+        if token not in {"flow", "review", "platform", "application", "app", "api", "service", "management"}
+    ]
+    if any(token in relevance_text for token in tokens):
+        return True
+    normalized = name.lower()
+    if "device health" in normalized and any(token in relevance_text for token in ["fault", "event", "device", "outage"]):
+        return True
+    if "telemetry" in normalized and any(token in relevance_text for token in ["fault", "event", "device", "health", "outage"]):
+        return True
+    return False
+
+
+def _feature_analysis_token_set(value: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z][a-z0-9]{2,}", value.lower())}
+
+
+def _feature_analysis_blocked_context_reason(name: str, relevance_text: str) -> str:
+    normalized = name.lower()
+    if any(token in normalized for token in ["login", "token", "auth", "session"]) and not any(
+        token in relevance_text for token in ["login", "token", "auth", "session", "credential", "password"]
+    ):
+        return "authentication context is not relevant to this feature intent"
+    if "firmware" in normalized and not any(
+        token in relevance_text for token in ["firmware", "rollout", "upgrade", "version", "rollback", "compliance"]
+    ):
+        return "firmware context is not relevant to this feature intent"
+    if any(token in normalized for token in ["analytics", "reporting", "dashboard", "metrics", "kpi"]) and not any(
+        token in relevance_text for token in ["analytics", "report", "reporting", "dashboard", "trend", "metric", "kpi"]
+    ):
+        return "analytics/reporting context is not relevant to this feature intent"
+    return ""
+
+
+def _sanitize_feature_ai_reasoning(text: str, feature: dict[str, Any], deterministic: dict[str, Any]) -> str:
+    relevance_text = _feature_analysis_relevance_text(feature, deterministic)
+    sanitized: list[str] = []
+    for line in text.splitlines():
+        lowered = line.lower()
+        leaked = False
+        for candidate in ["Login Flow", "Token Refresh", "Authentication", "Analytics Platform", "Analytics", "Firmware Update", "Firmware Management"]:
+            if candidate.lower() in lowered and _feature_analysis_blocked_context_reason(candidate, relevance_text):
+                leaked = True
+                break
+        if not leaked:
+            sanitized.append(line)
+    return "\n".join(sanitized).strip()
 
 
 def _feature_ai_reasoning_looks_useful(text: str) -> bool:
@@ -2006,6 +2095,8 @@ def _feature_analysis_ai_status(metadata: dict[str, Any], ai_requested: bool) ->
         return "not_requested"
     if phi_status == "success":
         return "success"
+    if phi_status == "plain_text_response":
+        return "plain_text_response"
     if phi_status in {"truncated_response", "length"} or "truncated" in fallback_reason:
         return "truncated_response"
     if "timeout" in phi_status or "timeout" in fallback_reason or phi_status == "provider_timeout":
@@ -2080,9 +2171,13 @@ def _feature_analysis_payload(
         "risks": _string_list(deterministic.get("risks")),
     }
     ai_enrichment = None
-    raw_reasoning = _clean_text(provider_metadata.get("raw_response_preview") or provider_metadata.get("phi_raw_response_preview"))
+    raw_reasoning = _sanitize_feature_ai_reasoning(
+        str(provider_metadata.get("raw_response_preview") or provider_metadata.get("phi_raw_response_preview") or ""),
+        feature,
+        deterministic,
+    )
     warnings: list[str] = []
-    if raw_reasoning and ai_status in {"success", "parse_error", "truncated_response"}:
+    if raw_reasoning:
         ai_enrichment = {
             "userJourneys": deterministic.get("story_analysis", {}).get("userJourneys", []) if isinstance(deterministic.get("story_analysis"), dict) else [],
             "acceptanceThemes": deterministic.get("story_generation_diagnostics", {}).get("story_coverage_areas", []) if isinstance(deterministic.get("story_generation_diagnostics"), dict) else [],

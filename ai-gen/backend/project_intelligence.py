@@ -1817,7 +1817,8 @@ def _run_feature_analysis_ai_enrichment(
             "parse_error": type(exc).__name__,
         }
     metadata = _with_context_diagnostics(_provider_status_metadata(provider, probe, health), context_diagnostics)
-    raw_text = _clean_text(probe.get("raw_content") or probe.get("raw_response_preview"))
+    raw_probe_text = str(probe.get("raw_content") or probe.get("raw_response_preview") or "")
+    raw_text = _clean_text(raw_probe_text)
     finish_reason = _clean_text(probe.get("finish_reason")).lower()
     status = _clean_text(probe.get("failure_reason") or probe.get("status")).lower()
     if finish_reason == "length":
@@ -1830,12 +1831,13 @@ def _run_feature_analysis_ai_enrichment(
         )
     elif status == "success":
         metadata.update({"phi_status": "success", "fallback_used": False, "fallback_reason": ""})
-    elif raw_text and _feature_ai_reasoning_looks_useful(raw_text):
+    elif raw_probe_text and _feature_ai_reasoning_looks_useful(raw_probe_text):
         metadata.update(
             {
-                "phi_status": "plain_text_response",
+                "phi_status": "success",
                 "fallback_used": False,
-                "fallback_reason": probe.get("failure_message") or "Optional AI enrichment returned plain text that was captured for review.",
+                "fallback_reason": "",
+                "feature_analysis_enrichment_format": "plain_text_sections",
             }
         )
     else:
@@ -1846,7 +1848,7 @@ def _run_feature_analysis_ai_enrichment(
                 "fallback_reason": probe.get("failure_message") or "Optional AI enrichment did not return usable reasoning.",
             }
         )
-    if _should_persist_feature_generation_failure(context_diagnostics, probe):
+    if _should_persist_feature_generation_failure(context_diagnostics, probe) and not _feature_ai_reasoning_looks_useful(raw_probe_text):
         metadata.update(
             _persist_feature_generation_failure(
                 prompt=prompt,
@@ -1916,10 +1918,11 @@ def _feature_analysis_plain_text_prompt(feature: dict[str, Any], deterministic: 
         "Enrich these sections in concise bullets:",
         "1. User journeys",
         "2. Acceptance themes",
-        "3. Story candidates to add or improve",
+        "3. Story candidates",
         "4. Risks and edge cases",
         "",
         "Rules:",
+        "- Return exactly the four numbered sections above.",
         "- Use only the feature, modules, flows, and dependencies listed above.",
         "- Do not introduce unrelated modules or flows.",
         "- Write user journeys as user actions, not APIs, services, dashboards, or implementation channels.",
@@ -2011,6 +2014,40 @@ def _sanitize_feature_ai_reasoning(text: str, feature: dict[str, Any], determini
     return "\n".join(sanitized).strip()
 
 
+def _parse_feature_ai_enrichment_sections(text: str) -> dict[str, list[str]]:
+    sections = {
+        "userJourneys": [],
+        "acceptanceThemes": [],
+        "storyCandidates": [],
+        "risksAndEdgeCases": [],
+    }
+    aliases = {
+        "user journeys": "userJourneys",
+        "acceptance themes": "acceptanceThemes",
+        "story candidates": "storyCandidates",
+        "story candidates to add or improve": "storyCandidates",
+        "risks and edge cases": "risksAndEdgeCases",
+    }
+    current = ""
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading_match = re.match(r"^\s*(?:#{1,4}\s*)?(?:\d+[.)]\s*)?([A-Za-z][A-Za-z\s]+?)\s*:?\s*$", line)
+        if heading_match:
+            label = heading_match.group(1).strip().lower()
+            if label in aliases:
+                current = aliases[label]
+                continue
+        if not current:
+            continue
+        item = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+        item = item.strip("\"' ")
+        if item:
+            sections[current].append(item)
+    return {key: _unique(values) for key, values in sections.items()}
+
+
 def _normalize_feature_ai_reasoning_line(line: str) -> str:
     text = str(line or "").strip()
     if not text:
@@ -2023,9 +2060,12 @@ def _normalize_feature_ai_reasoning_line(line: str) -> str:
     text = re.sub(r"\bthrough Backend API\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\band Backend API\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\bBackend API\b", "service behavior", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bOperations Dashboard\s*\(API\)\b", "operations view", text, flags=re.IGNORECASE)
     text = re.sub(r"\bOperations Dashboard\b", "operations view", text, flags=re.IGNORECASE)
     text = re.sub(r"\bMobile\b", "mobile experience", text)
     text = re.sub(r"\bUse see newly arrived events\b", "Review newly arrived fault events", text, flags=re.IGNORECASE)
+    text = re.sub(r"\busing see newly arrived events\b", "reviewing newly arrived fault events", text, flags=re.IGNORECASE)
+    text = re.sub(r"\breviewing view event details\b", "reviewing event details", text, flags=re.IGNORECASE)
     text = re.sub(r"\bUse review\b", "Review", text, flags=re.IGNORECASE)
     text = re.sub(r"\bUse classify\b", "Classify", text, flags=re.IGNORECASE)
     text = re.sub(r"\bView detect fault\b", "Detect and view faults", text, flags=re.IGNORECASE)
@@ -2050,7 +2090,10 @@ def _feature_ai_reasoning_looks_useful(text: str) -> bool:
         "please provide the relevant details",
         "if you need assistance",
     ]
-    return not any(marker in normalized for marker in template_markers)
+    if any(marker in normalized for marker in template_markers):
+        return False
+    parsed = _parse_feature_ai_enrichment_sections(text)
+    return any(parsed.values())
 
 
 def _feature_analysis_pipeline_error(
@@ -2210,12 +2253,18 @@ def _feature_analysis_payload(
         deterministic,
     )
     warnings: list[str] = []
-    if raw_reasoning:
+    if raw_reasoning and ai_status in {"success", "truncated_response"}:
+        parsed_enrichment = _parse_feature_ai_enrichment_sections(raw_reasoning)
+        deterministic_journeys = deterministic.get("story_analysis", {}).get("userJourneys", []) if isinstance(deterministic.get("story_analysis"), dict) else []
+        deterministic_themes = deterministic.get("story_generation_diagnostics", {}).get("story_coverage_areas", []) if isinstance(deterministic.get("story_generation_diagnostics"), dict) else []
         ai_enrichment = {
-            "userJourneys": deterministic.get("story_analysis", {}).get("userJourneys", []) if isinstance(deterministic.get("story_analysis"), dict) else [],
-            "acceptanceThemes": deterministic.get("story_generation_diagnostics", {}).get("story_coverage_areas", []) if isinstance(deterministic.get("story_generation_diagnostics"), dict) else [],
-            "storyCandidates": draft["storyCandidates"],
+            "userJourneys": parsed_enrichment.get("userJourneys") or deterministic_journeys,
+            "acceptanceThemes": parsed_enrichment.get("acceptanceThemes") or deterministic_themes,
+            "storyCandidates": parsed_enrichment.get("storyCandidates") or draft["storyCandidates"],
+            "risksAndEdgeCases": parsed_enrichment.get("risksAndEdgeCases") or draft["risks"],
             "aiReasoningText": raw_reasoning,
+            "source": "azure_phi",
+            "format": "plain_text_sections",
         }
     if ai_status in {"timeout", "parse_error", "provider_unavailable", "truncated_response"}:
         warnings.append("Feature analysis is available. AI enrichment failed and can be retried.")

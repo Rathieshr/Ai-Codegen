@@ -287,7 +287,12 @@ class StoryAnalysisIntelligenceTests(unittest.TestCase):
                 options={"mode": "retry_ai_enrichment", "llm_provider": provider},
             )
 
+        analysis = result["feature_analysis_result"]
+        self.assertEqual(result["phi_status"], "success")
+        self.assertEqual(analysis["aiStatus"], "success")
         reasoning = result["feature_analysis_result"]["aiEnrichment"]["aiReasoningText"]
+        self.assertIn("Operations user views critical fault events in mobile experience.", analysis["aiEnrichment"]["userJourneys"])
+        self.assertIn("Add \"Review newly arrived fault events\" to operations view.", analysis["aiEnrichment"]["storyCandidates"])
         self.assertIn("mobile experience", reasoning)
         self.assertIn("operations view", reasoning)
         self.assertIn("Operations user searches and filters fault events.", reasoning)

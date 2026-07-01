@@ -1104,7 +1104,8 @@ class ProjectIntelligenceService:
         deterministic["dna_diagnostics"] = _dna_diagnostics(parent_dna, deterministic["work_item_dna"])
         if not dna_validation["valid"]:
             return _dna_error_response(deterministic, dna_validation)
-        pipeline = _run_intelligence_pipeline(story_for_generation, story_for_generation, relevant_profile, "Task", _existing_children_from_options(options), options)
+        story_analysis_options = _story_analysis_options(options)
+        pipeline = _run_story_analysis_pipeline(story_for_generation, relevant_profile, _existing_children_from_options(options), story_analysis_options)
         deterministic["proposed_tasks"] = _attach_validation_to_items(proposed_tasks, pipeline, "Task")
         deterministic["proposed_tasks"] = [
             _with_child_dna(task, "Task", deterministic["work_item_dna"], relevant_profile, validation_report=task.get("validationReport"))
@@ -1112,7 +1113,25 @@ class ProjectIntelligenceService:
         ]
         deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["proposed_tasks"], modules, _context_keywords(title, description, relevant_profile))
         deterministic.update(_pipeline_payload(pipeline))
-        return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
+        story_ai_requested = bool(story_analysis_options.get("story_ai_requested"))
+        provider_metadata = _story_analysis_provider_metadata(
+            _run_story_analysis_ai_enrichment(story_for_generation, deterministic, relevant_profile, story_analysis_options)
+            if story_ai_requested
+            else _intelligence_pipeline_metadata(pipeline)
+        )
+        deterministic.update(
+            _story_analysis_payload(
+                story_for_generation,
+                deterministic,
+                provider_metadata,
+                modules,
+                flows,
+                selection,
+                dna_validation,
+                ai_requested=story_ai_requested,
+            )
+        )
+        return _with_provider_metadata(deterministic, provider_metadata)
 
     def generate_qa_test_cases(
         self,
@@ -1250,15 +1269,17 @@ class ProjectIntelligenceService:
     ) -> dict[str, Any]:
         active_profile = _merge_external_knowledge(_normalize_profile(profile or self.get_profile()), knowledge_profile or {})
         story = story or {}
+        executable = _execution_executable_artifact(story, options)
+        parent_story = _execution_parent_story(story, executable)
         title = _clean_text(story.get("title")) or "Untitled story"
         description = _clean_text(story.get("description"))
         selection = _select_knowledge_context(active_profile, story, "Story")
         relevant_profile = _profile_with_relevance(active_profile, selection)
-        refined_story = self.refine_story(story, relevant_profile, relevant_profile["knowledge_registry"], {"force_provider": "deterministic_fallback"})
+        refined_story = self.refine_story(parent_story, relevant_profile, relevant_profile["knowledge_registry"], {"force_provider": "deterministic_fallback"})
         impact = _normalize_story_impact(
-            impact_analysis or self.analyze_story_impact(story, relevant_profile, relevant_profile["knowledge_registry"])
+            impact_analysis or self.analyze_story_impact(parent_story, relevant_profile, relevant_profile["knowledge_registry"])
         )
-        acceptance = _string_list(story.get("acceptance_criteria")) or refined_story["acceptance_criteria"]
+        acceptance = _string_list(executable.get("acceptance_criteria")) or _string_list(parent_story.get("acceptance_criteria")) or refined_story["acceptance_criteria"]
         has_impact = any(impact[key] for key in ["affected_applications", "affected_modules", "affected_flows", "dependencies", "risks"])
         readiness = _execution_readiness_score(relevant_profile, has_impact)
         recommended_files = _recommended_files(relevant_profile, impact, title)
@@ -1271,25 +1292,25 @@ class ProjectIntelligenceService:
             }
             for task in task_plan["tasks"]
         ]
-        selected_task = _selected_execution_task(story, generated_tasks)
+        selected_task = executable if _execution_artifact_type(executable) == "Task" else _selected_execution_task(story, generated_tasks, require_explicit=True)
         implementation_tasks = _tasks_for_areas(generated_tasks, ["UI Work", "Backend Work", "Data Work", "Analytics Work"])
         pipeline = _run_intelligence_pipeline(
-            {**story, "selected_task": selected_task or {}, "acceptance_criteria": acceptance},
-            story,
+            {**executable, "selected_task": selected_task or {}, "acceptance_criteria": acceptance},
+            parent_story,
             relevant_profile,
             "Task",
             _existing_children_from_options(options),
             {**(options or {}), "deterministic_only": True},
         )
         story_dna_source = {
-            **story,
+            **parent_story,
             "affected_modules": impact["affected_modules"],
             "affected_flows": impact["affected_flows"],
             "affected_applications": impact["affected_applications"],
             "dependencies": impact["dependencies"] or refined_story["dependencies"],
             "risks": impact["risks"] or refined_story["risks"],
         }
-        story_dna = _option_parent_dna(options) or (story.get("work_item_dna") if isinstance(story.get("work_item_dna"), dict) else None) or generateDNA(
+        story_dna = _option_parent_dna(options) or (parent_story.get("work_item_dna") if isinstance(parent_story.get("work_item_dna"), dict) else None) or generateDNA(
             story_dna_source,
             "Story",
             profile=relevant_profile,
@@ -1303,12 +1324,16 @@ class ProjectIntelligenceService:
             "dependencies": impact["dependencies"] or refined_story["dependencies"],
             "risks": impact["risks"] or refined_story["risks"],
         }
-        task_dna = generateDNA(
-            task_dna_source,
-            "Task" if selected_task else "Story",
-            profile=relevant_profile,
-            parent_dna=story_dna if selected_task else _option_parent_dna(options),
-            validation_report=pipeline["validationReports"][0] if pipeline.get("validationReports") else None,
+        task_dna = (
+            generateDNA(
+                task_dna_source,
+                "Task",
+                profile=relevant_profile,
+                parent_dna=story_dna,
+                validation_report=pipeline["validationReports"][0] if pipeline.get("validationReports") else None,
+            )
+            if selected_task
+            else story_dna
         )
         dna_validation = validateDNA(story_dna if selected_task else None, task_dna)
         cache = self._read_knowledge_cache()
@@ -1316,11 +1341,11 @@ class ProjectIntelligenceService:
         context_capsule = _pipeline_context_capsule(
             capsule_type="execution",
             source_work_item={
-                **(selected_task or story),
+                **executable,
                 "dependencies": impact["dependencies"] or refined_story["dependencies"],
                 "risks": impact["risks"] or refined_story["risks"],
             },
-            parent_story=story,
+            parent_story=parent_story,
             acceptance_criteria=acceptance,
             pipeline=pipeline,
             profile=relevant_profile,
@@ -1333,7 +1358,7 @@ class ProjectIntelligenceService:
         self._write_context_capsules(capsules)
         validation_report = pipeline["validationReports"][0] if pipeline.get("validationReports") else None
         deterministic = _execution_package_from_capsule(
-            story=story,
+            story=parent_story,
             selected_task=selected_task,
             acceptance_criteria=acceptance,
             context_capsule=context_capsule,
@@ -1345,10 +1370,19 @@ class ProjectIntelligenceService:
         )
         deterministic.update(
             {
-                **_lineage_metadata(selected_task or story, "Task" if selected_task else "Story", "selected_task + context_capsule", selection, float((selected_task or {}).get("confidence") or 0.8)),
+                **_lineage_metadata(executable, _execution_artifact_type(executable), "executable_artifact + context_capsule", selection, float((selected_task or {}).get("confidence") or executable.get("confidence") or 0.8)),
                 **_relevance_metadata(selection),
             }
         )
+        deterministic["executable_artifact"] = executable
+        deterministic["artifact_id"] = _item_id(executable)
+        deterministic["artifact_type"] = _execution_artifact_type(executable)
+        deterministic["execution_source"] = {
+            "artifactId": deterministic["artifact_id"],
+            "artifactType": deterministic["artifact_type"],
+            "title": _clean_text(executable.get("title")),
+            "description": _clean_text(executable.get("description")),
+        }
         deterministic["rejected_context"] = deterministic["context_capsule"]["rejectedContext"]
         deterministic["work_item_dna"] = task_dna
         deterministic["parent_work_item_dna"] = story_dna
@@ -1359,7 +1393,7 @@ class ProjectIntelligenceService:
         metadata = _execution_primary_metadata(time.monotonic(), "build_execution_context")
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
-        phi = _project_phi_json("build_execution_context", active_profile, story, deterministic, _execution_ai_options(options), _execution_enrichment_keys("build_execution_context", deterministic))
+        phi = _project_phi_json("build_execution_context", active_profile, executable, deterministic, _execution_ai_options(options), _execution_enrichment_keys("build_execution_context", deterministic))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], _execution_enrichment_keys("build_execution_context", deterministic))
             merged["proposed_tasks"] = generated_tasks
@@ -1745,6 +1779,55 @@ def _feature_analysis_options(options: dict[str, Any] | None) -> dict[str, Any]:
     return next_options
 
 
+def _story_analysis_ai_requested(options: dict[str, Any] | None) -> bool:
+    options = options or {}
+    mode = _clean_text(options.get("mode")).lower()
+    force_provider = _clean_text(options.get("force_provider")).lower()
+    if bool(options.get("deterministic_only")) or force_provider in {"deterministic_fallback", "domain_fallback"}:
+        return False
+    return (
+        mode in {"ai_enrichment", "retry_ai_enrichment", "enhance_with_ai"}
+        or bool(options.get("retry_ai_enrichment"))
+        or os.getenv("AI_GEN_PROJECT_INTELLIGENCE_USE_PHI", "0").strip().lower() in {"1", "true", "yes", "on"}
+    )
+
+
+def _story_analysis_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    next_options = dict(options or {})
+    ai_requested = _story_analysis_ai_requested(next_options)
+    # Story Analysis must never depend on JSON-producing LLM planning. Build the
+    # deterministic draft first, then optionally enrich it with plain text.
+    next_options["deterministic_only"] = True
+    next_options.setdefault("allow_fallback", True)
+    if ai_requested:
+        next_options["story_ai_requested"] = True
+        next_options.setdefault(
+            "timeout_seconds",
+            int(os.getenv("AI_GEN_STORY_ANALYSIS_PROVIDER_TIMEOUT_SECONDS", os.getenv("AI_GEN_REFINER_TIMEOUT_SECONDS", "60"))),
+        )
+        next_options.setdefault("max_tokens", int(os.getenv("AI_GEN_STORY_ANALYSIS_MAX_TOKENS", "650")))
+    return next_options
+
+
+def _run_story_analysis_pipeline(
+    story: dict[str, Any],
+    profile: dict[str, Any],
+    existing_children: list[dict[str, Any]] | None,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    deterministic_options = dict(options or {})
+    deterministic_options["deterministic_only"] = True
+    deterministic_options.setdefault("allow_fallback", True)
+    try:
+        return _run_intelligence_pipeline(story, story, profile, "Task", existing_children, deterministic_options)
+    except TimeoutError as exc:
+        return _story_analysis_pipeline_error(story, profile, existing_children, "timeout", exc)
+    except Exception as exc:
+        message = str(exc).lower()
+        status = "parse_error" if "parse" in message or "json" in message or "normalized" in message else "provider_unavailable"
+        return _story_analysis_pipeline_error(story, profile, existing_children, status, exc)
+
+
 def _run_feature_analysis_pipeline(
     feature: dict[str, Any],
     profile: dict[str, Any],
@@ -1861,10 +1944,150 @@ def _run_feature_analysis_ai_enrichment(
     return metadata
 
 
+def _run_story_analysis_ai_enrichment(
+    story: dict[str, Any],
+    deterministic: dict[str, Any],
+    profile: dict[str, Any],
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    provider = options.get("llm_provider") or options.get("provider")
+    if not hasattr(provider, "probe_json"):
+        provider = get_refinement_provider()
+    context_diagnostics = {
+        "operation": "refine_story",
+        "story_analysis_enrichment": True,
+        "provider_prompt_mode": "plain_text_reasoning",
+    }
+    if provider is None or not provider.is_enabled():
+        metadata = _fallback_metadata("deterministic_story_analysis", "Azure Phi provider is not configured for optional Story Analysis enrichment.")
+        metadata.update({"phi_status": "provider_unavailable", "fallback_used": False})
+        return _with_context_diagnostics(metadata, context_diagnostics)
+    health = provider.health_snapshot() if hasattr(provider, "health_snapshot") else {}
+    prompt = _story_analysis_plain_text_prompt(story, deterministic, profile)
+    prompt_tokens = _estimate_tokens(prompt)
+    context_diagnostics.update(
+        {
+            "context_size": prompt_tokens,
+            "context_after_compression": prompt_tokens,
+            "tokens_sent": prompt_tokens,
+            "final_prompt_tokens": prompt_tokens,
+            "largest_context_sections": [{"section": "story_analysis_context", "tokens": prompt_tokens}],
+            "compression_ratio": 1,
+            "retry_attempt": 1,
+        }
+    )
+    timeout_seconds = int(options.get("timeout_seconds") or os.getenv("AI_GEN_STORY_ANALYSIS_PROVIDER_TIMEOUT_SECONDS", os.getenv("AI_GEN_REFINER_TIMEOUT_SECONDS", "60")))
+    max_tokens = int(options.get("max_tokens") or os.getenv("AI_GEN_STORY_ANALYSIS_MAX_TOKENS", "650"))
+    try:
+        probe = probe_json_with_budget(
+            provider,
+            _story_analysis_enrichment_sections(prompt),
+            operation="refine_story",
+            system_prompt=STORY_ANALYSIS_ENRICHMENT_SYSTEM_PROMPT,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            response_format_enabled=False,
+            allow_retry_without_response_format=False,
+        )
+        probe_status = _clean_text(probe.get("failure_reason") or probe.get("status")).lower()
+        if probe_status == "prompt_too_long":
+            context_diagnostics["retry_attempt"] = 2
+            probe = probe_json_with_budget(
+                provider,
+                _story_analysis_enrichment_sections(prompt),
+                operation="refine_story",
+                system_prompt=STORY_ANALYSIS_ENRICHMENT_SYSTEM_PROMPT,
+                max_tokens=max(250, int(max_tokens * 0.75)),
+                timeout_seconds=timeout_seconds,
+                response_format_enabled=False,
+                allow_retry_without_response_format=False,
+            )
+    except TimeoutError as exc:
+        probe = {
+            "status": "timeout",
+            "failure_reason": "provider_timeout",
+            "failure_message": str(exc),
+            "raw_content": "",
+            "parsed_json": {},
+            "elapsed_ms": timeout_seconds * 1000,
+            "http_status": None,
+            "parse_error": "TimeoutError",
+        }
+    except Exception as exc:
+        probe = {
+            "status": "provider_unavailable",
+            "failure_reason": type(exc).__name__,
+            "failure_message": str(exc),
+            "raw_content": "",
+            "parsed_json": {},
+            "elapsed_ms": 0,
+            "http_status": None,
+            "parse_error": type(exc).__name__,
+        }
+    metadata = _with_context_diagnostics(_provider_status_metadata(provider, probe, health), context_diagnostics)
+    raw_probe_text = str(probe.get("raw_content") or probe.get("raw_response_preview") or "")
+    raw_text = _clean_text(raw_probe_text)
+    finish_reason = _clean_text(probe.get("finish_reason")).lower()
+    status = _clean_text(probe.get("failure_reason") or probe.get("status")).lower()
+    if finish_reason == "length":
+        metadata.update(
+            {
+                "phi_status": "truncated_response",
+                "fallback_used": False,
+                "fallback_reason": "Optional AI enrichment response was truncated before completion.",
+            }
+        )
+    elif status == "success":
+        metadata.update({"phi_status": "success", "fallback_used": False, "fallback_reason": ""})
+    elif raw_probe_text and _story_ai_reasoning_looks_useful(raw_probe_text):
+        metadata.update(
+            {
+                "phi_status": "success",
+                "fallback_used": False,
+                "fallback_reason": "",
+                "story_analysis_enrichment_format": "plain_text_sections",
+            }
+        )
+    elif raw_text:
+        metadata.update(
+            {
+                "phi_status": "parse_error" if "parse" in status or "json" in status else status or "unusable_response",
+                "fallback_used": False,
+                "fallback_reason": probe.get("failure_message") or "Optional AI enrichment did not return usable reasoning.",
+            }
+        )
+    else:
+        metadata.update(
+            {
+                "phi_status": status or "unusable_response",
+                "fallback_used": False,
+                "fallback_reason": probe.get("failure_message") or "Optional AI enrichment did not return usable reasoning.",
+            }
+        )
+    if _should_persist_feature_generation_failure(context_diagnostics, probe) and not _story_ai_reasoning_looks_useful(raw_probe_text):
+        metadata.update(
+            _persist_feature_generation_failure(
+                prompt=prompt,
+                probe=probe,
+                context_diagnostics=context_diagnostics,
+                provider=provider,
+                expected_keys=["plain_text_story_analysis_enrichment"],
+            )
+        )
+    return metadata
+
+
 FEATURE_ANALYSIS_ENRICHMENT_SYSTEM_PROMPT = (
     "You are an engineering planning reviewer. Return concise plain text only. "
     "Do not return JSON. Do not explain the input format. Do not mention missing template fields. "
     "Write user-facing planning language, not backend implementation channels."
+)
+
+
+STORY_ANALYSIS_ENRICHMENT_SYSTEM_PROMPT = (
+    "You are a Scrum Master and engineering planning reviewer. Return concise plain text only. "
+    "Do not return JSON. Do not explain the input format. Do not mention missing template fields. "
+    "Write story planning language, not backend implementation channels."
 )
 
 
@@ -1881,6 +2104,23 @@ def _feature_analysis_enrichment_sections(prompt: str) -> list[PromptSection]:
             False,
             "instructions",
             "Return concise plain text bullets only. Use persona and capability language. Do not explain the input format. Do not invent modules, flows, dependencies, repository files, or backend channels.",
+        ),
+    ]
+
+
+def _story_analysis_enrichment_sections(prompt: str) -> list[PromptSection]:
+    return [
+        _prompt_budget_section("role", "Role", 100, True, False, "role", "Scrum Master and engineering planning reviewer"),
+        _prompt_budget_section("objective", "Objective", 100, True, False, "objective", "Enrich a deterministic Story Analysis draft with concise implementation planning observations."),
+        _prompt_budget_section("story_analysis_context", "Story Analysis Context", 100, True, True, "story_analysis", prompt),
+        _prompt_budget_section(
+            "instructions",
+            "Instructions",
+            100,
+            True,
+            False,
+            "instructions",
+            "Return concise plain text bullets only. Use story, acceptance, task, and validation language. Do not explain the input format. Do not invent modules, flows, dependencies, repository files, or backend channels.",
         ),
     ]
 
@@ -1929,6 +2169,45 @@ def _feature_analysis_plain_text_prompt(feature: dict[str, Any], deterministic: 
         "- Do not start story candidates with vague verbs such as Use.",
         "- Do not explain that fields are missing.",
         "- Keep the answer under 250 words.",
+    ]
+    return "\n".join(lines)
+
+
+def _story_analysis_plain_text_prompt(story: dict[str, Any], deterministic: dict[str, Any], profile: dict[str, Any]) -> str:
+    registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    modules = _string_list(deterministic.get("affected_modules")) or _string_list(registry.get("modules"))[:3]
+    flows = _string_list(deterministic.get("affected_flows")) or _string_list(registry.get("flows"))[:3]
+    tasks = [
+        _clean_text(task.get("title"))
+        for task in deterministic.get("proposed_tasks", [])
+        if isinstance(task, dict) and _clean_text(task.get("title"))
+    ][:8]
+    acceptance = _string_list(deterministic.get("acceptance_criteria"))[:8]
+    lines = [
+        "Story Analysis AI Enrichment",
+        "",
+        f"Story: {_clean_text(story.get('title')) or 'Untitled story'}",
+        f"Description: {_truncate_text(_clean_text(story.get('description') or deterministic.get('story_summary')), 450)}",
+        f"Acceptance criteria: {'; '.join(acceptance) or 'Not specified'}",
+        f"Modules: {', '.join(modules[:5])}",
+        f"Flows: {', '.join(flows[:5])}",
+        f"Dependencies: {', '.join(_string_list(deterministic.get('dependencies'))[:5]) or 'No dependencies identified'}",
+        f"Current task candidates: {', '.join(tasks) or 'No tasks generated yet'}",
+        "",
+        "Enrich these sections in concise bullets:",
+        "1. Implementation areas",
+        "2. Acceptance mapping",
+        "3. Task candidates",
+        "4. Risks and edge cases",
+        "",
+        "Rules:",
+        "- Return exactly the four numbered sections above.",
+        "- Use only the story, modules, flows, dependencies, and acceptance criteria listed above.",
+        "- Do not introduce unrelated modules or flows.",
+        "- Do not invent repository files.",
+        "- Write task candidates as engineering work areas, not generic Design/Implement/Test placeholders.",
+        "- Do not explain that fields are missing.",
+        "- Keep the answer under 220 words.",
     ]
     return "\n".join(lines)
 
@@ -2048,6 +2327,39 @@ def _parse_feature_ai_enrichment_sections(text: str) -> dict[str, list[str]]:
     return {key: _unique(values) for key, values in sections.items()}
 
 
+def _parse_story_ai_enrichment_sections(text: str) -> dict[str, list[str]]:
+    sections = {
+        "implementationAreas": [],
+        "acceptanceMapping": [],
+        "taskCandidates": [],
+        "risksAndEdgeCases": [],
+    }
+    aliases = {
+        "implementation areas": "implementationAreas",
+        "acceptance mapping": "acceptanceMapping",
+        "task candidates": "taskCandidates",
+        "task candidates to add or improve": "taskCandidates",
+        "risks and edge cases": "risksAndEdgeCases",
+    }
+    current = ""
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading_match = re.match(r"^\s*(?:#{1,4}\s*)?(?:\d+[.)]\s*)?([A-Za-z][A-Za-z\s]+?)\s*:?\s*$", line)
+        if heading_match:
+            label = heading_match.group(1).strip().lower()
+            if label in aliases:
+                current = aliases[label]
+                continue
+        if not current:
+            continue
+        item = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip().strip("\"' ")
+        if item:
+            sections[current].append(_normalize_feature_ai_reasoning_line(item))
+    return {key: _unique([item for item in values if item]) for key, values in sections.items()}
+
+
 def _normalize_feature_ai_reasoning_line(line: str) -> str:
     text = str(line or "").strip()
     if not text:
@@ -2094,6 +2406,80 @@ def _feature_ai_reasoning_looks_useful(text: str) -> bool:
         return False
     parsed = _parse_feature_ai_enrichment_sections(text)
     return any(parsed.values())
+
+
+def _story_ai_reasoning_looks_useful(text: str) -> bool:
+    normalized = text.lower()
+    if not normalized.strip():
+        return False
+    template_markers = [
+        "json-like structure",
+        "empty or null values",
+        "placeholder for future data",
+        "please provide the relevant details",
+        "if you need assistance",
+    ]
+    if any(marker in normalized for marker in template_markers):
+        return False
+    parsed = _parse_story_ai_enrichment_sections(text)
+    return any(parsed.values())
+
+
+def _story_analysis_pipeline_error(
+    story: dict[str, Any],
+    profile: dict[str, Any],
+    existing_children: list[dict[str, Any]] | None,
+    status: str,
+    exc: Exception,
+) -> dict[str, Any]:
+    repository_snapshot = _repository_snapshot_from_profile(profile)
+    knowledge_registry = profile.get("knowledge_registry") if isinstance(profile.get("knowledge_registry"), dict) else {}
+    intent = build_intent(story)
+    capability_context = buildCapabilityContext(
+        intent,
+        {
+            "parent_work_item": story,
+            "project_profile": profile,
+            "repository_snapshot": repository_snapshot,
+            "knowledge_registry": knowledge_registry,
+        },
+    )
+    planning_context = buildPlanningContext(
+        story,
+        story,
+        {
+            "intentModel": intent,
+            "capabilityContext": capability_context,
+            "projectProfile": profile,
+            "repositorySnapshot": repository_snapshot,
+            "knowledgeRegistry": knowledge_registry,
+            "existingChildren": existing_children or [],
+        },
+    )
+    metadata = _fallback_metadata("deterministic_story_analysis", "Story analysis returned a deterministic draft because AI enrichment failed.")
+    metadata.update(
+        {
+            "provider_used": "deterministic_story_analysis",
+            "source": "deterministic_story_analysis",
+            "phi_status": status,
+            "fallback_used": False,
+            "fallback_reason": f"Optional AI enrichment failed: {exc}",
+            "story_analysis_ai_status": status,
+            "raw_response_preview": str(exc)[:1200],
+        }
+    )
+    return {
+        "intent": intent,
+        "capabilityContext": capability_context,
+        "planningContext": planning_context,
+        "reasoning": {"diagnostics": {"providerUsed": "deterministic_story_analysis"}, "artifacts": []},
+        "artifacts": [],
+        "genericArtifacts": [],
+        "validationReports": [],
+        "previewPolicy": {"status": "NeedsReview", "allow_create": False, "allow_save": True, "allow_manual_edit": True, "block_creation": False},
+        "providerMetadata": metadata,
+        "providerParsed": {},
+    }
 
 
 def _feature_analysis_pipeline_error(
@@ -2164,6 +2550,31 @@ def _feature_analysis_provider_metadata(metadata: dict[str, Any]) -> dict[str, A
     return sanitized
 
 
+def _story_analysis_provider_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(metadata or {})
+    sanitized.pop("error", None)
+    sanitized.pop("message", None)
+    phi_status = _clean_text(sanitized.get("phi_status")).lower()
+    if phi_status == "required_sections_exceed_budget":
+        sanitized["phi_status"] = "blocked_by_budget_guard"
+        sanitized.setdefault("prompt_too_long_stage", "before_provider_call")
+        largest_section = (
+            sanitized.get("largest_section")
+            or sanitized.get("largestSection")
+            or sanitized.get("largestRequiredSection")
+            or sanitized.get("largest_required_section")
+            or "required_sections"
+        )
+        fallback_reason = _clean_text(sanitized.get("fallback_reason"))
+        if "largest section" not in fallback_reason.lower():
+            sanitized["fallback_reason"] = f"{fallback_reason} Largest section: {largest_section}".strip()
+        phi_status = "blocked_by_budget_guard"
+    if phi_status and phi_status not in {"success", "not_required", "skipped"}:
+        sanitized["fallback_used"] = False
+        sanitized.setdefault("fallback_reason", "Optional AI enrichment did not return usable output.")
+    return sanitized
+
+
 def _feature_analysis_ai_status(metadata: dict[str, Any], ai_requested: bool) -> str:
     phi_status = _clean_text(metadata.get("phi_status")).lower()
     fallback_reason = _clean_text(metadata.get("fallback_reason")).lower()
@@ -2184,10 +2595,24 @@ def _feature_analysis_ai_status(metadata: dict[str, Any], ai_requested: bool) ->
     return "provider_unavailable" if not phi_status else "parse_error"
 
 
+def _story_analysis_ai_status(metadata: dict[str, Any], ai_requested: bool) -> str:
+    return _feature_analysis_ai_status(metadata, ai_requested)
+
+
 def _feature_analysis_validation_status(dna_validation: dict[str, Any], recommended_stories: list[dict[str, Any]], ai_status: str) -> str:
     if not bool(dna_validation.get("valid", True)):
         return "Blocked"
     if not recommended_stories:
+        return "NeedsReview"
+    if ai_status in {"timeout", "parse_error", "provider_unavailable", "truncated_response"}:
+        return "NeedsReview"
+    return "Ready"
+
+
+def _story_analysis_validation_status(dna_validation: dict[str, Any], proposed_tasks: list[dict[str, Any]], ai_status: str) -> str:
+    if not bool(dna_validation.get("valid", True)):
+        return "Blocked"
+    if not proposed_tasks:
         return "NeedsReview"
     if ai_status in {"timeout", "parse_error", "provider_unavailable", "truncated_response"}:
         return "NeedsReview"
@@ -2293,6 +2718,94 @@ def _feature_analysis_payload(
         "ai_status": ai_status,
         "validation_status": validation_status,
         "feature_analysis_diagnostics": result["diagnostics"],
+        "warnings": warnings,
+    }
+
+
+def _story_analysis_payload(
+    story: dict[str, Any],
+    deterministic: dict[str, Any],
+    provider_metadata: dict[str, Any],
+    modules: list[str],
+    flows: list[str],
+    selection: dict[str, Any],
+    dna_validation: dict[str, Any],
+    *,
+    ai_requested: bool,
+) -> dict[str, Any]:
+    proposed_tasks = [task for task in deterministic.get("proposed_tasks", []) if isinstance(task, dict)]
+    ai_status = _story_analysis_ai_status(provider_metadata, ai_requested)
+    validation_status = _story_analysis_validation_status(dna_validation, proposed_tasks, ai_status)
+    dna = deterministic.get("work_item_dna") if isinstance(deterministic.get("work_item_dna"), dict) else {}
+    draft = {
+        "storyId": _item_id(story, "story"),
+        "title": _clean_text(story.get("title")) or _clean_text(dna.get("title")) or "Untitled story",
+        "summary": deterministic.get("story_summary"),
+        "userStory": deterministic.get("story_summary"),
+        "acceptanceCriteria": _string_list(deterministic.get("acceptance_criteria")),
+        "affectedModules": modules,
+        "affectedFlows": flows,
+        "dependencies": _string_list(deterministic.get("dependencies")),
+        "repositoryEvidence": {
+            "modules": modules,
+            "flows": flows,
+            "dependencies": _selection_names(selection, "relevant_dependencies"),
+            "rejectedContext": deterministic.get("rejected_context") or deterministic.get("rejected_irrelevant_context") or [],
+        },
+        "taskCandidates": [
+            {
+                "title": task.get("title"),
+                "description": task.get("description"),
+                "workArea": task.get("work_area"),
+                "acceptanceCriteria": _string_list(task.get("acceptance_criteria")),
+                "confidence": task.get("confidence"),
+            }
+            for task in proposed_tasks
+        ],
+        "implementationAreas": _unique([_clean_text(task.get("work_area")) for task in proposed_tasks if _clean_text(task.get("work_area"))]),
+        "risks": _string_list(deterministic.get("risks")),
+    }
+    ai_enrichment = None
+    raw_reasoning = str(provider_metadata.get("raw_response_preview") or provider_metadata.get("phi_raw_response_preview") or "").strip()
+    warnings: list[str] = []
+    if raw_reasoning and ai_status in {"success", "truncated_response"}:
+        parsed_enrichment = _parse_story_ai_enrichment_sections(raw_reasoning)
+        ai_enrichment = {
+            "implementationAreas": parsed_enrichment.get("implementationAreas") or draft["implementationAreas"],
+            "acceptanceMapping": parsed_enrichment.get("acceptanceMapping") or draft["acceptanceCriteria"],
+            "taskCandidates": parsed_enrichment.get("taskCandidates") or [task["title"] for task in draft["taskCandidates"] if task.get("title")],
+            "risksAndEdgeCases": parsed_enrichment.get("risksAndEdgeCases") or draft["risks"],
+            "aiReasoningText": raw_reasoning,
+            "source": "azure_phi",
+            "format": "plain_text_sections",
+        }
+    if ai_status in {"timeout", "parse_error", "provider_unavailable", "truncated_response"}:
+        warnings.append("Story analysis is available. AI enrichment failed and can be retried.")
+    result = {
+        "storyId": draft["storyId"],
+        "deterministicDraft": draft,
+        "aiEnrichment": ai_enrichment,
+        "aiStatus": ai_status,
+        "validationStatus": validation_status,
+        "diagnostics": {
+            "providerTimeoutMs": int(os.getenv("AI_GEN_STORY_ANALYSIS_PROVIDER_TIMEOUT_SECONDS", os.getenv("AI_GEN_REFINER_TIMEOUT_SECONDS", "60"))) * 1000,
+            "providerMetadata": provider_metadata,
+            "rawResponsePreview": provider_metadata.get("raw_response_preview") or provider_metadata.get("phi_raw_response_preview") or "",
+            "parseError": provider_metadata.get("parse_error") or (provider_metadata.get("fallback_reason") if ai_status == "parse_error" else ""),
+            "deterministicDraftReady": True,
+            "taskCandidateCount": len(proposed_tasks),
+            "selectedModules": modules,
+            "selectedFlows": flows,
+        },
+        "warnings": warnings,
+    }
+    return {
+        "story_analysis_result": result,
+        "storyAnalysisResult": result,
+        "deterministic_draft": draft,
+        "ai_status": ai_status,
+        "validation_status": validation_status,
+        "story_analysis_diagnostics": result["diagnostics"],
         "warnings": warnings,
     }
 
@@ -2927,14 +3440,25 @@ def _execution_package_from_capsule(
     story_title = _clean_text(story.get("title")) or "Untitled story"
     story_description = _clean_text(story.get("description"))
     task_title = _clean_text(selected_task.get("title")) or "Selected execution task"
+    artifact_type = "Task" if selected_task else "Story"
+    artifact = selected_task if selected_task else story
+    artifact_id = _item_id(artifact)
     package = {
         "execution_package_source": "context_capsule",
+        "artifact_id": artifact_id,
+        "artifact_type": artifact_type,
+        "execution_source": {
+            "artifactId": artifact_id,
+            "artifactType": artifact_type,
+            "title": _clean_text(artifact.get("title")),
+            "description": _clean_text(artifact.get("description")),
+        },
         "context_capsule": capsule,
         "context_capsule_diagnostics": _context_capsule_metadata(context_capsule),
         "work_item_dna": work_item_dna,
         "dna_summary": _dna_summary(work_item_dna),
         "story_summary": _sentence(story_title, story_description),
-        "task_focus": task_title,
+        "task_focus": task_title if selected_task else story_title,
         "selected_task": selected_task,
         "parent_story": {
             "id": _item_id(story),
@@ -3199,10 +3723,12 @@ def _active_capsule_profile_from_execution_package(context: dict[str, Any]) -> d
 
 def _execution_package_phi_item(context: dict[str, Any]) -> dict[str, Any]:
     selected_task = context.get("selected_task") if isinstance(context.get("selected_task"), dict) else {}
+    execution_source = context.get("execution_source") if isinstance(context.get("execution_source"), dict) else {}
+    artifact_type = _clean_text(context.get("artifact_type") or execution_source.get("artifactType")) or ("Task" if selected_task else "Story")
     return {
-        "id": _clean_text(selected_task.get("id")) or _clean_text(context.get("sourceWorkItemId")),
-        "type": "Task",
-        "title": _clean_text(selected_task.get("title")) or _clean_text(context.get("task_focus")) or "Execution task",
+        "id": _clean_text(selected_task.get("id")) or _clean_text(context.get("artifact_id")) or _clean_text(context.get("sourceWorkItemId")),
+        "type": artifact_type,
+        "title": _clean_text(selected_task.get("title")) or _clean_text(execution_source.get("title")) or _clean_text(context.get("task_focus")) or "Execution artifact",
         "state": _clean_text(selected_task.get("status")) or "Approved",
     }
 
@@ -9316,7 +9842,7 @@ def _tasks_for_areas(tasks: list[dict[str, Any]], areas: list[str]) -> list[str]
     return _unique(selected)
 
 
-def _selected_execution_task(story: dict[str, Any], generated_tasks: list[dict[str, Any]]) -> dict[str, Any]:
+def _selected_execution_task(story: dict[str, Any], generated_tasks: list[dict[str, Any]], *, require_explicit: bool = False) -> dict[str, Any]:
     raw = story.get("selected_task") or story.get("task") or story.get("current_task")
     if isinstance(raw, dict):
         title = _clean_text(raw.get("title"))
@@ -9337,7 +9863,61 @@ def _selected_execution_task(story: dict[str, Any], generated_tasks: list[dict[s
         for task in generated_tasks:
             if raw_title.lower() in _clean_text(task.get("title")).lower():
                 return task
+    if require_explicit:
+        return {}
     return generated_tasks[0] if generated_tasks else {}
+
+
+def _execution_artifact_type(item: dict[str, Any] | None) -> str:
+    if not isinstance(item, dict):
+        return "Story"
+    explicit = _clean_text(item.get("artifactType") or item.get("artifact_type") or item.get("type") or item.get("work_item_type"))
+    return "Task" if explicit.casefold() == "task" else "Story"
+
+
+def _execution_executable_artifact(story: dict[str, Any], options: dict[str, Any] | None) -> dict[str, Any]:
+    options = options or {}
+    candidate = options.get("executable_artifact") if isinstance(options.get("executable_artifact"), dict) else None
+    if candidate is None and isinstance(story.get("executable_artifact"), dict):
+        candidate = story.get("executable_artifact")
+    if candidate is None:
+        candidate = story
+    artifact = dict(candidate or {})
+    artifact_type = _execution_artifact_type(artifact)
+    artifact["artifactType"] = artifact_type
+    artifact.setdefault("type", artifact_type)
+    artifact.setdefault("work_item_type", artifact_type)
+    artifact.setdefault("title", story.get("title"))
+    artifact.setdefault("description", story.get("description"))
+    if not _string_list(artifact.get("acceptance_criteria")):
+        artifact["acceptance_criteria"] = _string_list(story.get("acceptance_criteria"))
+    return artifact
+
+
+def _execution_parent_story(story: dict[str, Any], executable: dict[str, Any]) -> dict[str, Any]:
+    if _execution_artifact_type(executable) != "Task":
+        parent = dict(story or {})
+        parent["artifactType"] = "Story"
+        parent.setdefault("type", "Story")
+        parent.setdefault("work_item_type", "Story")
+        return parent
+    for key in ("parent_story", "story", "parentStory"):
+        parent = executable.get(key)
+        if isinstance(parent, dict):
+            normalized = dict(parent)
+            normalized["artifactType"] = "Story"
+            normalized.setdefault("type", "Story")
+            normalized.setdefault("work_item_type", "Story")
+            return normalized
+    parent = dict(story or {})
+    parent["artifactType"] = "Story"
+    parent["type"] = "Story"
+    parent["work_item_type"] = "Story"
+    parent.setdefault("title", _clean_text(executable.get("parent_story_title")) or _clean_text(executable.get("story_title")) or _clean_text(executable.get("title")))
+    parent.setdefault("description", _clean_text(executable.get("parent_story_description")) or _clean_text(executable.get("description")))
+    if not _string_list(parent.get("acceptance_criteria")):
+        parent["acceptance_criteria"] = _string_list(executable.get("parent_acceptance_criteria")) or _string_list(executable.get("acceptance_criteria"))
+    return parent
 
 
 def _acceptance_criteria_mapping(acceptance: list[str], implementation_tasks: list[str]) -> list[dict[str, str]]:

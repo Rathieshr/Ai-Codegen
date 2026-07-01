@@ -75,6 +75,8 @@ class ExecutionPackageV2Tests(unittest.TestCase):
         )
 
         self.assertEqual(package["taskId"], 91)
+        self.assertEqual(package["artifactId"], 91)
+        self.assertEqual(package["artifactType"], "Task")
         self.assertEqual(package["storyId"], 42)
         self.assertEqual(package["featureId"], 21)
         self.assertEqual(package["epicId"], 7)
@@ -146,6 +148,42 @@ class ExecutionPackageV2Tests(unittest.TestCase):
         self.assertNotIn("Firmware Management", package["implementationBoundary"]["allowedModules"])
         self.assertEqual(package["acceptanceMapping"][0]["acceptanceCriteriaId"], "AC001")
         self.assertIn(package["readiness"]["status"], {"Ready", "Needs Review"})
+
+    def test_story_execution_package_uses_story_as_executable_artifact(self) -> None:
+        story = {
+            "id": 42,
+            "feature_id": 21,
+            "epic_id": 7,
+            "type": "Story",
+            "title": "Open critical fault event details",
+            "description": "As an Operations User, I want to open critical fault event details.",
+        }
+        package = build_execution_package_v2(
+            story=story,
+            selected_task={},
+            acceptance_criteria=["Fault event details show severity and device health."],
+            context_capsule={
+                "capsuleId": "execution_story",
+                "capsuleType": "execution",
+                "sourceWorkItemId": 42,
+                "parentStoryId": 42,
+                "knowledgeVersion": "kv-1",
+                "repositorySnapshotVersion": "rs-1",
+                "selectedModules": ["Fault Monitoring"],
+                "selectedFlows": ["Fault Event Review Flow"],
+                "selectedApplications": ["Operations Dashboard"],
+                "acceptanceCriteria": ["Fault event details show severity and device health."],
+                "relevantFiles": [],
+                "fileRankingStatus": "Repository file ranking not available",
+                "confidence": 0.75,
+            },
+        )
+
+        self.assertEqual(package["artifactType"], "Story")
+        self.assertEqual(package["artifactId"], 42)
+        self.assertIsNone(package["taskId"])
+        self.assertEqual(package["storyId"], 42)
+        self.assertEqual(package["businessContext"]["taskObjective"], "Deliver Open critical fault event details")
 
 
 if __name__ == "__main__":

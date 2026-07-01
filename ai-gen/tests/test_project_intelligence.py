@@ -1810,7 +1810,10 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(impact["provider_used"], "knowledge_registry")
         self.assertFalse(impact["fallback_used"])
         self.assertEqual(refined["provider_used"], "azure_phi")
-        self.assertIn("error", refined)
+        self.assertNotIn("error", refined)
+        self.assertEqual(refined["story_analysis_result"]["aiStatus"], "timeout")
+        self.assertTrue(refined["story_analysis_result"]["diagnostics"]["deterministicDraftReady"])
+        self.assertIn("Story analysis is available", " ".join(refined.get("warnings", [])))
 
     def test_provider_probe_returns_phi_diagnostics(self) -> None:
         provider = HealthyPhiProvider({"features": ["Fault Monitoring"]})
@@ -2134,6 +2137,67 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertEqual(result["phi_status"], "skipped")
         self.assertFalse(result["fallback_used"])
         self.assertIn("deterministic_generation_ms", result)
+
+    def test_build_execution_context_supports_direct_story_execution(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring"],
+                "flows": ["Fault Event Review Flow"],
+            },
+        }
+        story = {
+            "id": 601,
+            "type": "Story",
+            "title": "Open critical fault event details",
+            "description": "As an Operations User, I want to open critical fault event details.",
+            "acceptance_criteria": ["Fault severity and timestamp are visible."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            result = ProjectIntelligenceService().build_execution_context(
+                story,
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
+
+        package = result["execution_package_v2"]
+        self.assertEqual(result["artifact_type"], "Story")
+        self.assertEqual(str(result["artifact_id"]), "601")
+        self.assertEqual(package["artifactType"], "Story")
+        self.assertEqual(package["artifactId"], 601)
+        self.assertIsNone(package["taskId"])
+        self.assertEqual(package["storyId"], 601)
+        self.assertEqual(result["execution_source"]["artifactType"], "Story")
+
+    def test_build_execution_context_supports_task_execution(self) -> None:
+        profile = {
+            "project_name": "LineDefender",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring"],
+                "flows": ["Fault Event Review Flow"],
+            },
+        }
+        task = {
+            "id": 701,
+            "type": "Task",
+            "title": "Add fault event details API",
+            "description": "Expose fault event severity and device health.",
+            "acceptance_criteria": ["API returns fault severity and timestamp."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            result = ProjectIntelligenceService().build_execution_context(
+                task,
+                profile,
+                options={"force_provider": "deterministic_fallback"},
+            )
+
+        package = result["execution_package_v2"]
+        self.assertEqual(result["artifact_type"], "Task")
+        self.assertEqual(str(result["artifact_id"]), "701")
+        self.assertEqual(package["artifactType"], "Task")
+        self.assertEqual(package["artifactId"], 701)
+        self.assertEqual(package["taskId"], 701)
+        self.assertEqual(result["execution_source"]["artifactType"], "Task")
 
     def test_execution_phi_timeout_still_returns_package(self) -> None:
         provider = FailingPhiProvider()

@@ -604,6 +604,10 @@ type WorkItemDNASummary = {
 
 type ExecutionContextResult = ProviderMetadata & {
   execution_package_source?: string;
+  artifact_id?: string | number;
+  artifact_type?: 'Story' | 'Task' | string;
+  execution_source?: { artifactId?: string | number; artifactType?: string; title?: string; description?: string };
+  executable_artifact?: Record<string, unknown>;
   execution_package_v2?: Record<string, unknown>;
   executionPackageV2?: Record<string, unknown>;
   context_capsule?: ExecutionContextCapsule;
@@ -2012,8 +2016,21 @@ function ProjectIntelligenceTab() {
     window.setTimeout(() => setMessage(''), 1800);
   }
 
-  function currentStoryPayload(): { title: string; description: string; acceptance_criteria: string[] } {
+  function currentStoryPayload(): {
+    id?: number | string;
+    type?: string;
+    work_item_type?: string;
+    artifactType?: string;
+    title: string;
+    description: string;
+    acceptance_criteria: string[];
+  } {
+    const type = currentWorkItem ? normalizePlannerItemType(currentWorkItem.type) : selectedItemType;
     return {
+      id: currentWorkItem?.id,
+      type,
+      work_item_type: type,
+      artifactType: type === 'Task' ? 'Task' : 'Story',
       title: storyInput.title || storyTitle || storyResult?.story_summary || 'Approved story',
       description: storyInput.description || storyDescription || storyResult?.story_summary || 'Implement the approved story.',
       acceptance_criteria: splitLines(acceptanceCriteria).length ? splitLines(acceptanceCriteria) : (storyResult?.acceptance_criteria || []),
@@ -5864,33 +5881,23 @@ function DeveloperWorkspace({
       </section>
     );
   }
-  if (isStory) {
-    return (
-      <section className="planner-card">
-        <div className="planner-label">Execution Workspace</div>
-        <div className="planner-subtle">Execution starts from an approved Task. Story analysis, task generation, and task approval live in Planning.</div>
-        <div className="planner-summary-grid">
-          <SummaryTile title="Story Planning" value={storyResult ? 'Available' : 'Analyze Story'} />
-          <SummaryTile title="Tasks" value={hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Not Generated'} />
-          <SummaryTile title="Execution" value={approvalWorkflow.tasks === 'approved' ? 'Open a Task' : 'Locked'} />
-        </div>
-        <div className="hei-selected-empty">
-          <strong>{approvalWorkflow.tasks === 'approved' ? 'Open an approved Task to build the Execution Package.' : 'Approve Tasks before building Execution Package.'}</strong>
-          <span>Use Planning for Analyze Story, Generate Tasks, and Approve Tasks. Execution contains package, prompt, implementation validation, and PR review actions only.</span>
-        </div>
-      </section>
-    );
-  }
+  const executionSourceType = executionContext?.execution_source?.artifactType || executionContext?.artifact_type || (isTask ? 'Task' : isStory ? 'Story' : isBug ? 'Bug' : 'Artifact');
+  const executionSourceTitle = executionContext?.execution_source?.title || storyInput.title || currentWorkItem?.title || 'Selected execution artifact';
   return (
     <>
       <section className="planner-card hei-execution-workspace">
-        <div className="planner-label">{isBug ? 'Bug Fix Workspace' : isTask ? 'Task Execution Workspace' : 'Story Execution Workspace'}</div>
+        <div className="planner-label">{isBug ? 'Bug Fix Workspace' : 'Execution Workspace'}</div>
         <div className="planner-subtle">
           {isBug
             ? 'Analyze impact, prepare fix context, and generate regression coverage.'
             : isTask
-              ? 'Generate implementation prompts and open the package in VS Code.'
-              : 'Build execution-ready prompts from approved delivery artifacts.'}
+              ? 'Execute this Task through the shared package, prompt, validation, and PR review pipeline.'
+              : 'Execute this Story directly, or generate Tasks in Planning and execute a Task later.'}
+        </div>
+        <div className="planner-summary-grid">
+          <SummaryTile title="Executing" value={`${executionSourceType}: ${executionSourceTitle}`} />
+          <SummaryTile title="Tasks" value={isStory ? (hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Optional') : 'Not Required'} />
+          <SummaryTile title="Execution Package" value={executionContext ? 'Built' : 'Not Built'} />
         </div>
         {readOnly ? <div className="planner-error">This work item is Closed. Execution output is read-only.</div> : null}
         <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder={isBug ? 'Bug title' : isTask ? 'Task title' : 'Story title'} descriptionPlaceholder={isBug ? 'Bug symptoms, expected behavior, and observed behavior.' : 'Approved story/task scope for execution.'} />

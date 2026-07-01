@@ -107,6 +107,39 @@ class _RoughFeatureReasoningProvider(_TruncatedProvider):
         }
 
 
+class _StoryReasoningProvider(_TruncatedProvider):
+    def probe_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict:
+        self.calls += 1
+        self.user_prompt = user_prompt
+        raw = (
+            "1. Implementation areas:\n"
+            "   - Fault event detail view state and data binding.\n"
+            "   - Permission-aware access handling.\n\n"
+            "2. Acceptance mapping:\n"
+            "   - Map visible fault fields to UI and service validation.\n\n"
+            "3. Task candidates:\n"
+            "   - Add fault event detail retrieval and display behavior.\n"
+            "   - Add unavailable data handling.\n\n"
+            "4. Risks and edge cases:\n"
+            "   - Missing telemetry for selected device.\n"
+        )
+        return {
+            "status": "parse_error",
+            "http_status": 200,
+            "elapsed_ms": 500,
+            "raw_content": raw,
+            "raw_response_preview": raw,
+            "parsed_json": {},
+            "failure_reason": "parse_error",
+            "failure_message": "Model response could not be normalized into a JSON object.",
+            "parse_error": "NoJsonObjectFound",
+            "finish_reason": "stop",
+            "completion_tokens": 120,
+            "prompt_tokens": 300,
+            "response_length": len(raw),
+        }
+
+
 def _profile() -> dict:
     return {
         "project_name": "LineDefender",
@@ -299,6 +332,60 @@ class StoryAnalysisIntelligenceTests(unittest.TestCase):
         self.assertIn("Review newly arrived fault events", reasoning)
         self.assertNotIn("Backend API", reasoning)
         self.assertNotIn("Use see newly arrived events", reasoning)
+
+    def test_story_analysis_returns_deterministic_result_without_ai(self) -> None:
+        result = ProjectIntelligenceService().refine_story(
+            {
+                "id": 601,
+                "title": "View Critical Fault Details",
+                "description": "As an Operations User, I want to view critical fault details.",
+                "work_item_dna": generateDNA(
+                    {"id": 601, "title": "View Critical Fault Details"},
+                    "Story",
+                    profile=_profile(),
+                    parent_dna=_feature_dna(),
+                ),
+            },
+            _profile(),
+        )
+
+        analysis = result["story_analysis_result"]
+        self.assertEqual(analysis["aiStatus"], "not_requested")
+        self.assertEqual(analysis["validationStatus"], "Ready")
+        self.assertTrue(analysis["deterministicDraft"]["taskCandidates"])
+        self.assertNotIn("error", result)
+
+    def test_story_analysis_timeout_keeps_deterministic_draft(self) -> None:
+        result = ProjectIntelligenceService().refine_story(
+            {"id": 601, "title": "View Critical Fault Details", "work_item_dna": generateDNA({"id": 601, "title": "View Critical Fault Details"}, "Story", profile=_profile(), parent_dna=_feature_dna())},
+            _profile(),
+            options={"mode": "retry_ai_enrichment", "llm_provider": _TimeoutProvider()},
+        )
+
+        analysis = result["story_analysis_result"]
+        self.assertEqual(analysis["aiStatus"], "timeout")
+        self.assertEqual(analysis["validationStatus"], "NeedsReview")
+        self.assertTrue(analysis["deterministicDraft"]["taskCandidates"])
+        self.assertIn("Story analysis is available", analysis["warnings"][0])
+        self.assertNotIn("error", result)
+
+    def test_story_analysis_accepts_plain_text_phi_enrichment(self) -> None:
+        provider = _StoryReasoningProvider()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            result = ProjectIntelligenceService().refine_story(
+                {"id": 601, "title": "View Critical Fault Details", "work_item_dna": generateDNA({"id": 601, "title": "View Critical Fault Details"}, "Story", profile=_profile(), parent_dna=_feature_dna())},
+                _profile(),
+                options={"mode": "retry_ai_enrichment", "llm_provider": provider},
+            )
+
+        analysis = result["story_analysis_result"]
+        self.assertEqual(provider.calls, 1)
+        self.assertIn("Story Analysis AI Enrichment", provider.user_prompt)
+        self.assertNotIn("current_intent", provider.user_prompt)
+        self.assertEqual(result["phi_status"], "success")
+        self.assertEqual(analysis["aiStatus"], "success")
+        self.assertIn("Fault event detail view state and data binding.", analysis["aiEnrichment"]["implementationAreas"])
+        self.assertIn("Add fault event detail retrieval and display behavior.", analysis["aiEnrichment"]["taskCandidates"])
 
 
 if __name__ == "__main__":

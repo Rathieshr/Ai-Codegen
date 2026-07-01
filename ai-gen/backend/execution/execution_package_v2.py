@@ -43,11 +43,15 @@ def build_execution_package_v2(
     dna_summary = _dna_summary(dna)
     generated_at = _now_iso()
 
-    task_id = _item_id(selected_task) or _item_id(story)
+    artifact_type = _artifact_type(story, selected_task)
+    artifact_id = _item_id(selected_task) if artifact_type == "Task" else _item_id(story)
+    task_id = _item_id(selected_task) if artifact_type == "Task" else None
     story_id = _item_id(story) or capsule.get("parentStoryId")
     feature_id = _lineage_id(story, selected_task, dna, "feature")
     epic_id = _lineage_id(story, selected_task, dna, "epic")
     package_seed = {
+        "artifact": artifact_id,
+        "artifactType": artifact_type,
         "task": task_id,
         "story": story_id,
         "capsule": capsule.get("capsuleId"),
@@ -97,6 +101,8 @@ def build_execution_package_v2(
 
     package = {
         "packageId": package_id,
+        "artifactId": artifact_id,
+        "artifactType": artifact_type,
         "taskId": task_id,
         "storyId": story_id,
         "featureId": feature_id,
@@ -211,6 +217,15 @@ def _item_id(item: dict[str, Any] | None) -> Any:
         if item.get(key) not in ("", None):
             return item.get(key)
     return None
+
+
+def _artifact_type(story: dict[str, Any], selected_task: dict[str, Any]) -> str:
+    if selected_task:
+        return "Task"
+    explicit = _clean(story.get("artifactType") or story.get("artifact_type") or story.get("type") or story.get("work_item_type"))
+    if explicit.casefold() == "task":
+        return "Task"
+    return "Story"
 
 
 def _lineage_id(story: dict[str, Any], selected_task: dict[str, Any], dna: dict[str, Any], lineage: str) -> Any:

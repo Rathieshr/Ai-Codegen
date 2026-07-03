@@ -666,6 +666,20 @@ body {
   color: #7c2d12;
 }
 
+.planner-chip.active {
+  border-color: var(--hei-yellow);
+  background: #fff7c2;
+  color: #111827;
+  font-weight: 800;
+}
+
+.planner-trace-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
 .planner-relevance {
   display: grid;
   gap: 8px;

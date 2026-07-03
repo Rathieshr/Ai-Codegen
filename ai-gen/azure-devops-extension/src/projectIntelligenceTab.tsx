@@ -55,7 +55,7 @@ const REPOSITORY_DOCUMENTS = [
 const PROJECT_SESSION_STORAGE_KEY = 'ai-gen-project-intelligence:last-session';
 const AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED = false;
 
-type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'admin';
+type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'memory' | 'governance' | 'agents' | 'skills' | 'admin';
 type AIGenRole = 'admin' | 'contributor' | 'viewer';
 type WorkItemKind = 'Epic' | 'Feature' | 'Story' | 'Task' | 'Bug' | 'Test Case';
 type RoutedWorkspace = Extract<PlannerTab, 'planning' | 'execution' | 'qa'>;
@@ -112,6 +112,251 @@ type ArtifactType =
   | 'Test Suite'
   | 'Test Plan'
   | 'Coverage Report';
+type EngineeringMemoryItem = {
+  id: string;
+  projectId: string;
+  category: string;
+  title: string;
+  summary: string;
+  content?: string;
+  artifactType: string;
+  artifactId: string;
+  tags: string[];
+  confidence: number;
+  approvalStatus: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+  usageCount?: number;
+  knowledgeReferences?: string[];
+  graphReferences?: string[];
+  repositoryEvidence?: Array<Record<string, unknown>>;
+  searchScore?: number;
+  matchReasons?: string[];
+};
+type EngineeringMemoryResponse = {
+  memories?: EngineeringMemoryItem[];
+  results?: EngineeringMemoryItem[];
+  count?: number;
+  diagnostics?: Record<string, unknown>;
+};
+type GovernanceDashboard = {
+  policies?: GovernancePolicy[];
+  approvals?: {
+    approvals?: GovernanceApproval[];
+    count?: number;
+    byStatus?: Record<string, number>;
+  };
+  compliance?: {
+    status?: string;
+    score?: number;
+    scores?: Record<string, number>;
+    findings?: Array<Record<string, unknown>>;
+  };
+  metrics?: Record<string, number>;
+  feedback?: {
+    feedback?: GovernanceFeedback[];
+    count?: number;
+    byRating?: Record<string, number>;
+    satisfaction?: number;
+  };
+  observability?: {
+    observations?: GovernanceObservation[];
+    count?: number;
+    byEngine?: Record<string, number>;
+    byStatus?: Record<string, number>;
+    averageLatencyMs?: number;
+    failureCount?: number;
+    tokenUsage?: number;
+  };
+  auditTimeline?: {
+    events?: GovernanceAuditEvent[];
+    count?: number;
+  };
+  scorecard?: Record<string, number | string>;
+  diagnostics?: Record<string, unknown>;
+};
+type GovernancePolicy = {
+  id?: string;
+  name?: string;
+  area?: string;
+  description?: string;
+  enabled?: boolean;
+  severity?: string;
+  rules?: Record<string, unknown>;
+};
+type GovernanceApproval = {
+  id?: string;
+  artifactType?: string;
+  artifactId?: string;
+  artifactTitle?: string;
+  status?: string;
+  requestedBy?: string;
+  approvedBy?: string;
+  reason?: string;
+  updatedAt?: string;
+};
+type GovernanceFeedback = {
+  id?: string;
+  category?: string;
+  rating?: string;
+  comment?: string;
+  reason?: string;
+  createdBy?: string;
+  createdAt?: string;
+};
+type GovernanceObservation = {
+  id?: string;
+  engine?: string;
+  operation?: string;
+  status?: string;
+  durationMs?: number;
+  provider?: string;
+  model?: string;
+};
+type GovernanceAuditEvent = {
+  id?: string;
+  who?: string;
+  what?: string;
+  when?: string;
+  why?: string;
+  artifactType?: string;
+  artifactId?: string;
+  eventType?: string;
+};
+type AgentDashboard = {
+  agents?: AgentDefinition[];
+  featureFlags?: Record<string, boolean>;
+  policies?: string[];
+  runningAgents?: AgentWorkflow[];
+  waitingAgents?: AgentWorkflow[];
+  completedWorkflows?: AgentWorkflow[];
+  failedWorkflows?: AgentWorkflow[];
+  pendingJobs?: AgentWorkflow[];
+  history?: AgentHistoryEntry[];
+  lastRun?: Record<string, AgentLastRun>;
+  failures?: AgentWorkflow[];
+  upcomingActions?: AgentUpcomingAction[];
+  agentTimeline?: AgentTimelineEvent[];
+  diagnostics?: Record<string, unknown>;
+};
+type AgentDefinition = {
+  id?: string;
+  name?: string;
+  responsibility?: string;
+  triggers?: string[];
+  actions?: string[];
+  checkpoint?: string;
+};
+type AgentWorkflow = {
+  id?: string;
+  agent?: string;
+  trigger?: string;
+  artifactType?: string;
+  artifactId?: string;
+  artifactTitle?: string;
+  state?: string;
+  status?: string;
+  currentAction?: string;
+  nextAction?: string;
+  retryCount?: number;
+  errors?: string[];
+  steps?: Array<{ name?: string; status?: string; approvalBoundary?: boolean }>;
+  timeline?: AgentTimelineEvent[];
+};
+type AgentUpcomingAction = {
+  workflowId?: string;
+  agent?: string;
+  nextAction?: string;
+  artifactType?: string;
+  artifactId?: string;
+};
+type AgentTimelineEvent = {
+  time?: string;
+  type?: string;
+  message?: string;
+  source?: string;
+  status?: string;
+};
+type AgentHistoryEntry = {
+  time?: string;
+  type?: string;
+  agent?: string;
+  message?: string;
+  artifactType?: string;
+  artifactId?: string;
+  status?: string;
+};
+type AgentLastRun = {
+  workflowId?: string;
+  artifactType?: string;
+  artifactId?: string;
+  state?: string;
+  status?: string;
+  time?: string;
+};
+type SkillsDashboard = {
+  installedSkills?: EngineeringSkill[];
+  groupedSkills?: Record<string, EngineeringSkill[]>;
+  recommendedSkills?: EngineeringSkill[];
+  recentlyUsed?: EngineeringSkill[];
+  usageHistory?: SkillUsage[];
+  executionHistory?: SkillExecutionEvent[];
+  diagnostics?: Record<string, unknown>;
+};
+type EngineeringSkill = {
+  id?: string;
+  name?: string;
+  category?: string;
+  group?: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  supportedArtifacts?: string[];
+  requiredContext?: string[];
+  requiredPermissions?: string[];
+  compatibleAgents?: string[];
+  dependencies?: string[];
+  implementationPattern?: string;
+  repositoryHints?: string[];
+  architectureRules?: string[];
+  acceptanceTemplates?: string[];
+  testTemplates?: string[];
+  validationRules?: string[];
+  confidence?: number;
+  version?: number;
+  usageCount?: number;
+  lastUsedAt?: string;
+  matchScore?: number;
+  matchReasons?: string[];
+};
+type SkillUsage = {
+  skillIds?: string[];
+  artifact?: Record<string, unknown>;
+};
+type SkillExecutionEvent = {
+  skillId?: string;
+  skillName?: string;
+  group?: string;
+  agentId?: string;
+  status?: string;
+  durationMs?: number;
+  executedAt?: string;
+  artifactTitle?: string;
+};
+type MemoryContextPayload = {
+  relevantMemories?: Array<{ title?: string; category?: string; artifactType?: string; rankingScore?: number; retrievalReasons?: string[] }>;
+  matchedPatterns?: unknown[];
+  previousSuccessfulArtifacts?: unknown[];
+  knownRisks?: string[];
+  reusableAcceptanceCriteria?: string[];
+  reusableTests?: string[];
+  confidence?: number;
+  retrievalReasons?: string[];
+  excludedMemory?: Array<{ title?: string; reasons?: string[] }>;
+  diagnostics?: Record<string, unknown>;
+};
 type AzureDevOpsUserIdentity = {
   id?: string;
   descriptor?: string;
@@ -239,6 +484,47 @@ type ProviderMetadata = {
   relevance_scores?: Record<string, number>;
   token_estimate?: number;
   context_source?: string;
+  memory_context?: MemoryContextPayload;
+  memory_diagnostics?: Record<string, unknown>;
+  intelligence_trace?: IntelligenceTracePayload;
+};
+
+type IntelligenceTraceItem = {
+  id?: string;
+  traceId?: string;
+  projectId?: string;
+  artifactType?: string;
+  artifactId?: string;
+  artifactTitle?: string;
+  stage?: string;
+  source?: string;
+  decision?: string;
+  reason?: string;
+  confidence?: number;
+  evidence?: unknown[];
+  memoryUsed?: unknown[];
+  repositoryEvidence?: unknown[];
+  graphEvidence?: unknown[];
+  validationResult?: Record<string, unknown>;
+  promptVersion?: string;
+  time?: string;
+  latencyMs?: number;
+  model?: string;
+  tokenUsage?: Record<string, unknown>;
+};
+
+type IntelligenceTracePayload = {
+  trace_id?: string;
+  trace?: IntelligenceTraceItem;
+  trace_summary?: {
+    decision?: string;
+    reason?: string;
+    confidence?: number;
+    stage?: string;
+    memory_count?: number;
+    repository_evidence_count?: number;
+    graph_evidence_count?: number;
+  };
 };
 
 type RejectedContextItem = {
@@ -1267,6 +1553,16 @@ function ProjectIntelligenceTab() {
   const [artifactReuseStatus, setArtifactReuseStatus] = useState('');
   const [graphSummary, setGraphSummary] = useState<GraphSummary | undefined>();
   const [coverageReport, setCoverageReport] = useState<CoverageIntelligenceReport | undefined>();
+  const [engineeringMemories, setEngineeringMemories] = useState<EngineeringMemoryItem[]>([]);
+  const [engineeringMemoryDiagnostics, setEngineeringMemoryDiagnostics] = useState<Record<string, unknown>>({});
+  const [engineeringMemoryQuery, setEngineeringMemoryQuery] = useState('');
+  const [engineeringMemoryStatus, setEngineeringMemoryStatus] = useState('Engineering Memory is ready when validated artifacts are approved.');
+  const [governanceDashboard, setGovernanceDashboard] = useState<GovernanceDashboard | undefined>();
+  const [governanceStatus, setGovernanceStatus] = useState('Governance is ready to monitor policies, approvals, compliance, and quality.');
+  const [agentDashboard, setAgentDashboard] = useState<AgentDashboard | undefined>();
+  const [agentStatus, setAgentStatus] = useState('Agent Orchestrator is ready for manual and service-hook triggers.');
+  const [skillsDashboard, setSkillsDashboard] = useState<SkillsDashboard | undefined>();
+  const [skillsStatus, setSkillsStatus] = useState('Engineering Skills are ready to enrich execution plans.');
   const [editingProfile, setEditingProfile] = useState(false);
   const [showQuickStart, setShowQuickStart] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -1303,9 +1599,30 @@ function ProjectIntelligenceTab() {
         const lifecycleArtifacts = await getArtifacts().catch(() => ({ artifacts: [] as ArtifactRecord[] }));
         const relationshipSummary = await getGraphSummary().catch(() => undefined);
         const graphCoverage = await getCoverageReport().catch(() => undefined);
+        const memoryResponse = await getEngineeringMemory().catch(() => undefined);
+        const governanceResponse = await getGovernanceDashboard().catch(() => undefined);
+        const agentResponse = await getAgentDashboard().catch(() => undefined);
+        const skillsResponse = await getSkillsDashboard().catch(() => undefined);
         setArtifactRecords(lifecycleArtifacts.artifacts || []);
         setGraphSummary(relationshipSummary);
         setCoverageReport(graphCoverage);
+        if (memoryResponse) {
+          setEngineeringMemories(memoryResponse.memories || memoryResponse.results || []);
+          setEngineeringMemoryDiagnostics(memoryResponse.diagnostics || {});
+          setEngineeringMemoryStatus(`${memoryResponse.count || 0} validated memory items loaded.`);
+        }
+        if (governanceResponse) {
+          setGovernanceDashboard(governanceResponse);
+          setGovernanceStatus(`Governance scorecard: ${String(governanceResponse.scorecard?.status || 'Ready')}.`);
+        }
+        if (agentResponse) {
+          setAgentDashboard(agentResponse);
+          setAgentStatus(`${agentResponse.waitingAgents?.length || 0} workflows waiting for human approval.`);
+        }
+        if (skillsResponse) {
+          setSkillsDashboard(skillsResponse);
+          setSkillsStatus(`${skillsResponse.installedSkills?.length || 0} reusable engineering skills installed.`);
+        }
         const cachedProfile = knowledgeCache?.cache?.profile;
         const effectiveSession = storedSession || sessionFromBackend(backendSession, cachedProfile);
         if (storedSession) {
@@ -1448,6 +1765,64 @@ function ProjectIntelligenceTab() {
     } finally {
       setLoading(false);
       setMessage('');
+    }
+  }
+
+  async function refreshEngineeringMemory() {
+    const response = await withLoading('Loading Engineering Memory...', () => getEngineeringMemory());
+    if (response) {
+      setEngineeringMemories(response.memories || response.results || []);
+      setEngineeringMemoryDiagnostics(response.diagnostics || {});
+      setEngineeringMemoryStatus(`${response.count || 0} engineering memories loaded.`);
+    }
+  }
+
+  async function searchEngineeringMemory() {
+    const query = engineeringMemoryQuery.trim();
+    const response = await withLoading('Searching Engineering Memory...', () => query
+      ? searchEngineeringMemoryItems({ query, includeDrafts: false })
+      : getEngineeringMemory());
+    if (response) {
+      setEngineeringMemories(response.results || response.memories || []);
+      setEngineeringMemoryDiagnostics(response.diagnostics || engineeringMemoryDiagnostics);
+      setEngineeringMemoryStatus(query ? `${response.count || 0} matching memories found.` : `${response.count || 0} engineering memories loaded.`);
+    }
+  }
+
+  async function refreshGovernanceDashboard() {
+    const response = await withLoading('Loading Engineering Governance...', () => getGovernanceDashboard());
+    if (response) {
+      setGovernanceDashboard(response);
+      setGovernanceStatus(`Governance scorecard: ${String(response.scorecard?.status || 'Ready')}.`);
+    }
+  }
+
+  async function refreshAgentDashboard() {
+    const response = await withLoading('Loading Agent Orchestrator...', () => getAgentDashboard());
+    if (response) {
+      setAgentDashboard(response);
+      setAgentStatus(`${response.waitingAgents?.length || 0} workflows waiting for human approval.`);
+    }
+  }
+
+  async function updateAgentFeatureFlag(flag: string, enabled: boolean) {
+    const response = await withLoading('Updating agent feature flags...', () => postJson<{ featureFlags?: Record<string, boolean> }>('/agents/flags', {
+      flags: { [flag]: enabled },
+    }));
+    if (response) {
+      setAgentDashboard((current) => ({
+        ...(current || {}),
+        featureFlags: response.featureFlags || current?.featureFlags || {},
+      }));
+      await refreshAgentDashboard();
+    }
+  }
+
+  async function refreshSkillsDashboard() {
+    const response = await withLoading('Loading Engineering Skills...', () => getSkillsDashboard());
+    if (response) {
+      setSkillsDashboard(response);
+      setSkillsStatus(`${response.installedSkills?.length || 0} reusable engineering skills installed.`);
     }
   }
 
@@ -3115,6 +3490,44 @@ function ProjectIntelligenceTab() {
         />
       ) : null}
 
+      {activeTab === 'memory' ? (
+        <EngineeringMemoryWorkspace
+          memories={engineeringMemories}
+          diagnostics={engineeringMemoryDiagnostics}
+          query={engineeringMemoryQuery}
+          status={engineeringMemoryStatus}
+          onQueryChange={setEngineeringMemoryQuery}
+          onSearch={() => void searchEngineeringMemory()}
+          onRefresh={() => void refreshEngineeringMemory()}
+        />
+      ) : null}
+
+      {activeTab === 'governance' ? (
+        <GovernanceWorkspace
+          dashboard={governanceDashboard}
+          status={governanceStatus}
+          onRefresh={() => void refreshGovernanceDashboard()}
+        />
+      ) : null}
+
+      {activeTab === 'agents' ? (
+        <AgentWorkspace
+          dashboard={agentDashboard}
+          status={agentStatus}
+          canAdmin={canAdmin}
+          onRefresh={() => void refreshAgentDashboard()}
+          onToggleFlag={(flag, enabled) => void updateAgentFeatureFlag(flag, enabled)}
+        />
+      ) : null}
+
+      {activeTab === 'skills' ? (
+        <SkillsWorkspace
+          dashboard={skillsDashboard}
+          status={skillsStatus}
+          onRefresh={() => void refreshSkillsDashboard()}
+        />
+      ) : null}
+
       {activeTab === 'admin' && canAdmin ? (
         <AdminWorkspace
           permission={permissionState}
@@ -3148,6 +3561,634 @@ function ProjectIntelligenceTab() {
   );
 }
 
+function EngineeringMemoryWorkspace({
+  memories,
+  diagnostics,
+  query,
+  status,
+  onQueryChange,
+  onSearch,
+  onRefresh,
+}: {
+  memories: EngineeringMemoryItem[];
+  diagnostics: Record<string, unknown>;
+  query: string;
+  status: string;
+  onQueryChange: (value: string) => void;
+  onSearch: () => void;
+  onRefresh: () => void;
+}) {
+  const categories = [
+    'Project Memory',
+    'Architecture Memory',
+    'Planning Memory',
+    'Execution Memory',
+    'QA Memory',
+    'Pattern Memory',
+    'Decision Memory',
+    'Lessons Learned',
+  ];
+  const counts = categories.map((category) => ({
+    category,
+    count: memories.filter((memory) => memory.category === category).length,
+  }));
+  const visibleMemories = memories.length ? memories : [];
+  const latest = [...visibleMemories].sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))).slice(0, 6);
+  return (
+    <section className="planner-section">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Engineering Memory</div>
+          <h2>Validated Engineering Knowledge</h2>
+          <p>Approved planning, execution, QA, architecture, decisions, and lessons become reusable project assets after validation.</p>
+        </div>
+        <button className="planner-button secondary" type="button" onClick={onRefresh}>Refresh Memory</button>
+      </div>
+
+      <div className="planner-status-grid">
+        <Row label="Memory Status" value={status} />
+        <Row label="Stored Items" value={String(memories.length)} />
+        <Row label="Lifecycle" value="Draft → Validated → Approved → Indexed → Available" />
+      </div>
+
+      <div className="planner-card">
+        <div className="planner-label">Search</div>
+        <div className="planner-form-row">
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                onSearch();
+              }
+            }}
+            placeholder="Search by story, module, flow, decision, repository, or lesson"
+          />
+          <button className="planner-button" type="button" onClick={onSearch}>Search Memory</button>
+        </div>
+      </div>
+
+      <div className="planner-summary-grid">
+        {counts.map((item) => (
+          <SummaryTile key={item.category} title={item.category} value={item.count} />
+        ))}
+      </div>
+
+      <div className="planner-two-column">
+        <div className="planner-card">
+          <div className="planner-label">Memory Library</div>
+          {visibleMemories.length ? (
+            <div className="planner-list">
+              {visibleMemories.map((memory) => (
+                <EngineeringMemoryCard key={memory.id} memory={memory} />
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No Engineering Memory indexed yet."
+              detail="Approve and validate planning, execution, or QA artifacts to make them reusable here."
+            />
+          )}
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Timeline</div>
+          {latest.length ? (
+            <ul className="planner-list">
+              {latest.map((memory) => (
+                <li key={`${memory.id}-timeline`}>
+                  <strong>{memory.title}</strong>
+                  <span>{memory.category} · v{memory.version} · {formatTimestamp(memory.updatedAt || memory.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No validated engineering knowledge has been captured yet.</p>
+          )}
+          <details className="planner-accordion">
+            <summary>Memory Diagnostics</summary>
+            <pre className="planner-prompt">{JSON.stringify(diagnostics || {}, null, 2)}</pre>
+          </details>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EngineeringMemoryCard({ memory }: { memory: EngineeringMemoryItem }) {
+  return (
+    <article className="planner-task">
+      <div className="planner-task-header">
+        <div>
+          <strong>{memory.title || 'Untitled Memory'}</strong>
+          <p>{memory.summary || 'Validated engineering knowledge ready for reuse.'}</p>
+        </div>
+        <span className="planner-badge">{memory.approvalStatus || 'Draft'}</span>
+      </div>
+      <div className="planner-summary-grid compact">
+        <SummaryTile title="Category" value={memory.category || 'Project Memory'} />
+        <SummaryTile title="Artifact" value={[memory.artifactType, memory.artifactId].filter(Boolean).join(' #') || 'Project'} />
+        <SummaryTile title="Version" value={`v${memory.version || 1}`} />
+        <SummaryTile title="Confidence" value={`${Math.round((memory.confidence || 0) * 100)}%`} />
+      </div>
+      <ChipList items={(memory.tags || []).slice(0, 8)} />
+      {memory.knowledgeReferences?.length ? (
+        <ListBlock title="Knowledge References" items={memory.knowledgeReferences.slice(0, 6)} />
+      ) : null}
+    </article>
+  );
+}
+
+function GovernanceWorkspace({
+  dashboard,
+  status,
+  onRefresh,
+}: {
+  dashboard?: GovernanceDashboard;
+  status: string;
+  onRefresh: () => void;
+}) {
+  const policies = dashboard?.policies || [];
+  const approvals = dashboard?.approvals?.approvals || [];
+  const compliance = dashboard?.compliance || {};
+  const metrics = dashboard?.metrics || {};
+  const feedback = dashboard?.feedback || {};
+  const observability = dashboard?.observability || {};
+  const auditEvents = dashboard?.auditTimeline?.events || [];
+  const scorecard = dashboard?.scorecard || {};
+  return (
+    <section className="planner-section">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Engineering Governance</div>
+          <h2>Policy, Compliance, Observability</h2>
+          <p>Enterprise controls for planning, execution, QA, release readiness, approvals, metrics, feedback, and auditability.</p>
+        </div>
+        <button className="planner-button secondary" type="button" onClick={onRefresh}>Refresh Governance</button>
+      </div>
+
+      <div className="planner-status-grid">
+        <Row label="Governance Status" value={status} />
+        <Row label="Compliance" value={`${compliance.status || 'Not Assessed'} · ${formatNumber(compliance.score)}%`} />
+        <Row label="Overall Health" value={`${scorecard.overallEngineeringHealth ?? 0}% · ${scorecard.status || 'Pending'}`} />
+        <Row label="Audit Events" value={String(dashboard?.auditTimeline?.count || 0)} />
+      </div>
+
+      <div className="planner-summary-grid">
+        <SummaryTile title="Planning Quality" value={`${scorecard.planningQuality ?? 0}%`} />
+        <SummaryTile title="Execution Quality" value={`${scorecard.executionQuality ?? 0}%`} />
+        <SummaryTile title="QA Quality" value={`${scorecard.qaQuality ?? 0}%`} />
+        <SummaryTile title="Release Readiness" value={`${scorecard.releaseReadiness ?? 0}%`} />
+        <SummaryTile title="Repository Health" value={`${scorecard.repositoryHealth ?? 0}%`} />
+        <SummaryTile title="Memory Reuse" value={`${scorecard.memoryReuse ?? 0}%`} />
+      </div>
+
+      <div className="planner-two-column">
+        <div className="planner-card">
+          <div className="planner-label">Policies</div>
+          {policies.length ? (
+            <ul className="planner-list">
+              {policies.map((policy) => (
+                <li key={policy.id || policy.name}>
+                  <strong>{policy.name || 'Engineering Policy'}</strong>
+                  <span>{policy.area || 'General'} · {policy.enabled === false ? 'Disabled' : 'Enabled'} · {policy.severity || 'High'}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <EmptyState title="No policies configured." detail="Default enterprise governance policies will appear after refresh." />}
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Approvals</div>
+          <div className="planner-summary-grid compact">
+            <SummaryTile title="Pending" value={dashboard?.approvals?.byStatus?.Pending || 0} />
+            <SummaryTile title="Approved" value={dashboard?.approvals?.byStatus?.Approved || 0} />
+            <SummaryTile title="Rejected" value={dashboard?.approvals?.byStatus?.Rejected || 0} />
+          </div>
+          {approvals.slice(0, 5).map((approval) => (
+            <div className="planner-task" key={approval.id}>
+              <strong>{approval.artifactTitle || approval.artifactType || 'Artifact'}</strong>
+              <span>{approval.status || 'Pending'} · {approval.artifactType || 'Artifact'} {approval.artifactId || ''}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="planner-two-column">
+        <div className="planner-card">
+          <div className="planner-label">Compliance</div>
+          <div className="planner-summary-grid compact">
+            {Object.entries(compliance.scores || {}).map(([name, value]) => (
+              <SummaryTile key={name} title={titleCase(name)} value={`${formatNumber(value)}%`} />
+            ))}
+          </div>
+          {compliance.findings?.length ? (
+            <ListBlock title="Findings" items={compliance.findings.slice(0, 5).map((finding) => `${String(finding.severity || 'Info')}: ${String(finding.message || finding.policy || 'Review required')}`)} />
+          ) : <p>Compliance findings will appear after policy evaluation.</p>}
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Metrics</div>
+          <div className="planner-summary-grid compact">
+            <SummaryTile title="Generation Success" value={`${metrics.generationSuccess ?? 0}%`} />
+            <SummaryTile title="Coverage" value={`${metrics.averageCoverage ?? 0}%`} />
+            <SummaryTile title="Confidence" value={`${metrics.averageConfidence ?? 0}%`} />
+            <SummaryTile title="Failures" value={metrics.failureCount ?? 0} />
+          </div>
+        </div>
+      </div>
+
+      <div className="planner-two-column">
+        <div className="planner-card">
+          <div className="planner-label">Observability</div>
+          <div className="planner-summary-grid compact">
+            <SummaryTile title="Events" value={observability.count || 0} />
+            <SummaryTile title="Avg Latency" value={`${formatNumber(observability.averageLatencyMs || 0)} ms`} />
+            <SummaryTile title="Failures" value={observability.failureCount || 0} />
+            <SummaryTile title="Tokens" value={formatNumber(observability.tokenUsage || 0)} />
+          </div>
+          <ListBlock title="Engines" items={Object.entries(observability.byEngine || {}).map(([engine, count]) => `${engine}: ${count}`)} />
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Feedback</div>
+          <div className="planner-summary-grid compact">
+            <SummaryTile title="Feedback" value={feedback.count || 0} />
+            <SummaryTile title="Satisfaction" value={`${feedback.satisfaction || 0}%`} />
+            <SummaryTile title="Thumbs Up" value={feedback.byRating?.thumbs_up || 0} />
+            <SummaryTile title="Thumbs Down" value={feedback.byRating?.thumbs_down || 0} />
+          </div>
+          {feedback.feedback?.slice(0, 4).map((item) => (
+            <div className="planner-task" key={item.id}>
+              <strong>{item.category || 'Feedback'} · {item.rating || 'neutral'}</strong>
+              <span>{item.comment || item.reason || 'No comment provided.'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="planner-card">
+        <div className="planner-label">Audit Timeline</div>
+        {auditEvents.length ? (
+          <ul className="planner-list">
+            {auditEvents.slice(-8).reverse().map((event) => (
+              <li key={event.id}>
+                <strong>{event.what || 'Governance Event'}</strong>
+                <span>{event.who || 'system'} · {formatTimestamp(event.when || '')} · {event.why || event.eventType || 'Audit'}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState title="No governance audit events yet." detail="Approvals, policy changes, validation, release, and feedback events will appear here." />
+        )}
+        <details className="planner-accordion">
+          <summary>Governance Diagnostics</summary>
+          <pre className="planner-prompt">{JSON.stringify(dashboard?.diagnostics || {}, null, 2)}</pre>
+        </details>
+      </div>
+    </section>
+  );
+}
+
+function AgentWorkspace({
+  dashboard,
+  status,
+  canAdmin,
+  onRefresh,
+  onToggleFlag,
+}: {
+  dashboard?: AgentDashboard;
+  status: string;
+  canAdmin: boolean;
+  onRefresh: () => void;
+  onToggleFlag: (flag: string, enabled: boolean) => void;
+}) {
+  const agents = dashboard?.agents || [];
+  const featureFlags = dashboard?.featureFlags || {};
+  const policies = dashboard?.policies || [];
+  const waiting = dashboard?.waitingAgents || [];
+  const running = dashboard?.runningAgents || [];
+  const completed = dashboard?.completedWorkflows || [];
+  const failed = dashboard?.failedWorkflows || [];
+  const pendingJobs = dashboard?.pendingJobs || waiting;
+  const history = dashboard?.history || [];
+  const lastRun = dashboard?.lastRun || {};
+  const upcoming = dashboard?.upcomingActions || [];
+  const timeline = dashboard?.agentTimeline || [];
+  return (
+    <section className="planner-section">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Agent Center</div>
+          <h2>Autonomous Engineering Agents</h2>
+          <p>Agents react to engineering events, prepare work, and stop at policy and approval boundaries so users stay in control.</p>
+        </div>
+        <button className="planner-button secondary" type="button" onClick={onRefresh}>Refresh Agents</button>
+      </div>
+
+      <div className="planner-status-grid">
+        <Row label="Agent Status" value={status} />
+        <Row label="Registered Agents" value={String(agents.length)} />
+        <Row label="Pending Jobs" value={String(pendingJobs.length)} />
+        <Row label="Failed Workflows" value={String(failed.length)} />
+      </div>
+
+      <div className="planner-summary-grid">
+        <SummaryTile title="Running" value={running.length} />
+        <SummaryTile title="Waiting" value={waiting.length} />
+        <SummaryTile title="Completed" value={completed.length} />
+        <SummaryTile title="Failed" value={failed.length} />
+        <SummaryTile title="Upcoming Actions" value={upcoming.length} />
+        <SummaryTile title="Approval Rule" value="Human Required" />
+      </div>
+
+      <div className="planner-two-column">
+        <div className="planner-card">
+          <div className="planner-label">Registered Agents</div>
+          {agents.length ? (
+            <div className="planner-list">
+              {agents.map((agent) => (
+                <article className="planner-task" key={agent.id || agent.name}>
+                  <div className="planner-task-header">
+                    <div>
+                      <strong>{agent.name || 'Agent'}</strong>
+                      <p>{agent.responsibility || 'Single responsibility engineering agent.'}</p>
+                    </div>
+                    <span className="planner-badge">{agent.checkpoint || 'Approval Checkpoint'}</span>
+                  </div>
+                  <div className="planner-summary-grid compact">
+                    <SummaryTile title="Status" value={featureFlags[flagName(agent.id)] === false ? 'Disabled' : 'Enabled'} />
+                    <SummaryTile title="Last Run" value={formatTimestamp(lastRun[String(agent.id || '')]?.time || '') || 'Not run yet'} />
+                  </div>
+                  <ListBlock title="Triggers" items={agent.triggers || []} />
+                  <ListBlock title="Prepared Actions" items={agent.actions || []} />
+                  {canAdmin ? (
+                    <label className="planner-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={featureFlags[flagName(agent.id)] !== false}
+                        onChange={(event) => onToggleFlag(flagName(agent.id), event.target.checked)}
+                      />
+                      {featureFlags[flagName(agent.id)] !== false ? 'Enabled' : 'Disabled'}
+                    </label>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          ) : <EmptyState title="No agents registered." detail="Refresh the orchestrator to load agent registry." />}
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Pending Jobs</div>
+          {pendingJobs.length ? pendingJobs.map((workflow) => (
+            <article className="planner-task" key={workflow.id}>
+              <strong>{workflow.agent || 'Agent'} waiting for approval</strong>
+              <span>{workflow.nextAction || 'Human approval'} · {workflow.artifactType || 'Artifact'} {workflow.artifactId || ''}</span>
+              <ListBlock title="Prepared Work" items={(workflow.steps || []).map((step) => `${step.name || 'Step'}: ${step.status || 'Prepared'}`)} />
+            </article>
+          )) : <EmptyState title="No pending jobs." detail="Triggered agent workflows will appear here when they prepare work and wait for approval." />}
+        </div>
+      </div>
+
+      <div className="planner-two-column">
+        <div className="planner-card">
+          <div className="planner-label">Policies</div>
+          {policies.length ? (
+            <ListBlock title="Agent Policies" items={policies} />
+          ) : (
+            <p>No agent policies loaded.</p>
+          )}
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Upcoming Actions</div>
+          {upcoming.length ? (
+            <ul className="planner-list">
+              {upcoming.map((action) => (
+                <li key={action.workflowId}>
+                  <strong>{action.nextAction || 'Human approval'}</strong>
+                  <span>{action.agent || 'Agent'} · {action.artifactType || 'Artifact'} {action.artifactId || ''}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p>No upcoming agent actions.</p>}
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Workflow Outcomes</div>
+          <div className="planner-summary-grid compact">
+            <SummaryTile title="Completed" value={completed.length} />
+            <SummaryTile title="Failed" value={failed.length} />
+            <SummaryTile title="Retries" value={failed.reduce((sum, workflow) => sum + (workflow.retryCount || 0), 0)} />
+          </div>
+          {failed.length ? <ListBlock title="Errors" items={failed.flatMap((workflow) => workflow.errors || []).slice(0, 6)} /> : null}
+        </div>
+      </div>
+
+      <div className="planner-card">
+        <div className="planner-label">History</div>
+        {history.length ? (
+          <ul className="planner-list">
+            {history.slice(-12).reverse().map((event, index) => (
+              <li key={`${event.time}-${event.message}-${index}`}>
+                <strong>{event.message || 'Agent event'}</strong>
+                <span>{event.agent || event.type || 'Agent'} · {event.status || 'Recorded'} · {formatTimestamp(event.time || '')}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState title="No agent history yet." detail="Service hook, PR, work item, repository, and manual trigger activity will appear here." />
+        )}
+        <details className="planner-accordion">
+          <summary>Agent Diagnostics</summary>
+          <pre className="planner-prompt">{JSON.stringify(dashboard?.diagnostics || {}, null, 2)}</pre>
+        </details>
+      </div>
+    </section>
+  );
+}
+
+function flagName(agentId?: string) {
+  if (agentId === 'planning') return 'planningAgent';
+  if (agentId === 'execution') return 'executionAgent';
+  if (agentId === 'qa') return 'qaAgent';
+  if (agentId === 'review') return 'reviewAgent';
+  if (agentId === 'memory') return 'memoryAgent';
+  if (agentId === 'repository') return 'repositoryAgent';
+  return '';
+}
+
+function SkillsWorkspace({
+  dashboard,
+  status,
+  onRefresh,
+}: {
+  dashboard?: SkillsDashboard;
+  status: string;
+  onRefresh: () => void;
+}) {
+  const installed = dashboard?.installedSkills || [];
+  const groupedSkills = dashboard?.groupedSkills || {};
+  const recommended = dashboard?.recommendedSkills || [];
+  const recent = dashboard?.recentlyUsed || [];
+  const usageHistory = dashboard?.usageHistory || [];
+  const executionHistory = dashboard?.executionHistory || [];
+  const groups = installed.reduce<Record<string, number>>((acc, skill) => {
+    const group = skill.group || 'Execution';
+    acc[group] = (acc[group] || 0) + 1;
+    return acc;
+  }, {});
+  return (
+    <section className="planner-section">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Skill Library</div>
+          <h2>Reusable Engineering Skills</h2>
+          <p>Agents decide what to do. Skills know how to do it. Tools and providers stay downstream of the skill contract.</p>
+        </div>
+        <button className="planner-button secondary" type="button" onClick={onRefresh}>Refresh Skills</button>
+      </div>
+
+      <div className="planner-status-grid">
+        <Row label="Skills Status" value={status} />
+        <Row label="Installed Skills" value={String(installed.length)} />
+        <Row label="Recommended Skills" value={String(recommended.length)} />
+        <Row label="Resolution Mode" value={String(dashboard?.diagnostics?.resolutionMode || 'deterministic')} />
+      </div>
+
+      <div className="planner-summary-grid">
+        {Object.entries(groups).slice(0, 8).map(([group, count]) => (
+          <SummaryTile key={group} title={group} value={count} />
+        ))}
+        {!Object.keys(groups).length ? (
+          <SummaryTile title="Skill Registry" value="Not Loaded" />
+        ) : null}
+      </div>
+
+      <div className="planner-two-column">
+        <div className="planner-card">
+          <div className="planner-label">Recommended Skills</div>
+          {recommended.length ? (
+            <div className="planner-list">
+              {recommended.map((skill) => (
+                <SkillCard key={skill.id || skill.name} skill={skill} compact />
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No recommendations yet."
+              detail="Build an Execution Plan to match skills from the current execution package."
+            />
+          )}
+        </div>
+        <div className="planner-card">
+          <div className="planner-label">Recently Used</div>
+          {recent.length ? (
+            <div className="planner-list">
+              {recent.map((skill) => (
+                <SkillCard key={skill.id || skill.name} skill={skill} compact />
+              ))}
+            </div>
+          ) : (
+            <p>Skills will appear here after they enrich execution plans.</p>
+          )}
+          <details className="planner-accordion">
+            <summary>Usage History</summary>
+            {usageHistory.length ? (
+              <ul className="planner-list">
+                {usageHistory.slice(-8).reverse().map((usage, index) => (
+                  <li key={`${index}-${usage.skillIds?.join('-')}`}>
+                    <strong>{usage.skillIds?.join(', ') || 'Engineering Skills'}</strong>
+                    <span>{String(usage.artifact?.packageId || usage.artifact?.taskId || 'Execution artifact')}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No skill usage has been recorded yet.</p>
+            )}
+          </details>
+        </div>
+      </div>
+
+      <div className="planner-card">
+        <div className="planner-label">Installed Skills</div>
+        {Object.keys(groupedSkills).length ? (
+          <div className="planner-list">
+            {Object.entries(groupedSkills).map(([group, skills]) => (
+              <section key={group}>
+                <div className="planner-label">{group}</div>
+                {skills.map((skill) => (
+                  <SkillCard key={skill.id || skill.name} skill={skill} />
+                ))}
+              </section>
+            ))}
+          </div>
+        ) : installed.length ? (
+          <div className="planner-list">
+            {installed.map((skill) => (
+              <SkillCard key={skill.id || skill.name} skill={skill} />
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="No Engineering Skills installed." detail="Refresh the registry to load the default HEI skills." />
+        )}
+      </div>
+
+      <div className="planner-card">
+        <div className="planner-label">Execution History</div>
+        {executionHistory.length ? (
+          <ul className="planner-list">
+            {executionHistory.slice(-10).reverse().map((event, index) => (
+              <li key={`${event.skillId}-${event.executedAt}-${index}`}>
+                <strong>{event.skillName || event.skillId || 'Engineering Skill'}</strong>
+                <span>{event.group || 'Execution'} · {event.agentId || 'manual'} · {event.status || 'success'} · {formatTimestamp(event.executedAt || '')}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No skill executions recorded yet.</p>
+        )}
+      </div>
+
+      <div className="planner-card">
+        <div className="planner-label">Skill Diagnostics</div>
+        <details className="planner-accordion">
+          <summary>View Diagnostics</summary>
+          <pre className="planner-prompt">{JSON.stringify(dashboard?.diagnostics || {}, null, 2)}</pre>
+        </details>
+      </div>
+    </section>
+  );
+}
+
+function SkillCard({ skill, compact = false }: { skill: EngineeringSkill; compact?: boolean }) {
+  return (
+    <article className="planner-task">
+      <div className="planner-task-header">
+        <div>
+          <strong>{skill.name || 'Engineering Skill'}</strong>
+          <p>{skill.description || skill.implementationPattern || 'Reusable engineering guidance.'}</p>
+        </div>
+        <span className="planner-badge">{skill.group || skill.category || 'Execution'}</span>
+      </div>
+      <div className="planner-summary-grid compact">
+        <SummaryTile title="Version" value={`v${skill.version || 1}`} />
+        <SummaryTile title="Confidence" value={`${Math.round((skill.confidence || 0) * 100)}%`} />
+        <SummaryTile title="Usage" value={skill.usageCount || 0} />
+        <SummaryTile title="Match" value={skill.matchScore ? formatNumber(skill.matchScore) : 'Installed'} />
+      </div>
+      {skill.matchReasons?.length ? <ListBlock title="Why Matched" items={skill.matchReasons.slice(0, 4)} /> : null}
+      {!compact ? (
+        <>
+          <ListBlock title="Inputs" items={Object.keys(skill.inputSchema || {}).length ? Object.entries(skill.inputSchema || {}).map(([key, value]) => `${key}: ${String(value)}`) : []} />
+          <ListBlock title="Outputs" items={Object.keys(skill.outputSchema || {}).length ? Object.entries(skill.outputSchema || {}).map(([key, value]) => `${key}: ${String(value)}`) : []} />
+          <ListBlock title="Compatible Agents" items={(skill.compatibleAgents || []).slice(0, 6)} />
+          <ListBlock title="Required Permissions" items={(skill.requiredPermissions || []).slice(0, 6)} />
+          <ListBlock title="Implementation Pattern" items={skill.implementationPattern ? [skill.implementationPattern] : []} />
+          <ListBlock title="Repository Hints" items={(skill.repositoryHints || []).slice(0, 6)} />
+          <ListBlock title="Architecture Rules" items={(skill.architectureRules || []).slice(0, 6)} />
+          <ListBlock title="Test Templates" items={(skill.testTemplates || []).slice(0, 6)} />
+          <ListBlock title="Validation Rules" items={(skill.validationRules || []).slice(0, 6)} />
+          <Row label="Last Used" value={formatTimestamp(skill.lastUsedAt || '') || 'Not used yet'} />
+        </>
+      ) : null}
+    </article>
+  );
+}
+
 function WorkflowTabs({
   activeTab,
   onChange,
@@ -3162,6 +4203,10 @@ function WorkflowTabs({
     { id: 'planning', label: 'Planning', subtitle: 'Epic to task workflow' },
     { id: 'execution', label: 'Execution', subtitle: 'Developer packages' },
     { id: 'qa', label: 'QA Intelligence', subtitle: 'Coverage and test cases' },
+    { id: 'memory', label: 'Engineering Memory', subtitle: 'Validated knowledge' },
+    { id: 'governance', label: 'Governance', subtitle: 'Policy and observability' },
+    { id: 'agents', label: 'Agents', subtitle: 'Workflow orchestration' },
+    { id: 'skills', label: 'Skills', subtitle: 'Reusable capabilities' },
     ...(canAdmin ? [{ id: 'admin' as PlannerTab, label: 'Administration', subtitle: 'Repository and governance' }] : []),
   ];
   return (
@@ -5636,6 +6681,8 @@ function GeneratedChildWorkItems({
       <div className="planner-subtle">Preview generated children before creating them in Azure DevOps under {currentWorkItem ? `${currentWorkItem.type} #${currentWorkItem.id}` : 'the current work item'}.</div>
       <SourceBadge metadata={providerMetadata} />
       <RelevanceSummary metadata={providerMetadata} />
+      <EngineeringMemoryEvidence context={providerMetadata?.memory_context} area="Planning" />
+      <IntelligenceTracePanel trace={providerMetadata?.intelligence_trace} />
       {drafts.map((draft) => (
         <div className="planner-task" key={draft.id}>
           <label className="planner-checkbox">
@@ -5816,6 +6863,141 @@ function RelevanceSummary({ metadata, draft }: { metadata?: ProviderMetadata; dr
       ) : null}
     </div>
   );
+}
+
+function EngineeringMemoryEvidence({ context, area }: { context?: MemoryContextPayload; area: 'Planning' | 'Execution' | 'QA' }) {
+  if (!context) {
+    return null;
+  }
+  const memories = context.relevantMemories || [];
+  const risks = context.knownRisks || [];
+  const acceptance = context.reusableAcceptanceCriteria || [];
+  const tests = context.reusableTests || [];
+  const excluded = context.excludedMemory || [];
+  if (!memories.length && !risks.length && !acceptance.length && !tests.length && !excluded.length) {
+    return null;
+  }
+  const title = area === 'Planning'
+    ? 'Used prior engineering memory'
+    : area === 'Execution'
+      ? 'Relevant prior implementation'
+      : 'QA memory';
+  return (
+    <details className="planner-nested">
+      <summary>{title}</summary>
+      <div className="planner-summary-grid compact">
+        <SummaryTile title="Matches" value={memories.length} />
+        <SummaryTile title="Patterns" value={context.matchedPatterns?.length || 0} />
+        <SummaryTile title="Risks" value={risks.length} />
+        <SummaryTile title="Confidence" value={context.confidence !== undefined ? `${Math.round(context.confidence * 100)}%` : 'n/a'} />
+      </div>
+      <ListBlock
+        title="Selected Memory"
+        items={memories.slice(0, 3).map((memory) => `${memory.title || 'Engineering memory'}${memory.artifactType ? ` (${memory.artifactType})` : ''}`)}
+      />
+      {acceptance.length ? <ListBlock title="Acceptance Patterns" items={acceptance.slice(0, 3)} /> : null}
+      {tests.length ? <ListBlock title="Reusable Tests" items={tests.slice(0, 3)} /> : null}
+      {risks.length ? <ListBlock title="Known Risks" items={risks.slice(0, 3)} /> : null}
+      {excluded.length ? (
+        <ListBlock
+          title="Excluded Memory"
+          items={excluded.slice(0, 3).map((memory) => `${memory.title || 'Memory'}: ${(memory.reasons || []).join(', ') || 'not selected'}`)}
+        />
+      ) : null}
+      <details className="planner-accordion">
+        <summary>Memory Diagnostics</summary>
+        <ListBlock title="Retrieval Reasons" items={context.retrievalReasons || []} />
+        <pre className="planner-prompt">{JSON.stringify(context.diagnostics || {}, null, 2)}</pre>
+      </details>
+    </details>
+  );
+}
+
+function IntelligenceTracePanel({ trace }: { trace?: IntelligenceTracePayload }) {
+  const detail = trace?.trace;
+  const summary = trace?.trace_summary;
+  if (!detail && !summary) {
+    return null;
+  }
+  const decision = summary?.decision || detail?.decision || 'Engineering decision';
+  const reason = summary?.reason || detail?.reason || 'Decision trace captured for this artifact.';
+  const confidence = summary?.confidence ?? detail?.confidence;
+  const evidence = traceEvidenceLabels(detail?.evidence);
+  const memory = traceEvidenceLabels(detail?.memoryUsed);
+  const repository = traceEvidenceLabels(detail?.repositoryEvidence);
+  const graph = traceEvidenceLabels(detail?.graphEvidence);
+  const tokenUsage = detail?.tokenUsage || {};
+  const timeline = ['Planning', 'Execution', 'Validation', 'QA', 'Memory'];
+  return (
+    <details className="planner-nested">
+      <summary>Explain: {decision}</summary>
+      <div className="planner-summary-grid compact">
+        <SummaryTile title="Stage" value={summary?.stage || detail?.stage || 'Captured'} />
+        <SummaryTile title="Source" value={detail?.source || 'Intelligence Trace'} />
+        <SummaryTile title="Confidence" value={confidence !== undefined ? `${Math.round(confidence * 100)}%` : 'n/a'} />
+        <SummaryTile title="Trace ID" value={trace.trace_id || detail?.id || 'Stored'} />
+      </div>
+      <div className="planner-label-inline">Why</div>
+      <p className="planner-copy">{reason}</p>
+      <div className="planner-summary-grid compact">
+        <SummaryTile title="Memory Used" value={formatNumber(summary?.memory_count ?? memory.length)} />
+        <SummaryTile title="Repository Evidence" value={formatNumber(summary?.repository_evidence_count ?? repository.length)} />
+        <SummaryTile title="Graph Evidence" value={formatNumber(summary?.graph_evidence_count ?? graph.length)} />
+        <SummaryTile title="Latency" value={detail?.latencyMs ? `${formatNumber(detail.latencyMs)} ms` : 'n/a'} />
+      </div>
+      {evidence.length ? <ListBlock title="Evidence" items={evidence.slice(0, 5)} /> : null}
+      {repository.length ? <ListBlock title="Repository Evidence" items={repository.slice(0, 5)} /> : null}
+      {memory.length ? <ListBlock title="Memory Reused" items={memory.slice(0, 5)} /> : null}
+      {graph.length ? <ListBlock title="Graph Influence" items={graph.slice(0, 5)} /> : null}
+      <div className="planner-trace-timeline">
+        {timeline.map((stage) => (
+          <span className={`planner-chip ${stage === (summary?.stage || detail?.stage) ? 'active' : ''}`} key={stage}>{stage}</span>
+        ))}
+      </div>
+      <details className="planner-accordion">
+        <summary>Trace Diagnostics</summary>
+        <div className="planner-summary-grid compact">
+          <Row label="Model" value={detail?.model || 'deterministic'} />
+          <Row label="Prompt Version" value={detail?.promptVersion || 'n/a'} />
+          <Row label="Prompt Tokens" value={formatUnknownValue(tokenUsage.prompt_tokens ?? tokenUsage.promptTokens ?? tokenUsage.final_prompt_tokens)} />
+          <Row label="Completion Tokens" value={formatUnknownValue(tokenUsage.completion_tokens ?? tokenUsage.completionTokens)} />
+        </div>
+        {detail?.validationResult && Object.keys(detail.validationResult).length ? (
+          <pre className="planner-prompt">{JSON.stringify(detail.validationResult, null, 2)}</pre>
+        ) : null}
+      </details>
+    </details>
+  );
+}
+
+function traceEvidenceLabels(values?: unknown[]): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return values
+    .map((value) => {
+      if (typeof value === 'string') {
+        return value;
+      }
+      if (value && typeof value === 'object') {
+        const item = value as Record<string, unknown>;
+        const label = [item.name, item.title, item.path, item.type].map((part) => typeof part === 'string' ? part : '').filter(Boolean).join(' - ');
+        const reason = typeof item.reason === 'string' ? item.reason : typeof item.summary === 'string' ? item.summary : '';
+        return [label || 'Trace evidence', reason].filter(Boolean).join(': ');
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return 'n/a';
+  }
+  if (typeof value === 'number') {
+    return formatNumber(value);
+  }
+  return String(value);
 }
 
 function GeneratedTasksPreview({ story }: { story: StoryRefinement }) {
@@ -6313,6 +7495,8 @@ function DeveloperWorkspace({
         </div>
       </section>
       {storyImpact && isBug ? <StoryImpactResult result={storyImpact} /> : null}
+      <EngineeringMemoryEvidence context={executionContext?.memory_context} area="Execution" />
+      <IntelligenceTracePanel trace={executionContext?.intelligence_trace} />
       {!hasPackage ? (
         <section className="planner-card">
           <div className="planner-subtle">No execution package generated yet. Generate one from this workspace when the scope is ready.</div>
@@ -6494,6 +7678,8 @@ function QAWorkspace({
       {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
       {qaTestSuite ? (
         <>
+          <EngineeringMemoryEvidence context={qaTestSuite.memory_context} area="QA" />
+          <IntelligenceTracePanel trace={qaTestSuite.intelligence_trace} />
           <section className="planner-card">
             <ApprovalStatusStrip label="Test Suite" status={approvalWorkflow.qa} qualityScore={qaTestSuite.coverage_score} />
             <div className="planner-actions">
@@ -9173,6 +10359,26 @@ function getCoverageReport(): Promise<CoverageIntelligenceReport> {
   return getJson<CoverageIntelligenceReport>('/coverage/report');
 }
 
+function getEngineeringMemory(): Promise<EngineeringMemoryResponse> {
+  return getJson<EngineeringMemoryResponse>('/engineering-memory');
+}
+
+function searchEngineeringMemoryItems(query: Record<string, unknown>): Promise<EngineeringMemoryResponse> {
+  return postJson<EngineeringMemoryResponse>('/engineering-memory/search', { query });
+}
+
+function getGovernanceDashboard(): Promise<GovernanceDashboard> {
+  return getJson<GovernanceDashboard>('/governance');
+}
+
+function getAgentDashboard(): Promise<AgentDashboard> {
+  return getJson<AgentDashboard>('/agents');
+}
+
+function getSkillsDashboard(): Promise<SkillsDashboard> {
+  return getJson<SkillsDashboard>('/skills');
+}
+
 function saveArtifact(artifact: {
   artifact_type: ArtifactType;
   title: string;
@@ -9286,6 +10492,10 @@ function workspaceLabel(tab: PlannerTab | RoutedWorkspace): string {
   if (tab === 'planning') return 'Planning';
   if (tab === 'execution') return 'Execution';
   if (tab === 'qa') return 'QA';
+  if (tab === 'memory') return 'Engineering Memory';
+  if (tab === 'governance') return 'Governance';
+  if (tab === 'agents') return 'Agents';
+  if (tab === 'skills') return 'Skills';
   if (tab === 'admin') return 'Admin';
   return 'Overview';
 }
@@ -10065,7 +11275,7 @@ function buildProjectSession(
 }
 
 function isPlannerTab(value: unknown): value is PlannerTab {
-  return value === 'overview' || value === 'planning' || value === 'execution' || value === 'qa' || value === 'admin';
+  return value === 'overview' || value === 'planning' || value === 'execution' || value === 'qa' || value === 'memory' || value === 'governance' || value === 'agents' || value === 'skills' || value === 'admin';
 }
 
 function knowledgeVersion(profile: ProjectProfile): string {

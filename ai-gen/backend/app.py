@@ -15,9 +15,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from backend.agents import AgentOrchestrator
 from backend.auth import ApiKeyMiddleware, get_api_key_status, validate_approver_role
 from backend.guardrails import guard_stage_output, has_blocking_violation
 from backend.ado import AdoAutomation, AdoClient
+from backend.engineering_memory import EngineeringMemoryEngine
+from backend.governance import GovernanceEngine
+from backend.intelligence_trace import TraceEngine
+from backend.skills import SkillEngine
 
 logger = logging.getLogger("ai_gen.app")
 
@@ -89,6 +94,11 @@ repo_context_manager = RepoContextManager(
 pipeline_controller = PipelineController(Path(os.getenv("AI_GEN_PIPELINE_ROOT", ".ai_gen_pipelines")))
 ado_automation = AdoAutomation()
 lifecycle_manager = EngineeringLifecycleManager()
+agent_orchestrator = AgentOrchestrator()
+engineering_memory_engine = EngineeringMemoryEngine()
+governance_engine = GovernanceEngine()
+trace_engine = TraceEngine()
+skill_engine = SkillEngine()
 
 class ContextRequest(BaseModel):
     """Request body accepted by POST /context."""
@@ -343,6 +353,104 @@ class ProjectIntelligenceLifecycleRequest(BaseModel):
     actor: str = ""
 
 
+class ProjectIntelligenceEngineeringMemoryRequest(BaseModel):
+    memory: dict[str, Any] = Field(default_factory=dict)
+    actor: str = ""
+
+
+class ProjectIntelligenceEngineeringMemoryUpdateRequest(BaseModel):
+    changes: dict[str, Any] = Field(default_factory=dict)
+    actor: str = ""
+
+
+class ProjectIntelligenceEngineeringMemorySearchRequest(BaseModel):
+    query: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceEngineeringMemoryActorRequest(BaseModel):
+    actor: str = ""
+
+
+class ProjectIntelligenceTraceRequest(BaseModel):
+    trace: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceTraceSearchRequest(BaseModel):
+    query: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceAgentTriggerRequest(BaseModel):
+    event: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceAgentActorRequest(BaseModel):
+    actor: str = ""
+
+
+class ProjectIntelligenceAgentFlagsRequest(BaseModel):
+    flags: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceSkillRequest(BaseModel):
+    skill: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceSkillResolveRequest(BaseModel):
+    execution_package: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceSkillDiscoverRequest(BaseModel):
+    agent_id: str = ""
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceSkillExecuteRequest(BaseModel):
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceSkillVersionRequest(BaseModel):
+    changes: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceGovernancePolicyRequest(BaseModel):
+    policy: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceGovernanceEnforceRequest(BaseModel):
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceGovernanceApprovalRequest(BaseModel):
+    approval: dict[str, Any] = Field(default_factory=dict)
+    actor: str = ""
+
+
+class ProjectIntelligenceGovernanceApprovalUpdateRequest(BaseModel):
+    status: str = "Approved"
+    actor: str = ""
+    reason: str = ""
+
+
+class ProjectIntelligenceGovernanceMetricRequest(BaseModel):
+    metric: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceGovernanceFeedbackRequest(BaseModel):
+    feedback: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceGovernanceObservationRequest(BaseModel):
+    observation: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIntelligenceGovernanceAuditRequest(BaseModel):
+    event: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProjectIntelligenceGraphIngestRequest(BaseModel):
     project: dict[str, Any] = Field(default_factory=dict)
     epic: dict[str, Any] = Field(default_factory=dict)
@@ -591,6 +699,371 @@ def get_project_intelligence_lifecycle_history(artifact_id: str) -> dict:
 @app.post("/project-intelligence/lifecycle/diagnostics")
 def get_project_intelligence_lifecycle_diagnostics(request: ProjectIntelligenceLifecycleRequest) -> dict:
     return lifecycle_manager.diagnostics_for(request.artifact, request.context)
+
+
+@app.get("/project-intelligence/engineering-memory")
+def list_project_intelligence_engineering_memory(
+    project_id: str = "",
+    category: str = "",
+    status: str = "",
+) -> dict:
+    return engineering_memory_engine.list_memory(project_id, category, status)
+
+
+@app.post("/project-intelligence/engineering-memory")
+def store_project_intelligence_engineering_memory(request: ProjectIntelligenceEngineeringMemoryRequest) -> dict:
+    return engineering_memory_engine.store_memory(request.memory, request.actor)
+
+
+@app.patch("/project-intelligence/engineering-memory/{memory_id}")
+def update_project_intelligence_engineering_memory(
+    memory_id: str,
+    request: ProjectIntelligenceEngineeringMemoryUpdateRequest,
+) -> dict:
+    try:
+        return engineering_memory_engine.update_memory(memory_id, request.changes, request.actor)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/engineering-memory/{memory_id}/validate")
+def validate_project_intelligence_engineering_memory(
+    memory_id: str,
+    request: ProjectIntelligenceEngineeringMemoryActorRequest,
+) -> dict:
+    try:
+        return engineering_memory_engine.validate_memory(memory_id, request.actor)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/engineering-memory/{memory_id}/approve")
+def approve_project_intelligence_engineering_memory(
+    memory_id: str,
+    request: ProjectIntelligenceEngineeringMemoryActorRequest,
+) -> dict:
+    try:
+        return engineering_memory_engine.approve_memory(memory_id, request.actor)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/engineering-memory/{memory_id}/index")
+def index_project_intelligence_engineering_memory(
+    memory_id: str,
+    request: ProjectIntelligenceEngineeringMemoryActorRequest,
+) -> dict:
+    try:
+        return engineering_memory_engine.index_memory(memory_id, request.actor)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/engineering-memory/{memory_id}/available")
+def make_project_intelligence_engineering_memory_available(
+    memory_id: str,
+    request: ProjectIntelligenceEngineeringMemoryActorRequest,
+) -> dict:
+    try:
+        return engineering_memory_engine.make_available(memory_id, request.actor)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/engineering-memory/{memory_id}/archive")
+def archive_project_intelligence_engineering_memory(
+    memory_id: str,
+    request: ProjectIntelligenceEngineeringMemoryActorRequest,
+) -> dict:
+    try:
+        return engineering_memory_engine.archive_memory(memory_id, request.actor)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/engineering-memory/search")
+def search_project_intelligence_engineering_memory(request: ProjectIntelligenceEngineeringMemorySearchRequest) -> dict:
+    return engineering_memory_engine.search(request.query)
+
+
+@app.post("/project-intelligence/engineering-memory/relevant")
+def find_relevant_project_intelligence_engineering_memory(
+    request: ProjectIntelligenceEngineeringMemorySearchRequest,
+) -> dict:
+    return engineering_memory_engine.find_relevant_memory(request.query)
+
+
+@app.post("/project-intelligence/engineering-memory/patterns")
+def find_project_intelligence_engineering_memory_patterns(
+    request: ProjectIntelligenceEngineeringMemorySearchRequest,
+) -> dict:
+    return engineering_memory_engine.find_patterns(request.query)
+
+
+@app.post("/project-intelligence/engineering-memory/architecture")
+def find_project_intelligence_engineering_memory_architecture(
+    request: ProjectIntelligenceEngineeringMemorySearchRequest,
+) -> dict:
+    return engineering_memory_engine.find_architecture(request.query)
+
+
+@app.post("/project-intelligence/engineering-memory/planning-history")
+def find_project_intelligence_engineering_memory_planning_history(
+    request: ProjectIntelligenceEngineeringMemorySearchRequest,
+) -> dict:
+    return engineering_memory_engine.find_planning_history(request.query)
+
+
+@app.post("/project-intelligence/engineering-memory/execution-history")
+def find_project_intelligence_engineering_memory_execution_history(
+    request: ProjectIntelligenceEngineeringMemorySearchRequest,
+) -> dict:
+    return engineering_memory_engine.find_execution_history(request.query)
+
+
+@app.post("/project-intelligence/engineering-memory/lessons")
+def find_project_intelligence_engineering_memory_lessons(
+    request: ProjectIntelligenceEngineeringMemorySearchRequest,
+) -> dict:
+    return engineering_memory_engine.find_lessons(request.query)
+
+
+@app.post("/project-intelligence/engineering-memory/reusable-stories")
+def find_project_intelligence_engineering_memory_reusable_stories(
+    request: ProjectIntelligenceEngineeringMemorySearchRequest,
+) -> dict:
+    return engineering_memory_engine.find_reusable_stories(request.query)
+
+
+@app.get("/project-intelligence/engineering-memory/diagnostics")
+def get_project_intelligence_engineering_memory_diagnostics() -> dict:
+    return engineering_memory_engine.diagnostics_summary()
+
+
+@app.post("/project-intelligence/engineering-memory/pattern-detection")
+def detect_project_intelligence_engineering_memory_patterns() -> dict:
+    return engineering_memory_engine.detect_patterns()
+
+
+@app.get("/project-intelligence/agents")
+def get_project_intelligence_agents_dashboard() -> dict:
+    return agent_orchestrator.dashboard()
+
+
+@app.get("/project-intelligence/agents/policies")
+def get_project_intelligence_agent_policies() -> dict:
+    dashboard = agent_orchestrator.dashboard()
+    return {
+        "featureFlags": dashboard.get("featureFlags", {}),
+        "policies": dashboard.get("policies", []),
+    }
+
+
+@app.post("/project-intelligence/agents/flags")
+def update_project_intelligence_agent_flags(request: ProjectIntelligenceAgentFlagsRequest) -> dict:
+    return agent_orchestrator.update_feature_flags(request.flags)
+
+
+@app.post("/project-intelligence/agents/trigger")
+def trigger_project_intelligence_agent(request: ProjectIntelligenceAgentTriggerRequest) -> dict:
+    return agent_orchestrator.trigger(request.event, request.context)
+
+
+@app.post("/project-intelligence/agents/workflows/{workflow_id}/resume")
+def resume_project_intelligence_agent_workflow(workflow_id: str, request: ProjectIntelligenceAgentActorRequest) -> dict:
+    try:
+        return agent_orchestrator.resume(workflow_id, request.actor)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/agents/workflows/{workflow_id}/retry")
+def retry_project_intelligence_agent_workflow(workflow_id: str) -> dict:
+    try:
+        return agent_orchestrator.retry(workflow_id)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.get("/project-intelligence/agents/workflows")
+def list_project_intelligence_agent_workflows(state: str = "") -> dict:
+    return agent_orchestrator.list_workflows(state)
+
+
+@app.get("/project-intelligence/agents/events")
+def list_project_intelligence_agent_events(event_type: str = "") -> dict:
+    return agent_orchestrator.list_events(event_type)
+
+
+@app.get("/project-intelligence/agents/diagnostics")
+def get_project_intelligence_agent_diagnostics() -> dict:
+    return agent_orchestrator.diagnostics_summary()
+
+
+@app.get("/project-intelligence/skills")
+def get_project_intelligence_skills_dashboard() -> dict:
+    return skill_engine.dashboard()
+
+
+@app.get("/project-intelligence/skills/installed")
+def list_project_intelligence_skills() -> dict:
+    return skill_engine.list_skills()
+
+
+@app.post("/project-intelligence/skills")
+def save_project_intelligence_skill(request: ProjectIntelligenceSkillRequest) -> dict:
+    return skill_engine.save_skill(request.skill)
+
+
+@app.post("/project-intelligence/skills/resolve")
+def resolve_project_intelligence_skills(request: ProjectIntelligenceSkillResolveRequest) -> dict:
+    return skill_engine.resolve(request.execution_package, request.context)
+
+
+@app.post("/project-intelligence/skills/discover")
+def discover_project_intelligence_skills(request: ProjectIntelligenceSkillDiscoverRequest) -> dict:
+    return skill_engine.discover(request.agent_id, request.artifact, request.context)
+
+
+@app.post("/project-intelligence/skills/compose")
+def compose_project_intelligence_skills(request: ProjectIntelligenceSkillResolveRequest) -> dict:
+    return skill_engine.compose(request.execution_package, request.context)
+
+
+@app.post("/project-intelligence/skills/{skill_id}/execute")
+def execute_project_intelligence_skill(skill_id: str, request: ProjectIntelligenceSkillExecuteRequest) -> dict:
+    try:
+        return skill_engine.execute(skill_id, request.context)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/skills/{skill_id}/version")
+def version_project_intelligence_skill(skill_id: str, request: ProjectIntelligenceSkillVersionRequest) -> dict:
+    try:
+        return skill_engine.version_skill(skill_id, request.changes)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.get("/project-intelligence/skills/history")
+def get_project_intelligence_skill_history() -> dict:
+    return skill_engine.history()
+
+
+@app.get("/project-intelligence/skills/policies")
+def get_project_intelligence_skill_policies() -> dict:
+    return skill_engine.policies()
+
+
+@app.get("/project-intelligence/skills/diagnostics")
+def get_project_intelligence_skill_diagnostics() -> dict:
+    return skill_engine.diagnostics_summary()
+
+
+@app.get("/project-intelligence/governance")
+def get_project_intelligence_governance_dashboard() -> dict:
+    return governance_engine.dashboard()
+
+
+@app.get("/project-intelligence/governance/policies")
+def list_project_intelligence_governance_policies() -> dict:
+    return governance_engine.list_policies()
+
+
+@app.post("/project-intelligence/governance/policies")
+def save_project_intelligence_governance_policy(request: ProjectIntelligenceGovernancePolicyRequest) -> dict:
+    return governance_engine.save_policy(request.policy)
+
+
+@app.post("/project-intelligence/governance/policies/enforce")
+def enforce_project_intelligence_governance_policies(request: ProjectIntelligenceGovernanceEnforceRequest) -> dict:
+    return governance_engine.enforce_policies(request.artifact, request.context)
+
+
+@app.post("/project-intelligence/governance/approvals")
+def request_project_intelligence_governance_approval(request: ProjectIntelligenceGovernanceApprovalRequest) -> dict:
+    return governance_engine.request_approval(request.approval, request.actor)
+
+
+@app.post("/project-intelligence/governance/approvals/{approval_id}")
+def update_project_intelligence_governance_approval(
+    approval_id: str,
+    request: ProjectIntelligenceGovernanceApprovalUpdateRequest,
+) -> dict:
+    try:
+        return governance_engine.update_approval(approval_id, request.status, request.actor, request.reason)
+    except ValueError as error:
+        return JSONResponse(status_code=404, content={"error": str(error)})
+
+
+@app.post("/project-intelligence/governance/compliance")
+def validate_project_intelligence_governance_compliance(request: ProjectIntelligenceGovernanceEnforceRequest) -> dict:
+    return governance_engine.validate_compliance(request.artifact, request.context)
+
+
+@app.post("/project-intelligence/governance/metrics")
+def record_project_intelligence_governance_metric(request: ProjectIntelligenceGovernanceMetricRequest) -> dict:
+    return governance_engine.record_metric(request.metric)
+
+
+@app.post("/project-intelligence/governance/feedback")
+def record_project_intelligence_governance_feedback(request: ProjectIntelligenceGovernanceFeedbackRequest) -> dict:
+    return governance_engine.record_feedback(request.feedback)
+
+
+@app.post("/project-intelligence/governance/observability")
+def record_project_intelligence_governance_observation(request: ProjectIntelligenceGovernanceObservationRequest) -> dict:
+    return governance_engine.record_observation(request.observation)
+
+
+@app.post("/project-intelligence/governance/audit")
+def record_project_intelligence_governance_audit(request: ProjectIntelligenceGovernanceAuditRequest) -> dict:
+    return governance_engine.record_audit(request.event)
+
+
+@app.get("/project-intelligence/governance/audit")
+def get_project_intelligence_governance_audit(artifact_id: str = "") -> dict:
+    return governance_engine.audit_timeline(artifact_id)
+
+
+@app.get("/project-intelligence/governance/diagnostics")
+def get_project_intelligence_governance_diagnostics() -> dict:
+    return governance_engine.diagnostics_summary()
+
+
+@app.get("/project-intelligence/intelligence-trace")
+def list_project_intelligence_traces(
+    project_id: str = "",
+    artifact_id: str = "",
+    stage: str = "",
+) -> dict:
+    return trace_engine.list_traces(project_id, artifact_id, stage)
+
+
+@app.post("/project-intelligence/intelligence-trace")
+def record_project_intelligence_trace(request: ProjectIntelligenceTraceRequest) -> dict:
+    return trace_engine.record(request.trace)
+
+
+@app.post("/project-intelligence/intelligence-trace/search")
+def search_project_intelligence_traces(request: ProjectIntelligenceTraceSearchRequest) -> dict:
+    return trace_engine.search(request.query)
+
+
+@app.get("/project-intelligence/intelligence-trace/explain/{artifact_id}")
+def explain_project_intelligence_trace(artifact_id: str, decision: str = "", project_id: str = "") -> dict:
+    return trace_engine.explain(artifact_id, decision, project_id)
+
+
+@app.get("/project-intelligence/intelligence-trace/timeline")
+def get_project_intelligence_trace_timeline(artifact_id: str = "", project_id: str = "") -> dict:
+    return trace_engine.timeline(artifact_id, project_id)
+
+
+@app.get("/project-intelligence/intelligence-trace/diagnostics")
+def get_project_intelligence_trace_diagnostics() -> dict:
+    return trace_engine.diagnostics_summary()
 
 
 @app.get("/project-intelligence/graph")

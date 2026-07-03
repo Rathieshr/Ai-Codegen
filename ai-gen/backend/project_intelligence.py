@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from backend.artifacts import ArtifactEngine
+from backend.engineering_memory import MemoryContextBuilder
 from backend.execution import build_execution_package_v2
+from backend.intelligence_trace import TraceEngine
 from backend.implementation_validation import validate_implementation
 from backend.intelligence.capability import buildCapabilityContext
 from backend.intelligence.dna import compareDNA, generateDNA, validateDNA
@@ -34,6 +36,7 @@ from backend.prompt_builder import build_developer_prompt_v2, build_execution_pl
 from backend.qa import QAWorkspaceService
 from backend.pr_review import PRReviewEngine, review_pr
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
+from backend.skills import SkillEngine
 
 
 logger = logging.getLogger("ai_gen.project_intelligence")
@@ -173,6 +176,9 @@ class ProjectIntelligenceService:
         self._capsules_path = self._profile_dir / "context_capsules.json"
         self._profile_path.parent.mkdir(parents=True, exist_ok=True)
         self._profiles_dir.mkdir(parents=True, exist_ok=True)
+        self._memory_context_builder = MemoryContextBuilder()
+        self._trace_engine = TraceEngine()
+        self._skill_engine = SkillEngine()
 
     def get_profile(self) -> dict[str, Any]:
         if not self._profile_path.exists():
@@ -205,6 +211,89 @@ class ProjectIntelligenceService:
         normalized["saved_at"] = _now_iso()
         self._session_path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
         return {"exists": True, "session": normalized}
+
+    def _memory_context(
+        self,
+        purpose: str,
+        profile: dict[str, Any],
+        artifact_type: str,
+        work_item: dict[str, Any],
+        modules: list[str] | None = None,
+        flows: list[str] | None = None,
+        acceptance_criteria: list[str] | None = None,
+        repository_files: list[str] | None = None,
+        capability: str = "",
+    ) -> dict[str, Any]:
+        project_id = _clean_text(profile.get("project_id")) or _clean_text(profile.get("project_name")) or "default"
+        return self._memory_context_builder.build(
+            purpose=purpose,
+            project_id=project_id,
+            artifact_type=artifact_type,
+            work_item=work_item,
+            modules=modules or [],
+            flows=flows or [],
+            acceptance_criteria=acceptance_criteria or [],
+            repository_files=repository_files or [],
+            capability=capability,
+        )
+
+    def _trace_decision(
+        self,
+        *,
+        profile: dict[str, Any],
+        artifact_type: str,
+        artifact: dict[str, Any],
+        stage: str,
+        source: str,
+        decision: str,
+        reason: str,
+        confidence: float,
+        evidence: list[Any] | None = None,
+        memory_context: dict[str, Any] | None = None,
+        repository_evidence: list[Any] | None = None,
+        graph_evidence: list[Any] | None = None,
+        validation_result: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        provider_metadata = metadata or {}
+        trace = self._trace_engine.record_decision(
+            project_id=_clean_text(profile.get("project_id")) or _clean_text(profile.get("project_name")) or "default",
+            artifact_type=artifact_type,
+            artifact_id=_clean_text(artifact.get("id") or artifact.get("artifactId") or artifact.get("artifact_id") or artifact.get("title")),
+            artifact_title=_clean_text(artifact.get("title")),
+            stage=stage,
+            source=source,
+            decision=decision,
+            reason=reason,
+            confidence=confidence,
+            evidence=evidence or [],
+            memory_used=(memory_context or {}).get("relevantMemories", []) if isinstance(memory_context, dict) else [],
+            repository_evidence=repository_evidence or [],
+            graph_evidence=graph_evidence or [],
+            validation_result=validation_result or {},
+            prompt_version=_clean_text(provider_metadata.get("promptBudgetProfile") or provider_metadata.get("prompt_version") or "deterministic-v1"),
+            latency_ms=int(provider_metadata.get("phi_latency_ms") or provider_metadata.get("latency_ms") or provider_metadata.get("elapsed_ms") or 0),
+            model=_clean_text(provider_metadata.get("provider_deployment") or provider_metadata.get("model") or provider_metadata.get("provider_used")),
+            token_usage={
+                "prompt_tokens": provider_metadata.get("phi_prompt_tokens") or provider_metadata.get("prompt_tokens"),
+                "completion_tokens": provider_metadata.get("phi_completion_tokens") or provider_metadata.get("completion_tokens"),
+                "final_prompt_tokens": provider_metadata.get("final_prompt_tokens"),
+            },
+            metadata=provider_metadata,
+        )
+        return {
+            "trace_id": trace["id"],
+            "trace": trace,
+            "trace_summary": {
+                "decision": trace["decision"],
+                "reason": trace["reason"],
+                "confidence": trace["confidence"],
+                "stage": trace["stage"],
+                "memory_count": len(trace.get("memoryUsed", [])),
+                "repository_evidence_count": len(trace.get("repositoryEvidence", [])),
+                "graph_evidence_count": len(trace.get("graphEvidence", [])),
+            },
+        }
 
     def get_knowledge_cache(self) -> dict[str, Any]:
         cache = self._read_knowledge_cache()
@@ -856,6 +945,15 @@ class ProjectIntelligenceService:
             }
             for feature in capability_plan["recommended_features"]
         ]
+        memory_context = self._memory_context(
+            "planning",
+            relevant_profile,
+            "Feature",
+            epic,
+            modules=_selection_names(selection, "relevant_modules"),
+            flows=_selection_names(selection, "relevant_flows"),
+            capability=business_goal,
+        )
         deterministic = {
             "business_goal": business_goal,
             "business_outcomes": _string_list(epic_analysis.get("desiredOutcomes")) or _business_outcomes(keywords, relevant_profile),
@@ -864,8 +962,15 @@ class ProjectIntelligenceService:
             "capability_categories": capability_plan["capability_categories"],
             "applications": _application_names(relevant_profile),
             "constraints": _constraints_for_profile(relevant_profile),
-            "risks": _risks_for_profile(relevant_profile, keywords),
+            "risks": _unique([*_risks_for_profile(relevant_profile, keywords), *_string_list(memory_context.get("knownRisks"))]),
             "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
+            "memory_context": memory_context,
+            "memory_diagnostics": memory_context.get("diagnostics", {}),
+            "reusable_capabilities": [
+                memory for memory in memory_context.get("relevantMemories", [])
+                if memory.get("artifactType") in {"Feature", "Capability"}
+            ],
+            "known_memory_risks": memory_context.get("knownRisks", []),
             "epic_analysis": epic_analysis,
             "epic_analysis_diagnostics": epic_analysis.get("diagnostics", {}),
             "capability_review": capability_review["capabilities"],
@@ -942,7 +1047,27 @@ class ProjectIntelligenceService:
         ]
         deterministic["generation_review"] = _generation_review(relevant_profile, deterministic["recommended_features"], _selection_names(selection, "relevant_modules"), keywords)
         deterministic.update(_pipeline_payload(pipeline))
-        return _with_provider_metadata(deterministic, _intelligence_pipeline_metadata(pipeline))
+        provider_metadata = _intelligence_pipeline_metadata(pipeline)
+        deterministic["intelligence_trace"] = self._trace_decision(
+            profile=relevant_profile,
+            artifact_type="Epic",
+            artifact=epic,
+            stage="Planning",
+            source="Planning Intelligence",
+            decision="Generate Feature Recommendations",
+            reason="Epic intent, capability review, Knowledge Registry, Engineering Memory, and validation pipeline produced feature recommendations.",
+            confidence=float((deterministic.get("work_item_dna") or {}).get("confidence") or 0.84),
+            evidence=[
+                {"type": "capability_review", "count": len(deterministic.get("capability_review", []))},
+                {"type": "modules", "items": _selection_names(selection, "relevant_modules")},
+                {"type": "flows", "items": _selection_names(selection, "relevant_flows")},
+            ],
+            memory_context=memory_context,
+            repository_evidence=_selection_names(selection, "relevant_modules") + _selection_names(selection, "relevant_flows"),
+            validation_result={"previewPolicy": pipeline.get("previewPolicy"), "reports": pipeline.get("validationReports", [])},
+            metadata=provider_metadata,
+        )
+        return _with_provider_metadata(deterministic, provider_metadata)
 
     def refine_feature(
         self,
@@ -981,12 +1106,31 @@ class ProjectIntelligenceService:
                 }
             )
         story_plan = _story_plan_from_analysis(story_analysis, recommended_stories)
+        memory_context = self._memory_context(
+            "planning",
+            relevant_profile,
+            "Story",
+            feature_for_generation,
+            modules=modules,
+            flows=flows,
+            capability=title,
+        )
         deterministic = {
             "feature_summary": _sentence(title, description or f"Deliver {title} using project-aware modules and flows."),
             "affected_modules": modules,
             "affected_flows": flows,
             "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
-            "risks": _risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
+            "risks": _unique([
+                *_risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
+                *_string_list(memory_context.get("knownRisks")),
+            ]),
+            "memory_context": memory_context,
+            "memory_diagnostics": memory_context.get("diagnostics", {}),
+            "story_patterns": [
+                memory for memory in memory_context.get("relevantMemories", [])
+                if memory.get("artifactType") == "Story"
+            ],
+            "acceptance_criteria_memory_hints": memory_context.get("reusableAcceptanceCriteria", []),
             "story_analysis": story_analysis,
             "story_review": {
                 "journeys": reviewed_journeys,
@@ -1042,6 +1186,25 @@ class ProjectIntelligenceService:
                 ai_requested=_feature_analysis_ai_requested(feature_analysis_options),
             )
         )
+        deterministic["intelligence_trace"] = self._trace_decision(
+            profile=relevant_profile,
+            artifact_type="Feature",
+            artifact=feature_for_generation,
+            stage="Planning",
+            source="Planning Intelligence",
+            decision="Generate Story Recommendations",
+            reason="Feature DNA, approved journey analysis, selected modules/flows, Engineering Memory, and validation reports produced story recommendations.",
+            confidence=float((deterministic.get("work_item_dna") or {}).get("confidence") or 0.82),
+            evidence=[
+                {"type": "story_journeys", "count": len(reviewed_journeys)},
+                {"type": "modules", "items": modules},
+                {"type": "flows", "items": flows},
+            ],
+            memory_context=memory_context,
+            repository_evidence=modules + flows,
+            validation_result={"reports": pipeline.get("validationReports", []), "dna": dna_validation},
+            metadata=provider_metadata,
+        )
         return _with_provider_metadata(deterministic, provider_metadata)
 
     def refine_story(
@@ -1067,6 +1230,16 @@ class ProjectIntelligenceService:
         acceptance = _acceptance_criteria(title, flows, modules)
         acceptance_categories = _acceptance_criteria_categories(acceptance)
         acceptance_quality_score = _acceptance_criteria_quality_score(acceptance)
+        memory_context = self._memory_context(
+            "planning",
+            relevant_profile,
+            "Task",
+            story_for_generation,
+            modules=modules,
+            flows=flows,
+            acceptance_criteria=acceptance,
+            capability=title,
+        )
         task_plan = _task_intelligence(title, description, acceptance, impact, relevant_profile)
         proposed_tasks = [
             {
@@ -1084,7 +1257,18 @@ class ProjectIntelligenceService:
             "affected_modules": modules,
             "affected_flows": flows,
             "dependencies": _selection_names(selection, "relevant_dependencies") or _dependencies_for_profile(relevant_profile),
-            "risks": _risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
+            "risks": _unique([
+                *_risks_for_profile(relevant_profile, _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, relevant_profile)),
+                *_string_list(memory_context.get("knownRisks")),
+            ]),
+            "memory_context": memory_context,
+            "memory_diagnostics": memory_context.get("diagnostics", {}),
+            "task_patterns": [
+                memory for memory in memory_context.get("relevantMemories", [])
+                if memory.get("artifactType") in {"Task", "Execution Package"}
+            ],
+            "reusable_acceptance_criteria": memory_context.get("reusableAcceptanceCriteria", []),
+            "reusable_tests": memory_context.get("reusableTests", []),
             "ui_considerations": _ui_considerations(relevant_profile, flows),
             "technical_considerations": _technical_considerations(relevant_profile, modules),
             "qa_considerations": _qa_considerations(relevant_profile, flows),
@@ -1132,6 +1316,25 @@ class ProjectIntelligenceService:
                 ai_requested=story_ai_requested,
             )
         )
+        deterministic["intelligence_trace"] = self._trace_decision(
+            profile=relevant_profile,
+            artifact_type="Story",
+            artifact=story_for_generation,
+            stage="Planning",
+            source="Planning Intelligence",
+            decision="Generate Task Recommendations",
+            reason="Story DNA, acceptance criteria, selected modules/flows, Engineering Memory, and validation reports produced implementation tasks.",
+            confidence=float((deterministic.get("work_item_dna") or {}).get("confidence") or 0.8),
+            evidence=[
+                {"type": "acceptance_criteria", "count": len(acceptance)},
+                {"type": "modules", "items": modules},
+                {"type": "flows", "items": flows},
+            ],
+            memory_context=memory_context,
+            repository_evidence=modules + flows,
+            validation_result={"reports": pipeline.get("validationReports", []), "dna": dna_validation},
+            metadata=provider_metadata,
+        )
         return _with_provider_metadata(deterministic, provider_metadata)
 
     def generate_qa_test_cases(
@@ -1156,7 +1359,29 @@ class ProjectIntelligenceService:
         flows = _string_list(story.get("flows")) or _string_list(story.get("affected_flows")) or impact["affected_flows"]
         dependencies = _string_list(story.get("dependencies")) or impact["dependencies"] or _impact_dependencies(active_profile, keywords, modules, flows)
         acceptance = _string_list(story.get("acceptance_criteria")) or _acceptance_criteria(title, flows, modules)
+        memory_context = self._memory_context(
+            "qa",
+            active_profile,
+            "Test Suite",
+            story,
+            modules=modules,
+            flows=flows,
+            acceptance_criteria=acceptance,
+            capability=title,
+        )
         suite = _qa_test_suite(title, description, acceptance, modules, flows, dependencies, active_profile, keywords)
+        suite["memory_context"] = memory_context
+        suite["memory_diagnostics"] = memory_context.get("diagnostics", {})
+        suite["qa_memory"] = {
+            "prior_tests": memory_context.get("reusableTests", []),
+            "regression_patterns": [
+                memory for memory in memory_context.get("relevantMemories", [])
+                if "regression" in " ".join(_string_list(memory.get("tags"))).lower()
+                or "regression" in _clean_text(memory.get("summary")).lower()
+            ],
+            "known_risks": memory_context.get("knownRisks", []),
+            "previous_successful_artifacts": memory_context.get("previousSuccessfulArtifacts", []),
+        }
         suite["generation_review"] = _generation_review(active_profile, suite["test_suite"]["test_cases"], modules, keywords)
         phi_item = {
             **story,
@@ -1184,10 +1409,45 @@ class ProjectIntelligenceService:
                 ["test_suite", "coverage_summary", "coverage_score", "coverage_breakdown", "generated_test_count", "coverage_gaps", "generation_review"],
             )
             merged["generation_review"] = suite["generation_review"]
-            return _with_provider_metadata(_attach_qa_intelligence(merged, story, active_profile, execution_package, execution_plan, implementation_validation), phi["metadata"])
+            merged["memory_context"] = memory_context
+            merged["memory_diagnostics"] = memory_context.get("diagnostics", {})
+            merged["qa_memory"] = suite["qa_memory"]
+            qa_payload = _attach_qa_intelligence(merged, story, active_profile, execution_package, execution_plan, implementation_validation)
+            qa_payload["intelligence_trace"] = self._trace_decision(
+                profile=active_profile,
+                artifact_type="Story",
+                artifact=story,
+                stage="QA",
+                source="QA Intelligence",
+                decision="Generate QA Test Suite",
+                reason="Story acceptance criteria, execution context, repository knowledge, Engineering Memory, and QA readiness rules produced the test suite.",
+                confidence=float((qa_payload.get("qa_readiness") or {}).get("overallReadiness") or qa_payload.get("coverage_score") or 0) / 100,
+                evidence=[{"type": "acceptance_criteria", "count": len(acceptance)}, {"type": "tests", "count": qa_payload.get("generated_test_count", 0)}],
+                memory_context=memory_context,
+                repository_evidence=modules + flows,
+                validation_result=qa_payload.get("qa_readiness") or {},
+                metadata=phi["metadata"],
+            )
+            return _with_provider_metadata(qa_payload, phi["metadata"])
         if phi["blocked"]:
             return _phi_error_response(phi)
-        return _with_provider_metadata(_attach_qa_intelligence(suite, story, active_profile, execution_package, execution_plan, implementation_validation), phi["metadata"])
+        qa_payload = _attach_qa_intelligence(suite, story, active_profile, execution_package, execution_plan, implementation_validation)
+        qa_payload["intelligence_trace"] = self._trace_decision(
+            profile=active_profile,
+            artifact_type="Story",
+            artifact=story,
+            stage="QA",
+            source="QA Intelligence",
+            decision="Generate QA Test Suite",
+            reason="Story acceptance criteria, execution context, repository knowledge, Engineering Memory, and QA readiness rules produced the test suite.",
+            confidence=float((qa_payload.get("qa_readiness") or {}).get("overallReadiness") or qa_payload.get("coverage_score") or 0) / 100,
+            evidence=[{"type": "acceptance_criteria", "count": len(acceptance)}, {"type": "tests", "count": qa_payload.get("generated_test_count", 0)}],
+            memory_context=memory_context,
+            repository_evidence=modules + flows,
+            validation_result=qa_payload.get("qa_readiness") or {},
+            metadata=phi["metadata"],
+        )
+        return _with_provider_metadata(qa_payload, phi["metadata"])
 
     def analyze_story_impact(
         self,
@@ -1288,6 +1548,17 @@ class ProjectIntelligenceService:
         readiness = _execution_readiness_score(relevant_profile, has_impact)
         recommended_files = _recommended_files(relevant_profile, impact, title)
         file_ranking_status = "Repository file ranking available" if recommended_files else "Repository file ranking not available"
+        memory_context = self._memory_context(
+            "execution",
+            relevant_profile,
+            "Execution Package",
+            executable,
+            modules=impact["affected_modules"],
+            flows=impact["affected_flows"],
+            acceptance_criteria=acceptance,
+            repository_files=recommended_files,
+            capability=title,
+        )
         task_plan = _task_intelligence(title, description, acceptance, impact, relevant_profile, recommended_files)
         generated_tasks = [
             {
@@ -1391,10 +1662,38 @@ class ProjectIntelligenceService:
         deterministic["work_item_dna"] = task_dna
         deterministic["parent_work_item_dna"] = story_dna
         deterministic["dna_validation"] = dna_validation
+        deterministic["memory_context"] = memory_context
+        deterministic["memory_diagnostics"] = memory_context.get("diagnostics", {})
+        deterministic["relevant_prior_implementation"] = memory_context.get("previousSuccessfulArtifacts", [])
+        deterministic["prior_implementation_patterns"] = [
+            memory for memory in memory_context.get("relevantMemories", [])
+            if memory.get("category") in {"Execution Memory", "Pattern Memory"}
+        ]
+        deterministic["known_implementation_risks"] = memory_context.get("knownRisks", [])
+        deterministic["reusable_testing_expectations"] = memory_context.get("reusableTests", [])
         deterministic.update(_pipeline_payload(pipeline))
         deterministic.update(_context_capsule_metadata(context_capsule))
         active_profile = {**relevant_profile, "_active_context_capsule": context_capsule}
         metadata = _execution_primary_metadata(time.monotonic(), "build_execution_context")
+        deterministic["intelligence_trace"] = self._trace_decision(
+            profile=relevant_profile,
+            artifact_type=_execution_artifact_type(executable),
+            artifact=executable,
+            stage="Execution",
+            source="Execution Intelligence",
+            decision="Build Execution Package",
+            reason="Task or Story DNA, Context Capsule, Repository Intelligence, Engineering Graph evidence, Engineering Memory, and validation report produced the execution package.",
+            confidence=float(context_capsule.get("confidence") or 0.8),
+            evidence=[
+                {"type": "context_capsule", "id": context_capsule.get("capsuleId"), "tokenEstimate": context_capsule.get("tokenEstimate")},
+                {"type": "acceptance_criteria", "count": len(acceptance)},
+            ],
+            memory_context=memory_context,
+            repository_evidence=(context_capsule.get("selectedModules") or []) + (context_capsule.get("selectedFlows") or []) + (context_capsule.get("relevantFiles") or []),
+            graph_evidence=context_capsule.get("graphReferences") or [],
+            validation_result=validation_report or {},
+            metadata=metadata,
+        )
         if not _execution_ai_enrichment_enabled(options):
             return _with_provider_metadata(deterministic, metadata)
         phi = _project_phi_json("build_execution_context", active_profile, executable, deterministic, _execution_ai_options(options), _execution_enrichment_keys("build_execution_context", deterministic))
@@ -1458,12 +1757,33 @@ class ProjectIntelligenceService:
             provider=provider_name,
             model=provider_model,
         )
+        execution_package_v2 = context.get("execution_package_v2") if isinstance(context.get("execution_package_v2"), dict) else {}
+        skill_payload = self._skill_engine.compose(
+            execution_package_v2,
+            {
+                "memoryContext": context.get("memory_context", {}),
+                "executionMode": execution_mode,
+            },
+        )
+        skill_section = _execution_plan_skill_section(skill_payload)
+        if skill_section:
+            plan_text = str(deterministic.get("plan") or deterministic.get("finalPlan") or "").strip()
+            enriched_plan = f"{plan_text}\n\n{skill_section}".strip()
+            deterministic["plan"] = enriched_plan
+            deterministic["finalPlan"] = enriched_plan
         deterministic["execution_plan"] = {
             key: value
             for key, value in deterministic.items()
             if key not in {"execution_plan"}
         }
-        deterministic["execution_package_v2"] = context.get("execution_package_v2", {})
+        if isinstance(deterministic.get("execution_plan"), dict):
+            deterministic["execution_plan"]["engineeringSkills"] = skill_payload.get("skills", [])
+            deterministic["execution_plan"]["skillComposition"] = skill_payload.get("composition", {})
+            deterministic["execution_plan"]["skillDiagnostics"] = skill_payload.get("diagnostics", {})
+        deterministic["execution_package_v2"] = execution_package_v2
+        deterministic["engineering_skills"] = skill_payload.get("skills", [])
+        deterministic["skill_composition"] = skill_payload.get("composition", {})
+        deterministic["skill_diagnostics"] = skill_payload.get("diagnostics", {})
         deterministic["execution_context"] = {
             "packageId": context.get("execution_package_v2", {}).get("packageId") if isinstance(context.get("execution_package_v2"), dict) else context.get("package_id"),
             "artifactId": context.get("artifact_id"),
@@ -3868,6 +4188,41 @@ def _prompt_validation_payload(execution_context: dict[str, Any], title: str, co
         "manual_edit_allowed": bool(policy.get("allow_manual_edit")),
         "creation_blocked": bool(policy.get("block_creation")),
     }
+
+
+def _execution_plan_skill_section(skill_payload: dict[str, Any]) -> str:
+    skills = skill_payload.get("skills", []) if isinstance(skill_payload, dict) else []
+    composition = skill_payload.get("composition", {}) if isinstance(skill_payload, dict) else {}
+    if not skills:
+        return ""
+    lines = [
+        "## Engineering Skills",
+        "Apply these reusable HEI engineering skills while executing the task:",
+    ]
+    for skill in skills[:5]:
+        name = str(skill.get("name") or "Engineering Skill").strip()
+        category = str(skill.get("category") or "Architecture").strip()
+        pattern = str(skill.get("implementationPattern") or skill.get("description") or "").strip()
+        lines.append(f"- {name} ({category}): {pattern}")
+    validation_rules = [
+        str(rule).strip()
+        for rule in composition.get("validationRules", [])[:5]
+        if str(rule).strip()
+    ]
+    test_templates = [
+        str(test).strip()
+        for test in composition.get("testTemplates", [])[:5]
+        if str(test).strip()
+    ]
+    if validation_rules:
+        lines.append("")
+        lines.append("Skill validation rules:")
+        lines.extend(f"- {rule}" for rule in validation_rules)
+    if test_templates:
+        lines.append("")
+        lines.append("Skill test expectations:")
+        lines.extend(f"- {test}" for test in test_templates)
+    return "\n".join(lines)
 
 
 def _names_from_context(value: Any) -> list[str]:

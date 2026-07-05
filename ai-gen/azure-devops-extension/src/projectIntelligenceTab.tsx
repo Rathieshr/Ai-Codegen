@@ -55,7 +55,7 @@ const REPOSITORY_DOCUMENTS = [
 const PROJECT_SESSION_STORAGE_KEY = 'ai-gen-project-intelligence:last-session';
 const AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED = false;
 
-type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'memory' | 'governance' | 'agents' | 'skills' | 'admin';
+type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'memory' | 'governance' | 'agents' | 'skills' | 'admin' | 'diagnostics';
 type AIGenRole = 'admin' | 'contributor' | 'viewer';
 type WorkItemKind = 'Epic' | 'Feature' | 'Story' | 'Task' | 'Bug' | 'Test Case';
 type RoutedWorkspace = Extract<PlannerTab, 'planning' | 'execution' | 'qa'>;
@@ -1580,6 +1580,9 @@ function ProjectIntelligenceTab() {
     itemType: currentItemType,
     approvalWorkflow,
     childDrafts,
+    epicResult,
+    featureResult,
+    storyResult,
     hasQa: Boolean(qaTestSuite),
     hasExecution: Boolean(executionContext),
     hasKnowledge: hasKnowledgeRegistry(profile),
@@ -2756,8 +2759,15 @@ function ProjectIntelligenceTab() {
     window.setTimeout(() => setMessage(''), 1800);
   }
 
-  function approveFeatures() {
-    if (!childDrafts.some((draft) => draft.type === 'Feature')) {
+function approveFeatures() {
+    const hasFeatureDrafts = childDrafts.some((draft) => draft.type === 'Feature');
+    if (!hasFeatureDrafts && epicResult?.recommended_features?.length) {
+      const drafts = featureDraftsFromEpic(epicResult, false).map((draft) => ({ ...draft, status: 'approved' as ChildDraft['status'] }));
+      approveArtifact('features');
+      setChildDrafts((current) => [...current.filter((draft) => draft.type !== 'Feature'), ...drafts]);
+      return;
+    }
+    if (!hasFeatureDrafts) {
       setError('Generate features before approving them.');
       return;
     }
@@ -3528,6 +3538,19 @@ function ProjectIntelligenceTab() {
         />
       ) : null}
 
+      {activeTab === 'diagnostics' ? (
+        <DiagnosticsWorkspace
+          providerMetadata={latestProvider}
+          workflow={workflowOrchestration}
+          knowledgeCacheStatus={knowledgeCacheStatus}
+          capsuleStatus={contextCapsuleStatus}
+          governanceStatus={governanceStatus}
+          agentStatus={agentStatus}
+          skillsStatus={skillsStatus}
+          memoryStatus={engineeringMemoryStatus}
+        />
+      ) : null}
+
       {activeTab === 'admin' && canAdmin ? (
         <AdminWorkspace
           permission={permissionState}
@@ -3579,36 +3602,39 @@ function EngineeringMemoryWorkspace({
   onRefresh: () => void;
 }) {
   const categories = [
-    'Project Memory',
-    'Architecture Memory',
-    'Planning Memory',
-    'Execution Memory',
-    'QA Memory',
-    'Pattern Memory',
-    'Decision Memory',
-    'Lessons Learned',
+    'Planning Pattern',
+    'Execution Pattern',
+    'QA Pattern',
+    'Decision',
+    'Lesson Learned',
   ];
+  const visibleMemories = memories.filter((memory) => {
+    const state = String(memory.approvalStatus || '').toLowerCase();
+    return state.includes('approved') || state.includes('indexed') || state.includes('available');
+  }).map((memory) => ({
+    ...memory,
+    category: normalizedMemoryCategory(memory.category),
+  }));
   const counts = categories.map((category) => ({
     category,
-    count: memories.filter((memory) => memory.category === category).length,
+    count: visibleMemories.filter((memory) => memory.category === category).length,
   }));
-  const visibleMemories = memories.length ? memories : [];
   const latest = [...visibleMemories].sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))).slice(0, 6);
   return (
     <section className="planner-section">
       <div className="planner-section-header">
         <div>
-          <div className="planner-label">Engineering Memory</div>
+          <div className="planner-label">Memory</div>
           <h2>Validated Engineering Knowledge</h2>
-          <p>Approved planning, execution, QA, architecture, decisions, and lessons become reusable project assets after validation.</p>
+          <p>Only approved and indexed knowledge is shown here so teams can reuse patterns with confidence.</p>
         </div>
         <button className="planner-button secondary" type="button" onClick={onRefresh}>Refresh Memory</button>
       </div>
 
       <div className="planner-status-grid">
         <Row label="Memory Status" value={status} />
-        <Row label="Stored Items" value={String(memories.length)} />
-        <Row label="Lifecycle" value="Draft → Validated → Approved → Indexed → Available" />
+        <Row label="Reusable Items" value={String(visibleMemories.length)} />
+        <Row label="Lifecycle" value="Approved → Indexed → Available" />
       </div>
 
       <div className="planner-card">
@@ -3645,8 +3671,8 @@ function EngineeringMemoryWorkspace({
             </div>
           ) : (
             <EmptyState
-              title="No Engineering Memory indexed yet."
-              detail="Approve and validate planning, execution, or QA artifacts to make them reusable here."
+              title="No reusable memory indexed yet."
+              detail="Approve and index planning, execution, QA, decision, or lesson artifacts to make them reusable here."
             />
           )}
         </div>
@@ -3662,7 +3688,7 @@ function EngineeringMemoryWorkspace({
               ))}
             </ul>
           ) : (
-            <p>No validated engineering knowledge has been captured yet.</p>
+            <p>No approved reusable knowledge has been captured yet.</p>
           )}
           <details className="planner-accordion">
             <summary>Memory Diagnostics</summary>
@@ -4154,6 +4180,51 @@ function SkillsWorkspace({
   );
 }
 
+function DiagnosticsWorkspace({
+  providerMetadata,
+  workflow,
+  knowledgeCacheStatus,
+  capsuleStatus,
+  governanceStatus,
+  agentStatus,
+  skillsStatus,
+  memoryStatus,
+}: {
+  providerMetadata?: ProviderMetadata;
+  workflow: WorkflowOrchestrationState;
+  knowledgeCacheStatus?: KnowledgeCacheStatus;
+  capsuleStatus?: ContextCapsuleStatus;
+  governanceStatus: string;
+  agentStatus: string;
+  skillsStatus: string;
+  memoryStatus: string;
+}) {
+  return (
+    <section className="planner-section">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Diagnostics</div>
+          <h2>Advanced Diagnostics</h2>
+          <p>Provider and workflow internals are collapsed here so the main demo flow stays clean.</p>
+        </div>
+      </div>
+      <div className="planner-summary-grid">
+        <SummaryTile title="Lifecycle" value={workflow.currentStage || 'Planning'} />
+        <SummaryTile title="Next Action" value={workflow.nextAction.label} />
+        <SummaryTile title="Knowledge Cache" value={knowledgeStatusText(knowledgeCacheStatus?.knowledge_status || 'missing')} />
+        <SummaryTile title="Capsule" value={capsuleStatus ? `${capsuleStatus.ready_count || 0}/${capsuleStatus.total_count || 0} ready` : 'Pending'} />
+      </div>
+      <div className="planner-status-grid">
+        <Row label="Memory" value={memoryStatus} />
+        <Row label="Skills" value={skillsStatus} />
+        <Row label="Agents" value={agentStatus} />
+        <Row label="Governance" value={governanceStatus} />
+      </div>
+      <ProjectIntelligenceProviderDiagnostics metadata={providerMetadata} />
+    </section>
+  );
+}
+
 function SkillCard({ skill, compact = false }: { skill: EngineeringSkill; compact?: boolean }) {
   return (
     <article className="planner-task">
@@ -4200,29 +4271,54 @@ function WorkflowTabs({
 }) {
   const tabs: Array<{ id: PlannerTab; label: string; subtitle: string }> = [
     { id: 'overview', label: 'Command Center', subtitle: 'Current work and next action' },
-    { id: 'planning', label: 'Planning', subtitle: 'Epic to task workflow' },
-    { id: 'execution', label: 'Execution', subtitle: 'Developer packages' },
-    { id: 'qa', label: 'QA Intelligence', subtitle: 'Coverage and test cases' },
-    { id: 'memory', label: 'Engineering Memory', subtitle: 'Validated knowledge' },
-    { id: 'governance', label: 'Governance', subtitle: 'Policy and observability' },
+    { id: 'planning', label: 'Planning', subtitle: 'Story summary and task approval' },
+    { id: 'execution', label: 'Execution', subtitle: 'Package cards and prompts' },
+    { id: 'qa', label: 'QA & Release', subtitle: 'Readiness and release review' },
+    { id: 'memory', label: 'Memory', subtitle: 'Reusable approved knowledge' },
+  ];
+  const advancedTabs: Array<{ id: PlannerTab; label: string; subtitle: string }> = [
+    { id: 'governance', label: 'Governance', subtitle: 'Policies and observability' },
     { id: 'agents', label: 'Agents', subtitle: 'Workflow orchestration' },
     { id: 'skills', label: 'Skills', subtitle: 'Reusable capabilities' },
-    ...(canAdmin ? [{ id: 'admin' as PlannerTab, label: 'Administration', subtitle: 'Repository and governance' }] : []),
+    { id: 'diagnostics', label: 'Diagnostics', subtitle: 'Provider and workflow internals' },
+    ...(canAdmin ? [{ id: 'admin' as PlannerTab, label: 'Administration', subtitle: 'Repository and setup' }] : []),
   ];
+  const advancedActive = advancedTabs.some((tab) => tab.id === activeTab);
   return (
-    <nav className="planner-tabs" aria-label="Project Intelligence workspace tabs">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          className={`planner-tab ${activeTab === tab.id ? 'active' : ''}`}
-          onClick={() => onChange(tab.id)}
-          type="button"
-        >
-          <span>{tab.label}</span>
-          <small>{tab.subtitle}</small>
-        </button>
-      ))}
-    </nav>
+    <div className="planner-tab-shell">
+      <nav className="planner-tabs" aria-label="Project Intelligence workspace tabs">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            className={`planner-tab ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => onChange(tab.id)}
+            type="button"
+          >
+            <span>{tab.label}</span>
+            <small>{tab.subtitle}</small>
+          </button>
+        ))}
+      </nav>
+      <details className={`planner-advanced-menu ${advancedActive ? 'active' : ''}`}>
+        <summary>
+          <span>Advanced</span>
+          <small>Governance, agents, skills, admin, diagnostics</small>
+        </summary>
+        <div className="planner-advanced-grid">
+          {advancedTabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`planner-tab planner-tab-advanced ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => onChange(tab.id)}
+              type="button"
+            >
+              <span>{tab.label}</span>
+              <small>{tab.subtitle}</small>
+            </button>
+          ))}
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -4335,40 +4431,43 @@ function CommandCenterWorkspace({
         <CurrentWorkCard profile={profile} workItem={workItem} workflow={workflow} />
         <RecommendedActionHero workflow={workflow} loading={loading} canContribute={canContribute} onContinue={onContinueWorkflow} />
       </div>
-      <div className="hei-command-row metrics">
-        <OverviewHealthCard workflow={workflow} profile={profile} hasQa={hasQa} hasExecution={hasExecution} />
-        <RepositoryMetricsCard profile={profile} status={knowledgeCacheStatus} capsuleStatus={capsuleStatus} />
-        <KnowledgeHealthCompactCard
-          session={session}
-          status={knowledgeCacheStatus}
-          profile={profile}
-          capsuleStatus={capsuleStatus}
-          loading={loading}
-          canRefresh={canAdmin}
-          onContinue={onContinue}
-          onRefresh={onRefresh}
-          onChangeRepository={onChangeRepository}
-        />
-      </div>
-      <div className="hei-command-row secondary">
-        <RepositoryDriftCard status={knowledgeCacheStatus} profile={profile} loading={loading} canRefresh={canAdmin} onRefresh={onRefresh} />
-        <RecentActivityCard currentWorkItem={workItem} profile={profile} hasQa={hasQa} hasExecution={hasExecution} />
-      </div>
-      {showQuickStart && canAdmin ? (
-        <QuickStartSetup
-          profile={profile}
-          adoProjects={adoProjects}
-          repositories={repositories}
-          branches={branches}
-          repositoryLoadMessage={repositoryLoadMessage}
-          loading={loading}
-          onProfileChange={onProfileChange}
-          onSelectAdoProject={onSelectAdoProject}
-          onSelectRepository={onSelectRepository}
-          onReloadRepositories={onReloadRepositories}
-          onAnalyzeProject={onAnalyzeProject}
-        />
-      ) : null}
+      <details className="planner-nested">
+        <summary>Show details</summary>
+        <div className="hei-command-row metrics">
+          <OverviewHealthCard workflow={workflow} profile={profile} hasQa={hasQa} hasExecution={hasExecution} />
+          <RepositoryMetricsCard profile={profile} status={knowledgeCacheStatus} capsuleStatus={capsuleStatus} />
+          <KnowledgeHealthCompactCard
+            session={session}
+            status={knowledgeCacheStatus}
+            profile={profile}
+            capsuleStatus={capsuleStatus}
+            loading={loading}
+            canRefresh={canAdmin}
+            onContinue={onContinue}
+            onRefresh={onRefresh}
+            onChangeRepository={onChangeRepository}
+          />
+        </div>
+        <div className="hei-command-row secondary">
+          <RepositoryDriftCard status={knowledgeCacheStatus} profile={profile} loading={loading} canRefresh={canAdmin} onRefresh={onRefresh} />
+          <RecentActivityCard currentWorkItem={workItem} profile={profile} hasQa={hasQa} hasExecution={hasExecution} />
+        </div>
+        {showQuickStart && canAdmin ? (
+          <QuickStartSetup
+            profile={profile}
+            adoProjects={adoProjects}
+            repositories={repositories}
+            branches={branches}
+            repositoryLoadMessage={repositoryLoadMessage}
+            loading={loading}
+            onProfileChange={onProfileChange}
+            onSelectAdoProject={onSelectAdoProject}
+            onSelectRepository={onSelectRepository}
+            onReloadRepositories={onReloadRepositories}
+            onAnalyzeProject={onAnalyzeProject}
+          />
+        ) : null}
+      </details>
     </div>
   );
 }
@@ -5668,9 +5767,9 @@ function AIPlannerWorkspace({
 }) {
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
   const planningType = itemType === 'Epic' || itemType === 'Feature' ? itemType : selectedItemType;
-  const hasGeneratedFeatures = childDrafts.some((draft) => draft.type === 'Feature');
-  const hasGeneratedStories = childDrafts.some((draft) => draft.type === 'User Story');
-  const hasGeneratedTasks = childDrafts.some((draft) => draft.type === 'Task');
+  const hasGeneratedFeatures = childDrafts.some((draft) => draft.type === 'Feature') || Boolean(epicResult?.recommended_features?.length);
+  const hasGeneratedStories = childDrafts.some((draft) => draft.type === 'User Story') || Boolean(featureResult?.recommended_stories?.length);
+  const hasGeneratedTasks = childDrafts.some((draft) => draft.type === 'Task') || Boolean(storyResult && taskDraftsFromStory(storyResult).length);
   const [selectedPlanningItemId, setSelectedPlanningItemId] = useState('');
   const [selectedPlanningDetailTab, setSelectedPlanningDetailTab] = useState<PlanningDetailTab>('overview');
   const [storyPlanningTab, setStoryPlanningTab] = useState<StoryPlanningTab>('overview');
@@ -5698,6 +5797,7 @@ function AIPlannerWorkspace({
     setSelectedId: setSelectedPlanningItemId,
   });
   if (itemType === 'Story' && currentWorkItem) {
+    const generatedTasks = childDrafts.filter((draft) => draft.type === 'Task');
     return (
       <>
         <section className="planner-card hei-planning-workspace">
@@ -5706,10 +5806,10 @@ function AIPlannerWorkspace({
             <div>
               <div className="planner-label">Story Planning</div>
               <h2>{normalizeStoryTitle(storyInput.title || currentWorkItem.title || 'Story')}</h2>
-              <p>Analyze the selected Story, generate implementation Tasks, review them, then approve Tasks before opening Execution.</p>
+              <p>Review the story, confirm acceptance criteria, approve generated tasks, then continue into execution.</p>
             </div>
             <div className="hei-planning-primary">
-              <span>{hasGeneratedTasks ? 'Task Review' : storyResult ? 'Generate Tasks' : 'Story Analysis'}</span>
+              <span>{hasGeneratedTasks ? 'Task Approval' : storyResult ? 'Generate Tasks' : 'Story Analysis'}</span>
               {!storyResult ? (
                 <button className="planner-button" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>
                   Analyze Story →
@@ -5725,7 +5825,7 @@ function AIPlannerWorkspace({
               )}
             </div>
           </div>
-          <PlanningProgressBar
+        <PlanningProgressBar
             stages={buildSingleCurrentStages(
               ['Story Analysis', 'Task Review', 'Execution'],
               !storyResult ? 'Story Analysis' : !hasGeneratedTasks || isApprovalPending(approvalWorkflow.tasks) ? 'Task Review' : 'Execution',
@@ -5740,82 +5840,77 @@ function AIPlannerWorkspace({
               { label: 'Task Review', status: hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Pending' },
               { label: 'Execution', status: approvalWorkflow.tasks === 'approved' ? 'Ready' : 'Locked' },
             ]}
-          />
-          {readOnly ? <div className="planner-error">This work item is Closed. Story planning is read-only.</div> : null}
-          <div className="hei-planning-grid">
-            <section className="hei-planning-list" aria-label="Story task queue">
-              <div className="planner-label">Task Queue</div>
+        />
+        {readOnly ? <div className="planner-error">This work item is Closed. Story planning is read-only.</div> : null}
+        <div className="planner-summary-grid">
+          <SummaryTile title="Approval Status" value={approvalStatusLabel(approvalWorkflow.tasks)} />
+          <SummaryTile title="Generated Tasks" value={generatedTasks.length} />
+          <SummaryTile title="Execution" value={approvalWorkflow.tasks === 'approved' ? 'Ready' : 'Waiting'} />
+          <SummaryTile title="Recommended Action" value={!storyResult ? 'Analyze Story' : !hasGeneratedTasks ? 'Generate Tasks' : approvalWorkflow.tasks === 'approved' ? 'Open Execution' : 'Approve Tasks'} />
+        </div>
+        <div className="hei-demo-stack">
+          <section className="planner-card">
+            <div className="planner-label">Story Summary</div>
+            <strong>{normalizeStoryTitle(storyInput.title || storyResult?.story_summary || currentWorkItem.title || 'Story')}</strong>
+            <p>{storyInput.description || storyResult?.story_summary || 'Story summary will appear here after analysis.'}</p>
+          </section>
+          <section className="planner-card">
+            <div className="planner-label">Acceptance Criteria</div>
+            <ListBlock
+              title="Acceptance Criteria"
+              items={splitAcceptanceCriteriaText(acceptanceCriteria).length ? splitAcceptanceCriteriaText(acceptanceCriteria) : storyResult?.acceptance_criteria || []}
+              empty="Analyze the story to generate acceptance criteria."
+            />
+          </section>
+          <section className="planner-card">
+            <div className="planner-section-header">
+              <div>
+                <div className="planner-label">Generated Task List</div>
+                <div className="planner-subtle">Tasks stay in draft until you approve them.</div>
+              </div>
               {hasGeneratedTasks ? (
-                <PlanningItemList
-                  items={childDrafts.filter((draft) => draft.type === 'Task').map(draftToReviewItem)}
-                  selectedId={selectedPlanningItemId}
-                  onSelect={setSelectedPlanningItemId}
-                />
-              ) : (
-                <div className="hei-queue-empty">
-                  <strong>No Tasks generated yet.</strong>
-                  <span>Generate Tasks to continue Story planning.</span>
-                </div>
-              )}
-            </section>
-            <section className="hei-planning-detail">
-              <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Approved story scope, users, and outcome." />
-              <textarea
-                className="planner-textarea compact"
-                value={acceptanceCriteria}
-                onChange={(event) => setAcceptanceCriteria(event.target.value)}
-                placeholder="Acceptance criteria, one per line"
-              />
-              {storyResult ? (
-                <StoryPlanningWorkspace
-                  result={storyResult}
-                  currentWorkItem={currentWorkItem}
-                  activeTab={storyPlanningTab}
-                  onTabChange={setStoryPlanningTab}
-                  taskDrafts={childDrafts.filter((draft) => draft.type === 'Task')}
-                  hasExecutionPackage={false}
-                  onGenerateTasks={() => generateChildren(false)}
-                  loading={loading}
-                  readOnly={readOnly}
-                />
-              ) : (
-                <div className="hei-selected-empty">
-                  <strong>Select a Story to analyze and generate Tasks.</strong>
-                  <span>Story Planning becomes active when a Story is selected from Azure DevOps.</span>
-                </div>
-              )}
-            </section>
-            <aside className="hei-planning-insights">
-              <details className="planner-nested" open>
-                <summary>Planning Health</summary>
-                <div className="planner-status-grid">
-                  <Row label="Story" value={storyResult ? 'Analyzed' : 'Analysis Pending'} />
-                  <Row label="Tasks" value={hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Not Generated'} />
-                  <Row label="Execution" value={approvalWorkflow.tasks === 'approved' ? 'Ready' : 'Locked'} />
-                  <Row label="Recommended Action" value={!storyResult ? 'Analyze Story' : !hasGeneratedTasks ? 'Generate Tasks' : approvalWorkflow.tasks === 'approved' ? 'Open Execution' : 'Approve Tasks'} />
-                </div>
-              </details>
-              <details className="planner-nested">
-                <summary>Engineering Insights</summary>
-                <ListBlock title="Modules" items={storyResult?.affected_modules || []} />
-                <ListBlock title="Flows" items={storyResult?.affected_flows || []} />
-                <ListBlock title="Dependencies" items={storyResult?.dependencies || []} />
-              </details>
-            </aside>
-          </div>
-        </section>
-        {hasGeneratedTasks ? (
-          <GeneratedChildWorkItems
-            drafts={childDrafts.filter((draft) => draft.type === 'Task')}
-            creationLog={creationLog}
-            currentWorkItem={currentWorkItem}
-            providerMetadata={providerMetadata}
-            readOnly={!canContribute}
-            loading={loading}
-            onSelectionChange={updateDraftSelection}
-            onCreateSelected={createSelectedChildren}
+                <button className="planner-button" onClick={approveTasks} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.tasks)}>
+                  Approve Tasks
+                </button>
+              ) : null}
+            </div>
+            {generatedTasks.length ? (
+              <StructuredChildDraftList drafts={generatedTasks} />
+            ) : (
+              <EmptyState title="No tasks generated yet." detail="Generate Tasks to continue Story planning." />
+            )}
+          </section>
+        </div>
+        <details className="planner-nested">
+          <summary>Show details</summary>
+          <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Approved story scope, users, and outcome." />
+          <textarea
+            className="planner-textarea compact"
+            value={acceptanceCriteria}
+            onChange={(event) => setAcceptanceCriteria(event.target.value)}
+            placeholder="Acceptance criteria, one per line"
           />
-        ) : null}
+          {storyResult ? (
+            <StoryPlanningWorkspace
+              result={storyResult}
+              currentWorkItem={currentWorkItem}
+              activeTab={storyPlanningTab}
+              onTabChange={setStoryPlanningTab}
+              taskDrafts={generatedTasks}
+              hasExecutionPackage={false}
+              onGenerateTasks={() => generateChildren(false)}
+              loading={loading}
+              readOnly={readOnly}
+            />
+          ) : null}
+          <div className="planner-status-grid">
+            <Row label="Story" value={storyResult ? 'Analyzed' : 'Analysis Pending'} />
+            <Row label="Tasks" value={hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Not Generated'} />
+            <Row label="Modules" value={(storyResult?.affected_modules || []).join(', ') || 'Pending'} />
+            <Row label="Flows" value={(storyResult?.affected_flows || []).join(', ') || 'Pending'} />
+          </div>
+        </details>
+        </section>
       </>
     );
   }
@@ -6050,27 +6145,31 @@ function buildPlanningWorkspaceModel({
   const isEpic = planningType === 'Epic';
   const featureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
   const storyDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
+  const effectiveFeatureDrafts = featureDrafts.length ? featureDrafts : (epicResult?.recommended_features?.length ? featureDraftsFromEpic(epicResult, false) : []);
+  const effectiveStoryDrafts = storyDrafts.length ? storyDrafts : (featureResult?.recommended_stories?.length ? storyDraftsFromFeature(featureResult) : []);
   const capabilities = epicResult?.capability_review || [];
   const items = isEpic
     ? capabilities.length
       ? capabilities.map(capabilityToReviewItem)
-      : featureDrafts.map(draftToReviewItem)
-    : storyDrafts.length
-      ? storyDrafts.map(draftToReviewItem)
+      : effectiveFeatureDrafts.map(draftToReviewItem)
+    : effectiveStoryDrafts.length
+      ? effectiveStoryDrafts.map(draftToReviewItem)
       : (featureResult?.recommended_stories || []).map(storyToReviewItem);
   const effectiveSelectedId = items.some((item) => item.id === selectedId) ? selectedId : items[0]?.id || '';
   const selectedItem = items.find((item) => item.id === effectiveSelectedId);
+  const hasEpicOutput = Boolean(epicResult || effectiveFeatureDrafts.length || capabilities.length);
+  const hasFeatureOutput = Boolean(featureResult || effectiveStoryDrafts.length);
   const epicApproved = approvalWorkflow.epic === 'approved';
   const featureApproved = approvalWorkflow.feature === 'approved';
-  const featuresApproved = approvalWorkflow.features === 'approved' || featureDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
-  const storiesApproved = approvalWorkflow.stories === 'approved' || storyDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const featuresApproved = approvalWorkflow.features === 'approved' || effectiveFeatureDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const storiesApproved = approvalWorkflow.stories === 'approved' || effectiveStoryDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
   const allCapabilitiesReviewed = !capabilities.length || capabilities.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
   const approvedCapabilities = capabilities.filter((capability) => capability.status === 'Approved').length;
   const pendingCapabilities = capabilities.filter((capability) => !['Approved', 'Rejected'].includes(String(capability.status)));
-  const pendingFeatureDrafts = featureDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
-  const pendingStoryDrafts = storyDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
+  const pendingFeatureDrafts = effectiveFeatureDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
+  const pendingStoryDrafts = effectiveStoryDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
   const primaryAction = isEpic
-    ? !epicResult
+    ? !hasEpicOutput
       ? { label: 'Analyze Epic →', run: refineEpic, disabled: loading || readOnly || !epicTitle.trim(), disabledReason: !epicTitle.trim() ? 'Epic title is required before analysis.' : '' }
       : !epicApproved && isApprovalPending(approvalWorkflow.epic)
         ? { label: 'Approve Epic →', run: approveEpic, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents approval.' : '' }
@@ -6080,8 +6179,8 @@ function buildPlanningWorkspaceModel({
             ? { label: 'Generate Features →', run: () => generateChildren(false), disabled: loading || readOnly || !epicTitle.trim() || (capabilities.length > 0 && approvedCapabilities === 0), disabledReason: capabilities.length > 0 && approvedCapabilities === 0 ? 'Approve at least one capability before generating Features.' : '' }
             : !featuresApproved && isApprovalPending(approvalWorkflow.features)
               ? { label: 'Approve Features →', run: approveFeatures, disabled: loading || readOnly || pendingFeatureDrafts.length === 0, disabledReason: pendingFeatureDrafts.length ? `${pendingFeatureDrafts.length} Features still require approval.` : '' }
-            : { label: 'Open Feature Planning →', run: () => setSelectedId(featureDrafts[0]?.id || selectedId), disabled: loading || readOnly, disabledReason: '' }
-    : !featureResult
+            : { label: 'Open Feature Planning →', run: () => setSelectedId(effectiveFeatureDrafts[0]?.id || selectedId), disabled: loading || readOnly, disabledReason: '' }
+    : !hasFeatureOutput
       ? { label: 'Analyze Feature →', run: refineFeature, disabled: loading || readOnly || !featureTitle.trim(), disabledReason: !featureTitle.trim() ? 'Feature title is required before analysis.' : '' }
       : !featureApproved && isApprovalPending(approvalWorkflow.feature)
         ? { label: 'Approve Feature →', run: approveFeature, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents approval.' : '' }
@@ -6089,16 +6188,16 @@ function buildPlanningWorkspaceModel({
           ? { label: 'Generate Stories →', run: () => generateChildren(false), disabled: loading || readOnly || !featureTitle.trim(), disabledReason: !featureApproved ? 'Approve the Feature before generating Stories.' : '' }
           : !storiesApproved && isApprovalPending(approvalWorkflow.stories)
             ? { label: 'Approve Stories →', run: approveStories, disabled: loading || readOnly || pendingStoryDrafts.length === 0, disabledReason: pendingStoryDrafts.length ? `${pendingStoryDrafts.length} Stories still require approval.` : '' }
-            : { label: 'Open Story Planning →', run: () => setSelectedId(storyDrafts[0]?.id || selectedId), disabled: loading || readOnly, disabledReason: '' };
+            : { label: 'Open Story Planning →', run: () => setSelectedId(effectiveStoryDrafts[0]?.id || selectedId), disabled: loading || readOnly, disabledReason: '' };
   const currentStage = isEpic
-    ? !epicResult
+    ? !hasEpicOutput
       ? 'Epic'
       : capabilities.length && !allCapabilitiesReviewed
         ? 'Capability Review'
         : !hasGeneratedFeatures || !featuresApproved
           ? 'Feature Review'
           : 'Story Review'
-    : !featureResult
+    : !hasFeatureOutput
       ? 'Feature'
       : !hasGeneratedStories || !storiesApproved
         ? 'Story Review'
@@ -6115,7 +6214,7 @@ function buildPlanningWorkspaceModel({
           'Task Review': false,
         }
       : {
-          Feature: Boolean(featureResult),
+          Feature: hasFeatureOutput,
           'Story Review': Boolean(hasGeneratedStories && storiesApproved),
           'Task Review': false,
           Execution: false,
@@ -6123,15 +6222,15 @@ function buildPlanningWorkspaceModel({
   );
   const progressMetrics = isEpic
     ? [
-        { label: 'Epic', percent: epicResult ? 100 : 0 },
-        { label: 'Capability Review', percent: capabilities.length ? Math.round(((capabilities.length - pendingCapabilities.length) / capabilities.length) * 100) : undefined, status: epicResult ? 'Pending' : 'Locked' },
-        { label: 'Feature Review', percent: featureDrafts.length ? Math.round(((featureDrafts.length - pendingFeatureDrafts.length) / featureDrafts.length) * 100) : undefined, status: hasGeneratedFeatures ? undefined : 'Locked' },
+        { label: 'Epic', percent: hasEpicOutput ? 100 : 0 },
+        { label: 'Capability Review', percent: capabilities.length ? Math.round(((capabilities.length - pendingCapabilities.length) / capabilities.length) * 100) : undefined, status: hasEpicOutput ? 'Pending' : 'Locked' },
+        { label: 'Feature Review', percent: effectiveFeatureDrafts.length ? Math.round(((effectiveFeatureDrafts.length - pendingFeatureDrafts.length) / effectiveFeatureDrafts.length) * 100) : undefined, status: hasGeneratedFeatures ? undefined : 'Locked' },
         { label: 'Story Review', status: hasGeneratedFeatures && featuresApproved ? 'Open Feature Planning' : 'Locked' },
         { label: 'Task Review', status: 'Locked' },
       ]
     : [
-        { label: 'Feature', percent: featureResult ? 100 : 0 },
-        { label: 'Story Review', percent: storyDrafts.length ? Math.round(((storyDrafts.length - pendingStoryDrafts.length) / storyDrafts.length) * 100) : undefined, status: hasGeneratedStories ? undefined : 'Pending' },
+        { label: 'Feature', percent: hasFeatureOutput ? 100 : 0 },
+        { label: 'Story Review', percent: effectiveStoryDrafts.length ? Math.round(((effectiveStoryDrafts.length - pendingStoryDrafts.length) / effectiveStoryDrafts.length) * 100) : undefined, status: hasGeneratedStories ? undefined : 'Pending' },
         { label: 'Task Review', status: hasGeneratedStories && storiesApproved ? 'Open Story Planning' : 'Locked' },
         { label: 'Execution', status: 'Locked' },
       ];
@@ -7263,6 +7362,47 @@ function qaPrimaryAction({
   return { label: 'Export QA Report', onRun: 'copy' };
 }
 
+function executionContextFileNames(context?: ExecutionContextResult): string[] {
+  const ranked = Array.isArray(context?.recommended_files) ? context?.recommended_files : [];
+  const executionPackage = (context?.execution_package_v2 || context?.executionPackageV2 || {}) as {
+    repositoryContext?: { relevantFiles?: Array<{ path?: string; file?: string } | string> };
+    risks?: Array<{ reason?: string; name?: string; title?: string } | string>;
+  };
+  const packageFiles = Array.isArray(executionPackage.repositoryContext?.relevantFiles)
+    ? executionPackage.repositoryContext?.relevantFiles
+    : [];
+  return uniqueStrings([
+    ...ranked.map((item) => String(item || '')).filter(Boolean),
+    ...packageFiles.map((item) => String(typeof item === 'string' ? item : item?.path || item?.file || '')).filter(Boolean),
+  ]);
+}
+
+function executionContextRiskText(context?: ExecutionContextResult): string[] {
+  const executionPackage = (context?.execution_package_v2 || context?.executionPackageV2 || {}) as {
+    risks?: Array<{ reason?: string; name?: string; title?: string } | string>;
+  };
+  const risks = Array.isArray(executionPackage.risks)
+    ? executionPackage.risks
+    : Array.isArray(context?.risks)
+      ? context?.risks
+      : [];
+  return risks.map((risk: any) => {
+    if (typeof risk === 'string') return risk;
+    return String(risk?.reason || risk?.name || risk?.title || '').trim();
+  }).filter(Boolean);
+}
+
+function filterPackageFiles(files: string[], keywords: string[]): string[] {
+  const lowered = keywords.map((keyword) => keyword.toLowerCase());
+  const matched = files.filter((file) => lowered.some((keyword) => file.toLowerCase().includes(keyword)));
+  return matched.slice(0, 5);
+}
+
+function filterPackageRisks(risks: string[], keywords: string[]): string[] {
+  const lowered = keywords.map((keyword) => keyword.toLowerCase());
+  return risks.filter((risk) => lowered.some((keyword) => risk.toLowerCase().includes(keyword)));
+}
+
 function StructuredTaskList({ tasks }: { tasks: StoryTask[] }) {
   return (
     <>
@@ -7494,70 +7634,83 @@ function DeveloperWorkspace({
           ) : null}
         </div>
       </section>
+      <ExecutionPackageCards
+        executionContext={executionContext}
+        executionPlan={executionPlan}
+        devPrompt={devPrompt}
+        uiPrompt={uiPrompt}
+        qaPrompt={qaPrompt}
+        onGeneratePrompt={onGeneratePrompt}
+        onOpenVsCode={onOpenVsCode}
+        loading={loading}
+      />
       {storyImpact && isBug ? <StoryImpactResult result={storyImpact} /> : null}
-      <EngineeringMemoryEvidence context={executionContext?.memory_context} area="Execution" />
-      <IntelligenceTracePanel trace={executionContext?.intelligence_trace} />
-      {!hasPackage ? (
-        <section className="planner-card">
-          <div className="planner-subtle">No execution package generated yet. Generate one from this workspace when the scope is ready.</div>
-        </section>
-      ) : null}
-      {executionContext?.context_capsule ? (
-        <ContextCapsuleCard
-          context={executionContext}
-          loading={loading}
-          readOnly={readOnly}
-          onRefresh={onGenerate}
-          onBuild={onGenerate}
-        />
-      ) : null}
-      {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
-      {executionPlan ? <PromptBlock title="Execution Plan" value={executionPlan.plan || executionPlan.finalPlan || executionPlan.prompt || ''} metadata={executionPlan} copyable /> : null}
-      {executionContext ? (
-        <ImplementationValidationPanel
-          report={implementationValidation}
-          changedFilesInput={implementationChangedFiles}
-          setChangedFilesInput={setImplementationChangedFiles}
-          loading={loading}
-          readOnly={readOnly}
-          onValidate={validateImplementation}
-        />
-      ) : null}
-      {executionContext ? (
-        <PRReviewPanel
-          report={prReview}
-          loading={loading}
-          readOnly={readOnly}
-          onRun={runPRReview}
-          onPost={postPRReviewComment}
-        />
-      ) : null}
-      {executionContext ? (
-        <section className="planner-card">
-          <details>
-            <summary className="planner-label">Advanced Execution Artifacts</summary>
-            <div className="planner-subtle">Optional artifacts for specialized review. Most implementation work should use the Execution Plan.</div>
+      <details className="planner-nested">
+        <summary>Show details</summary>
+        <EngineeringMemoryEvidence context={executionContext?.memory_context} area="Execution" />
+        <IntelligenceTracePanel trace={executionContext?.intelligence_trace} />
+        {!hasPackage ? (
+          <section className="planner-card">
+            <div className="planner-subtle">No execution package generated yet. Generate one from this workspace when the scope is ready.</div>
+          </section>
+        ) : null}
+        {executionContext?.context_capsule ? (
+          <ContextCapsuleCard
+            context={executionContext}
+            loading={loading}
+            readOnly={readOnly}
+            onRefresh={onGenerate}
+            onBuild={onGenerate}
+          />
+        ) : null}
+        {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
+        {executionPlan ? <PromptBlock title="Execution Plan" value={executionPlan.plan || executionPlan.finalPlan || executionPlan.prompt || ''} metadata={executionPlan} copyable /> : null}
+        {executionContext ? (
+          <ImplementationValidationPanel
+            report={implementationValidation}
+            changedFilesInput={implementationChangedFiles}
+            setChangedFilesInput={setImplementationChangedFiles}
+            loading={loading}
+            readOnly={readOnly}
+            onValidate={validateImplementation}
+          />
+        ) : null}
+        {executionContext ? (
+          <PRReviewPanel
+            report={prReview}
+            loading={loading}
+            readOnly={readOnly}
+            onRun={runPRReview}
+            onPost={postPRReviewComment}
+          />
+        ) : null}
+        {executionContext ? (
+          <section className="planner-card">
+            <details>
+              <summary className="planner-label">Advanced Execution Artifacts</summary>
+              <div className="planner-subtle">Optional artifacts for specialized review. Most implementation work should use the Execution Plan.</div>
+              <div className="planner-actions">
+                <button className="planner-button secondary" onClick={() => onGeneratePrompt('copilot')} disabled={loading || readOnly}>Generate Context Capsule</button>
+                <button className="planner-button secondary" onClick={() => onGeneratePrompt('ui')} disabled={loading || readOnly}>Generate UI Refinement Prompt</button>
+                <button className="planner-button secondary" onClick={onOpenQA}>Open QA Intelligence</button>
+                <button className="planner-button secondary" onClick={() => void copyText(JSON.stringify(executionContext.execution_package_v2 || executionContext.executionPackageV2 || executionContext, null, 2))}>Export Execution Package</button>
+              </div>
+            </details>
+          </section>
+        ) : null}
+        {devPrompt ? <PromptBlock title="Dev Prompt" value={devPrompt.prompt} metadata={devPrompt} copyable /> : null}
+        {uiPrompt ? <PromptBlock title="UI Prompt" value={uiPrompt.prompt} metadata={uiPrompt} copyable /> : null}
+        {copilotContext ? (
+          <div className="planner-task">
+            <div className="planner-label">Context Capsule</div>
+            <SourceBadge metadata={copilotContext} />
             <div className="planner-actions">
-              <button className="planner-button secondary" onClick={() => onGeneratePrompt('copilot')} disabled={loading || readOnly}>Generate Context Capsule</button>
-              <button className="planner-button secondary" onClick={() => onGeneratePrompt('ui')} disabled={loading || readOnly}>Generate UI Refinement Prompt</button>
-              <button className="planner-button secondary" onClick={onOpenQA}>Open QA Intelligence</button>
-              <button className="planner-button secondary" onClick={() => void copyText(JSON.stringify(executionContext.execution_package_v2 || executionContext.executionPackageV2 || executionContext, null, 2))}>Export Execution Package</button>
+              <button className="planner-button secondary" onClick={() => void copyText(copilotContext.context)}>Copy</button>
             </div>
-          </details>
-        </section>
-      ) : null}
-      {devPrompt ? <PromptBlock title="Dev Prompt" value={devPrompt.prompt} metadata={devPrompt} copyable /> : null}
-      {uiPrompt ? <PromptBlock title="UI Prompt" value={uiPrompt.prompt} metadata={uiPrompt} copyable /> : null}
-      {copilotContext ? (
-        <div className="planner-task">
-          <div className="planner-label">Context Capsule</div>
-          <SourceBadge metadata={copilotContext} />
-          <div className="planner-actions">
-            <button className="planner-button secondary" onClick={() => void copyText(copilotContext.context)}>Copy</button>
+            <pre className="planner-prompt">{copilotContext.context}</pre>
           </div>
-          <pre className="planner-prompt">{copilotContext.context}</pre>
-        </div>
-      ) : null}
+        ) : null}
+      </details>
     </>
   );
 }
@@ -7628,27 +7781,24 @@ function QAWorkspace({
   }
   return (
     <>
-      <RelationshipSummaryCard summary={graphSummary} />
-      <CoverageIntelligenceCard report={coverageReport} />
       <section className="planner-card hei-qa-workspace">
         <LifecycleStrip workflow={workflow} />
         <div className="planner-section-header">
           <div>
-            <div className="planner-label">{isTestCase ? 'Test Case Workspace' : 'QA Workspace'}</div>
+            <div className="planner-label">{isTestCase ? 'Test Case Workspace' : 'QA & Release'}</div>
             <div className="planner-subtle">
               {isTestCase
                 ? 'Analyze coverage, regression scope, and execution notes for the selected test case.'
-                : 'Assess release readiness through acceptance coverage, test intelligence, regression scope, risk, gaps, and release recommendation.'}
+                : 'Assess QA readiness, coverage, regression risk, missing tests, and release recommendation in one place.'}
             </div>
           </div>
           <button className="planner-button" onClick={primary.onRun === 'copy' ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite)) : generateQATestCases} disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()}>{primary.label}</button>
         </div>
-        <div className="hei-workspace-topline">
-          <SummaryTile title="Selected Item" value={currentWorkItem ? `${currentWorkItem.type} #${currentWorkItem.id}` : 'Story / Task'} />
+        <div className="planner-summary-grid">
           <SummaryTile title="QA Readiness" value={qaTestSuite?.qa_status || qaTestSuite?.qa_readiness?.status || (hasExecutionPackage ? 'Ready To Analyze' : 'Execution Package Required')} />
-          <SummaryTile title="Release" value={qaTestSuite?.release_status || qaTestSuite?.release_recommendation?.recommendation || 'Not Assessed'} />
           <SummaryTile title="Acceptance Coverage" value={qaTestSuite ? `${qaTestSuite.qa_readiness?.acceptanceCoverage ?? qaTestSuite.coverage_score}%` : 'Not Assessed'} />
           <SummaryTile title="Regression Risk" value={qaTestSuite?.qa_readiness?.regressionRisk || 'Pending'} />
+          <SummaryTile title="Release Recommendation" value={qaTestSuite?.release_status || qaTestSuite?.release_recommendation?.recommendation || 'Not Assessed'} />
         </div>
         {!hasExecutionPackage && !isTestCase ? (
           <div className="planner-banner">Build an Execution Package before running QA Intelligence.</div>
@@ -7656,43 +7806,46 @@ function QAWorkspace({
         {!hasValidation ? (
           <div className="planner-banner">Run Implementation Validation to improve QA accuracy.</div>
         ) : null}
-        <details className="planner-nested">
-          <summary>QA Input</summary>
-          <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Story description or outcome for QA validation." />
-          <textarea
-            className="planner-textarea compact"
-            value={acceptanceCriteria}
-            onChange={(event) => setAcceptanceCriteria(event.target.value)}
-            placeholder="Acceptance criteria, one per line"
-          />
-        </details>
-        <div className="hei-action-grid">
-          <ActionTile title="QA Intelligence" detail={qaTestSuite ? `${qaTestSuite.qa_status || 'QA'} with ${qaTestSuite.generated_test_count || qaTestSuite.test_suite.test_cases.length} tests.` : 'Assess coverage, tests, risk, regression, gaps, and release readiness.'} action={primary.label} onRun={primary.onRun === 'copy' ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite)) : generateQATestCases} disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()} primary />
-          <ActionTile title="Acceptance Coverage" detail={qaTestSuite ? `${qaTestSuite.coverage_score}% coverage score.` : 'Map acceptance criteria to test cases.'} action="Run QA Analysis" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
-          <ActionTile title="Regression Risk" detail="Identify impacted flows, modules, and regression candidates." action="Regression Scope" onRun={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()} />
-          <ActionTile title="Test Intelligence" detail="Functional, integration, negative, boundary, permission, security, performance, and regression tests." action={qaTestSuite ? 'Generate Missing Tests' : 'Generate Tests'} onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
-          <ActionTile title="Export / Review" detail="Copy the QA suite and release recommendation for review." action="Export QA Report" onRun={() => void copyText(formatQATestSuiteForCopy(qaTestSuite))} disabled={!qaTestSuite} />
-          <ActionTile title="PR Review Signal" detail={prReview ? `${prReview.status || 'PR Review'} available.` : 'PR Review report not available yet.'} action="Review Gaps" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !qaTestSuite} />
+        <div className="hei-release-grid">
+          <ActionTile title="QA Readiness" detail={qaTestSuite ? qaTestSuite.qa_status || 'QA ready for review.' : 'Run QA analysis to measure coverage and release readiness.'} action={primary.label} onRun={primary.onRun === 'copy' ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite)) : generateQATestCases} disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()} primary />
+          <ActionTile title="Acceptance Coverage" detail={qaTestSuite ? `${qaTestSuite.coverage_score}% coverage score.` : 'Map acceptance criteria to verification coverage.'} action="Run QA Analysis" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
+          <ActionTile title="Regression Risk" detail={qaTestSuite?.qa_readiness?.regressionRisk || 'Identify impacted modules, APIs, and regression scope.'} action="Review Regression" onRun={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()} />
+          <ActionTile title="Missing Tests" detail={qaTestSuite?.coverage_gaps?.length ? `${qaTestSuite.coverage_gaps.length} gaps detected.` : 'Generate or refresh missing tests.'} action="Generate Missing Tests" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
+          <ActionTile title="Release Recommendation" detail={qaTestSuite?.release_recommendation?.reason || 'Release guidance appears after QA analysis.'} action="Export QA Report" onRun={() => void copyText(formatQATestSuiteForCopy(qaTestSuite))} disabled={!qaTestSuite} />
         </div>
       </section>
-      {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
       {qaTestSuite ? (
         <>
-          <EngineeringMemoryEvidence context={qaTestSuite.memory_context} area="QA" />
-          <IntelligenceTracePanel trace={qaTestSuite.intelligence_trace} />
           <section className="planner-card">
             <ApprovalStatusStrip label="Test Suite" status={approvalWorkflow.qa} qualityScore={qaTestSuite.coverage_score} />
             <div className="planner-actions">
               <button className="planner-button" onClick={approveTestSuite} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.qa)}>Approve Test Suite</button>
-              <button className="planner-button secondary" onClick={generateQATestCases} disabled={loading || readOnly || !storyInput.title.trim()}>Regenerate Test Suite</button>
             </div>
           </section>
-          <QAIntelligencePanel result={qaTestSuite} />
+          <details className="planner-nested">
+            <summary>Show details</summary>
+            {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
+            <RelationshipSummaryCard summary={graphSummary} />
+            <CoverageIntelligenceCard report={coverageReport} />
+            <EngineeringMemoryEvidence context={qaTestSuite.memory_context} area="QA" />
+            <IntelligenceTracePanel trace={qaTestSuite.intelligence_trace} />
+            <details className="planner-nested">
+              <summary>QA Input</summary>
+              <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Story description or outcome for QA validation." />
+              <textarea
+                className="planner-textarea compact"
+                value={acceptanceCriteria}
+                onChange={(event) => setAcceptanceCriteria(event.target.value)}
+                placeholder="Acceptance criteria, one per line"
+              />
+            </details>
+            <QAIntelligencePanel result={qaTestSuite} />
+          </details>
         </>
       ) : (
         <section className="planner-card">
-          <div className="planner-label">QA Readiness</div>
-          <div className="planner-subtle">{hasExecutionPackage ? 'No tests generated yet. Generate tests to evaluate coverage.' : 'Build an Execution Package before running QA Intelligence.'}</div>
+          <div className="planner-label">QA & Release</div>
+          <div className="planner-subtle">{hasExecutionPackage ? 'No tests generated yet. Generate tests to evaluate coverage and release readiness.' : 'Build an Execution Package before running QA Intelligence.'}</div>
           <div className="planner-summary-grid">
             <SummaryTile title="Execution Package" value={hasExecutionPackage ? 'Ready' : 'Missing'} />
             <SummaryTile title="Implementation Validation" value={hasValidation ? 'Ready' : 'Recommended'} />
@@ -7814,7 +7967,7 @@ function EngineeringDNASection({ dna, summary }: { dna?: WorkItemDNA; summary?: 
 
 function ExecutionContextBlock({ context }: { context: ExecutionContextResult }) {
   return (
-    <section className="planner-card">
+    <section className="planner-card" id="execution-package-details">
       <div className="planner-label">Execution Context</div>
       <SourceBadge metadata={context} />
       <RelevanceSummary metadata={context} />
@@ -9747,6 +9900,107 @@ function ActionTile({
   );
 }
 
+function StructuredChildDraftList({ drafts }: { drafts: ChildDraft[] }) {
+  return (
+    <div className="planner-list">
+      {drafts.map((draft) => (
+        <article className="planner-task" key={draft.id}>
+          <div className="planner-task-header">
+            <div>
+              <strong>{draft.title}</strong>
+              <p>{draft.description}</p>
+            </div>
+            <span className={`planner-badge ${statusTone(draft.status)}`}>{draft.status}</span>
+          </div>
+          <ListBlock title="Acceptance Criteria" items={draft.acceptanceCriteria || []} empty="Acceptance criteria pending." />
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function splitAcceptanceCriteriaText(value: string): string[] {
+  return splitLines(value).map((item) => item.replace(/^[*-]\s*/, '').trim()).filter(Boolean);
+}
+
+function normalizedMemoryCategory(category?: string): string {
+  const value = String(category || '').toLowerCase();
+  if (value.includes('decision')) return 'Decision';
+  if (value.includes('lesson')) return 'Lesson Learned';
+  if (value.includes('qa')) return 'QA Pattern';
+  if (value.includes('execution')) return 'Execution Pattern';
+  return 'Planning Pattern';
+}
+
+function ExecutionPackageCards({
+  executionContext,
+  executionPlan,
+  devPrompt,
+  uiPrompt,
+  qaPrompt,
+  onGeneratePrompt,
+  onOpenVsCode,
+  loading,
+}: {
+  executionContext?: ExecutionContextResult;
+  executionPlan?: ExecutionPlanResult;
+  devPrompt?: PromptBuilderResult;
+  uiPrompt?: PromptBuilderResult;
+  qaPrompt?: PromptBuilderResult;
+  onGeneratePrompt: (kind: 'dev' | 'ui' | 'qa' | 'copilot') => void;
+  onOpenVsCode: () => void;
+  loading: boolean;
+}) {
+  const allFiles = executionContextFileNames(executionContext);
+  const allRisks = executionContextRiskText(executionContext);
+  const cards = [
+    { title: 'UI Package', prompt: uiPrompt?.prompt || '', files: filterPackageFiles(allFiles, ['page', 'screen', 'view', 'component', 'xaml', 'css', 'scss', 'tsx', 'jsx']), risk: filterPackageRisks(allRisks, ['ui', 'accessibility', 'validation', 'display']), kind: 'ui' as const },
+    { title: 'Frontend Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['front', 'client', 'web', 'mobile', 'viewmodel', 'presenter', 'hook', 'tsx', 'jsx', 'js']), risk: filterPackageRisks(allRisks, ['frontend', 'mobile', 'state', 'interaction']), kind: 'dev' as const },
+    { title: 'Backend/API Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['api', 'controller', 'service', 'handler', 'endpoint', 'repository', 'cs', 'py', 'ts']), risk: filterPackageRisks(allRisks, ['backend', 'api', 'authorization', 'integration', 'service']), kind: 'dev' as const },
+    { title: 'Data Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['data', 'entity', 'model', 'schema', 'migration', 'sql', 'db']), risk: filterPackageRisks(allRisks, ['data', 'migration', 'integrity', 'consistency']), kind: 'dev' as const },
+    { title: 'Analytics Package', prompt: qaPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['analytics', 'report', 'metric', 'dashboard', 'telemetry']), risk: filterPackageRisks(allRisks, ['analytics', 'reporting', 'telemetry']), kind: 'qa' as const },
+  ];
+  return (
+    <section className="planner-card">
+      <div className="planner-section-header">
+        <div>
+          <div className="planner-label">Execution Packages</div>
+          <div className="planner-subtle">Package cards keep the execution view focused. Advanced artifacts stay collapsed below.</div>
+        </div>
+      </div>
+      <div className="hei-package-grid">
+        {cards.map((card) => {
+          const promptText = card.prompt;
+          const files = card.files.length ? card.files : allFiles.slice(0, 4);
+          const risk = card.risk.length ? card.risk[0] : allRisks[0] || 'Risk will appear after package generation.';
+          const status = executionContext ? (promptText ? 'Ready' : 'Package Built') : 'Not Built';
+          return (
+            <article className="hei-package-card" key={card.title}>
+              <div className="planner-task-header">
+                <strong>{card.title}</strong>
+                <span className="planner-badge">{status}</span>
+              </div>
+              <Row label="Status" value={status} />
+              <Row label="Files Impacted" value={files.length ? `${files.length} files` : 'Repository file ranking not available'} />
+              <Row label="Risk" value={risk} />
+              <ListBlock title="Files Impacted" items={files} empty="Repository file ranking not available" />
+              <div className="planner-actions">
+                <button className="planner-button secondary" onClick={() => document.getElementById('execution-package-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} disabled={!executionContext}>View Package</button>
+                <button className="planner-button secondary" onClick={() => promptText ? void copyText(promptText) : onGeneratePrompt(card.kind)} disabled={loading || (!promptText && !executionContext)}>
+                  Copy Prompt
+                </button>
+                <button className="planner-button secondary" onClick={onOpenVsCode} disabled={!executionContext}>
+                  Send to Copilot
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function formatQATestSuiteForCopy(result?: QATestSuiteResult): string {
   if (!result) {
     return '';
@@ -10491,13 +10745,14 @@ function routedWorkspaceForWorkflow(type: WorkItemKind, workflow: WorkflowOrches
 function workspaceLabel(tab: PlannerTab | RoutedWorkspace): string {
   if (tab === 'planning') return 'Planning';
   if (tab === 'execution') return 'Execution';
-  if (tab === 'qa') return 'QA';
-  if (tab === 'memory') return 'Engineering Memory';
+  if (tab === 'qa') return 'QA & Release';
+  if (tab === 'memory') return 'Memory';
   if (tab === 'governance') return 'Governance';
   if (tab === 'agents') return 'Agents';
   if (tab === 'skills') return 'Skills';
-  if (tab === 'admin') return 'Admin';
-  return 'Overview';
+  if (tab === 'diagnostics') return 'Diagnostics';
+  if (tab === 'admin') return 'Administration';
+  return 'Command Center';
 }
 
 function knowledgeStatusText(status: KnowledgeCacheStatus['knowledge_status'] | string): string {
@@ -11350,6 +11605,9 @@ function buildWorkflowOrchestration({
   itemType,
   approvalWorkflow,
   childDrafts,
+  epicResult,
+  featureResult,
+  storyResult,
   hasQa,
   hasExecution,
   hasKnowledge,
@@ -11359,6 +11617,9 @@ function buildWorkflowOrchestration({
   itemType: WorkItemKind;
   approvalWorkflow: ApprovalWorkflowState;
   childDrafts: ChildDraft[];
+  epicResult?: EpicRefinement;
+  featureResult?: FeatureRefinement;
+  storyResult?: StoryRefinement;
   hasQa: boolean;
   hasExecution: boolean;
   hasKnowledge: boolean;
@@ -11368,6 +11629,9 @@ function buildWorkflowOrchestration({
   const featureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
   const storyDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
   const taskDrafts = childDrafts.filter((draft) => draft.type === 'Task');
+  const featureCandidates = featureDrafts.length ? featureDrafts : (epicResult?.recommended_features?.length ? featureDraftsFromEpic(epicResult, false) : []);
+  const storyCandidates = storyDrafts.length ? storyDrafts : (featureResult?.recommended_stories?.length ? storyDraftsFromFeature(featureResult) : []);
+  const taskCandidates = taskDrafts.length ? taskDrafts : (storyResult ? taskDraftsFromStory(storyResult) : []);
   const featuresApproved = approvalWorkflow.features === 'approved' || featureDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
   const storiesApproved = approvalWorkflow.stories === 'approved' || storyDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
   const tasksApproved = approvalWorkflow.tasks === 'approved' || taskDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
@@ -11388,7 +11652,7 @@ function buildWorkflowOrchestration({
     if (isApprovalPending(approvalWorkflow.epic)) {
       nextAction = { label: 'Approve Epic', action: 'approve_epic', workspace: 'planning', reason: 'The epic draft is ready and needs approval before feature generation.' };
       currentStage = 'Epic Approval';
-    } else if (!featureDrafts.length) {
+    } else if (!featureCandidates.length) {
       nextAction = { label: 'Generate Features', action: 'generate_features', workspace: 'planning', reason: 'The epic is ready. Generate child Features next.' };
       currentStage = 'Feature Generation';
     } else if (!featuresApproved || isApprovalPending(approvalWorkflow.features)) {
@@ -11402,7 +11666,7 @@ function buildWorkflowOrchestration({
     if (isApprovalPending(approvalWorkflow.feature)) {
       nextAction = { label: 'Approve Feature', action: 'approve_feature', workspace: 'planning', reason: 'The feature draft is ready and needs approval before story generation.' };
       currentStage = 'Feature Approval';
-    } else if (!storyDrafts.length) {
+    } else if (!storyCandidates.length) {
       nextAction = { label: 'Generate Stories', action: 'generate_stories', workspace: 'planning', reason: 'The feature is ready. Generate child Stories next.' };
       currentStage = 'Story Generation';
     } else if (!storiesApproved || isApprovalPending(approvalWorkflow.stories)) {
@@ -11416,7 +11680,7 @@ function buildWorkflowOrchestration({
     if (isApprovalPending(approvalWorkflow.story)) {
       nextAction = { label: 'Approve Story', action: 'approve_story', workspace: 'planning', reason: 'The story draft is ready and must be approved before delivery artifacts are generated.' };
       currentStage = 'Story Approval';
-    } else if (!taskDrafts.length) {
+    } else if (!taskCandidates.length) {
       nextAction = { label: 'Generate Tasks', action: 'generate_tasks', workspace: 'planning', reason: 'The story is approved or loaded. Generate implementation tasks next.' };
       currentStage = 'Task Generation';
     } else if (!tasksApproved || isApprovalPending(approvalWorkflow.tasks)) {
@@ -11452,9 +11716,9 @@ function buildWorkflowOrchestration({
     featuresApproved,
     storiesApproved,
     tasksApproved,
-    featureDrafts,
-    storyDrafts,
-    taskDrafts,
+    featureDrafts: featureCandidates,
+    storyDrafts: storyCandidates,
+    taskDrafts: taskCandidates,
     approvalWorkflow,
   });
 

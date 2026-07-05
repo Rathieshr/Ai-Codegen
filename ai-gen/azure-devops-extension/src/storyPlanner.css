@@ -364,6 +364,41 @@ body {
   background: var(--hei-bg);
 }
 
+.planner-tab-shell {
+  display: grid;
+  gap: 8px;
+}
+
+.planner-advanced-menu {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  background: var(--hei-surface);
+  box-shadow: var(--hei-shadow);
+}
+
+.planner-advanced-menu summary {
+  list-style: none;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+}
+
+.planner-advanced-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.planner-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.planner-tab-advanced {
+  min-height: 64px;
+}
+
 .planner-tab,
 .planner-pill {
   border: 1px solid var(--hei-border);
@@ -396,6 +431,27 @@ body {
 .hei-command-center {
   display: grid;
   gap: 12px;
+}
+
+.hei-demo-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.hei-package-grid,
+.hei-release-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.hei-package-card {
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  background: var(--hei-surface-subtle);
 }
 
 .hei-command-row {

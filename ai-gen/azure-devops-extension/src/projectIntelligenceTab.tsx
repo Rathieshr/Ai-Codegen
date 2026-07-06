@@ -10968,15 +10968,51 @@ async function addAdoComment(workItem: AdoWorkItem, text: string): Promise<void>
 }
 
 function featureDraftsFromEpic(result: EpicRefinement, approvedOnly = false): ChildDraft[] {
-  const approvedCapabilities = new Set((result.capability_review || [])
-    .filter(isCapabilityApproved)
-    .map((capability) => (capability.capabilityName || '').trim().toLowerCase()));
-  const features = approvedOnly && result.capability_review?.length
+  const approvedCapabilitiesList = (result.capability_review || []).filter(isCapabilityApproved);
+  const approvedCapabilities = new Set(
+    approvedCapabilitiesList.map((capability) => (capability.capabilityName || '').trim().toLowerCase())
+  );
+
+  const matchedFeatures = approvedOnly && result.capability_review?.length
     ? result.recommended_features.filter((feature) => {
         const featureCapability = (feature.capability_category || feature.capability || feature.title || '').trim().toLowerCase();
         return approvedCapabilities.has(featureCapability);
       })
     : result.recommended_features;
+
+  const features = [...matchedFeatures];
+
+  if (approvedOnly) {
+    const matchedCapabilityNames = new Set(
+      matchedFeatures.map((feature) => (feature.capability_category || feature.capability || feature.title || '').trim().toLowerCase())
+    );
+
+    // Synthesize missing features from approved capabilities
+    for (const capability of approvedCapabilitiesList) {
+      const capabilityName = (capability.capabilityName || '').trim().toLowerCase();
+      if (!matchedCapabilityNames.has(capabilityName)) {
+        features.push({
+          title: capability.capabilityName || 'New Feature',
+          description: capability.businessPurpose || 'Implement capability requirements.',
+          acceptance_criteria: capability.inScope || [],
+          business_goal: capability.businessPurpose,
+          user_problem: capability.businessValue,
+          business_value: capability.businessValue,
+          business_outcome: capability.businessValue,
+          capability: capability.capabilityName,
+          capability_category: capability.capabilityName,
+          primary_personas: result.users || [],
+          primary_users: result.users || [],
+          impacted_applications: capability.relatedApplications || [],
+          impacted_modules: capability.relatedModules || [],
+          impacted_flows: capability.relatedFlows || [],
+          dependencies: capability.dependencies || [],
+          confidence: capability.confidence || 0.8,
+        } as any);
+      }
+    }
+  }
+
   return features.map((feature, index) => ({
     id: `feature_${index + 1}`,
     type: 'Feature',

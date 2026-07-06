@@ -55,15 +55,16 @@ def _execution_package() -> dict:
             "fileRankingStatus": "Repository file ranking available",
         },
         "engineeringRules": [
-            {"type": "security", "rule": "Role-based access", "source": "project_standards"},
-            {"type": "testing", "rule": "Unit and integration tests required", "source": "project_standards"},
+            {"type": "technology", "category": "Technology Stack", "rule": "Backend: ASP.NET Core REST APIs", "source": "execution_package"},
+            {"type": "security", "category": "Security", "rule": "Role-based access", "source": "project_standards"},
+            {"type": "testing", "category": "Testing", "rule": "Unit and integration tests required", "source": "project_standards"},
         ],
         "risks": [{"type": "data", "risk": "Telemetry may be stale.", "source": "context_capsule"}],
         "suggestedTests": [
             {"type": "unit", "title": "Validate fault event detail mapping", "coverage": ["AC001"], "priority": "High"},
             {"type": "permission", "title": "Reject unauthorized access", "coverage": ["AC001"], "priority": "High"},
         ],
-        "readiness": {"status": "Ready", "executionReadinessScore": 88},
+        "readiness": {"status": "Ready", "executionReadinessScore": 88, "warnings": []},
         "diagnostics": {"rejectedContext": [{"type": "module", "name": "Firmware Management", "reason": "No firmware intent."}]},
     }
 
@@ -141,6 +142,8 @@ class DeveloperPromptV2Tests(unittest.TestCase):
         self.assertIn("Identify root cause before editing", plan)
         self.assertIn("Fault Event Review Flow", plan)
         self.assertIn("Repository file ranking", plan)
+        self.assertIn("Technology Stack", plan)
+        self.assertIn("Backend: ASP.NET Core REST APIs", plan)
         self.assertNotIn("Copilot", plan)
         self.assertGreater(result["estimatedTokens"], 0)
         self.assertIn("finalPlanTokens", result["diagnostics"])
@@ -186,6 +189,29 @@ class DeveloperPromptV2Tests(unittest.TestCase):
         self.assertIn("Mode: Refactor", result["plan"])
         self.assertNotIn("Copilot", result["plan"])
         self.assertEqual(result["provider_used"], "deterministic_execution")
+
+    def test_execution_plan_uses_normalized_title_and_acceptance(self) -> None:
+        package = _execution_package()
+        package["businessContext"]["storyTitle"] = "Classify Fault Severity"
+        package["businessContext"]["storyUserGoal"] = (
+            "As an Operations User, I want fault events classified by severity so that I can identify and respond to high-risk events first."
+        )
+        package["businessContext"]["taskObjective"] = (
+            "Implement fault severity classification so Operations Users can identify high-risk fault events first."
+        )
+        package["acceptanceMapping"] = [
+            {
+                "acceptanceCriteriaId": "AC001",
+                "acceptanceText": "Fault events are sorted by Severity and Timestamp so highest-risk items appear first.",
+                "implementationArea": "Backend Work",
+                "validationExpectation": "Validate ordering, filtering accuracy, and regression coverage.",
+            }
+        ]
+
+        result = build_execution_plan(package, execution_mode="implement", provider="azure_phi")
+
+        self.assertIn("Implement fault severity classification", result["plan"])
+        self.assertIn("Fault events are sorted by Severity and Timestamp", result["plan"])
 
 
 if __name__ == "__main__":

@@ -1453,7 +1453,8 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertTrue(all(task["parent_type"] == "Story" for task in refined["proposed_tasks"]))
         self.assertEqual(context["selected_task"]["title"], "Add Critical Fault Event Detail API")
         self.assertIn("Add Critical Fault Event Detail API", prompt)
-        self.assertIn("Start outage investigation from fault event", prompt)
+        self.assertIn("Start Outage Investigation From Fault Event", prompt)
+        self.assertIn("I can complete the approved operational workflow with confidence", prompt)
         self.assertNotIn("Firmware Rollout", prompt)
         self.assertNotIn("Token Refresh", prompt)
         self.assertEqual(context["file_ranking_status"], "Repository file ranking not available")
@@ -1591,9 +1592,9 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
             qa_prompt = service.build_qa_prompt(story, profile, options={"force_provider": "deterministic_fallback"})["prompt"]
             copilot_context = service.build_copilot_context(story, profile, options={"force_provider": "deterministic_fallback"})["context"]
 
-        self.assertIn("Technology Stack: mobile: MAUI; backend: .NET", dev_prompt)
-        self.assertIn("Coding Standards: MVVM; Repository Pattern; Unit Tests Required", dev_prompt)
-        self.assertIn("Architecture Rules: preserve the boundaries in the selected context capsule.", dev_prompt)
+        self.assertIn("Mobile: MAUI", dev_prompt)
+        self.assertIn("Backend: .NET", dev_prompt)
+        self.assertIn("Preserve the approved implementation boundary from the Context Capsule.", dev_prompt)
         self.assertIn("Component Library: Hubbell Mobile UI", ui_prompt)
         self.assertIn("Affected User Flows:", ui_prompt)
         self.assertIn("Fault Event Review", ui_prompt)

@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 
 FILE_RANKING_UNAVAILABLE = "Repository file ranking not available"
+SOURCE_CODE_NOT_INDEXED = "Source Code: Not Indexed"
 
 
 def build_execution_package_v2(
@@ -60,12 +62,24 @@ def build_execution_package_v2(
     }
     package_id = f"execpkg_{_stable_hash(package_seed)[:12]}"
 
+    normalized_story_title = _normalize_story_title(story)
+    normalized_story_goal = _normalize_user_story(story, normalized_story_title, dna_summary)
+    raw_acceptance = acceptance_criteria or _string_list(capsule.get("acceptanceCriteria"))
+    normalized_acceptance = _normalize_acceptance_criteria(raw_acceptance, normalized_story_title)
+
     modules = _string_list(capsule.get("selectedModules"))
     flows = _string_list(capsule.get("selectedFlows"))
     dependencies = _string_list(capsule.get("selectedDependencies"))
     standards = _string_list(capsule.get("selectedStandards"))
-    applications = _string_list(capsule.get("selectedApplications"))
     rejected_context = [item for item in capsule.get("rejectedContext", []) if isinstance(item, dict)]
+    modules, flows, rejected_context = _tighten_repository_context(
+        normalized_story_title,
+        normalized_story_goal,
+        normalized_acceptance,
+        modules,
+        flows,
+        rejected_context,
+    )
     relevant_files = _repository_items(capsule.get("relevantFiles"), item_type="file")
 
     repository_context = {
@@ -81,8 +95,10 @@ def build_execution_package_v2(
     if not relevant_files:
         repository_context["fileRankingStatus"] = FILE_RANKING_UNAVAILABLE
 
-    acceptance_mapping = _acceptance_mapping(
-        acceptance_criteria or _string_list(capsule.get("acceptanceCriteria")),
+    acceptance_mapping, acceptance_quality = _acceptance_mapping(
+        normalized_acceptance,
+        raw_acceptance,
+        normalized_story_title,
         selected_task,
         generated_tasks,
         modules,
@@ -94,6 +110,7 @@ def build_execution_package_v2(
     readiness_payload = _readiness(
         readiness,
         acceptance_mapping,
+        acceptance_quality,
         repository_context,
         capsule,
         validation_report,
@@ -114,9 +131,9 @@ def build_execution_package_v2(
         "businessContext": {
             "epicBusinessGoal": _first(dna_summary.get("businessGoals")) or _clean(story.get("epic_business_goal")),
             "featureCapability": dna_summary.get("capability") or _first(capsule.get("selectedCapabilities")),
-            "storyTitle": _clean(story.get("title")),
-            "storyUserGoal": _story_goal(story, dna_summary),
-            "taskObjective": _task_objective(selected_task, story),
+            "storyTitle": normalized_story_title,
+            "storyUserGoal": normalized_story_goal,
+            "taskObjective": _task_objective(selected_task, story, normalized_story_title),
             "businessValue": dna_summary.get("businessOutcome") or _clean(story.get("business_value")),
         },
         "engineeringDNA": {
@@ -161,6 +178,7 @@ def build_execution_package_v2(
             "selectedFlows": flows,
             "selectedFiles": [item["name"] for item in relevant_files],
             "rejectedContext": rejected_context,
+            "acceptanceQuality": acceptance_quality,
             "tokenEstimate": _estimate_tokens(json.dumps(package_seed, sort_keys=True)),
             "confidence": float(capsule.get("confidence") or 0),
             "freshnessStatus": _clean(capsule.get("freshnessStatus")) or "unknown",
@@ -268,11 +286,22 @@ def _dna_summary(dna: dict[str, Any]) -> dict[str, Any]:
 
 
 def _story_goal(story: dict[str, Any], dna_summary: dict[str, Any]) -> str:
-    return _clean(story.get("user_goal") or story.get("story_user_goal") or story.get("description")) or dna_summary.get("businessOutcome") or _clean(story.get("title"))
+    return _normalize_user_story(story, _normalize_story_title(story), dna_summary)
 
 
-def _task_objective(selected_task: dict[str, Any], story: dict[str, Any]) -> str:
-    return _clean(selected_task.get("objective") or selected_task.get("description") or selected_task.get("title")) or f"Deliver {_clean(story.get('title'))}"
+def _task_objective(selected_task: dict[str, Any], story: dict[str, Any], normalized_story_title: str = "") -> str:
+    objective = _clean(selected_task.get("objective"))
+    if objective:
+        return objective
+    title = _clean(selected_task.get("title"))
+    if title:
+        return _normalize_sentence(title)
+    story_title = normalized_story_title or _normalize_story_title(story)
+    if _contains_keywords(story_title, "severity", "classify"):
+        return "Implement fault severity classification so Operations Users can identify high-risk fault events first."
+    if _contains_keywords(story_title, "fault", "details"):
+        return "Implement critical fault detail retrieval so Operations Users can assess device condition and outage impact quickly."
+    return f"Implement {story_title or _clean(story.get('title'))} within the approved story boundary."
 
 
 def _default_scope(modules: list[str], flows: list[str]) -> list[str]:
@@ -345,25 +374,28 @@ def _repository_named_items(profile: dict[str, Any], key: str) -> list[dict[str,
 
 def _acceptance_mapping(
     acceptance_criteria: list[str],
+    raw_acceptance_criteria: list[str],
+    story_title: str,
     selected_task: dict[str, Any],
     generated_tasks: list[dict[str, Any]],
     modules: list[str],
     flows: list[str],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     task_area = _clean(selected_task.get("work_area") or selected_task.get("type") or selected_task.get("category")) or _infer_area(selected_task, modules)
     task_title = _clean(selected_task.get("title")) or "Selected execution task"
+    quality = _acceptance_quality(acceptance_criteria, raw_acceptance_criteria)
     mappings: list[dict[str, Any]] = []
-    for index, criterion in enumerate(_string_list(acceptance_criteria), start=1):
+    for index, criterion in enumerate(acceptance_criteria, start=1):
         mappings.append(
             {
                 "acceptanceCriteriaId": f"AC{index:03d}",
                 "acceptanceText": criterion,
-                "implementationArea": task_area,
+                "implementationArea": _implementation_area_for_criterion(criterion, task_area, modules, flows, story_title),
                 "validationExpectation": _validation_expectation(criterion, flows),
                 "mappedTasks": _mapped_task_titles(criterion, generated_tasks) or [task_title],
             }
         )
-    return mappings
+    return mappings, quality
 
 
 def _infer_area(selected_task: dict[str, Any], modules: list[str]) -> str:
@@ -379,7 +411,35 @@ def _infer_area(selected_task: dict[str, Any], modules: list[str]) -> str:
     return "Implementation Work"
 
 
+def _implementation_area_for_criterion(
+    criterion: str,
+    default_area: str,
+    modules: list[str],
+    flows: list[str],
+    story_title: str,
+) -> str:
+    text = f"{criterion} {story_title}".casefold()
+    if any(term in text for term in ("display", "view", "screen", "dashboard", "page", "list")):
+        return "UI Work"
+    if any(term in text for term in ("api", "service", "endpoint", "sort", "filter", "order", "load", "retrieve")):
+        return "Backend Work"
+    if any(term in text for term in ("audit", "history", "persist", "store", "repository", "database")):
+        return "Data Work"
+    if any(term in text for term in ("telemetry", "classification", "severity")) and modules:
+        return modules[0]
+    if flows:
+        return default_area
+    return default_area
+
+
 def _validation_expectation(criterion: str, flows: list[str]) -> str:
+    lowered = criterion.casefold()
+    if any(term in lowered for term in ("permission", "authorized", "unauthorized", "access denied")):
+        return "Validate authorized access, denied access, and audit behavior."
+    if any(term in lowered for term in ("load", "display", "view", "list", "details")):
+        return "Validate positive rendering, empty state handling, and error handling."
+    if any(term in lowered for term in ("sort", "filter", "order")):
+        return "Validate ordering, filtering accuracy, and regression coverage."
     flow_text = f" in {', '.join(flows[:2])}" if flows else ""
     return f"Verify that {criterion.rstrip('.')} works as approved{flow_text}."
 
@@ -405,48 +465,51 @@ def _engineering_rules(profile: dict[str, Any], standards: list[str], modules: l
     dev = profile.get("development_standards") if isinstance(profile.get("development_standards"), dict) else {}
     ui = _string_list(profile.get("ui_guidelines"))
     rules: list[dict[str, Any]] = []
-    stack_text = _format_stack(profile.get("technology_stack"))
-    coding_text = "; ".join(
-        _unique(
-            [
-                *_string_list(dev.get("architecture_patterns")),
-                *_string_list(dev.get("coding_guidelines")),
-                *_string_list(dev.get("testing_requirements")),
-            ]
-        )
+    rules.extend(_stack_rule_items(profile.get("technology_stack")))
+    rules.append(
+        {
+            "type": "architecture",
+            "category": "Architecture Rules",
+            "rule": "Preserve the approved implementation boundary from the Context Capsule.",
+            "source": "context_capsule",
+        }
     )
-    if stack_text:
-        rules.append({"type": "technology", "rule": f"Technology Stack: {stack_text}", "source": "execution_package"})
-    if coding_text:
-        rules.append({"type": "coding", "rule": f"Coding Standards: {coding_text}", "source": "execution_package"})
-    rules.append({"type": "architecture", "rule": "Architecture Rules: preserve the boundaries in the selected context capsule.", "source": "context_capsule"})
-    rules.extend(_rule_items("architecture", dev.get("architecture_patterns") or standards, "Architecture rule selected from project standards."))
-    rules.extend(_rule_items("coding", dev.get("coding_guidelines"), "Coding rule selected from project standards."))
-    rules.extend(_rule_items("security", dev.get("security_requirements"), "Security rule selected from project standards."))
-    rules.extend(_rule_items("testing", dev.get("testing_requirements"), "Testing rule selected from project standards."))
-    rules.extend(_rule_items("ui", ui, "UI guideline selected from project profile."))
+    rules.extend(_rule_items("architecture", dev.get("architecture_patterns") or standards, "Architecture rule selected from project standards.", category="Architecture Rules"))
+    rules.extend(_rule_items("coding", dev.get("coding_guidelines"), "Coding rule selected from project standards.", category="Coding Standards"))
+    rules.extend(_rule_items("security", dev.get("security_requirements"), "Security rule selected from project standards.", category="Security"))
+    rules.extend(_rule_items("testing", dev.get("testing_requirements"), "Testing rule selected from project standards.", category="Testing"))
+    rules.extend(_rule_items("ui", ui, "UI guideline selected from project profile.", category="UI Guidelines"))
     if modules:
-        rules.append({"type": "validation", "rule": f"Keep changes inside selected modules: {', '.join(modules)}.", "source": "context_capsule"})
+        rules.append({"type": "validation", "category": "Implementation Boundary", "rule": f"Keep changes inside selected modules: {', '.join(modules)}.", "source": "context_capsule"})
     if flows:
-        rules.append({"type": "audit", "rule": f"Preserve behavior for selected flows: {', '.join(flows)}.", "source": "context_capsule"})
+        rules.append({"type": "audit", "category": "Implementation Boundary", "rule": f"Preserve behavior for selected flows: {', '.join(flows)}.", "source": "context_capsule"})
     if not rules:
-        rules.append({"type": "coding", "rule": "Follow existing repository conventions and project standards.", "source": "deterministic_default"})
-    return rules[:12]
+        rules.append({"type": "coding", "category": "Coding Standards", "rule": "Follow existing repository conventions and project standards.", "source": "deterministic_default"})
+    return rules[:16]
 
 
-def _format_stack(stack: Any) -> str:
+def _stack_rule_items(stack: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
     if isinstance(stack, dict):
-        parts: list[str] = []
-        for key, value in stack.items():
-            values = _string_list(value)
+        labels = {
+            "mobile": "Mobile",
+            "backend": "Backend",
+            "database": "Database",
+            "analytics": "Analytics",
+            "frontend": "Frontend",
+            "firmware": "Firmware",
+        }
+        for key, label in labels.items():
+            values = _string_list(stack.get(key))
             if values:
-                parts.append(f"{key}: {', '.join(values)}")
-        return "; ".join(parts)
-    return "; ".join(_string_list(stack))
+                items.append({"type": "technology", "category": "Technology Stack", "rule": f"{label}: {', '.join(values)}", "source": "execution_package"})
+        return items
+    values = _string_list(stack)
+    return [{"type": "technology", "category": "Technology Stack", "rule": value, "source": "execution_package"} for value in values]
 
 
-def _rule_items(rule_type: str, values: Any, reason: str) -> list[dict[str, Any]]:
-    return [{"type": rule_type, "rule": value, "source": "project_standards", "reason": reason} for value in _string_list(values)]
+def _rule_items(rule_type: str, values: Any, reason: str, *, category: str) -> list[dict[str, Any]]:
+    return [{"type": rule_type, "category": category, "rule": value, "source": "project_standards", "reason": reason} for value in _string_list(values)]
 
 
 def _execution_risks(capsule: dict[str, Any], validation_report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -467,7 +530,7 @@ def _suggested_tests(
     flows: list[str],
     risks: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    title = _clean(selected_task.get("title")) or _clean(story.get("title")) or "approved behavior"
+    title = _clean(selected_task.get("title")) or _normalize_story_title(story) or "approved behavior"
     flow = flows[0] if flows else "approved flow"
     tests = [
         {"type": "unit", "title": f"Validate {title} business rules", "coverage": _coverage_ids(acceptance_mapping), "priority": "High"},
@@ -490,6 +553,7 @@ def _coverage_ids(acceptance_mapping: list[dict[str, Any]]) -> list[str]:
 def _readiness(
     readiness: dict[str, Any],
     acceptance_mapping: list[dict[str, Any]],
+    acceptance_quality: dict[str, Any],
     repository_context: dict[str, Any],
     capsule: dict[str, Any],
     validation_report: dict[str, Any],
@@ -498,15 +562,35 @@ def _readiness(
     repo_alignment = 85 if (repository_context.get("relevantModules") or repository_context.get("relevantFlows")) else 50
     knowledge_alignment = round(float(capsule.get("confidence") or 0.7) * 100)
     acceptance_coverage = 100 if acceptance_mapping else 0
-    file_confidence = round(sum(float(item.get("confidence") or 0) for item in relevant_files) / len(relevant_files) * 100) if relevant_files else 35
+    file_confidence = round(sum(float(item.get("confidence") or 0) for item in relevant_files) / len(relevant_files) * 100) if relevant_files else 25
     validation_score = int(validation_report.get("score") or validation_report.get("validationScore") or 75)
     configured_score = int(readiness.get("score") or 0)
     score = round((repo_alignment + knowledge_alignment + acceptance_coverage + file_confidence + validation_score) / 5)
     if configured_score:
         score = round((score + configured_score) / 2)
-    status = "Ready" if score >= 80 and acceptance_coverage else "Needs Review"
+
+    repository_mode = "CodeIndexed" if relevant_files else "Knowledge Snapshot"
+    blockers: list[str] = []
+    warnings: list[str] = []
+
     if not acceptance_mapping:
         status = "Blocked"
+        score = min(score, 40)
+        blockers.append("No acceptance criteria mapped to execution work.")
+    else:
+        status = "Ready" if score >= 80 else "NeedsReview"
+
+    if repository_mode == "Knowledge Snapshot":
+        score = min(score, 80)
+        warnings.extend([FILE_RANKING_UNAVAILABLE, SOURCE_CODE_NOT_INDEXED])
+        if status == "Ready":
+            status = "NeedsReview"
+
+    if acceptance_quality.get("issues"):
+        score = min(score, 75)
+        status = "NeedsReview"
+        warnings.append("Acceptance criteria require cleanup before implementation.")
+
     return {
         "repositoryAlignmentScore": repo_alignment,
         "knowledgeAlignmentScore": knowledge_alignment,
@@ -514,9 +598,231 @@ def _readiness(
         "fileConfidenceScore": file_confidence,
         "executionReadinessScore": score,
         "status": status,
-        "blockers": [] if status != "Blocked" else ["No acceptance criteria mapped to execution work."],
+        "repositoryMode": repository_mode,
+        "sourceCodeStatus": "Indexed" if relevant_files else "Not Indexed",
+        "fileRanking": "Available" if relevant_files else "Unavailable",
+        "warnings": _unique(warnings),
+        "blockers": blockers,
+        "acceptanceQuality": acceptance_quality,
         "details": readiness.get("breakdown") if isinstance(readiness.get("breakdown"), dict) else {},
     }
+
+
+def _normalize_story_title(story: dict[str, Any]) -> str:
+    title = _clean(story.get("title"))
+    lowered = title.casefold()
+    if _contains_keywords(lowered, "classify", "severity"):
+        return "Classify Fault Severity"
+    if _contains_keywords(lowered, "view", "detect", "fault"):
+        return "View Critical Fault Details"
+    if _contains_keywords(lowered, "newly", "arrived", "events"):
+        return "View Newly Arrived Fault Events"
+    tokens = [token for token in re.split(r"[^a-z0-9]+", lowered) if token and token not in {"use", "do", "complete"}]
+    normalized = " ".join(tokens).strip()
+    if normalized and not any(word in normalized for word in ("fault", "event", "severity", "outage", "telemetry")):
+        normalized = f"{normalized} fault details"
+    return _title_case(normalized or title or "Approved Story")
+
+
+def _normalize_user_story(story: dict[str, Any], normalized_title: str, dna_summary: dict[str, Any]) -> str:
+    raw = _clean(story.get("user_goal") or story.get("story_user_goal") or story.get("description"))
+    persona = _extract_persona(raw) or "Operations User"
+    persona_phrase = f"As {_article_for(persona)} {persona},"
+    if _contains_keywords(normalized_title, "severity", "classify"):
+        return f"{persona_phrase} I want fault events classified by severity so that I can identify and respond to high-risk events first."
+    if _contains_keywords(normalized_title, "fault", "details"):
+        return f"{persona_phrase} I want to view critical fault details so that I can assess device condition and outage impact quickly."
+    if _contains_keywords(normalized_title, "newly", "arrived", "events"):
+        return f"{persona_phrase} I want newly arrived fault events highlighted so that I can respond to new operational risks without delay."
+    outcome = dna_summary.get("businessOutcome") or "I can complete the approved operational workflow with confidence."
+    action = _clean(normalized_title).casefold()
+    if action.startswith("view "):
+        action = f"view {action[5:]}"
+    elif not action.startswith("to "):
+        action = action
+    return f"{persona_phrase} I want to {action} so that {_normalize_benefit(outcome)}"
+
+
+def _normalize_acceptance_criteria(criteria: list[str], story_title: str) -> list[str]:
+    values = [_clean(item) for item in criteria if _clean(item)]
+    merged: list[str] = []
+    field_buffer: list[str] = []
+    list_prefix = ""
+    for item in values:
+        if _is_field_list_anchor(item):
+            if field_buffer and list_prefix:
+                merged.append(_build_field_list_sentence(list_prefix, field_buffer))
+                field_buffer = []
+            list_prefix, field_seed = _anchor_prefix(item, story_title)
+            field_buffer.extend(field_seed)
+            continue
+        if field_buffer and _is_field_fragment(item):
+            field_buffer.append(_field_fragment(item))
+            continue
+        if field_buffer and list_prefix:
+            merged.append(_build_field_list_sentence(list_prefix, field_buffer))
+            field_buffer = []
+            list_prefix = ""
+        merged.extend(_split_atomic_criteria(item))
+    if field_buffer and list_prefix:
+        merged.append(_build_field_list_sentence(list_prefix, field_buffer))
+    normalized = [_normalize_sentence(item) for item in merged if _clean(item)]
+    return _unique([item for item in normalized if item])
+
+
+def _acceptance_quality(criteria: list[str], raw_criteria: list[str] | None = None) -> dict[str, Any]:
+    issues: list[str] = []
+    for criterion in raw_criteria or []:
+        raw = _clean(criterion)
+        if re.match(r"^(and|or|,)\b", raw, flags=re.IGNORECASE):
+            issues.append(f"Acceptance criterion starts like a fragment: {raw}")
+    seen: set[str] = set()
+    for criterion in criteria:
+        cleaned = _clean(criterion)
+        lowered = cleaned.casefold()
+        if lowered in seen:
+            issues.append(f"Duplicate acceptance criterion: {cleaned}")
+        seen.add(lowered)
+        if not cleaned or len(cleaned.split()) < 4:
+            issues.append(f"Fragmented acceptance criterion: {cleaned}")
+        if re.match(r"^(and|or|,|[a-z])\b", cleaned):
+            issues.append(f"Acceptance criterion starts like a fragment: {cleaned}")
+        if len(cleaned) > 250:
+            issues.append(f"Acceptance criterion is too long and should be split: {cleaned[:80]}...")
+        if not cleaned.endswith("."):
+            issues.append(f"Acceptance criterion is not a complete sentence: {cleaned}")
+    return {"issues": issues, "passes": not issues, "count": len(criteria)}
+
+
+def _tighten_repository_context(
+    story_title: str,
+    story_goal: str,
+    acceptance_criteria: list[str],
+    modules: list[str],
+    flows: list[str],
+    rejected_context: list[dict[str, Any]],
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    intent = " ".join([story_title, story_goal, *acceptance_criteria]).casefold()
+    filtered_modules: list[str] = []
+    filtered_flows: list[str] = []
+    for module in modules:
+        keep, reason = _repository_item_allowed(module, "module", intent)
+        if keep:
+            filtered_modules.append(module)
+        else:
+            rejected_context.append({"type": "module", "name": module, "reason": reason})
+    for flow in flows:
+        keep, reason = _repository_item_allowed(flow, "flow", intent)
+        if keep:
+            filtered_flows.append(flow)
+        else:
+            rejected_context.append({"type": "flow", "name": flow, "reason": reason})
+    return _unique(filtered_modules), _unique(filtered_flows), rejected_context
+
+
+def _repository_item_allowed(name: str, item_type: str, intent: str) -> tuple[bool, str]:
+    lowered = name.casefold()
+    if "firmware" in lowered and not any(term in intent for term in ("firmware", "upgrade", "rollout", "version", "rollback", "compliance")):
+        return False, f"{name} removed because the current implementation does not involve firmware behavior."
+    if "login flow" in lowered and not any(term in intent for term in ("login", "token", "session", "authentication refresh", "authorization failure")):
+        return False, "Login Flow removed because login behavior is not changing in this implementation."
+    if "device registration flow" in lowered and not any(term in intent for term in ("device registration", "register device", "onboard device")):
+        return False, "Device Registration Flow removed because the story does not change device registration behavior."
+    if "device management" in lowered and not any(term in intent for term in ("device health", "device details", "device status", "device condition")):
+        return False, f"{name} removed because the story does not require device management behavior."
+    if "analytics" in lowered and not any(term in intent for term in ("analytics", "trend", "report", "dashboard", "metric", "kpi")):
+        return False, f"{name} removed because analytics behavior is not part of this implementation."
+    if item_type == "flow" and "authentication" in lowered:
+        return False, f"{name} removed because authentication belongs in standards unless the auth flow itself changes."
+    return True, ""
+
+
+def _contains_keywords(text: str, *keywords: str) -> bool:
+    lowered = text.casefold()
+    return all(keyword.casefold() in lowered for keyword in keywords)
+
+
+def _title_case(text: str) -> str:
+    return " ".join(word.capitalize() for word in text.split())
+
+
+def _normalize_sentence(text: str) -> str:
+    cleaned = _clean(text)
+    if not cleaned:
+        return ""
+    cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned if cleaned.endswith(".") else f"{cleaned}."
+
+
+def _extract_persona(raw: str) -> str:
+    match = re.search(r"As\s+(?:an?|the)\s+([^,]+),", raw, flags=re.IGNORECASE)
+    return _clean(match.group(1)) if match else ""
+
+
+def _article_for(value: str) -> str:
+    return "an" if value[:1].casefold() in {"a", "e", "i", "o", "u"} else "a"
+
+
+def _is_field_list_anchor(text: str) -> bool:
+    lowered = text.casefold()
+    return "list shows" in lowered or "list displays" in lowered or "details show" in lowered
+
+
+def _anchor_prefix(text: str, story_title: str) -> tuple[str, list[str]]:
+    lowered = text.casefold()
+    noun = "The fault event list displays" if "list" in lowered else "The fault event details display"
+    fragments = re.split(r"\bshows\b|\bdisplays\b", text, flags=re.IGNORECASE)
+    tail = fragments[-1] if fragments else text
+    seed = [_field_fragment(tail)] if _field_fragment(tail) else []
+    if not seed and _contains_keywords(story_title, "severity"):
+        seed.append("Severity")
+    return noun, seed
+
+
+def _is_field_fragment(text: str) -> bool:
+    cleaned = _clean(text)
+    if not cleaned:
+        return False
+    if len(cleaned.split()) > 5:
+        return False
+    return not bool(re.search(r"\b(is|are|can|must|should|shows|displays|loads|sorts|filters)\b", cleaned.casefold()))
+
+
+def _field_fragment(text: str) -> str:
+    cleaned = _clean(re.sub(r"^(and|or|,)\s*", "", text, flags=re.IGNORECASE))
+    return cleaned.rstrip(".")
+
+
+def _build_field_list_sentence(prefix: str, fields: list[str]) -> str:
+    unique_fields = _unique([field.rstrip(".") for field in fields if field.rstrip(".")])
+    if not unique_fields:
+        return ""
+    if len(unique_fields) == 1:
+        joined = unique_fields[0]
+    else:
+        joined = ", ".join(unique_fields[:-1]) + f", and {unique_fields[-1]}"
+    return f"{prefix} {joined}."
+
+
+def _normalize_benefit(outcome: str) -> str:
+    cleaned = _clean(outcome)
+    if not cleaned:
+        return "I can complete the approved operational workflow with confidence."
+    if cleaned.lower().startswith("i "):
+        return "I" + cleaned[1:]
+    return cleaned[0].lower() + cleaned[1:]
+
+
+def _split_atomic_criteria(text: str) -> list[str]:
+    parts = [part.strip() for part in re.split(r"(?<=[.])\s+", text) if part.strip()]
+    results: list[str] = []
+    for part in parts:
+        cleaned = _clean(part)
+        if cleaned.casefold().startswith("and "):
+            cleaned = cleaned[4:]
+        if cleaned:
+            results.append(cleaned)
+    return results or [text]
 
 
 def _float(value: Any, default: float) -> float:

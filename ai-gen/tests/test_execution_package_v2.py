@@ -110,6 +110,8 @@ class ExecutionPackageV2Tests(unittest.TestCase):
         self.assertEqual(package["repositoryContext"]["relevantFiles"], [])
         self.assertEqual(package["repositoryContext"]["fileRankingStatus"], "Repository file ranking not available")
         self.assertIn("Repository file ranking not available", package["implementationBoundary"]["assumptions"])
+        self.assertEqual(package["readiness"]["repositoryMode"], "Knowledge Snapshot")
+        self.assertEqual(package["readiness"]["status"], "NeedsReview")
 
     def test_project_intelligence_execution_context_exposes_v2_package(self) -> None:
         profile = {
@@ -147,7 +149,7 @@ class ExecutionPackageV2Tests(unittest.TestCase):
         self.assertIn("Fault Monitoring", package["implementationBoundary"]["allowedModules"])
         self.assertNotIn("Firmware Management", package["implementationBoundary"]["allowedModules"])
         self.assertEqual(package["acceptanceMapping"][0]["acceptanceCriteriaId"], "AC001")
-        self.assertIn(package["readiness"]["status"], {"Ready", "Needs Review"})
+        self.assertIn(package["readiness"]["status"], {"Ready", "NeedsReview"})
 
     def test_story_execution_package_uses_story_as_executable_artifact(self) -> None:
         story = {
@@ -183,7 +185,110 @@ class ExecutionPackageV2Tests(unittest.TestCase):
         self.assertEqual(package["artifactId"], 42)
         self.assertIsNone(package["taskId"])
         self.assertEqual(package["storyId"], 42)
-        self.assertEqual(package["businessContext"]["taskObjective"], "Deliver Open critical fault event details")
+        self.assertEqual(package["businessContext"]["storyTitle"], "Open Critical Fault Event Details")
+        self.assertEqual(
+            package["businessContext"]["taskObjective"],
+            "Implement critical fault detail retrieval so Operations Users can assess device condition and outage impact quickly.",
+        )
+
+    def test_title_and_user_story_are_normalized_for_execution_package(self) -> None:
+        package = build_execution_package_v2(
+            story={
+                "id": "story-weak",
+                "title": "Use classify severity",
+                "description": "As a Operations User, I want to use classify severity so that the user can complete classify severity as an independent outcome.",
+            },
+            selected_task={},
+            acceptance_criteria=["Severity is displayed."],
+            context_capsule={
+                "capsuleId": "execution_story",
+                "knowledgeVersion": "kv-1",
+                "repositorySnapshotVersion": "rs-1",
+                "selectedModules": ["Fault Monitoring", "Telemetry"],
+                "selectedFlows": ["Fault Event Review Flow"],
+                "confidence": 0.82,
+            },
+        )
+
+        self.assertEqual(package["businessContext"]["storyTitle"], "Classify Fault Severity")
+        self.assertIn("fault events classified by severity", package["businessContext"]["storyUserGoal"])
+
+    def test_fragmented_acceptance_criteria_are_merged(self) -> None:
+        package = build_execution_package_v2(
+            story={"id": "story-fields", "title": "View detect fault"},
+            selected_task={},
+            acceptance_criteria=["The list shows Device ID", "Fault Type", "Severity", "Timestamp", "and Status for each event."],
+            context_capsule={
+                "capsuleId": "execution_fields",
+                "knowledgeVersion": "kv-1",
+                "repositorySnapshotVersion": "rs-1",
+                "selectedModules": ["Fault Monitoring"],
+                "selectedFlows": ["Fault Event Review Flow"],
+                "confidence": 0.82,
+            },
+        )
+
+        self.assertEqual(
+            package["acceptanceMapping"][0]["acceptanceText"],
+            "The fault event list displays Device ID, Fault Type, Severity, Timestamp, and Status for each event.",
+        )
+
+    def test_mashed_acceptance_criteria_are_split(self) -> None:
+        package = build_execution_package_v2(
+            story={"id": "story-split", "title": "View detect fault"},
+            selected_task={},
+            acceptance_criteria=["Fault events are sorted by Severity and Timestamp. Events refresh without duplicates."],
+            context_capsule={
+                "capsuleId": "execution_split",
+                "knowledgeVersion": "kv-1",
+                "repositorySnapshotVersion": "rs-1",
+                "selectedModules": ["Fault Monitoring"],
+                "selectedFlows": ["Fault Event Review Flow"],
+                "confidence": 0.82,
+            },
+        )
+
+        self.assertEqual(len(package["acceptanceMapping"]), 2)
+        self.assertEqual(package["acceptanceMapping"][1]["acceptanceText"], "Events refresh without duplicates.")
+
+    def test_fragmented_acceptance_criteria_force_needs_review(self) -> None:
+        package = build_execution_package_v2(
+            story={"id": "story-bad-ac", "title": "View detect fault"},
+            selected_task={},
+            acceptance_criteria=["and Status for each event."],
+            context_capsule={
+                "capsuleId": "execution_bad_ac",
+                "knowledgeVersion": "kv-1",
+                "repositorySnapshotVersion": "rs-1",
+                "selectedModules": ["Fault Monitoring"],
+                "selectedFlows": ["Fault Event Review Flow"],
+                "confidence": 0.82,
+            },
+        )
+
+        self.assertEqual(package["readiness"]["status"], "NeedsReview")
+        self.assertIn("Acceptance criteria require cleanup before implementation.", package["readiness"]["warnings"])
+
+    def test_irrelevant_login_and_device_registration_flows_are_excluded(self) -> None:
+        package = build_execution_package_v2(
+            story={"id": "story-tight", "title": "Classify Fault Severity"},
+            selected_task={},
+            acceptance_criteria=["Fault events are sorted by Severity and Timestamp."],
+            context_capsule={
+                "capsuleId": "execution_tight",
+                "knowledgeVersion": "kv-1",
+                "repositorySnapshotVersion": "rs-1",
+                "selectedModules": ["Fault Monitoring", "Telemetry", "Device Management"],
+                "selectedFlows": ["Fault Event Review Flow", "Login Flow", "Device Registration Flow"],
+                "confidence": 0.82,
+            },
+        )
+
+        self.assertEqual(package["implementationBoundary"]["allowedModules"], ["Fault Monitoring", "Telemetry"])
+        self.assertEqual(package["implementationBoundary"]["allowedFlows"], ["Fault Event Review Flow"])
+        self.assertIn("Device Management", package["implementationBoundary"]["blockedModules"])
+        self.assertIn("Login Flow", package["implementationBoundary"]["blockedFlows"])
+        self.assertIn("Device Registration Flow", package["implementationBoundary"]["blockedFlows"])
 
 
 if __name__ == "__main__":

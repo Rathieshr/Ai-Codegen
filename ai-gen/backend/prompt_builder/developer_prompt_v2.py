@@ -68,8 +68,13 @@ def _warnings(package: dict[str, Any], budget_result: dict[str, Any]) -> list[st
     if not repository.get("relevantFiles"):
         warnings.append("Repository file ranking not available. Do not invent file paths.")
     readiness = package.get("readiness") if isinstance(package.get("readiness"), dict) else {}
-    if readiness.get("status") in {"Needs Review", "Blocked"}:
+    if readiness.get("status") in {"Needs Review", "NeedsReview", "Blocked"}:
         warnings.append(f"Execution readiness is {readiness.get('status')}. Review blockers before coding.")
+    readiness_warnings = readiness.get("warnings") if isinstance(readiness.get("warnings"), list) else []
+    for warning in readiness_warnings:
+        text = clean(warning)
+        if text and text not in warnings:
+            warnings.append(text)
     diagnostics = budget_result.get("diagnostics") if isinstance(budget_result.get("diagnostics"), dict) else {}
     if diagnostics.get("blockedByBudgetGuard"):
         warnings.append("Prompt exceeded provider budget after compression. Review diagnostics before using.")

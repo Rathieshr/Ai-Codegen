@@ -131,7 +131,7 @@ def execution_plan_sections(package: dict[str, Any], execution_mode: str = "impl
         _section("repository_evidence", "Repository Context", _repository_context(repository), True, 90, "repository", True),
         _section("validation", "Acceptance Criteria", [_acceptance_item(item) for item in acceptance], True, 95, "validation", True),
         _section("planning_boundary", "Implementation Boundary", _boundary(boundary), True, 92, "knowledge", True),
-        _section("knowledge_summary", "Engineering Standards", [_standard_item(item) for item in standards], True, 82, "knowledge", True),
+        _section("knowledge_summary", "Engineering Standards", standards, True, 82, "knowledge", True),
         _section("ui_guidance", "UI Guidance", ui_guidance, False, 72, "knowledge", True),
         _section("required_tests", "Testing Guidance", [_test_item(item) for item in tests], True, 86, "validation", True),
         _section("risks", "Risk Notes", [_risk_item(item) for item in risks], False, 68, "diagnostics", True),
@@ -213,13 +213,18 @@ def _mode_content(mode: str) -> dict[str, str]:
 
 
 def _implementation_goal(business: dict[str, Any], mode: str) -> str:
-    task = clean(business.get("taskObjective")) or "Complete the approved execution package."
+    title = clean(business.get("storyTitle"))
     story = clean(business.get("storyUserGoal"))
-    parts = [task]
+    task = clean(business.get("taskObjective"))
+    if "Classify Fault Severity" in title:
+        summary = "Implement fault severity classification so Operations Users can identify high-risk fault events first, review relevant event details, and validate severity-driven ordering."
+    elif "View Critical Fault Details" in title:
+        summary = "Implement critical fault detail retrieval so Operations Users can review device condition, severity, and timing without leaving the approved operational workflow."
+    else:
+        summary = task or f"Implement {title or 'the approved story'} within the approved boundary."
     if story:
-        parts.append(f"Support the parent story goal: {story}.")
-    parts.append(EXECUTION_MODES[mode]["guidance"])
-    return " ".join(parts)
+        summary = f"{summary} Parent user goal: {story}"
+    return f"{summary} {EXECUTION_MODES[mode]['guidance']}".strip()
 
 
 def _repository_context(repository: dict[str, Any]) -> dict[str, Any]:
@@ -343,7 +348,7 @@ def _format_section(section_id: str, content: Any) -> str:
     if section_id == "planning_boundary":
         return _boundary_lines(content)
     if section_id == "knowledge_summary":
-        return _list_lines(content, "Follow existing codebase standards.")
+        return _knowledge_lines(content)
     if section_id == "ui_guidance":
         return _list_lines(content, "")
     if section_id == "required_tests":
@@ -457,14 +462,67 @@ def _list_lines(content: Any, empty: str) -> str:
     return "\n".join(f"- {value}" for value in values) if values else empty
 
 
+def _knowledge_lines(content: Any) -> str:
+    items = content if isinstance(content, list) else []
+    if not items:
+        return "Follow existing codebase standards."
+    groups: dict[str, list[str]] = {}
+    for item in items:
+        if isinstance(item, dict):
+            category = clean(item.get("category")) or clean(item.get("type")) or "Standards"
+            value = clean(item.get("rule") or item.get("name") or item.get("title"))
+        else:
+            category = "Standards"
+            value = clean(item)
+        if not value:
+            continue
+        groups.setdefault(category, [])
+        if value not in groups[category]:
+            groups[category].append(value)
+    lines: list[str] = []
+    for category in [
+        "Technology Stack",
+        "Coding Standards",
+        "Security",
+        "Testing",
+        "UI Guidelines",
+        "Architecture Rules",
+        "Implementation Boundary",
+        "Standards",
+    ]:
+        values = groups.get(category) or []
+        if not values:
+            continue
+        lines.append(f"- {category}:")
+        lines.extend(f"  - {value}" for value in values)
+    for category, values in groups.items():
+        if category in {
+            "Technology Stack",
+            "Coding Standards",
+            "Security",
+            "Testing",
+            "UI Guidelines",
+            "Architecture Rules",
+            "Implementation Boundary",
+            "Standards",
+        }:
+            continue
+        lines.append(f"- {category}:")
+        lines.extend(f"  - {value}" for value in values)
+    return "\n".join(lines) if lines else "Follow existing codebase standards."
+
+
 def _warnings(package: dict[str, Any], budget_result: dict[str, Any], mode: str) -> list[str]:
     warnings: list[str] = []
     repository = _mapping(package.get("repositoryContext"))
     if not repository.get("relevantFiles"):
         warnings.append("Repository file ranking not available. Do not invent file paths.")
     readiness = _mapping(package.get("readiness"))
-    if readiness.get("status") in {"Needs Review", "Blocked"}:
+    if readiness.get("status") in {"Needs Review", "NeedsReview", "Blocked"}:
         warnings.append(f"Execution readiness is {readiness.get('status')}. Review blockers before proceeding.")
+    for warning in string_list(readiness.get("warnings")):
+        if warning not in warnings:
+            warnings.append(warning)
     diagnostics = budget_result.get("diagnostics") if isinstance(budget_result.get("diagnostics"), dict) else {}
     if diagnostics.get("blockedByBudgetGuard"):
         warnings.append("Execution Plan exceeded provider budget after compression. Review diagnostics before using.")

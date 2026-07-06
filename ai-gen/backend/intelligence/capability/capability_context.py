@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 MatchType = Literal["capability", "module", "flow", "application", "dependency"]
-MatchSource = Literal["intent", "repository", "knowledge_registry", "fallback_rules"]
+MatchSource = Literal["intent", "repository", "knowledge_registry", "memory", "fallback_rules"]
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,7 @@ class CapabilityContext:
     relevant_applications: list[CapabilityMatch] = field(default_factory=list)
     relevant_dependencies: list[CapabilityMatch] = field(default_factory=list)
     capability_reasoning: list[str] = field(default_factory=list)
+    capability_discovery: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
     generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -65,7 +66,7 @@ class CapabilityContext:
             "relevantApplications": [item.to_dict() for item in self.relevant_applications],
             "relevantDependencies": [item.to_dict() for item in self.relevant_dependencies],
             "capabilityReasoning": self.capability_reasoning,
+            "capabilityDiscovery": self.capability_discovery,
             "confidence": self.confidence,
             "generatedAt": self.generated_at,
         }
-

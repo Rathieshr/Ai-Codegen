@@ -18,7 +18,7 @@ CORE_CAPABILITIES = [
 
 CAPABILITY_RULES: dict[str, dict[str, list[str]]] = {
     "Operational Awareness": {
-        "keywords": ["live operations", "live status", "operational status", "dashboard view", "production health", "equipment status", "operations monitoring"],
+        "keywords": ["live operations", "live status", "operational status", "dashboard view", "dashboard visibility", "production health", "equipment status", "operations monitoring", "operational visibility", "operator visibility", "shared status", "status center", "alarm center"],
         "modules": ["Reporting", "Telemetry", "Dashboard"],
         "flows": ["Live Status Review", "Operations Monitoring"],
     },

@@ -20,6 +20,7 @@ from backend.implementation_validation import validate_implementation
 from backend.intelligence.capability import buildCapabilityContext
 from backend.intelligence.dna import compareDNA, generateDNA, validateDNA
 from backend.intelligence.epic_analysis import analyzeEpic, buildCapabilityReview
+from backend.intelligence.epic_analysis.epic_analysis import CapabilityCandidate, CapabilityPriority
 from backend.intelligence.intent import build_intent
 from backend.intelligence.planning import buildPlanningContext
 from backend.intelligence.reasoning import generatePlanningArtifact
@@ -934,9 +935,21 @@ class ProjectIntelligenceService:
         relevant_profile = _profile_with_relevance(active_profile, selection)
         keywords = _string_list(selection.get("intent", {}).get("keywords")) or _context_keywords(title, description, active_profile)
         epic_analysis = analyzeEpic(epic, relevant_profile, {"intent_keywords": keywords})
+        epic_analysis_for_features = dict(epic_analysis)
+        capability_context = buildCapabilityContext(
+            build_intent(epic),
+            {
+                "project_profile": relevant_profile,
+                "repository_snapshot": _repository_snapshot_from_profile(relevant_profile),
+                "knowledge_registry": relevant_profile.get("knowledge_registry") if isinstance(relevant_profile.get("knowledge_registry"), dict) else {},
+                "project_id": _clean_text(active_profile.get("project_id") or active_profile.get("projectId") or active_profile.get("project_name") or active_profile.get("projectName") or active_profile.get("name")),
+                "work_item_type": "Epic",
+            },
+        )
+        epic_analysis = _apply_capability_discovery_to_epic_analysis(epic_analysis, capability_context)
         capability_review = buildCapabilityReview(epic_analysis, relevant_profile)
         business_goal = _primary_epic_goal(epic_analysis, title, description, active_profile)
-        capability_plan = _capability_decomposition_from_epic_analysis(title, business_goal, keywords, relevant_profile, epic_analysis, options)
+        capability_plan = _capability_decomposition_from_epic_analysis(title, business_goal, keywords, relevant_profile, epic_analysis_for_features, options)
         features = [
             {
                 **feature,
@@ -972,10 +985,12 @@ class ProjectIntelligenceService:
             ],
             "known_memory_risks": memory_context.get("knownRisks", []),
             "epic_analysis": epic_analysis,
+            "epic_analysis_feature_generation_source": epic_analysis_for_features,
             "epic_analysis_diagnostics": epic_analysis.get("diagnostics", {}),
             "capability_review": capability_review["capabilities"],
             "capability_review_diagnostics": capability_review["diagnostics"],
             "capability_dependency_graph": capability_review["dependencyGraph"],
+            "capability_context": capability_context,
             "planning_boundary": epic_analysis.get("planningBoundary") or epic_analysis.get("planning_boundary"),
             "recommended_features": features,
             "capability_diagnostics": capability_plan["diagnostics"],
@@ -6077,6 +6092,83 @@ def _primary_epic_goal(epic_analysis: dict[str, Any], title: str, description: s
     if goals:
         return goals[0]
     return _sentence(f"Improve {title}", description or profile["project_description"])
+
+
+def _apply_capability_discovery_to_epic_analysis(epic_analysis: dict[str, Any], capability_context: dict[str, Any]) -> dict[str, Any]:
+    discovery = capability_context.get("capabilityDiscovery") if isinstance(capability_context.get("capabilityDiscovery"), dict) else {}
+    recommendations = discovery.get("recommendations") if isinstance(discovery.get("recommendations"), list) else []
+    accepted = [item for item in recommendations if isinstance(item, dict) and item.get("accepted") and _clean_text(item.get("name"))]
+    if not accepted:
+        return epic_analysis
+
+    rejected = capability_context.get("rejectedCapabilities") if isinstance(capability_context.get("rejectedCapabilities"), list) else []
+    required_candidates = [
+        CapabilityCandidate(
+            name=_clean_text(item.get("name")),
+            reason=_clean_text(item.get("reason")) or f"{_clean_text(item.get('name'))} was selected by capability discovery.",
+            confidence=float(item.get("confidence") or 0.0),
+            repository_evidence=_string_list(item.get("evidence")),
+        ).to_dict()
+        for item in accepted[:6]
+    ]
+    rejected_candidates = [
+        CapabilityCandidate(
+            name=_clean_text(item.get("name")),
+            reason=_clean_text(item.get("reason")) or f"{_clean_text(item.get('name'))} was rejected by capability discovery.",
+            confidence=float(item.get("confidence") or 0.0),
+            repository_evidence=[],
+        ).to_dict()
+        for item in rejected
+        if isinstance(item, dict) and _clean_text(item.get("name"))
+    ]
+    capability_priority = [
+        CapabilityPriority(
+            name=_clean_text(item.get("name")),
+            priority=_capability_priority_label(index),
+            reason=f"Ranked by capability discovery score {int(item.get('final', 0) or item.get('overall_score', 0) or 0)} with intent, repository, knowledge, and memory evidence.",
+            rank=index,
+        ).to_dict()
+        for index, item in enumerate(accepted[:6], start=1)
+    ]
+    updated = dict(epic_analysis)
+    updated["requiredCapabilities"] = required_candidates
+    updated["required_capabilities"] = required_candidates
+    updated["excludedCapabilities"] = rejected_candidates
+    updated["excluded_capabilities"] = rejected_candidates
+    updated["capabilityPriority"] = capability_priority
+    updated["capability_priority"] = capability_priority
+    boundary = updated.get("planningBoundary") if isinstance(updated.get("planningBoundary"), dict) else {}
+    in_scope = [_clean_text(item.get("name")) for item in accepted[:6] if _clean_text(item.get("name"))]
+    out_of_scope = _unique([
+        *_string_list(boundary.get("outOfScope") or boundary.get("out_of_scope")),
+        *[_clean_text(item.get("name")) for item in rejected if isinstance(item, dict) and _clean_text(item.get("name"))],
+    ])
+    updated["planningBoundary"] = {
+        "inScope": in_scope,
+        "outOfScope": out_of_scope,
+        "in_scope": in_scope,
+        "out_of_scope": out_of_scope,
+    }
+    updated["planning_boundary"] = updated["planningBoundary"]
+    diagnostics = dict(updated.get("diagnostics") or {})
+    diagnostics["capability_discovery_applied"] = True
+    diagnostics["capability_discovery_threshold"] = discovery.get("threshold")
+    diagnostics["capability_discovery_selected"] = len(required_candidates)
+    diagnostics["capability_discovery_candidates"] = len(recommendations)
+    diagnostics["capability_discovery_report"] = recommendations
+    updated["diagnostics"] = diagnostics
+    updated["confidence"] = round(max(float(updated.get("confidence") or 0), float(capability_context.get("confidence") or 0)), 2)
+    return updated
+
+
+def _capability_priority_label(rank: int) -> str:
+    if rank <= 2:
+        return "Critical"
+    if rank <= 4:
+        return "High"
+    if rank <= 6:
+        return "Medium"
+    return "Low"
 
 
 def _capability_review_for_feature(feature: dict[str, Any], reviews: list[dict[str, Any]]) -> dict[str, Any]:

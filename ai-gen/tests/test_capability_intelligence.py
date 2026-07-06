@@ -239,6 +239,78 @@ class CapabilityIntelligenceTests(unittest.TestCase):
         self.assertLess(len(applications), len(PROFILE["applications"]))
         self.assertNotIn("Firmware Service", applications)
 
+    def test_device_health_epic_prioritizes_asset_health(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Modernize Device Health Dashboard",
+                "description": "Improve device health monitoring, telemetry review, dashboard visibility, and health analysis for operations.",
+            }
+        )
+
+        self.assertEqual(context["primaryCapability"]["name"], "Asset Health")
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Operational Awareness", selected)
+        self.assertIn("Reliability Analytics", selected)
+        self.assertNotIn("Firmware Management", selected)
+
+    def test_user_administration_epic_prioritizes_authentication_and_excludes_fault_monitoring(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "User Administration Portal",
+                "description": "Administrators manage secure login, roles, authorization, user access, audit history, and account permissions.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Authentication", selected)
+        self.assertIn("Authorization", selected)
+        self.assertNotIn("Fault Monitoring", selected)
+
+    def test_analytics_epic_prioritizes_reliability_analytics(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Energy Consumption Analytics",
+                "description": "Provide analytics, trends, KPI visibility, telemetry reporting, and data export for energy consumption review.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertEqual(context["primaryCapability"]["name"], "Reliability Analytics")
+        self.assertIn("Reliability Analytics", selected)
+
+    def test_alert_center_epic_prioritizes_alert_management(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Centralized Alarm Center",
+                "description": "Operators need alert management, notification handling, escalation review, and operational visibility for alarms.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertEqual(context["primaryCapability"]["name"], "Alert Management")
+        self.assertIn("Operational Awareness", selected)
+
+    def test_capability_discovery_limits_recommendations_and_includes_evidence(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Modernize Device Health Dashboard",
+                "description": "Improve device health monitoring, telemetry review, dashboard visibility, and health analysis for operations.",
+            }
+        )
+
+        discovery = context["capabilityDiscovery"]
+        recommendations = discovery["recommendations"]
+        accepted = [item for item in recommendations if item["accepted"]]
+        self.assertLessEqual(len(accepted), 6)
+        self.assertGreaterEqual(discovery["threshold"], 70)
+        self.assertTrue(all(item["reason"] for item in recommendations[:3]))
+        self.assertTrue(all(item["evidence"] for item in recommendations[:3]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .capability_discovery_engine import CapabilityDiscoveryEngine
 from .capability_context import CapabilityContext, CapabilityMatch
 from .capability_deduplicator import dedupe_capabilities
 from .capability_diagnostics import CapabilityDiagnostics
@@ -10,13 +11,27 @@ from .capability_rejection import reject_irrelevant_capabilities
 
 
 class CapabilityEngine:
+    def __init__(self) -> None:
+        self.discovery = CapabilityDiscoveryEngine()
+
     def build_capability_context(self, intent_model: dict[str, Any], options: dict[str, Any] | None = None) -> dict[str, Any]:
         options = options or {}
         diagnostics = CapabilityDiagnostics()
         knowledge_registry = _knowledge_registry(options)
         project_profile = options.get("project_profile") or options.get("projectProfile") or {}
+        repository_snapshot = options.get("repository_snapshot") or options.get("repositorySnapshot") or {}
 
-        raw_matches = match_capabilities(intent_model, diagnostics)
+        discovery = self.discovery.discover(
+            intent_model,
+            {
+                **options,
+                "knowledge_registry": knowledge_registry,
+                "project_profile": project_profile,
+                "repository_snapshot": repository_snapshot,
+                "work_item_type": str(intent_model.get("workItemType") or intent_model.get("work_item_type") or "Epic"),
+            },
+        )
+        raw_matches = list(discovery.get("accepted") or []) or match_capabilities(intent_model, diagnostics)
         accepted, rejected_by_rules = reject_irrelevant_capabilities(raw_matches, intent_model, diagnostics)
         deduped, rejected_duplicates = dedupe_capabilities(accepted, diagnostics)
         if not deduped:
@@ -38,6 +53,16 @@ class CapabilityEngine:
         applications = match_applications(intent_model, project_profile, diagnostics)
         dependencies = match_dependencies(modules, flows, knowledge_registry, diagnostics)
         confidence = _confidence(primary, secondary, modules, flows, knowledge_registry)
+        discovery_report = discovery.get("report") if isinstance(discovery, dict) else {}
+        discovery_memory = discovery.get("memoryContext") if isinstance(discovery, dict) else {}
+        if discovery_report:
+            diagnostics.add(
+                f"Capability discovery selected {discovery_report.get('selectedCount', 0)} of {discovery_report.get('candidateCount', 0)} candidate capabilities above threshold {discovery_report.get('threshold', 0)}."
+            )
+        if isinstance(discovery_memory, dict) and discovery_memory.get("relevantMemories"):
+            diagnostics.add(
+                f"Engineering memory contributed {len(discovery_memory.get('relevantMemories', []))} supporting memory item(s) to capability discovery."
+            )
 
         context = CapabilityContext(
             work_item_id=intent_model.get("workItemId") or intent_model.get("work_item_id"),
@@ -50,6 +75,10 @@ class CapabilityEngine:
             relevant_applications=applications,
             relevant_dependencies=dependencies,
             capability_reasoning=diagnostics.reasoning,
+            capability_discovery={
+                **(discovery_report if isinstance(discovery_report, dict) else {}),
+                "memoryContext": discovery_memory if isinstance(discovery_memory, dict) else {},
+            },
             confidence=confidence,
         )
         return context.to_dict()
@@ -90,4 +119,3 @@ def _confidence(
     if knowledge_registry:
         score += 0.08
     return round(min(score, 0.96), 2)
-

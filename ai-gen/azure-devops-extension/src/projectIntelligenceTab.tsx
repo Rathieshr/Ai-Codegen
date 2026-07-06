@@ -5162,6 +5162,7 @@ function RecommendedActionCard({
     onGenerateQATestCases,
     onBuildExecutionPackage,
     onOpenVsCode,
+    hasStoryAnalysis: workflow.nextAction.action !== 'analyze_story',
     hasExecutionPackage,
     hasTaskDrafts,
     approvalWorkflow,
@@ -5317,6 +5318,7 @@ function recommendedActionsForItemType(
     onGenerateQATestCases: () => void;
     onBuildExecutionPackage: () => void;
     onOpenVsCode: () => void;
+    hasStoryAnalysis: boolean;
     hasExecutionPackage: boolean;
     hasTaskDrafts: boolean;
     approvalWorkflow: ApprovalWorkflowState;
@@ -5356,23 +5358,22 @@ function recommendedActionsForItemType(
     ];
   }
   if (itemType === 'Story') {
-    if (isApprovalPending(handlers.approvalWorkflow.story)) {
+    if (!handlers.hasStoryAnalysis) {
       return [
-        { label: 'Approve Story', run: handlers.onApproveStory, primary: true },
-        { label: 'Regenerate Story', run: handlers.onRefineStory },
-        { label: 'Generate Tasks', run: handlers.onGenerateChildren },
+        { label: 'Analyze Story', run: handlers.onRefineStory, primary: true },
+        { label: 'Review Acceptance Criteria', run: handlers.onRefineStory },
       ];
     }
     if (handlers.hasTaskDrafts && isApprovalPending(handlers.approvalWorkflow.tasks)) {
       return [
         { label: 'Approve Tasks', run: handlers.onApproveTasks, primary: true },
         { label: 'Regenerate Tasks', run: handlers.onGenerateChildren },
-        { label: 'Open Planning', run: handlers.onGenerateChildren },
+        { label: 'Review Story', run: handlers.onRefineStory },
       ];
     }
     return [
       { label: 'Generate Tasks', run: handlers.onGenerateChildren, primary: true },
-      ...(handlers.hasTaskDrafts ? [{ label: 'Approve Tasks', run: handlers.onApproveTasks }] : []),
+      { label: 'Regenerate Story', run: handlers.onRefineStory },
       { label: 'Open Execution', run: handlers.onBuildExecutionPackage },
     ];
   }
@@ -6229,68 +6230,30 @@ function AIPlannerWorkspace({
             ]}
         />
         {readOnly ? <div className="planner-error">This work item is Closed. Story planning is read-only.</div> : null}
-        <div className="hei-demo-stack">
-          <section className="planner-card">
-            <div className="planner-label">Story Summary</div>
-            <strong>{normalizeStoryTitle(storyInput.title || storyResult?.story_summary || currentWorkItem.title || 'Story')}</strong>
-            <p>{storyInput.description || storyResult?.story_summary || 'Story summary will appear here after analysis.'}</p>
-          </section>
-          <section className="planner-card">
-            <div className="planner-label">Acceptance Criteria</div>
-            <ListBlock
-              title="Acceptance Criteria"
-              items={splitAcceptanceCriteriaText(acceptanceCriteria).length ? splitAcceptanceCriteriaText(acceptanceCriteria) : storyResult?.acceptance_criteria || []}
-              empty="Analyze the story to generate acceptance criteria."
-            />
-          </section>
-          <section className="planner-card">
-            <div className="planner-section-header">
-              <div>
-                <div className="planner-label">Generated Task List</div>
-                <div className="planner-subtle">Tasks stay in draft until you approve them.</div>
-              </div>
-              {hasGeneratedTasks ? (
-                <button className="planner-button" onClick={approveTasks} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.tasks)}>
-                  Approve Tasks
-                </button>
-              ) : null}
-            </div>
-            {generatedTasks.length ? (
-              <StructuredChildDraftGrid drafts={generatedTasks} />
-            ) : (
-              <EmptyState title="No tasks generated yet." detail="Generate Tasks to continue Story planning." />
-            )}
-          </section>
-        </div>
-        <details className="planner-nested">
-          <summary>Show details</summary>
-          <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Approved story scope, users, and outcome." />
-          <textarea
-            className="planner-textarea compact"
-            value={acceptanceCriteria}
-            onChange={(event) => setAcceptanceCriteria(event.target.value)}
-            placeholder="Acceptance criteria, one per line"
+        {storyResult ? (
+          <StoryPlanningWorkspace
+            result={storyResult}
+            currentWorkItem={currentWorkItem}
+            activeTab={storyPlanningTab}
+            onTabChange={setStoryPlanningTab}
+            taskDrafts={generatedTasks}
+            hasExecutionPackage={false}
+            onGenerateTasks={() => generateChildren(false)}
+            loading={loading}
+            readOnly={readOnly}
+            taskApprovalStatus={approvalWorkflow.tasks}
           />
-          {storyResult ? (
-            <StoryPlanningWorkspace
-              result={storyResult}
-              currentWorkItem={currentWorkItem}
-              activeTab={storyPlanningTab}
-              onTabChange={setStoryPlanningTab}
-              taskDrafts={generatedTasks}
-              hasExecutionPackage={false}
-              onGenerateTasks={() => generateChildren(false)}
-              loading={loading}
-              readOnly={readOnly}
+        ) : (
+          <section className="planner-card">
+            <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder="Open critical fault event details" descriptionPlaceholder="Approved story scope, users, and outcome." />
+            <textarea
+              className="planner-textarea compact"
+              value={acceptanceCriteria}
+              onChange={(event) => setAcceptanceCriteria(event.target.value)}
+              placeholder="Acceptance criteria, one per line"
             />
-          ) : null}
-          <div className="planner-status-grid">
-            <Row label="Story" value={storyResult ? 'Analyzed' : 'Analysis Pending'} />
-            <Row label="Tasks" value={hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Not Generated'} />
-            <Row label="Modules" value={(storyResult?.affected_modules || []).join(', ') || 'Pending'} />
-            <Row label="Flows" value={(storyResult?.affected_flows || []).join(', ') || 'Pending'} />
-          </div>
-        </details>
+          </section>
+        )}
         </section>
       </>
     );
@@ -7834,16 +7797,24 @@ function qaPrimaryAction({
 
 function executionContextFileNames(context?: ExecutionContextResult): string[] {
   const ranked = Array.isArray(context?.recommended_files) ? context?.recommended_files : [];
-  const executionPackage = (context?.execution_package_v2 || context?.executionPackageV2 || {}) as {
-    repositoryContext?: { relevantFiles?: Array<{ path?: string; file?: string } | string> };
+  const executionPackage = (context?.execution_package_v2
+    || context?.executionPackageV2
+    || context?.implementation_package_v2
+    || context?.implementationPackageV2
+    || {}) as {
+    repositoryContext?: { relevantFiles?: Array<{ path?: string; file?: string; name?: string } | string> };
     risks?: Array<{ reason?: string; name?: string; title?: string } | string>;
   };
   const packageFiles = Array.isArray(executionPackage.repositoryContext?.relevantFiles)
     ? executionPackage.repositoryContext?.relevantFiles
     : [];
+  const capsuleFiles = Array.isArray((context as any)?.context_capsule?.relevantFiles)
+    ? (context as any).context_capsule.relevantFiles
+    : [];
   return uniqueStrings([
     ...ranked.map((item) => String(item || '')).filter(Boolean),
-    ...packageFiles.map((item) => String(typeof item === 'string' ? item : item?.path || item?.file || '')).filter(Boolean),
+    ...packageFiles.map((item) => String(typeof item === 'string' ? item : item?.path || item?.file || item?.name || '')).filter(Boolean),
+    ...capsuleFiles.map((item: any) => String(typeof item === 'string' ? item : item?.path || item?.file || item?.name || '')).filter(Boolean),
   ]);
 }
 
@@ -7865,7 +7836,7 @@ function executionContextRiskText(context?: ExecutionContextResult): string[] {
 function filterPackageFiles(files: string[], keywords: string[]): string[] {
   const lowered = keywords.map((keyword) => keyword.toLowerCase());
   const matched = files.filter((file) => lowered.some((keyword) => file.toLowerCase().includes(keyword)));
-  return matched.slice(0, 5);
+  return (matched.length ? matched : files).slice(0, 5);
 }
 
 function filterPackageRisks(risks: string[], keywords: string[]): string[] {
@@ -9836,6 +9807,7 @@ function StoryPlanningWorkspace({
   onGenerateTasks,
   loading,
   readOnly,
+  taskApprovalStatus,
 }: {
   result: StoryRefinement;
   currentWorkItem?: AdoWorkItem;
@@ -9846,6 +9818,7 @@ function StoryPlanningWorkspace({
   onGenerateTasks: () => void;
   loading: boolean;
   readOnly: boolean;
+  taskApprovalStatus: ApprovalStatus;
 }) {
   const title = normalizeStoryTitle(currentWorkItem?.title || result.story_summary || 'Story');
   const confidence = qualityScoreForStory(result) || 0;
@@ -9855,6 +9828,14 @@ function StoryPlanningWorkspace({
   const validationState = confidence >= 75 && acceptanceItems.length ? 'PASS' : 'Validation Pending';
   const storyId = currentWorkItem?.id ? `Story #${currentWorkItem.id}` : 'Story ID Pending';
   const taskCount = taskDrafts.length || result.proposed_tasks?.length || 0;
+  const nextAction =
+    !acceptanceItems.length
+      ? 'Review Acceptance Criteria'
+      : !taskDrafts.length
+        ? 'Generate Tasks'
+        : taskApprovalStatus === 'approved'
+          ? 'Open Execution'
+          : 'Approve Tasks';
   return (
     <section className="planner-card hei-story-workspace">
       <div className="hei-story-header">
@@ -9868,9 +9849,10 @@ function StoryPlanningWorkspace({
             <span className="hei-status-badge neutral">{storyId}</span>
           </div>
         </div>
-        <button className="planner-button" onClick={onGenerateTasks} disabled={loading || readOnly || !acceptanceItems.length}>
-          Generate Tasks →
-        </button>
+        <div className="hei-planning-primary">
+          <span>{nextAction}</span>
+          <small>Use the sticky header action to continue.</small>
+        </div>
       </div>
 
       <div className="hei-story-grid">
@@ -9916,18 +9898,21 @@ function StoryPlanningWorkspace({
           <div className="hei-stage-summary-card">
             <div>
               <span>Story Readiness</span>
-              <strong>{validationState === 'PASS' ? 'Generate Tasks' : 'Review Acceptance Criteria'}</strong>
+              <strong>{nextAction}</strong>
             </div>
             <div className="planner-status-grid">
               <Row label="Validation" value={validationState} />
               <Row label="Knowledge" value={(result.affected_modules?.length || result.affected_flows?.length) ? 'PASS' : 'Knowledge Not Loaded'} />
               <Row label="Repository" value={repositoryState} />
               <Row label="Acceptance" value={acceptanceItems.length ? `${acceptanceItems.length} Mapped` : 'Validation Pending'} />
-              <Row label="Execution" value={hasExecutionPackage ? 'Ready' : 'Waiting'} />
+              <Row label="Task Approval" value={taskDrafts.length ? approvalStatusLabel(taskApprovalStatus) : 'Not Generated'} />
+              <Row label="Execution" value={hasExecutionPackage ? 'Ready' : (taskApprovalStatus === 'approved' ? 'Ready' : 'Waiting')} />
             </div>
-            <button className="planner-button" onClick={onGenerateTasks} disabled={loading || readOnly || !acceptanceItems.length}>
-              Generate Tasks →
-            </button>
+            {!taskDrafts.length ? (
+              <button className="planner-button" onClick={onGenerateTasks} disabled={loading || readOnly || !acceptanceItems.length}>
+                Generate Tasks →
+              </button>
+            ) : null}
           </div>
         </aside>
       </div>
@@ -10467,41 +10452,89 @@ function ExecutionPackageCards({
   onOpenVsCode: () => void;
   loading: boolean;
 }) {
+  type PackageKind = 'dev' | 'ui' | 'qa' | 'copilot';
+  type PackageCard = {
+    title: string;
+    prompt: string;
+    files: string[];
+    risk: string[];
+    kind: PackageKind;
+    focus: string;
+  };
   const allFiles = executionContextFileNames(executionContext);
   const allRisks = executionContextRiskText(executionContext);
-  const cards = [
-    { title: 'UI Package', prompt: uiPrompt?.prompt || '', files: filterPackageFiles(allFiles, ['page', 'screen', 'view', 'component', 'xaml', 'css', 'scss', 'tsx', 'jsx']), risk: filterPackageRisks(allRisks, ['ui', 'accessibility', 'validation', 'display']), kind: 'ui' as const },
-    { title: 'Frontend Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['front', 'client', 'web', 'mobile', 'viewmodel', 'presenter', 'hook', 'tsx', 'jsx', 'js']), risk: filterPackageRisks(allRisks, ['frontend', 'mobile', 'state', 'interaction']), kind: 'dev' as const },
-    { title: 'Backend/API Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['api', 'controller', 'service', 'handler', 'endpoint', 'repository', 'cs', 'py', 'ts']), risk: filterPackageRisks(allRisks, ['backend', 'api', 'authorization', 'integration', 'service']), kind: 'dev' as const },
-    { title: 'Data Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['data', 'entity', 'model', 'schema', 'migration', 'sql', 'db']), risk: filterPackageRisks(allRisks, ['data', 'migration', 'integrity', 'consistency']), kind: 'dev' as const },
-    { title: 'Analytics Package', prompt: qaPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['analytics', 'report', 'metric', 'dashboard', 'telemetry']), risk: filterPackageRisks(allRisks, ['analytics', 'reporting', 'telemetry']), kind: 'qa' as const },
+  const sourceTitle = executionContext?.execution_source?.title || 'Selected work item';
+  const cards: PackageCard[] = [
+    { title: 'UI Package', prompt: uiPrompt?.prompt || '', files: filterPackageFiles(allFiles, ['page', 'screen', 'view', 'component', 'xaml', 'css', 'scss', 'tsx', 'jsx']), risk: filterPackageRisks(allRisks, ['ui', 'accessibility', 'validation', 'display']), kind: 'ui', focus: 'Focus on screens, interaction states, accessibility, validation feedback, and user-facing behavior only.' },
+    { title: 'Frontend Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['front', 'client', 'web', 'mobile', 'viewmodel', 'presenter', 'hook', 'tsx', 'jsx', 'js']), risk: filterPackageRisks(allRisks, ['frontend', 'mobile', 'state', 'interaction']), kind: 'dev', focus: 'Focus on client-side state, orchestration, interaction flow, and rendering behavior for the approved scope.' },
+    { title: 'Backend/API Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['api', 'controller', 'service', 'handler', 'endpoint', 'repository', 'cs', 'py', 'ts']), risk: filterPackageRisks(allRisks, ['backend', 'api', 'authorization', 'integration', 'service']), kind: 'dev', focus: 'Focus on APIs, handlers, services, authorization, and integration boundaries for the approved scope.' },
+    { title: 'Data Package', prompt: devPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['data', 'entity', 'model', 'schema', 'migration', 'sql', 'db']), risk: filterPackageRisks(allRisks, ['data', 'migration', 'integrity', 'consistency']), kind: 'dev', focus: 'Focus on entities, schemas, persistence, migration safety, and data integrity only.' },
+    { title: 'Analytics Package', prompt: qaPrompt?.prompt || executionPlan?.plan || '', files: filterPackageFiles(allFiles, ['analytics', 'report', 'metric', 'dashboard', 'telemetry']), risk: filterPackageRisks(allRisks, ['analytics', 'reporting', 'telemetry']), kind: 'qa', focus: 'Focus on telemetry, analytics outputs, reporting signals, and verification of measurable outcomes.' },
   ];
+  const [selectedPackageTitle, setSelectedPackageTitle] = useState<string | null>(null);
+  useEffect(() => {
+    if (!cards.length) {
+      if (selectedPackageTitle !== null) {
+        setSelectedPackageTitle(null);
+      }
+      return;
+    }
+    if (!selectedPackageTitle || !cards.some((card) => card.title === selectedPackageTitle)) {
+      setSelectedPackageTitle(cards[0].title);
+    }
+  }, [cards, selectedPackageTitle]);
+  const selectedCard = cards.find((card) => card.title === selectedPackageTitle) || cards[0];
+  const buildPackagePrompt = (card: PackageCard, files: string[], risk: string, basePrompt: string): string => {
+    const lines = [
+      `Package Focus: ${card.title}`,
+      `Source Artifact: ${sourceTitle}`,
+      card.focus,
+      files.length
+        ? `Prioritize these files first: ${files.join(', ')}`
+        : 'Repository file ranking not available. Locate the closest existing implementation before editing.',
+      `Primary risk: ${risk}`,
+      '',
+      basePrompt || executionPlan?.plan || 'Generate the implementation prompt for this package from the approved implementation package.',
+    ];
+    return lines.join('\n');
+  };
   return (
     <section className="planner-card">
       <div className="planner-section-header">
         <div>
           <div className="planner-label">Implementation Packages</div>
-          <div className="planner-subtle">Package cards keep the implementation view focused. Advanced artifacts stay collapsed below.</div>
+        <div className="planner-subtle">Package cards keep the implementation view focused. Advanced artifacts stay collapsed below.</div>
         </div>
       </div>
       <div className="hei-package-grid">
         {cards.map((card) => {
-          const promptText = card.prompt;
           const files = card.files.length ? card.files : allFiles.slice(0, 4);
           const risk = card.risk.length ? card.risk[0] : allRisks[0] || 'Risk will appear after package generation.';
-          const status = executionContext ? (promptText ? 'Ready' : 'Package Built') : 'Not Built';
+          const promptText = buildPackagePrompt(card, files, risk, card.prompt);
+          const status = executionContext ? (card.prompt ? 'Prompt Ready' : 'Package Built') : 'Not Built';
+          const isSelected = selectedCard?.title === card.title;
           return (
-            <article className="hei-package-card" key={card.title}>
+            <article className={`hei-package-card${isSelected ? ' selected' : ''}`} key={card.title}>
               <div className="planner-task-header">
                 <strong>{card.title}</strong>
-                <span className="planner-badge">{status}</span>
               </div>
               <Row label="Status" value={status} />
               <Row label="Files Impacted" value={files.length ? `${files.length} files` : 'Repository file ranking not available'} />
               <Row label="Risk" value={risk} />
               <ListBlock title="Files Impacted" items={files} empty="Repository file ranking not available" />
               <div className="planner-actions">
-                <button className="planner-button secondary" onClick={() => document.getElementById('execution-package-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} disabled={!executionContext}>View Package</button>
+                <button
+                  className="planner-button secondary"
+                  onClick={() => {
+                    setSelectedPackageTitle(card.title);
+                    window.setTimeout(() => {
+                      document.getElementById('execution-package-card-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 0);
+                  }}
+                  disabled={!executionContext}
+                >
+                  View Package
+                </button>
                 <button className="planner-button secondary" onClick={() => promptText ? void copyText(promptText) : onGeneratePrompt(card.kind)} disabled={loading || (!promptText && !executionContext)}>
                   Copy Developer Prompt
                 </button>
@@ -10513,6 +10546,24 @@ function ExecutionPackageCards({
           );
         })}
       </div>
+      {selectedCard ? (
+        <section className="planner-card" id="execution-package-card-details">
+          <div className="planner-section-header">
+            <div>
+              <div className="planner-label">{selectedCard.title}</div>
+              <div className="planner-subtle">Focused implementation view for this package. Use the copied prompt for Copilot, Codex, or Claude.</div>
+            </div>
+          </div>
+          <div className="planner-summary-grid">
+            <SummaryTile title="Package" value={selectedCard.title} />
+            <SummaryTile title="Files Impacted" value={selectedCard.files.length ? `${selectedCard.files.length} prioritized` : (allFiles.length ? `${allFiles.slice(0, 4).length} fallback files` : 'Not Available')} />
+            <SummaryTile title="Prompt" value={selectedCard.prompt ? 'Available' : 'Generated From Implementation Plan'} />
+          </div>
+          <ListBlock title="Focused Files" items={selectedCard.files.length ? selectedCard.files : allFiles.slice(0, 4)} empty="Repository file ranking not available" />
+          <ListBlock title="Focused Risks" items={selectedCard.risk.length ? selectedCard.risk : allRisks.slice(0, 3)} empty="Risk will appear after package generation." />
+          <PromptBlock title={`${selectedCard.title} Developer Prompt`} value={buildPackagePrompt(selectedCard, selectedCard.files.length ? selectedCard.files : allFiles.slice(0, 4), selectedCard.risk[0] || allRisks[0] || 'Risk will appear after package generation.', selectedCard.prompt)} copyable />
+        </section>
+      ) : null}
     </section>
   );
 }
@@ -12228,11 +12279,8 @@ function buildWorkflowOrchestration({
     if (!hasStoryAnalysis) {
       nextAction = { label: 'Analyze Story', action: 'analyze_story', workspace: 'planning', reason: 'Start by analyzing the Story before task generation.' };
       currentStage = 'Story Analysis';
-    } else if (isApprovalPending(approvalWorkflow.story)) {
-      nextAction = { label: 'Approve Story', action: 'approve_story', workspace: 'planning', reason: 'The story draft is ready and must be approved before delivery artifacts are generated.' };
-      currentStage = 'Story Approval';
     } else if (!taskCandidates.length) {
-      nextAction = { label: 'Generate Tasks', action: 'generate_tasks', workspace: 'planning', reason: 'The story is approved or loaded. Generate implementation tasks next.' };
+      nextAction = { label: 'Generate Tasks', action: 'generate_tasks', workspace: 'planning', reason: 'The story analysis is ready. Generate implementation tasks next.' };
       currentStage = 'Task Generation';
     } else if (!tasksApproved || isApprovalPending(approvalWorkflow.tasks)) {
       nextAction = { label: 'Approve Tasks', action: 'approve_tasks', workspace: 'planning', reason: 'Generated Tasks are waiting for approval.' };

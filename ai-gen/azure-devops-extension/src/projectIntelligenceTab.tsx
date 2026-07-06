@@ -10970,9 +10970,12 @@ async function addAdoComment(workItem: AdoWorkItem, text: string): Promise<void>
 function featureDraftsFromEpic(result: EpicRefinement, approvedOnly = false): ChildDraft[] {
   const approvedCapabilities = new Set((result.capability_review || [])
     .filter(isCapabilityApproved)
-    .map((capability) => capability.capabilityName));
+    .map((capability) => (capability.capabilityName || '').trim().toLowerCase()));
   const features = approvedOnly && result.capability_review?.length
-    ? result.recommended_features.filter((feature) => approvedCapabilities.has(feature.capability_category || feature.capability || feature.title))
+    ? result.recommended_features.filter((feature) => {
+        const featureCapability = (feature.capability_category || feature.capability || feature.title || '').trim().toLowerCase();
+        return approvedCapabilities.has(featureCapability);
+      })
     : result.recommended_features;
   return features.map((feature, index) => ({
     id: `feature_${index + 1}`,

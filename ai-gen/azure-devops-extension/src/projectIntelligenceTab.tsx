@@ -2032,8 +2032,8 @@ function ProjectIntelligenceTab() {
       return;
     }
     if (itemType === 'Epic' && epicResult?.capability_review?.length) {
-      const allReviewed = epicResult.capability_review.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
-      const approvedCount = epicResult.capability_review.filter((capability) => capability.status === 'Approved').length;
+      const allReviewed = epicResult.capability_review.every(isCapabilityReviewed);
+      const approvedCount = epicResult.capability_review.filter(isCapabilityApproved).length;
       if (!allReviewed || approvedCount === 0) {
         return;
       }
@@ -2818,12 +2818,16 @@ function ProjectIntelligenceTab() {
     }
     if (targetType === 'Epic') {
       const source = epicFeatureGenerationSource(epicInput, epicResult);
-      if (epicResult?.capability_review?.length && !epicResult.capability_review.some((capability) => capability.status === 'Approved')) {
+      if (epicResult?.capability_review?.length && !epicResult.capability_review.some(isCapabilityApproved)) {
         setError('Approve at least one capability before generating Features.');
         return;
       }
       if (epicResult && !forceRegenerate) {
-        const drafts = mergeEpicFeatureDraftsFromCapabilityState(epicResult, childDrafts);
+        let drafts = mergeEpicFeatureDraftsFromCapabilityState(epicResult, childDrafts);
+        if (!drafts.length) {
+          // No existing feature drafts to merge — generate fresh from approved capabilities
+          drafts = featureDraftsFromEpic(epicResult, true);
+        }
         if (!drafts.length) {
           setError('Approve at least one capability before generating Features.');
           return;
@@ -5429,10 +5433,10 @@ function epicFeatureGenerationSource(epicInput: { title: string; description: st
     epic: epicInput,
     purpose: 'generated_features',
     approved_capabilities: (epicResult?.capability_review || [])
-      .filter((capability) => capability.status === 'Approved')
+      .filter(isCapabilityApproved)
       .map((capability) => capability.capabilityId || capability.capabilityName),
     rejected_capabilities: (epicResult?.capability_review || [])
-      .filter((capability) => capability.status === 'Rejected')
+      .filter(isCapabilityRejected)
       .map((capability) => capability.capabilityId || capability.capabilityName),
   };
 }
@@ -5453,6 +5457,22 @@ function normalizeEpicCapabilityReview(result: EpicRefinement, preserveReviewedS
       status: 'Pending',
     })),
   };
+}
+
+function normalizedCapabilityStatus(status: string | undefined | null): string {
+  return String(status || '').trim().toLowerCase();
+}
+
+function isCapabilityApproved(capability: Pick<CapabilityReview, 'status'>): boolean {
+  return normalizedCapabilityStatus(capability.status) === 'approved';
+}
+
+function isCapabilityRejected(capability: Pick<CapabilityReview, 'status'>): boolean {
+  return normalizedCapabilityStatus(capability.status) === 'rejected';
+}
+
+function isCapabilityReviewed(capability: Pick<CapabilityReview, 'status'>): boolean {
+  return isCapabilityApproved(capability) || isCapabilityRejected(capability);
 }
 
 function capabilityReviewIdentity(capability: Pick<CapabilityReview, 'capabilityId' | 'capabilityName'>): string {
@@ -5476,16 +5496,14 @@ function reconcileEpicCapabilityReview(
     if (!previous) {
       return capability;
     }
-    const preservedStatus = ['Approved', 'Rejected'].includes(String(previous.status)) ? previous.status : capability.status;
+    const preservedStatus = isCapabilityReviewed(previous) ? previous.status : capability.status;
     return {
       ...capability,
       status: preservedStatus,
       reviewComments: previous.reviewComments?.length ? previous.reviewComments : capability.reviewComments,
     };
   });
-  const userValidated = capabilityReview.some((capability) => (
-    ['Approved', 'Rejected'].includes(String(capability.status)) || Boolean(capability.reviewComments?.length)
-  ));
+  const userValidated = capabilityReview.some((capability) => isCapabilityReviewed(capability) || Boolean(capability.reviewComments?.length));
   return {
     ...nextResult,
     capability_review_user_validated: userValidated,
@@ -6525,9 +6543,9 @@ function buildPlanningWorkspaceModel({
     ? []
     : childDrafts.filter((draft) => draft.type === 'User Story');
   const capabilities = epicResult?.capability_review || [];
-  const allCapabilitiesReviewed = !capabilities.length || capabilities.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
-  const approvedCapabilities = capabilities.filter((capability) => capability.status === 'Approved').length;
-  const pendingCapabilities = capabilities.filter((capability) => !['Approved', 'Rejected'].includes(String(capability.status)));
+  const allCapabilitiesReviewed = !capabilities.length || capabilities.every(isCapabilityReviewed);
+  const approvedCapabilities = capabilities.filter(isCapabilityApproved).length;
+  const pendingCapabilities = capabilities.filter((capability) => !isCapabilityReviewed(capability));
   const showCapabilityReview = isEpic && capabilities.length > 0;
   const items = isEpic
     ? showCapabilityReview
@@ -7133,7 +7151,7 @@ function capabilityToReviewItem(capability: CapabilityReview): PlanningReviewIte
     comments: capability.reviewComments,
     repositoryCoverage: Math.round(Math.min(100, ((capability.repositoryEvidence?.length || 0) + (capability.relatedModules?.length || 0) + (capability.relatedFlows?.length || 0)) * 12)),
     generatedCount: capability.estimatedFeatures || 1,
-    validation: capability.status === 'Approved' ? 'PASS' : capability.status === 'Rejected' ? 'Rejected' : 'Needs Review',
+    validation: isCapabilityApproved(capability) ? 'PASS' : isCapabilityRejected(capability) ? 'Rejected' : 'Needs Review',
   };
 }
 
@@ -10951,7 +10969,7 @@ async function addAdoComment(workItem: AdoWorkItem, text: string): Promise<void>
 
 function featureDraftsFromEpic(result: EpicRefinement, approvedOnly = false): ChildDraft[] {
   const approvedCapabilities = new Set((result.capability_review || [])
-    .filter((capability) => capability.status === 'Approved')
+    .filter(isCapabilityApproved)
     .map((capability) => capability.capabilityName));
   const features = approvedOnly && result.capability_review?.length
     ? result.recommended_features.filter((feature) => approvedCapabilities.has(feature.capability_category || feature.capability || feature.title))
@@ -12203,8 +12221,8 @@ function buildWorkflowOrchestration({
   const hasEpicAnalysis = Boolean(epicResult || capabilities.length);
   const hasFeatureAnalysis = Boolean(featureResult);
   const hasStoryAnalysis = Boolean(storyResult);
-  const allCapabilitiesReviewed = !capabilities.length || capabilities.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
-  const approvedCapabilities = capabilities.filter((capability) => capability.status === 'Approved').length;
+  const allCapabilitiesReviewed = !capabilities.length || capabilities.every(isCapabilityReviewed);
+  const approvedCapabilities = capabilities.filter(isCapabilityApproved).length;
   const featuresApproved = approvalWorkflow.features === 'approved' || areAllDraftsApproved(featureCandidates);
   const selectableFeatureDrafts = featureCandidates.filter((draft) => draft.selected && draft.status !== 'created');
   const storiesApproved = approvalWorkflow.stories === 'approved' || areAllDraftsReviewed(storyCandidates);
@@ -12232,7 +12250,7 @@ function buildWorkflowOrchestration({
         label: 'Review Remaining Capabilities',
         action: 'open_planning',
         workspace: 'planning',
-        reason: `${capabilities.filter((capability) => !['Approved', 'Rejected'].includes(String(capability.status))).length} capabilities still require approval before feature generation.`,
+        reason: `${capabilities.filter((capability) => !isCapabilityReviewed(capability)).length} capabilities still require approval before feature generation.`,
       };
       currentStage = 'Capability Review';
     } else if (!featureDrafts.length) {

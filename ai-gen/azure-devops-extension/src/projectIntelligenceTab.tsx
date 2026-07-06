@@ -64,10 +64,14 @@ type ApprovalArtifact = 'epic' | 'features' | 'feature' | 'stories' | 'story' | 
 type ApprovalWorkflowState = Record<ApprovalArtifact, ApprovalStatus>;
 type WorkflowHealthStatus = 'Ready' | 'Needs Attention' | 'Blocked' | 'In Progress';
 type WorkflowActionKind =
+  | 'analyze_epic'
   | 'approve_epic'
+  | 'analyze_feature'
   | 'generate_features'
+  | 'create_children'
   | 'approve_features'
   | 'approve_feature'
+  | 'analyze_story'
   | 'generate_stories'
   | 'approve_stories'
   | 'approve_story'
@@ -103,8 +107,11 @@ type ArtifactType =
   | 'Task'
   | 'Acceptance Criteria'
   | 'Execution Package'
+  | 'Implementation Package'
   | 'Execution Plan'
+  | 'Implementation Plan'
   | 'Dev Prompt'
+  | 'AI Prompt'
   | 'UI Prompt'
   | 'QA Prompt'
   | 'Context Capsule'
@@ -892,12 +899,15 @@ type WorkItemDNASummary = {
 
 type ExecutionContextResult = ProviderMetadata & {
   execution_package_source?: string;
+  implementation_package_source?: string;
   artifact_id?: string | number;
   artifact_type?: 'Story' | 'Task' | string;
   execution_source?: { artifactId?: string | number; artifactType?: string; title?: string; description?: string };
   executable_artifact?: Record<string, unknown>;
   execution_package_v2?: Record<string, unknown>;
   executionPackageV2?: Record<string, unknown>;
+  implementation_package_v2?: Record<string, unknown>;
+  implementationPackageV2?: Record<string, unknown>;
   context_capsule?: ExecutionContextCapsule;
   context_capsule_diagnostics?: ProviderMetadata;
   work_item_dna?: WorkItemDNA;
@@ -946,6 +956,8 @@ type ExecutionContextResult = ProviderMetadata & {
 
 type PromptBuilderResult = ProviderMetadata & {
   prompt: string;
+  ai_prompt?: string;
+  aiPrompt?: Record<string, unknown>;
   developer_prompt_v2?: Record<string, unknown>;
 };
 
@@ -958,6 +970,8 @@ type ExecutionPlanResult = ProviderMetadata & {
   executionMode: ExecutionMode | string;
   executionModeLabel?: string;
   execution_plan?: Record<string, unknown>;
+  implementation_plan?: Record<string, unknown>;
+  implementationPlan?: Record<string, unknown>;
 };
 
 type CopilotContextResult = ProviderMetadata & {
@@ -1036,6 +1050,7 @@ type EpicRefinement = ProviderMetadata & {
   risks: string[];
   dependencies: string[];
   capability_review?: CapabilityReview[];
+  capability_review_user_validated?: boolean;
   capability_review_diagnostics?: {
     capabilityCount?: number;
     approved?: number;
@@ -1553,6 +1568,7 @@ function ProjectIntelligenceTab() {
   const [artifactReuseStatus, setArtifactReuseStatus] = useState('');
   const [graphSummary, setGraphSummary] = useState<GraphSummary | undefined>();
   const [coverageReport, setCoverageReport] = useState<CoverageIntelligenceReport | undefined>();
+  const [planningFocusRequest, setPlanningFocusRequest] = useState<{ target: PlanningFocusTarget; nonce: number }>({ target: null, nonce: 0 });
   const [engineeringMemories, setEngineeringMemories] = useState<EngineeringMemoryItem[]>([]);
   const [engineeringMemoryDiagnostics, setEngineeringMemoryDiagnostics] = useState<Record<string, unknown>>({});
   const [engineeringMemoryQuery, setEngineeringMemoryQuery] = useState('');
@@ -1685,7 +1701,8 @@ function ProjectIntelligenceTab() {
         const workItem = await loadCurrentWorkItem();
         if (workItem) {
           setCurrentWorkItem(workItem);
-          seedPlannerFromWorkItem(workItem, effectiveSession?.auto_route_by_work_item_type !== false, effectiveSession?.last_work_item_id !== workItem.id);
+          seedPlannerFromWorkItem(workItem, effectiveSession?.auto_route_by_work_item_type !== false);
+          restorePlanningArtifactForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
           restoreGeneratedChildArtifactForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
         }
         if (hasReadyCache) {
@@ -2010,7 +2027,22 @@ function ProjectIntelligenceTab() {
     if (!artifact || !Array.isArray(artifact.payload)) {
       return;
     }
-    const drafts = normalizeChildDraftPayload(artifact.payload, artifact.state);
+    const normalizedDrafts = normalizeChildDraftPayload(artifact.payload, artifact.state);
+    if (!normalizedDrafts.length) {
+      return;
+    }
+    if (itemType === 'Epic' && epicResult?.capability_review?.length) {
+      const allReviewed = epicResult.capability_review.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
+      const approvedCount = epicResult.capability_review.filter((capability) => capability.status === 'Approved').length;
+      if (!allReviewed || approvedCount === 0) {
+        return;
+      }
+    }
+    const drafts = itemType === 'Epic'
+      ? mergeEpicFeatureDraftsFromCapabilityState(epicResult, normalizedDrafts)
+      : itemType === 'Feature'
+        ? reconcileFeatureStoryDrafts(featureResult, normalizedDrafts)
+        : normalizedDrafts;
     if (!drafts.length) {
       return;
     }
@@ -2026,6 +2058,70 @@ function ProjectIntelligenceTab() {
     setArtifactReuseStatus(`Loaded existing ${childGenerationNoun(itemType)} v${artifact.version}. Use Regenerate if the ${itemType.toLowerCase()} details changed.`);
   }
 
+  function restorePlanningArtifactForWorkItem(workItem: AdoWorkItem, artifacts: ArtifactRecord[]) {
+    const itemType = normalizePlannerItemType(workItem.type);
+    const sourceItemId = String(workItem.id);
+    if (itemType === 'Epic') {
+      const artifact = latestArtifactForSource(artifacts, 'Epic', sourceItemId);
+      if (!artifact || Array.isArray(artifact.payload)) return;
+      const payload = normalizeEpicCapabilityReview(artifact.payload as EpicRefinement, (artifact.payload as EpicRefinement).capability_review_user_validated === true);
+      setEpicResult(payload);
+      setApprovalWorkflow((current) => ({
+        ...current,
+        epic: artifact.state === 'approved' || artifact.state === 'locked'
+          ? 'approved'
+          : isReadyForApproval(qualityScoreForEpic(payload)) ? 'ready_for_approval' : 'draft',
+      }));
+      setArtifactReuseStatus(`Loaded existing Epic analysis v${artifact.version}.`);
+      return;
+    }
+    if (itemType === 'Feature') {
+      const artifact = latestArtifactForSource(artifacts, 'Feature', sourceItemId);
+      if (!artifact || Array.isArray(artifact.payload)) return;
+      const payload = artifact.payload as FeatureRefinement;
+      setFeatureResult(payload);
+      setApprovalWorkflow((current) => ({
+        ...current,
+        feature: artifact.state === 'approved' || artifact.state === 'locked'
+          ? 'approved'
+          : isReadyForApproval(qualityScoreForFeature(payload)) ? 'ready_for_approval' : 'draft',
+      }));
+      setArtifactReuseStatus(`Loaded existing Feature analysis v${artifact.version}.`);
+      return;
+    }
+    if (itemType === 'Story') {
+      const artifact = latestArtifactForSource(artifacts, 'Story', sourceItemId);
+      if (!artifact || Array.isArray(artifact.payload)) return;
+      const payload = artifact.payload as StoryRefinement;
+      setStoryResult(payload);
+      setApprovalWorkflow((current) => ({
+        ...current,
+        story: artifact.state === 'approved' || artifact.state === 'locked'
+          ? 'approved'
+          : isReadyForApproval(qualityScoreForStory(payload)) ? 'ready_for_approval' : 'draft',
+      }));
+      setArtifactReuseStatus(`Loaded existing Story analysis v${artifact.version}.`);
+    }
+  }
+
+  async function persistEpicReviewArtifact(nextResult: EpicRefinement, state: ArtifactLifecycleState = 'draft') {
+    const sourceItem = sourceItemForArtifact('Epic');
+    const fingerprint = artifactFingerprint('Epic', sourceItem, epicInput);
+    const artifact = await saveArtifact({
+      artifact_type: 'Epic',
+      title: epicInput.title || currentWorkItem?.title || 'Epic refinement',
+      payload: nextResult,
+      fingerprint,
+      state,
+      source_item: sourceItem,
+      created_by: permissionState.user_display_name || permissionState.user_name || 'AI Gen User',
+    }).catch(() => undefined);
+    if (artifact) {
+      setArtifactRecords((current) => [artifact, ...current.filter((item) => item.artifact_id !== artifact.artifact_id)]);
+      setArtifactReuseStatus(`Saved Epic review state v${artifact.version}.`);
+    }
+  }
+
   async function loadReusableArtifact<T>(
     artifactType: ArtifactType,
     source: Record<string, unknown>,
@@ -2036,11 +2132,11 @@ function ProjectIntelligenceTab() {
     const reusable = await getReusableArtifact(artifactType, fingerprint, sourceItem.id).catch(() => undefined);
     if (reusable?.reusable && reusable.artifact) {
       apply(reusable.artifact.payload as T, reusable.artifact);
-      setArtifactReuseStatus(`Using existing ${artifactType} v${reusable.artifact.version}.`);
+      setArtifactReuseStatus(`Using existing ${artifactDisplayName(artifactType)} v${reusable.artifact.version}.`);
       return true;
     }
     if (reusable?.status === 'refresh_required') {
-      setArtifactReuseStatus(`${artifactType} changed since last approval. Refresh required.`);
+      setArtifactReuseStatus(`${artifactDisplayName(artifactType)} changed since last approval. Refresh required.`);
     }
     return false;
   }
@@ -2110,8 +2206,9 @@ function ProjectIntelligenceTab() {
       return;
     }
     if (!forceRefresh && await loadReusableArtifact<EpicRefinement>('Epic', epicInput, (payload) => {
-      setEpicResult(payload);
-      markApprovalGenerated('epic', qualityScoreForEpic(payload));
+      const normalized = normalizeEpicCapabilityReview(payload, payload.capability_review_user_validated === true);
+      setEpicResult(normalized);
+      markApprovalGenerated('epic', qualityScoreForEpic(normalized));
     })) {
       return;
     }
@@ -2121,9 +2218,17 @@ function ProjectIntelligenceTab() {
       epic: epicInput,
     }));
     if (result) {
-      setEpicResult(result);
-      markApprovalGenerated('epic', qualityScoreForEpic(result));
-      await saveGeneratedArtifact('Epic', epicInput.title || 'Epic refinement', result, epicInput);
+      const normalized = normalizeEpicCapabilityReview(result);
+      const reconciled = reconcileEpicCapabilityReview(epicResult, normalized);
+      setEpicResult(reconciled);
+      setChildDrafts((current) => {
+        const nonFeatureDrafts = current.filter((draft) => draft.type !== 'Feature');
+        const mergedFeatureDrafts = mergeEpicFeatureDraftsFromCapabilityState(reconciled, current);
+        void persistChildDraftReviewArtifact('Feature', mergedFeatureDrafts);
+        return [...nonFeatureDrafts, ...mergedFeatureDrafts];
+      });
+      markApprovalGenerated('epic', qualityScoreForEpic(reconciled));
+      await saveGeneratedArtifact('Epic', epicInput.title || 'Epic refinement', reconciled, epicInput);
     }
   }
 
@@ -2134,6 +2239,11 @@ function ProjectIntelligenceTab() {
     }
     if (!mode && !forceRefresh && await loadReusableArtifact<FeatureRefinement>('Feature', featureInput, (payload) => {
       setFeatureResult(payload);
+      setChildDrafts((current) => {
+        const nonStoryDrafts = current.filter((draft) => draft.type !== 'User Story');
+        const mergedStoryDrafts = reconcileFeatureStoryDrafts(payload, current);
+        return [...nonStoryDrafts, ...mergedStoryDrafts];
+      });
       markApprovalGenerated('feature', qualityScoreForFeature(payload));
     })) {
       return;
@@ -2146,6 +2256,12 @@ function ProjectIntelligenceTab() {
     }));
     if (result) {
       setFeatureResult(result);
+      setChildDrafts((current) => {
+        const nonStoryDrafts = current.filter((draft) => draft.type !== 'User Story');
+        const mergedStoryDrafts = reconcileFeatureStoryDrafts(result, current);
+        void persistChildDraftReviewArtifact('Story', mergedStoryDrafts);
+        return [...nonStoryDrafts, ...mergedStoryDrafts];
+      });
       markApprovalGenerated('feature', qualityScoreForFeature(result));
       await saveGeneratedArtifact('Feature', featureInput.title || 'Feature refinement', result, featureInput);
     }
@@ -2175,20 +2291,20 @@ function ProjectIntelligenceTab() {
     }
   }
 
-  async function generateQATestCases(forceRefresh = false) {
+  async function generateQATestCases(forceRefresh = false, action: 'analyze' | 'generate_missing_tests' = 'analyze') {
     if (!canContribute) {
       setError('QA generation is restricted to AI Gen Admins and Contributors.');
       return;
     }
     const story = currentStoryPayload();
-    const source = { story, impact_analysis: storyImpact || {} };
+    const source = { story, impact_analysis: storyImpact || {}, qa_action: action };
     if (!forceRefresh && await loadReusableArtifact<QATestSuiteResult>('Test Suite', source, (payload) => {
       setQaTestSuite(payload);
       markApprovalGenerated('qa', payload.coverage_score);
     })) {
       return;
     }
-    const result = await withLoading('Generating QA test cases...', () => postJson<QATestSuiteResult>('/generate-qa-test-cases', {
+    const result = await withLoading(action === 'generate_missing_tests' ? 'Generating missing tests...' : 'Generating QA test cases...', () => postJson<QATestSuiteResult>('/generate-qa-test-cases', {
       profile,
       knowledge_profile: profile.knowledge_registry,
       story,
@@ -2196,6 +2312,8 @@ function ProjectIntelligenceTab() {
       execution_package: executionContext?.execution_package_v2 || executionContext?.executionPackageV2 || {},
       execution_plan: executionPlan?.execution_plan || executionPlan || {},
       implementation_validation: implementationValidation || {},
+      existing_test_suite: qaTestSuite || {},
+      qa_action: action,
     }));
     if (result) {
       setQaTestSuite(result);
@@ -2267,7 +2385,7 @@ function ProjectIntelligenceTab() {
     })) {
       return;
     }
-    const context = await withLoading('Building execution package...', async () => {
+    const context = await withLoading('Building implementation package...', async () => {
       const basePayload = {
         profile,
         knowledge_profile: profile.knowledge_registry,
@@ -2287,7 +2405,7 @@ function ProjectIntelligenceTab() {
       setImplementationValidation(undefined);
       setPrReview(undefined);
       markApprovalGenerated('execution', context.execution_readiness_score);
-      await saveGeneratedArtifact('Execution Package', story.title || 'Execution package', { context }, source);
+      await saveGeneratedArtifact('Execution Package', story.title || 'Implementation package', { context }, source);
       await refreshContextCapsules(profile, ['story', 'execution', 'qa']);
       setActiveTab('execution');
     }
@@ -2306,10 +2424,10 @@ function ProjectIntelligenceTab() {
 
   async function buildExecutionPlan(mode: ExecutionMode = executionMode) {
     if (!canContribute) {
-      setError('Execution Plan generation is restricted to AI Gen Admins and Contributors.');
+      setError('Implementation Plan generation is restricted to AI Gen Admins and Contributors.');
       return;
     }
-    const result = await withLoading('Generating Execution Plan...', async () => {
+    const result = await withLoading('Generating Implementation Plan...', async () => {
       if (!executionContext) {
         await buildExecutionPackage();
       }
@@ -2320,7 +2438,7 @@ function ProjectIntelligenceTab() {
     });
     if (result) {
       setExecutionPlan(result);
-      setMessage('Execution Plan generated.');
+      setMessage('Implementation Plan generated.');
       window.setTimeout(() => setMessage(''), 1800);
     }
   }
@@ -2337,9 +2455,9 @@ function ProjectIntelligenceTab() {
       copilot: '/build-copilot-context',
     };
     const labelByKind = {
-      dev: 'Dev Prompt',
-      ui: 'UI Prompt',
-      qa: 'QA Prompt',
+      dev: 'Developer Prompt',
+      ui: 'Specialized UI Prompt',
+      qa: 'Specialized QA Prompt',
       copilot: 'Context Capsule',
     };
     const result = await withLoading(`${mode === 'enhance_with_ai' ? 'Enhancing' : 'Generating'} ${labelByKind[kind]}...`, async () => {
@@ -2359,7 +2477,7 @@ function ProjectIntelligenceTab() {
 
   async function validateImplementation() {
     if (!executionContext?.execution_package_v2 && !executionContext?.executionPackageV2) {
-      setError('Build the execution package before validating implementation.');
+      setError('Build the implementation package before validating implementation.');
       return;
     }
     const changedFiles = parseChangedFilesInput(implementationChangedFiles);
@@ -2382,7 +2500,7 @@ function ProjectIntelligenceTab() {
 
   async function runPRReview() {
     if (!executionContext?.execution_package_v2 && !executionContext?.executionPackageV2) {
-      setError('Build the execution package before running PR Review.');
+      setError('Build the implementation package before running PR Review.');
       return;
     }
     const changedFiles = parseChangedFilesInput(implementationChangedFiles);
@@ -2425,7 +2543,7 @@ function ProjectIntelligenceTab() {
       await buildExecutionPackage();
     }
     setMessage('Enhancing with AI...');
-    const enriched = await withLoading('Enhancing execution package with AI...', () => {
+    const enriched = await withLoading('Enhancing implementation package with AI...', () => {
       return postJson<ExecutionContextResult>('/build-execution-context', executionBasePayload('enhance_with_ai'));
     });
     if (enriched) {
@@ -2454,15 +2572,23 @@ function ProjectIntelligenceTab() {
     setError('');
     const action = workflowOrchestration.nextAction.action;
     setMessage(`Continuing workflow: ${workflowOrchestration.nextAction.label}`);
-    if (action === 'approve_epic') {
+    if (action === 'analyze_epic') {
+      await refineEpic();
+    } else if (action === 'approve_epic') {
       await approveEpic();
+    } else if (action === 'analyze_feature') {
+      await refineFeature();
     } else if (action === 'generate_features') {
       setSelectedItemType('Epic');
       await generateChildrenForCurrentType('Epic');
+    } else if (action === 'create_children') {
+      await createSelectedChildWorkItems();
     } else if (action === 'approve_features') {
       approveFeatures();
     } else if (action === 'approve_feature') {
       await approveFeature();
+    } else if (action === 'analyze_story') {
+      await refineStory();
     } else if (action === 'generate_stories') {
       setSelectedItemType('Feature');
       await generateChildrenForCurrentType('Feature');
@@ -2482,6 +2608,11 @@ function ProjectIntelligenceTab() {
     } else if (action === 'open_vscode') {
       openVsCodeExecutionPackage();
     } else if (action === 'open_planning') {
+      if (currentItemType === 'Epic') {
+        setPlanningFocusRequest({ target: 'features', nonce: Date.now() });
+      } else if (currentItemType === 'Feature') {
+        setPlanningFocusRequest({ target: 'stories', nonce: Date.now() });
+      }
       setActiveTab('planning');
     } else if (action === 'open_execution') {
       setActiveTab('execution');
@@ -2506,7 +2637,7 @@ function ProjectIntelligenceTab() {
     if (!executionContext) {
       await buildExecutionPackage();
     }
-    setMessage('Story automation complete. Review tasks, QA coverage, and execution package.');
+    setMessage('Story automation complete. Review tasks, QA coverage, and the implementation package.');
     window.setTimeout(() => setMessage(''), 1800);
   }
 
@@ -2531,17 +2662,44 @@ function ProjectIntelligenceTab() {
     };
   }
 
-  function seedPlannerFromWorkItem(workItem: AdoWorkItem, shouldAutoRoute = autoRouteByWorkItemType, resetApproval = true) {
+  function resetItemScopedState() {
+    setApprovalWorkflow(defaultApprovalWorkflowState());
+    setEpicResult(undefined);
+    setFeatureResult(undefined);
+    setStoryResult(undefined);
+    setEpicImpact(undefined);
+    setFeatureImpact(undefined);
+    setStoryImpact(undefined);
+    setChildDrafts([]);
+    setCreationLog([]);
+    setExecutionContext(undefined);
+    setExecutionPlan(undefined);
+    setDevPrompt(undefined);
+    setUiPrompt(undefined);
+    setQaPrompt(undefined);
+    setCopilotContext(undefined);
+    setImplementationValidation(undefined);
+    setPrReview(undefined);
+    setArtifactReuseStatus('');
+  }
+
+  function seedPlannerFromWorkItem(workItem: AdoWorkItem, shouldAutoRoute = autoRouteByWorkItemType) {
     const type = normalizePlannerItemType(workItem.type);
     setSelectedItemType(type);
-    if (resetApproval) {
-      setApprovalWorkflow(defaultApprovalWorkflowState());
-    }
+    resetItemScopedState();
     if (type === 'Epic') {
       setEpicInput({ title: workItem.title, description: htmlToText(workItem.description) });
+      setFeatureInput({ title: '', description: '' });
+      setStoryInput({ title: '', description: '' });
+      setAcceptanceCriteria('');
     } else if (type === 'Feature') {
+      setEpicInput({ title: '', description: '' });
       setFeatureInput({ title: workItem.title, description: htmlToText(workItem.description) });
+      setStoryInput({ title: '', description: '' });
+      setAcceptanceCriteria('');
     } else {
+      setEpicInput({ title: '', description: '' });
+      setFeatureInput({ title: '', description: '' });
       setStoryInput({ title: workItem.title, description: htmlToText(workItem.description) });
       setAcceptanceCriteria(htmlToText(workItem.acceptanceCriteria));
     }
@@ -2554,15 +2712,70 @@ function ProjectIntelligenceTab() {
     setChildDrafts((current) => current.map((draft) => draft.id === draftId ? { ...draft, selected } : draft));
   }
 
+  async function persistChildDraftReviewArtifact(
+    artifactType: ArtifactType,
+    payload: ChildDraft[],
+    state: ArtifactLifecycleState = 'draft',
+  ) {
+    const source = artifactType === 'Feature'
+      ? epicFeatureGenerationSource(epicInput, epicResult)
+      : artifactType === 'Story'
+        ? { feature: featureInput, purpose: 'generated_stories' }
+        : { story: storyInput, acceptance_criteria: splitLines(acceptanceCriteria), purpose: 'generated_tasks' };
+    await saveGeneratedArtifact(
+      artifactType,
+      artifactType === 'Feature'
+        ? epicInput.title || 'Generated features'
+        : artifactType === 'Story'
+          ? featureInput.title || 'Generated stories'
+          : storyInput.title || 'Generated tasks',
+      payload,
+      source,
+      state,
+    );
+  }
+
+  function updateChildDraftReview(
+    draftId: string,
+    artifactType: ArtifactType,
+    changes: Partial<ChildDraft>,
+  ) {
+    let nextDrafts: ChildDraft[] = [];
+    setChildDrafts((current) => {
+      nextDrafts = current.map((draft) => (
+        draft.id === draftId ? { ...draft, ...changes } : draft
+      ));
+      return nextDrafts;
+    });
+    if (nextDrafts.length) {
+      void persistChildDraftReviewArtifact(artifactType, nextDrafts);
+    }
+  }
+
+  function syncFeatureDraftsWithCapabilityReview(nextResult: EpicRefinement) {
+    setChildDrafts((current) => {
+      if (!current.some((draft) => draft.type === 'Feature')) {
+        return current;
+      }
+      const mergedFeatureDrafts = mergeEpicFeatureDraftsFromCapabilityState(nextResult, current);
+      void persistChildDraftReviewArtifact('Feature', mergedFeatureDrafts);
+      return [...current.filter((draft) => draft.type !== 'Feature'), ...mergedFeatureDrafts];
+    });
+  }
+
   function updateCapabilityReview(capabilityId: string, changes: Partial<CapabilityReview>) {
     setEpicResult((current) => {
       if (!current?.capability_review?.length) return current;
-      return {
+      const next = {
         ...current,
+        capability_review_user_validated: true,
         capability_review: current.capability_review.map((capability) => (
           capability.capabilityId === capabilityId ? { ...capability, ...changes } : capability
         )),
       };
+      syncFeatureDraftsWithCapabilityReview(next);
+      void persistEpicReviewArtifact(next);
+      return next;
     });
   }
 
@@ -2575,35 +2788,10 @@ function ProjectIntelligenceTab() {
       if (index < 0 || target < 0 || target >= next.length) return current;
       const [item] = next.splice(index, 1);
       next.splice(target, 0, item);
-      return { ...current, capability_review: next };
+      const nextResult = { ...current, capability_review_user_validated: true, capability_review: next };
+      void persistEpicReviewArtifact(nextResult);
+      return nextResult;
     });
-  }
-
-  function generateFeatureForCapability(capabilityId: string) {
-    if (!epicResult?.capability_review?.length) {
-      setError('Run Epic Analysis before generating a capability Feature.');
-      return;
-    }
-    const nextResult: EpicRefinement = {
-      ...epicResult,
-      capability_review: epicResult.capability_review.map((capability) => (
-        capability.capabilityId === capabilityId ? { ...capability, status: 'Approved' } : capability
-      )),
-    };
-    const drafts = featureDraftsFromEpic(nextResult, true).filter((draft) => {
-      const capability = nextResult.capability_review?.find((item) => item.capabilityId === capabilityId);
-      return capability ? draft.capabilityCategory === capability.capabilityName : true;
-    });
-    if (!drafts.length) {
-      setError('No Feature mapping was found for the selected capability.');
-      return;
-    }
-    setEpicResult(nextResult);
-    setChildDrafts((current) => {
-      const others = current.filter((draft) => !drafts.some((next) => next.capabilityCategory === draft.capabilityCategory));
-      return [...others, ...drafts];
-    });
-    markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
   }
 
   async function generateChildrenForCurrentType(targetType: WorkItemKind = selectedItemType, forceRegenerate = false) {
@@ -2629,26 +2817,26 @@ function ProjectIntelligenceTab() {
       }
     }
     if (targetType === 'Epic') {
-      const source = { epic: epicInput, purpose: 'generated_features' };
+      const source = epicFeatureGenerationSource(epicInput, epicResult);
       if (epicResult?.capability_review?.length && !epicResult.capability_review.some((capability) => capability.status === 'Approved')) {
         setError('Approve at least one capability before generating Features.');
+        return;
+      }
+      if (epicResult && !forceRegenerate) {
+        const drafts = mergeEpicFeatureDraftsFromCapabilityState(epicResult, childDrafts);
+        if (!drafts.length) {
+          setError('Approve at least one capability before generating Features.');
+          return;
+        }
+        setChildDrafts((current) => [...current.filter((draft) => draft.type !== 'Feature'), ...drafts]);
+        markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
+        await saveGeneratedArtifact('Feature', epicInput.title || 'Generated features', drafts, source);
         return;
       }
       if (!forceRegenerate && await loadReusableArtifact<ChildDraft[]>('Feature', source, (payload) => {
         setChildDrafts(payload);
         markApprovalGenerated('features', qualityScoreForFeatureDrafts(payload));
       })) {
-        return;
-      }
-      if (epicResult && !forceRegenerate) {
-        const drafts = featureDraftsFromEpic(epicResult, true);
-        if (!drafts.length) {
-          setError('Approve at least one capability before generating Features.');
-          return;
-        }
-        setChildDrafts(drafts);
-        markApprovalGenerated('features', qualityScoreForFeatureDrafts(drafts));
-        await saveGeneratedArtifact('Feature', epicInput.title || 'Generated features', drafts, source);
         return;
       }
       const generated = await withLoading('Generating Features from Epic...', () => postJson<EpicRefinement>('/refine-epic', {
@@ -2765,6 +2953,7 @@ function approveFeatures() {
       const drafts = featureDraftsFromEpic(epicResult, false).map((draft) => ({ ...draft, status: 'approved' as ChildDraft['status'] }));
       approveArtifact('features');
       setChildDrafts((current) => [...current.filter((draft) => draft.type !== 'Feature'), ...drafts]);
+      void persistChildDraftReviewArtifact('Feature', drafts, 'approved');
       return;
     }
     if (!hasFeatureDrafts) {
@@ -2772,7 +2961,9 @@ function approveFeatures() {
       return;
     }
     approveArtifact('features');
-    setChildDrafts((drafts) => drafts.map((draft) => draft.type === 'Feature' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft));
+    const nextDrafts = childDrafts.map((draft) => draft.type === 'Feature' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft);
+    setChildDrafts(nextDrafts as ChildDraft[]);
+    void persistChildDraftReviewArtifact('Feature', nextDrafts as ChildDraft[], 'approved');
   }
 
   async function approveFeature() {
@@ -2799,7 +2990,9 @@ function approveFeatures() {
       return;
     }
     approveArtifact('stories');
-    setChildDrafts((drafts) => drafts.map((draft) => draft.type === 'User Story' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft));
+    const nextDrafts = childDrafts.map((draft) => draft.type === 'User Story' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft);
+    setChildDrafts(nextDrafts as ChildDraft[]);
+    void persistChildDraftReviewArtifact('Story', nextDrafts as ChildDraft[], 'approved');
   }
 
   async function approveStory() {
@@ -2808,17 +3001,8 @@ function approveFeatures() {
       return;
     }
     approveArtifact('story');
-    const drafts = taskDraftsFromStory(storyResult);
-    if (drafts.length) {
-      setChildDrafts(drafts);
-      markApprovalGenerated('tasks', qualityScoreForTasks(storyResult));
-    }
-    if (!qaTestSuite) {
-      await generateQATestCases();
-    }
-    if (!executionContext) {
-      await buildExecutionPackage();
-    }
+    setMessage('Story approved. Generate Tasks from Planning to continue.');
+    window.setTimeout(() => setMessage(''), 1600);
   }
 
   function approveTasks() {
@@ -2840,7 +3024,7 @@ function approveFeatures() {
 
   function approveExecutionPackage() {
     if (!executionContext) {
-      setError('Build the execution package before approving it.');
+      setError('Build the implementation package before approving it.');
       return;
     }
     approveArtifact('execution');
@@ -2890,7 +3074,12 @@ function approveFeatures() {
       setError('This work item is Closed. Child work item creation is disabled.');
       return;
     }
-    const selected = childDrafts.filter((draft) => draft.selected && draft.status !== 'created');
+    const sourceDrafts = currentItemType === 'Epic'
+      ? mergeEpicFeatureDraftsFromCapabilityState(epicResult, childDrafts)
+      : currentItemType === 'Feature'
+        ? mergeFeatureStoryDraftsFromReviewState(featureResult, childDrafts)
+        : childDrafts.filter((draft) => draft.type === 'Task');
+    const selected = sourceDrafts.filter((draft) => draft.selected && draft.status !== 'created');
     if (!selected.length) {
       setError('Select at least one generated child work item to create.');
       return;
@@ -3288,7 +3477,7 @@ function approveFeatures() {
             <div className="planner-subtitle">
               {editingProfile
                 ? 'Connect the project once. The platform turns repository knowledge into planning, execution, and QA context.'
-                : 'Project-aware planning, execution packages, and QA coverage for enterprise delivery teams.'}
+                : 'Project-aware planning, implementation packages, and QA coverage for enterprise delivery teams.'}
             </div>
             <div className={`planner-save-status ${saveStatus}`}>{saveStatusLabel(saveStatus)}</div>
           </div>
@@ -3405,7 +3594,7 @@ function approveFeatures() {
           retryFeatureAI={() => void refineFeature(true, 'retry_ai_enrichment')}
           refineStory={() => void refineStory(true)}
           analyzeImpact={() => void analyzeCurrentItemImpact()}
-          generateChildren={(forceRegenerate) => void generateChildrenForCurrentType(undefined, forceRegenerate)}
+          generateChildren={(forceRegenerate) => void generateChildrenForCurrentType(currentWorkItem?.type === 'User Story' || currentWorkItem?.type === 'Story' ? 'Story' : undefined, forceRegenerate)}
           approveEpic={() => void approveEpic()}
           approveFeatures={() => approveFeatures()}
           approveFeature={() => void approveFeature()}
@@ -3413,14 +3602,15 @@ function approveFeatures() {
           approveTasks={() => approveTasks()}
           updateCapabilityReview={updateCapabilityReview}
           moveCapabilityReview={moveCapabilityReview}
-          generateFeatureForCapability={generateFeatureForCapability}
           updateDraftSelection={updateDraftSelection}
+          updateChildDraftReview={updateChildDraftReview}
           createSelectedChildren={() => void createSelectedChildWorkItems()}
           buildExecutionPackage={() => void buildExecutionPackage(true)}
           generateQATestCases={() => void generateQATestCases(true)}
           artifactRecords={artifactRecords}
           artifactReuseStatus={artifactReuseStatus}
           workflow={workflowOrchestration}
+          planningFocusRequest={planningFocusRequest}
         />
       ) : null}
 
@@ -4096,7 +4286,7 @@ function SkillsWorkspace({
           ) : (
             <EmptyState
               title="No recommendations yet."
-              detail="Build an Execution Plan to match skills from the current execution package."
+              detail="Build an Implementation Plan to match skills from the current implementation package."
             />
           )}
         </div>
@@ -4961,6 +5151,7 @@ function RecommendedActionCard({
   onContinueWorkflow: () => void;
   onGenerateEverythingForStory: () => void;
 }) {
+  const hasTaskDrafts = itemType === 'Story' && (workflow.statuses.tasks === 'current' || workflow.statuses.tasks === 'complete');
   const actions = recommendedActionsForItemType(itemType, {
     onRefineEpic,
     onRefineFeature,
@@ -4972,6 +5163,7 @@ function RecommendedActionCard({
     onBuildExecutionPackage,
     onOpenVsCode,
     hasExecutionPackage,
+    hasTaskDrafts,
     approvalWorkflow,
     onApproveEpic,
     onApproveFeature,
@@ -5126,6 +5318,7 @@ function recommendedActionsForItemType(
     onBuildExecutionPackage: () => void;
     onOpenVsCode: () => void;
     hasExecutionPackage: boolean;
+    hasTaskDrafts: boolean;
     approvalWorkflow: ApprovalWorkflowState;
     onApproveEpic: () => void;
     onApproveFeature: () => void;
@@ -5170,7 +5363,7 @@ function recommendedActionsForItemType(
         { label: 'Generate Tasks', run: handlers.onGenerateChildren },
       ];
     }
-    if (isApprovalPending(handlers.approvalWorkflow.tasks)) {
+    if (handlers.hasTaskDrafts && isApprovalPending(handlers.approvalWorkflow.tasks)) {
       return [
         { label: 'Approve Tasks', run: handlers.onApproveTasks, primary: true },
         { label: 'Regenerate Tasks', run: handlers.onGenerateChildren },
@@ -5179,15 +5372,15 @@ function recommendedActionsForItemType(
     }
     return [
       { label: 'Generate Tasks', run: handlers.onGenerateChildren, primary: true },
-      { label: 'Approve Tasks', run: handlers.onApproveTasks },
+      ...(handlers.hasTaskDrafts ? [{ label: 'Approve Tasks', run: handlers.onApproveTasks }] : []),
       { label: 'Open Execution', run: handlers.onBuildExecutionPackage },
     ];
   }
   if (itemType === 'Task') {
     return [
-      { label: handlers.hasExecutionPackage ? 'Open VS Code' : 'Build Execution Package', run: handlers.hasExecutionPackage ? handlers.onOpenVsCode : handlers.onBuildExecutionPackage, primary: true },
-      { label: 'Dev Prompt', run: handlers.onBuildExecutionPackage },
-      { label: 'QA Prompt', run: handlers.onBuildExecutionPackage },
+      { label: handlers.hasExecutionPackage ? 'Open VS Code' : 'Build Implementation Package', run: handlers.hasExecutionPackage ? handlers.onOpenVsCode : handlers.onBuildExecutionPackage, primary: true },
+      { label: 'Generate Developer Prompt', run: handlers.onBuildExecutionPackage },
+      { label: 'Open QA & Release', run: handlers.onBuildExecutionPackage },
     ];
   }
   if (itemType === 'Bug') {
@@ -5218,6 +5411,174 @@ function childDraftsForTarget(targetType: WorkItemKind, drafts: ChildDraft[]): C
   return [];
 }
 
+function areAllDraftsApproved(drafts: ChildDraft[]): boolean {
+  return Boolean(drafts.length) && drafts.every((draft) => draft.status === 'approved' || draft.status === 'created');
+}
+
+function areAllDraftsReviewed(drafts: ChildDraft[]): boolean {
+  return Boolean(drafts.length) && drafts.every((draft) => ['approved', 'created', 'failed', 'skipped'].includes(draft.status));
+}
+
+function childDraftIdentity(draft: ChildDraft): string {
+  return `${draft.type}:${draft.capabilityCategory || ''}:${draft.title}`;
+}
+
+function epicFeatureGenerationSource(epicInput: { title: string; description: string }, epicResult?: EpicRefinement): Record<string, unknown> {
+  return {
+    epic: epicInput,
+    purpose: 'generated_features',
+    approved_capabilities: (epicResult?.capability_review || [])
+      .filter((capability) => capability.status === 'Approved')
+      .map((capability) => capability.capabilityId || capability.capabilityName),
+    rejected_capabilities: (epicResult?.capability_review || [])
+      .filter((capability) => capability.status === 'Rejected')
+      .map((capability) => capability.capabilityId || capability.capabilityName),
+  };
+}
+
+function normalizeEpicCapabilityReview(result: EpicRefinement, preserveReviewedState = false): EpicRefinement {
+  if (!result.capability_review?.length) {
+    return result;
+  }
+  const shouldPreserve = preserveReviewedState || result.capability_review_user_validated === true;
+  if (shouldPreserve) {
+    return result;
+  }
+  return {
+    ...result,
+    capability_review_user_validated: false,
+    capability_review: result.capability_review.map((capability) => ({
+      ...capability,
+      status: 'Pending',
+    })),
+  };
+}
+
+function capabilityReviewIdentity(capability: Pick<CapabilityReview, 'capabilityId' | 'capabilityName'>): string {
+  return (capability.capabilityName || capability.capabilityId || '')
+    .trim()
+    .toLowerCase();
+}
+
+function reconcileEpicCapabilityReview(
+  previousResult: EpicRefinement | undefined,
+  nextResult: EpicRefinement,
+): EpicRefinement {
+  if (!nextResult.capability_review?.length || !previousResult?.capability_review?.length) {
+    return nextResult;
+  }
+  const previousByIdentity = new Map(
+    previousResult.capability_review.map((capability) => [capabilityReviewIdentity(capability), capability]),
+  );
+  const capabilityReview = nextResult.capability_review.map((capability) => {
+    const previous = previousByIdentity.get(capabilityReviewIdentity(capability));
+    if (!previous) {
+      return capability;
+    }
+    const preservedStatus = ['Approved', 'Rejected'].includes(String(previous.status)) ? previous.status : capability.status;
+    return {
+      ...capability,
+      status: preservedStatus,
+      reviewComments: previous.reviewComments?.length ? previous.reviewComments : capability.reviewComments,
+    };
+  });
+  const userValidated = capabilityReview.some((capability) => (
+    ['Approved', 'Rejected'].includes(String(capability.status)) || Boolean(capability.reviewComments?.length)
+  ));
+  return {
+    ...nextResult,
+    capability_review_user_validated: userValidated,
+    capability_review: capabilityReview,
+  };
+}
+
+function mergeEpicFeatureDraftsFromCapabilityState(
+  epicResult: EpicRefinement | undefined,
+  childDrafts: ChildDraft[],
+): ChildDraft[] {
+  const existingFeatureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
+  if (!epicResult?.recommended_features?.length) {
+    return existingFeatureDrafts;
+  }
+  if (!existingFeatureDrafts.length) {
+    return [];
+  }
+  const visibleDrafts = featureDraftsFromEpic(epicResult, true);
+  const existingByIdentity = new Map(
+    existingFeatureDrafts
+      .map((draft) => [childDraftIdentity(draft), draft]),
+  );
+  return visibleDrafts.map((draft) => {
+    const existing = existingByIdentity.get(childDraftIdentity(draft));
+    return existing
+      ? {
+          ...draft,
+          selected: existing.selected,
+          status: existing.status,
+          azureId: existing.azureId,
+          error: existing.error,
+        }
+      : draft;
+  });
+}
+
+function mergeFeatureStoryDraftsFromReviewState(
+  featureResult: FeatureRefinement | undefined,
+  childDrafts: ChildDraft[],
+): ChildDraft[] {
+  const existingStoryDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
+  if (!featureResult?.recommended_stories?.length) {
+    return existingStoryDrafts.filter((draft) => ['approved', 'created', 'creating'].includes(draft.status));
+  }
+  if (!existingStoryDrafts.length) {
+    return [];
+  }
+  const visibleDrafts = storyDraftsFromFeature(featureResult);
+  const existingByIdentity = new Map(
+    existingStoryDrafts.map((draft) => [childDraftIdentity(draft), draft]),
+  );
+  return visibleDrafts
+    .map((draft) => {
+      const existing = existingByIdentity.get(childDraftIdentity(draft));
+      return existing
+        ? {
+            ...draft,
+            selected: existing.selected,
+            status: existing.status,
+            azureId: existing.azureId,
+            error: existing.error,
+          }
+        : draft;
+    })
+    .filter((draft) => ['approved', 'created', 'creating'].includes(draft.status));
+}
+
+function reconcileFeatureStoryDrafts(
+  featureResult: FeatureRefinement | undefined,
+  childDrafts: ChildDraft[],
+): ChildDraft[] {
+  const existingStoryDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
+  if (!featureResult?.recommended_stories?.length) {
+    return existingStoryDrafts;
+  }
+  const nextStoryDrafts = storyDraftsFromFeature(featureResult);
+  const existingByIdentity = new Map(
+    existingStoryDrafts.map((draft) => [childDraftIdentity(draft), draft]),
+  );
+  return nextStoryDrafts.map((draft) => {
+    const existing = existingByIdentity.get(childDraftIdentity(draft));
+    return existing
+      ? {
+          ...draft,
+          selected: existing.selected,
+          status: existing.status,
+          azureId: existing.azureId,
+          error: existing.error,
+        }
+      : draft;
+  });
+}
+
 function childArtifactTypeForWorkItem(itemType: WorkItemKind): ArtifactType | undefined {
   if (itemType === 'Epic') return 'Feature';
   if (itemType === 'Feature') return 'Story';
@@ -5232,9 +5593,25 @@ function approvalForChildArtifactType(artifactType: ArtifactType): ApprovalArtif
   return 'features';
 }
 
+function artifactDisplayName(artifactType: ArtifactType): string {
+  if (artifactType === 'Execution Package') return 'Implementation Package';
+  if (artifactType === 'Execution Plan') return 'Implementation Plan';
+  if (artifactType === 'Dev Prompt') return 'Developer Prompt';
+  return artifactType;
+}
+
 function latestChildArtifactForSource(artifacts: ArtifactRecord[], artifactType: ArtifactType, sourceItemId: string): ArtifactRecord | undefined {
   return artifacts
-    .filter((artifact) => artifact.artifact_type === artifactType && artifact.source_item?.id === sourceItemId && Array.isArray(artifact.payload))
+    .filter((artifact) => artifact.artifact_type === artifactType && String(artifact.source_item?.id || '') === sourceItemId && Array.isArray(artifact.payload))
+    .sort((left, right) => {
+      const dateCompare = String(right.created_on || '').localeCompare(String(left.created_on || ''));
+      return dateCompare || Number(right.version || 0) - Number(left.version || 0);
+    })[0];
+}
+
+function latestArtifactForSource(artifacts: ArtifactRecord[], artifactType: ArtifactType, sourceItemId: string): ArtifactRecord | undefined {
+  return artifacts
+    .filter((artifact) => artifact.artifact_type === artifactType && String(artifact.source_item?.id || '') === sourceItemId)
     .sort((left, right) => {
       const dateCompare = String(right.created_on || '').localeCompare(String(left.created_on || ''));
       return dateCompare || Number(right.version || 0) - Number(left.version || 0);
@@ -5272,7 +5649,7 @@ function ApprovalWorkflowDashboard({ state, itemType }: { state: ApprovalWorkflo
     { key: 'story', label: 'Story' },
     { key: 'tasks', label: 'Tasks' },
     { key: 'qa', label: 'QA' },
-    { key: 'execution', label: 'Execution Package' },
+    { key: 'execution', label: 'Implementation Package' },
   ];
   const visible = rows.filter((row) => {
     if (itemType === 'Epic') return ['epic', 'features'].includes(row.key);
@@ -5351,7 +5728,7 @@ function RelationshipSummaryCard({ summary }: { summary?: GraphSummary }) {
         <SummaryTile title="Stories" value={String(chain.stories)} />
         <SummaryTile title="Tasks" value={String(chain.tasks)} />
         <SummaryTile title="Tests" value={String(chain.tests)} />
-        <SummaryTile title="Execution Packages" value={String(chain.execution_packages)} />
+        <SummaryTile title="Implementation Packages" value={String(chain.execution_packages)} />
       </div>
       <div className="planner-status-grid">
         <Row label="Relationships" value={String(summary.relationship_count)} />
@@ -5709,14 +6086,15 @@ function AIPlannerWorkspace({
   approveTasks,
   updateCapabilityReview,
   moveCapabilityReview,
-  generateFeatureForCapability,
   updateDraftSelection,
+  updateChildDraftReview,
   createSelectedChildren,
   buildExecutionPackage,
   generateQATestCases,
   artifactRecords,
   artifactReuseStatus,
   workflow,
+  planningFocusRequest,
 }: {
   profile: ProjectProfile;
   loading: boolean;
@@ -5756,20 +6134,21 @@ function AIPlannerWorkspace({
   approveTasks: () => void;
   updateCapabilityReview: (capabilityId: string, changes: Partial<CapabilityReview>) => void;
   moveCapabilityReview: (capabilityId: string, direction: -1 | 1) => void;
-  generateFeatureForCapability: (capabilityId: string) => void;
   updateDraftSelection: (draftId: string, selected: boolean) => void;
+  updateChildDraftReview: (draftId: string, artifactType: ArtifactType, changes: Partial<ChildDraft>) => void;
   createSelectedChildren: () => void;
   buildExecutionPackage: () => void;
-  generateQATestCases: () => void;
+  generateQATestCases: (forceRefresh?: boolean, action?: 'analyze' | 'generate_missing_tests') => void;
   artifactRecords: ArtifactRecord[];
   artifactReuseStatus: string;
   workflow: WorkflowOrchestrationState;
+  planningFocusRequest: { target: PlanningFocusTarget; nonce: number };
 }) {
   const readOnly = !canContribute || currentWorkItem?.state.toLowerCase() === 'closed';
   const planningType = itemType === 'Epic' || itemType === 'Feature' ? itemType : selectedItemType;
-  const hasGeneratedFeatures = childDrafts.some((draft) => draft.type === 'Feature') || Boolean(epicResult?.recommended_features?.length);
-  const hasGeneratedStories = childDrafts.some((draft) => draft.type === 'User Story') || Boolean(featureResult?.recommended_stories?.length);
-  const hasGeneratedTasks = childDrafts.some((draft) => draft.type === 'Task') || Boolean(storyResult && taskDraftsFromStory(storyResult).length);
+  const hasGeneratedFeatures = childDrafts.some((draft) => draft.type === 'Feature');
+  const hasGeneratedStories = childDrafts.some((draft) => draft.type === 'User Story');
+  const hasGeneratedTasks = childDrafts.some((draft) => draft.type === 'Task');
   const [selectedPlanningItemId, setSelectedPlanningItemId] = useState('');
   const [selectedPlanningDetailTab, setSelectedPlanningDetailTab] = useState<PlanningDetailTab>('overview');
   const [storyPlanningTab, setStoryPlanningTab] = useState<StoryPlanningTab>('overview');
@@ -5789,6 +6168,7 @@ function AIPlannerWorkspace({
     approveFeature,
     approveFeatures,
     approveStories,
+    createSelectedChildren,
     generateChildren,
     analyzeImpact,
     hasGeneratedFeatures,
@@ -5796,12 +6176,31 @@ function AIPlannerWorkspace({
     selectedId: selectedPlanningItemId,
     setSelectedId: setSelectedPlanningItemId,
   });
+  const planningDrafts = planningType === 'Epic'
+    ? mergeEpicFeatureDraftsFromCapabilityState(epicResult, childDrafts)
+    : mergeFeatureStoryDraftsFromReviewState(featureResult, childDrafts);
+  const firstPlanningItemId = planningModel.items[0]?.id || '';
+  useEffect(() => {
+    if (planningFocusRequest.target === 'features' && planningType === 'Epic') {
+      const targetId = firstPlanningItemId;
+      if (targetId) {
+        setSelectedPlanningItemId(targetId);
+        setSelectedPlanningDetailTab('overview');
+      }
+    }
+    if (planningFocusRequest.target === 'stories' && planningType === 'Feature') {
+      const targetId = firstPlanningItemId;
+      if (targetId) {
+        setSelectedPlanningItemId(targetId);
+        setSelectedPlanningDetailTab('overview');
+      }
+    }
+  }, [planningFocusRequest.nonce, planningFocusRequest.target, planningType, firstPlanningItemId]);
   if (itemType === 'Story' && currentWorkItem) {
     const generatedTasks = childDrafts.filter((draft) => draft.type === 'Task');
     return (
       <>
         <section className="planner-card hei-planning-workspace">
-          <LifecycleStrip workflow={workflow} />
           <div className="hei-planning-header">
             <div>
               <div className="planner-label">Story Planning</div>
@@ -5810,19 +6209,7 @@ function AIPlannerWorkspace({
             </div>
             <div className="hei-planning-primary">
               <span>{hasGeneratedTasks ? 'Task Approval' : storyResult ? 'Generate Tasks' : 'Story Analysis'}</span>
-              {!storyResult ? (
-                <button className="planner-button" onClick={refineStory} disabled={loading || readOnly || !storyInput.title.trim()}>
-                  Analyze Story →
-                </button>
-              ) : !hasGeneratedTasks ? (
-                <button className="planner-button" onClick={() => generateChildren(false)} disabled={loading || readOnly || !storyInput.title.trim()}>
-                  Generate Tasks →
-                </button>
-              ) : (
-                <button className="planner-button" onClick={approveTasks} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.tasks)}>
-                  Approve Tasks →
-                </button>
-              )}
+              <small>Use the sticky header action to continue.</small>
             </div>
           </div>
         <PlanningProgressBar
@@ -5842,12 +6229,6 @@ function AIPlannerWorkspace({
             ]}
         />
         {readOnly ? <div className="planner-error">This work item is Closed. Story planning is read-only.</div> : null}
-        <div className="planner-summary-grid">
-          <SummaryTile title="Approval Status" value={approvalStatusLabel(approvalWorkflow.tasks)} />
-          <SummaryTile title="Generated Tasks" value={generatedTasks.length} />
-          <SummaryTile title="Execution" value={approvalWorkflow.tasks === 'approved' ? 'Ready' : 'Waiting'} />
-          <SummaryTile title="Recommended Action" value={!storyResult ? 'Analyze Story' : !hasGeneratedTasks ? 'Generate Tasks' : approvalWorkflow.tasks === 'approved' ? 'Open Execution' : 'Approve Tasks'} />
-        </div>
         <div className="hei-demo-stack">
           <section className="planner-card">
             <div className="planner-label">Story Summary</div>
@@ -5875,7 +6256,7 @@ function AIPlannerWorkspace({
               ) : null}
             </div>
             {generatedTasks.length ? (
-              <StructuredChildDraftList drafts={generatedTasks} />
+              <StructuredChildDraftGrid drafts={generatedTasks} />
             ) : (
               <EmptyState title="No tasks generated yet." detail="Generate Tasks to continue Story planning." />
             )}
@@ -5918,7 +6299,6 @@ function AIPlannerWorkspace({
     return (
       <>
       <section className="planner-card">
-        <LifecycleStrip workflow={workflow} />
         <div className="planner-label">Planning Workspace</div>
           <div className="planner-subtle">{itemType} work items are routed to {workspaceLabel(recommendedWorkspaceForItem(itemType))}. Planning actions are hidden for this item type.</div>
         </section>
@@ -5928,7 +6308,6 @@ function AIPlannerWorkspace({
   return (
     <>
       <section className="planner-card hei-planning-workspace">
-        <LifecycleStrip workflow={workflow} />
         <div className="hei-planning-header">
           <div>
             <div className="planner-label">{planningType} Planning</div>
@@ -5937,10 +6316,7 @@ function AIPlannerWorkspace({
           </div>
           <div className="hei-planning-primary">
             <span>{planningModel.stageLabel}</span>
-            <button className="planner-button" onClick={planningModel.primaryAction.run} disabled={planningModel.primaryAction.disabled}>
-              {planningModel.primaryAction.label}
-            </button>
-            {planningModel.primaryAction.disabledReason ? <small>{planningModel.primaryAction.disabledReason}</small> : null}
+            <small>{planningModel.primaryAction.disabledReason || 'Use the sticky header action to continue.'}</small>
           </div>
         </div>
         <PlanningProgressBar stages={planningModel.stages} metrics={planningModel.progressMetrics} />
@@ -5986,14 +6362,42 @@ function AIPlannerWorkspace({
               emptyText={planningModel.emptyText}
               loading={loading}
               readOnly={readOnly}
-              onApprove={planningModel.selectedItem?.kind === 'capability' ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Approved' }) : undefined}
-              onReject={planningModel.selectedItem?.kind === 'capability' ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Rejected' }) : undefined}
-              onEdit={planningModel.selectedItem?.kind === 'capability' ? () => {
-                const comment = window.prompt('Add a review comment for this capability', planningModel.selectedItem?.comments?.[0] || '');
-                if (comment !== null && planningModel.selectedItem) {
-                  updateCapabilityReview(planningModel.selectedItem.id, { reviewComments: comment.trim() ? [comment.trim()] : [] });
+              onApprove={planningModel.selectedItem?.kind === 'capability'
+                ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Approved' })
+                : planningModel.selectedItem?.kind === 'feature'
+                  ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Feature', { status: 'approved' })
+                  : planningModel.selectedItem?.kind === 'story'
+                    ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Story', { status: 'approved' })
+                    : undefined}
+              onReject={planningModel.selectedItem?.kind === 'capability'
+                ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Rejected' })
+                : planningModel.selectedItem?.kind === 'feature'
+                  ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Feature', { status: 'failed' })
+                  : planningModel.selectedItem?.kind === 'story'
+                    ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Story', { status: 'failed' })
+                    : undefined}
+              onEdit={planningModel.selectedItem?.kind === 'capability'
+                ? () => {
+                  const comment = window.prompt('Add a review comment for this capability', planningModel.selectedItem?.comments?.[0] || '');
+                  if (comment !== null && planningModel.selectedItem) {
+                    updateCapabilityReview(planningModel.selectedItem.id, { reviewComments: comment.trim() ? [comment.trim()] : [] });
+                  }
                 }
-              } : undefined}
+                : planningModel.selectedItem?.kind === 'feature' || planningModel.selectedItem?.kind === 'story'
+                  ? () => {
+                    const comment = window.prompt(
+                      `Add a review note for this ${planningModel.selectedItem?.kind}`,
+                      planningModel.selectedItem?.comments?.[0] || planningModel.selectedItem?.subtitle || '',
+                    );
+                    if (comment !== null && planningModel.selectedItem) {
+                      updateChildDraftReview(
+                        planningModel.selectedItem.id,
+                        planningModel.selectedItem.kind === 'feature' ? 'Feature' : 'Story',
+                        { error: comment.trim() || undefined },
+                      );
+                    }
+                  }
+                  : undefined}
               onMoveUp={planningModel.selectedItem?.kind === 'capability' ? () => moveCapabilityReview(planningModel.selectedItem!.id, -1) : undefined}
               onMoveDown={planningModel.selectedItem?.kind === 'capability' ? () => moveCapabilityReview(planningModel.selectedItem!.id, 1) : undefined}
               selectedTab={selectedPlanningDetailTab}
@@ -6014,6 +6418,18 @@ function AIPlannerWorkspace({
             />
           </aside>
         </div>
+        {planningDrafts.length ? (
+          <GeneratedChildWorkItems
+            drafts={planningDrafts}
+            creationLog={creationLog}
+            currentWorkItem={currentWorkItem}
+            providerMetadata={providerMetadata}
+            readOnly={!canContribute}
+            loading={loading}
+            onSelectionChange={updateDraftSelection}
+            onCreateSelected={createSelectedChildren}
+          />
+        ) : null}
         <details className="planner-nested">
           <summary>Advanced Planning Actions</summary>
           <div className="planner-actions">
@@ -6029,16 +6445,6 @@ function AIPlannerWorkspace({
           </div>
         </details>
       </section>
-      <GeneratedChildWorkItems
-        drafts={childDrafts}
-        creationLog={creationLog}
-        currentWorkItem={currentWorkItem}
-        providerMetadata={providerMetadata}
-        readOnly={!canContribute}
-        loading={loading}
-        onSelectionChange={updateDraftSelection}
-        onCreateSelected={createSelectedChildren}
-      />
     </>
   );
 }
@@ -6071,6 +6477,7 @@ type PlanningStageStatus = 'complete' | 'current' | 'locked';
 type PlanningStage = { label: string; status: PlanningStageStatus };
 type PlanningDetailTab = 'overview' | 'responsibilities' | 'scope' | 'repository' | 'knowledge' | 'history';
 type StoryPlanningTab = 'overview' | 'acceptance' | 'implementation' | 'repository' | 'knowledge' | 'history';
+type PlanningFocusTarget = 'features' | 'stories' | null;
 type PlanningProgressMetric = { label: string; percent?: number; status?: string };
 type PlanningReviewItem = {
   id: string;
@@ -6081,6 +6488,7 @@ type PlanningReviewItem = {
   priority?: string;
   confidence?: number;
   description?: string;
+  businessGoal?: string;
   businessValue?: string;
   responsibilities?: string[];
   scope?: string[];
@@ -6113,6 +6521,7 @@ function buildPlanningWorkspaceModel({
   approveFeature,
   approveFeatures,
   approveStories,
+  createSelectedChildren,
   generateChildren,
   analyzeImpact,
   hasGeneratedFeatures,
@@ -6135,6 +6544,7 @@ function buildPlanningWorkspaceModel({
   approveFeature: () => void;
   approveFeatures: () => void;
   approveStories: () => void;
+  createSelectedChildren: () => void;
   generateChildren: (forceRegenerate?: boolean) => void;
   analyzeImpact: () => void;
   hasGeneratedFeatures: boolean;
@@ -6145,11 +6555,19 @@ function buildPlanningWorkspaceModel({
   const isEpic = planningType === 'Epic';
   const featureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
   const storyDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
-  const effectiveFeatureDrafts = featureDrafts.length ? featureDrafts : (epicResult?.recommended_features?.length ? featureDraftsFromEpic(epicResult, false) : []);
-  const effectiveStoryDrafts = storyDrafts.length ? storyDrafts : (featureResult?.recommended_stories?.length ? storyDraftsFromFeature(featureResult) : []);
+  const effectiveFeatureDrafts = isEpic
+    ? mergeEpicFeatureDraftsFromCapabilityState(epicResult, childDrafts)
+    : featureDrafts;
+  const effectiveStoryDrafts = isEpic
+    ? []
+    : childDrafts.filter((draft) => draft.type === 'User Story');
   const capabilities = epicResult?.capability_review || [];
+  const allCapabilitiesReviewed = !capabilities.length || capabilities.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
+  const approvedCapabilities = capabilities.filter((capability) => capability.status === 'Approved').length;
+  const pendingCapabilities = capabilities.filter((capability) => !['Approved', 'Rejected'].includes(String(capability.status)));
+  const showCapabilityReview = isEpic && capabilities.length > 0;
   const items = isEpic
-    ? capabilities.length
+    ? showCapabilityReview
       ? capabilities.map(capabilityToReviewItem)
       : effectiveFeatureDrafts.map(draftToReviewItem)
     : effectiveStoryDrafts.length
@@ -6158,60 +6576,57 @@ function buildPlanningWorkspaceModel({
   const effectiveSelectedId = items.some((item) => item.id === selectedId) ? selectedId : items[0]?.id || '';
   const selectedItem = items.find((item) => item.id === effectiveSelectedId);
   const hasEpicOutput = Boolean(epicResult || effectiveFeatureDrafts.length || capabilities.length);
-  const hasFeatureOutput = Boolean(featureResult || effectiveStoryDrafts.length);
-  const epicApproved = approvalWorkflow.epic === 'approved';
+  const hasFeatureOutput = Boolean(featureResult);
   const featureApproved = approvalWorkflow.feature === 'approved';
-  const featuresApproved = approvalWorkflow.features === 'approved' || effectiveFeatureDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
-  const storiesApproved = approvalWorkflow.stories === 'approved' || effectiveStoryDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
-  const allCapabilitiesReviewed = !capabilities.length || capabilities.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
-  const approvedCapabilities = capabilities.filter((capability) => capability.status === 'Approved').length;
-  const pendingCapabilities = capabilities.filter((capability) => !['Approved', 'Rejected'].includes(String(capability.status)));
+  const featuresApproved = approvalWorkflow.features === 'approved' || areAllDraftsApproved(effectiveFeatureDrafts);
+  const storiesApproved = approvalWorkflow.stories === 'approved' || areAllDraftsReviewed(effectiveStoryDrafts);
   const pendingFeatureDrafts = effectiveFeatureDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
-  const pendingStoryDrafts = effectiveStoryDrafts.filter((draft) => draft.status !== 'approved' && draft.status !== 'created');
+  const pendingStoryDrafts = effectiveStoryDrafts.filter((draft) => !['approved', 'created', 'failed', 'skipped'].includes(draft.status));
+  const selectableStoryDrafts = mergeFeatureStoryDraftsFromReviewState(featureResult, childDrafts).filter((draft) => draft.selected && draft.status !== 'created');
+  const selectableFeatureDrafts = effectiveFeatureDrafts.filter((draft) => draft.selected && draft.status !== 'created');
   const primaryAction = isEpic
     ? !hasEpicOutput
       ? { label: 'Analyze Epic →', run: refineEpic, disabled: loading || readOnly || !epicTitle.trim(), disabledReason: !epicTitle.trim() ? 'Epic title is required before analysis.' : '' }
-      : !epicApproved && isApprovalPending(approvalWorkflow.epic)
-        ? { label: 'Approve Epic →', run: approveEpic, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents approval.' : '' }
         : capabilities.length && !allCapabilitiesReviewed
           ? { label: 'Review Remaining Capabilities →', run: () => setSelectedId(pendingCapabilities[0]?.capabilityId || selectedId), disabled: loading || readOnly || !pendingCapabilities.length, disabledReason: `${pendingCapabilities.length} capabilities still require approval.` }
-          : !hasGeneratedFeatures
-            ? { label: 'Generate Features →', run: () => generateChildren(false), disabled: loading || readOnly || !epicTitle.trim() || (capabilities.length > 0 && approvedCapabilities === 0), disabledReason: capabilities.length > 0 && approvedCapabilities === 0 ? 'Approve at least one capability before generating Features.' : '' }
+        : !hasGeneratedFeatures
+          ? { label: 'Generate Features →', run: () => generateChildren(false), disabled: loading || readOnly || !epicTitle.trim() || (capabilities.length > 0 && approvedCapabilities === 0), disabledReason: capabilities.length > 0 && approvedCapabilities === 0 ? 'Approve at least one capability before generating Features.' : '' }
             : !featuresApproved && isApprovalPending(approvalWorkflow.features)
               ? { label: 'Approve Features →', run: approveFeatures, disabled: loading || readOnly || pendingFeatureDrafts.length === 0, disabledReason: pendingFeatureDrafts.length ? `${pendingFeatureDrafts.length} Features still require approval.` : '' }
-            : { label: 'Open Feature Planning →', run: () => setSelectedId(effectiveFeatureDrafts[0]?.id || selectedId), disabled: loading || readOnly, disabledReason: '' }
+            : selectableFeatureDrafts.length
+              ? { label: 'Create Selected Features →', run: createSelectedChildren, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents Azure DevOps creation.' : '' }
+              : { label: 'Feature Creation Complete →', run: () => setSelectedId(effectiveFeatureDrafts[0]?.id || selectedId), disabled: loading || !effectiveFeatureDrafts.length, disabledReason: !effectiveFeatureDrafts.length ? 'No generated Features are available yet.' : '' }
     : !hasFeatureOutput
       ? { label: 'Analyze Feature →', run: refineFeature, disabled: loading || readOnly || !featureTitle.trim(), disabledReason: !featureTitle.trim() ? 'Feature title is required before analysis.' : '' }
-      : !featureApproved && isApprovalPending(approvalWorkflow.feature)
-        ? { label: 'Approve Feature →', run: approveFeature, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents approval.' : '' }
+        : !featureApproved && isApprovalPending(approvalWorkflow.feature)
+          ? { label: 'Approve Feature →', run: approveFeature, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents approval.' : '' }
         : !hasGeneratedStories
           ? { label: 'Generate Stories →', run: () => generateChildren(false), disabled: loading || readOnly || !featureTitle.trim(), disabledReason: !featureApproved ? 'Approve the Feature before generating Stories.' : '' }
           : !storiesApproved && isApprovalPending(approvalWorkflow.stories)
             ? { label: 'Approve Stories →', run: approveStories, disabled: loading || readOnly || pendingStoryDrafts.length === 0, disabledReason: pendingStoryDrafts.length ? `${pendingStoryDrafts.length} Stories still require approval.` : '' }
-            : { label: 'Open Story Planning →', run: () => setSelectedId(effectiveStoryDrafts[0]?.id || selectedId), disabled: loading || readOnly, disabledReason: '' };
+            : selectableStoryDrafts.length
+              ? { label: 'Create Selected Stories →', run: createSelectedChildren, disabled: loading || readOnly, disabledReason: readOnly ? 'Read-only access prevents Azure DevOps creation.' : '' }
+              : { label: 'Story Creation Complete →', run: () => setSelectedId(effectiveStoryDrafts[0]?.id || selectedId), disabled: loading || !effectiveStoryDrafts.length, disabledReason: !effectiveStoryDrafts.length ? 'No generated Stories are available yet.' : '' };
   const currentStage = isEpic
     ? !hasEpicOutput
-      ? 'Epic'
+      ? 'Epic Analysis'
       : capabilities.length && !allCapabilitiesReviewed
         ? 'Capability Review'
-        : !hasGeneratedFeatures || !featuresApproved
-          ? 'Feature Review'
-          : 'Story Review'
+        : 'Feature Review'
     : !hasFeatureOutput
       ? 'Feature'
       : !hasGeneratedStories || !storiesApproved
         ? 'Story Review'
         : 'Task Review';
   const stages = buildSingleCurrentStages(
-    isEpic ? ['Epic', 'Capability Review', 'Feature Review', 'Story Review', 'Task Review'] : ['Feature', 'Story Review', 'Task Review', 'Execution'],
+    isEpic ? ['Epic Analysis', 'Capability Review', 'Feature Review', 'Feature Creation'] : ['Feature', 'Story Review', 'Task Review', 'Execution'],
     currentStage,
     isEpic
       ? {
-          Epic: Boolean(epicResult),
+          'Epic Analysis': Boolean(epicResult),
           'Capability Review': Boolean(capabilities.length && allCapabilitiesReviewed),
           'Feature Review': Boolean(hasGeneratedFeatures && featuresApproved),
-          'Story Review': false,
-          'Task Review': false,
+          'Feature Creation': Boolean(effectiveFeatureDrafts.length && effectiveFeatureDrafts.every((draft) => draft.status === 'created')),
         }
       : {
           Feature: hasFeatureOutput,
@@ -6222,16 +6637,15 @@ function buildPlanningWorkspaceModel({
   );
   const progressMetrics = isEpic
     ? [
-        { label: 'Epic', percent: hasEpicOutput ? 100 : 0 },
-        { label: 'Capability Review', percent: capabilities.length ? Math.round(((capabilities.length - pendingCapabilities.length) / capabilities.length) * 100) : undefined, status: hasEpicOutput ? 'Pending' : 'Locked' },
+        { label: 'Epic Analysis', percent: hasEpicOutput ? 100 : 0 },
+        { label: 'Capability Review', percent: capabilities.length ? Math.round(((capabilities.length - pendingCapabilities.length) / capabilities.length) * 100) : undefined, status: hasEpicOutput ? undefined : 'Locked' },
         { label: 'Feature Review', percent: effectiveFeatureDrafts.length ? Math.round(((effectiveFeatureDrafts.length - pendingFeatureDrafts.length) / effectiveFeatureDrafts.length) * 100) : undefined, status: hasGeneratedFeatures ? undefined : 'Locked' },
-        { label: 'Story Review', status: hasGeneratedFeatures && featuresApproved ? 'Open Feature Planning' : 'Locked' },
-        { label: 'Task Review', status: 'Locked' },
+        { label: 'Feature Creation', status: effectiveFeatureDrafts.length ? (selectableFeatureDrafts.length ? 'Ready To Create' : effectiveFeatureDrafts.every((draft) => draft.status === 'created') ? 'Created' : 'Selection Required') : 'Locked' },
       ]
     : [
         { label: 'Feature', percent: hasFeatureOutput ? 100 : 0 },
         { label: 'Story Review', percent: effectiveStoryDrafts.length ? Math.round(((effectiveStoryDrafts.length - pendingStoryDrafts.length) / effectiveStoryDrafts.length) * 100) : undefined, status: hasGeneratedStories ? undefined : 'Pending' },
-        { label: 'Task Review', status: hasGeneratedStories && storiesApproved ? 'Open Story Planning' : 'Locked' },
+        { label: 'Task Review', status: hasGeneratedStories && storiesApproved ? 'Story Drafts Ready' : 'Locked' },
         { label: 'Execution', status: 'Locked' },
       ];
   return {
@@ -6245,7 +6659,7 @@ function buildPlanningWorkspaceModel({
     selectedId: effectiveSelectedId,
     setSelectedId,
     selectedItem,
-    listTitle: capabilities.length ? 'Capabilities' : isEpic ? 'Features' : 'Stories',
+    listTitle: showCapabilityReview ? 'Capabilities' : isEpic ? 'Features' : 'Stories',
     emptyTitle: isEpic ? 'No planning items yet' : 'No story candidates yet',
     emptyText: isEpic ? 'Analyze the Epic to reveal capability review items.' : 'Analyze the Feature or generate Stories to populate this workspace.',
   };
@@ -6508,6 +6922,19 @@ function repositoryReadinessLabel(item: PlanningReviewItem): string {
 }
 
 function planningOverviewForItem(item: PlanningReviewItem): { context: string; storyTitle: string; story: string; value: string; objective: string } {
+  if (item.kind === 'capability') {
+    return {
+      context: meaningfulText(
+        item.description,
+        item.subtitle,
+        `This capability defines the approved business outcome and planning boundary for ${normalizeStoryTitle(item.title)}.`,
+      ),
+      storyTitle: 'Capability Statement',
+      story: capabilityStatementForItem(item),
+      value: meaningfulBusinessValue(item),
+      objective: implementationObjectiveForItem(item),
+    };
+  }
   if (item.kind === 'story') {
     const title = normalizeStoryTitle(item.title);
     const modules = (item.modules || []).slice(0, 2);
@@ -6526,13 +6953,46 @@ function planningOverviewForItem(item: PlanningReviewItem): { context: string; s
       objective: implementationObjectiveForItem(item),
     };
   }
+  if (item.kind === 'feature') {
+    const modules = (item.modules || []).slice(0, 2);
+    const flows = (item.flows || []).slice(0, 2);
+    const applications = (item.applications || []).slice(0, 2);
+    const contextParts = [
+      item.businessGoal ? `Business goal: ${normalizePlannerText(item.businessGoal)}` : '',
+      modules.length ? `Modules: ${modules.join(', ')}` : '',
+      flows.length ? `Flows: ${flows.join(', ')}` : '',
+      applications.length ? `Applications: ${applications.join(', ')}` : '',
+    ].filter(Boolean);
+    return {
+      context: contextParts.length
+        ? contextParts.join('  ')
+        : `This feature organizes the approved capability into a delivery-ready scope for ${normalizeStoryTitle(item.title)}.`,
+      storyTitle: 'Feature Statement',
+      story: meaningfulText(item.description, item.subtitle, 'Feature statement pending validation.'),
+      value: meaningfulBusinessValue(item),
+      objective: implementationObjectiveForItem(item),
+    };
+  }
   return {
     context: meaningfulText(item.description, item.subtitle, 'This item captures the approved planning context for review.'),
-    storyTitle: item.kind === 'feature' ? 'Capability Statement' : 'Planning Statement',
+    storyTitle: 'Planning Statement',
     story: meaningfulText(item.subtitle, item.description, 'Planning statement pending validation.'),
     value: meaningfulBusinessValue(item),
     objective: implementationObjectiveForItem(item),
   };
+}
+
+function capabilityStatementForItem(item: PlanningReviewItem): string {
+  const title = normalizeStoryTitle(item.title);
+  const responsibilities = (item.responsibilities || []).slice(0, 2);
+  const applications = (item.applications || []).slice(0, 2);
+  const modules = (item.modules || []).slice(0, 2);
+  const responsibilityText = responsibilities.length
+    ? responsibilities.join(' and ')
+    : `deliver ${title.toLowerCase()} as an approved business capability`;
+  const applicationText = applications.length ? ` across ${applications.join(' and ')}` : '';
+  const moduleText = modules.length ? ` using ${modules.join(' and ')} context` : '';
+  return `${title} should ${responsibilityText}${applicationText}${moduleText}, with clear dependencies and validation readiness before feature generation.`;
 }
 
 function normalizeStoryStatement(item: PlanningReviewItem): string {
@@ -6578,6 +7038,9 @@ function implementationObjectiveForItem(item: PlanningReviewItem): string {
   const title = normalizeStoryTitle(item.title);
   const modules = (item.modules || []).slice(0, 2).join(', ');
   const flows = (item.flows || []).slice(0, 2).join(', ');
+  if (item.kind === 'capability') {
+    return `Confirm ${title} as a feature-ready capability with clear scope, dependency coverage, repository alignment, and approval-ready validation criteria.`;
+  }
   if (item.kind === 'story') {
     return `Deliver ${title} with mapped acceptance criteria, ${modules || 'selected module'} coverage, and ${flows || 'approved flow'} validation.`;
   }
@@ -6681,11 +7144,15 @@ function PlanningInsights({
 }
 
 function capabilityToReviewItem(capability: CapabilityReview): PlanningReviewItem {
+  const purpose = normalizePlannerText(capability.businessPurpose);
+  const value = normalizePlannerText(capability.businessValue);
   return {
     id: capability.capabilityId,
     kind: 'capability',
     title: capability.capabilityName,
-    subtitle: capability.businessPurpose || capability.businessValue || 'Capability under review',
+    subtitle: value && value.toLowerCase() !== purpose.toLowerCase()
+      ? capability.businessValue
+      : capability.businessPurpose || capability.businessValue || 'Capability under review',
     status: capability.status,
     priority: capability.priority,
     confidence: capability.confidence,
@@ -6708,14 +7175,16 @@ function capabilityToReviewItem(capability: CapabilityReview): PlanningReviewIte
 }
 
 function draftToReviewItem(draft: ChildDraft): PlanningReviewItem {
+  const subtitle = meaningfulText(draft.businessGoal, draft.businessValue, draft.description || 'Generated child work item');
   return {
     id: draft.id,
     kind: draft.type === 'Feature' ? 'feature' : 'story',
     title: draft.title,
-    subtitle: draft.description || 'Generated child work item',
+    subtitle,
     status: draft.status,
     confidence: draft.relevanceConfidence,
     description: draft.description,
+    businessGoal: draft.businessGoal,
     businessValue: draft.businessValue || draft.businessGoal,
     responsibilities: draft.primaryPersonas,
     scope: draft.impactedApplications,
@@ -6782,28 +7251,32 @@ function GeneratedChildWorkItems({
       <RelevanceSummary metadata={providerMetadata} />
       <EngineeringMemoryEvidence context={providerMetadata?.memory_context} area="Planning" />
       <IntelligenceTracePanel trace={providerMetadata?.intelligence_trace} />
-      {drafts.map((draft) => (
-        <div className="planner-task" key={draft.id}>
-          <label className="planner-checkbox">
-            <input
-              type="checkbox"
-              checked={draft.selected}
-              disabled={readOnly || draft.status === 'created'}
-              onChange={(event) => onSelectionChange(draft.id, event.target.checked)}
-            />
-            <strong>{draft.type}: {draft.title}</strong>
-          </label>
-          <span>{draft.description}</span>
-          <RelevanceSummary draft={draft} />
-          <FeatureEnrichmentDetails draft={draft} />
-          <ListBlock title="Acceptance Criteria" items={draft.acceptanceCriteria} />
-          <div className="planner-subtle">
-            Status: {draft.status}
-            {draft.azureId ? ` #${draft.azureId}` : ''}
-            {draft.error ? ` - ${draft.error}` : ''}
-          </div>
-        </div>
-      ))}
+      <div className="hei-generated-grid">
+        {drafts.map((draft) => (
+          <article className="hei-generated-card planner-task" key={draft.id}>
+            <div className="planner-task-header">
+              <label className="planner-checkbox">
+                <input
+                  type="checkbox"
+                  checked={draft.selected}
+                  disabled={readOnly || draft.status === 'created'}
+                  onChange={(event) => onSelectionChange(draft.id, event.target.checked)}
+                />
+                <strong>{draft.type}: {draft.title}</strong>
+              </label>
+              <span className={`planner-badge ${statusTone(draft.status)}`}>{draft.status}</span>
+            </div>
+            <p className="planner-copy">{draft.description}</p>
+            <RelevanceSummary draft={draft} />
+            <FeatureEnrichmentDetails draft={draft} />
+            <ListBlock title="Acceptance Criteria" items={draft.acceptanceCriteria} />
+            <div className="planner-subtle">
+              {draft.azureId ? `Azure DevOps #${draft.azureId}` : 'Not created yet'}
+              {draft.error ? ` - ${draft.error}` : ''}
+            </div>
+          </article>
+        ))}
+      </div>
       <div className="planner-actions">
         <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, true))} disabled={loading || readOnly}>Select All</button>
         <button className="planner-button secondary" onClick={() => drafts.forEach((draft) => onSelectionChange(draft.id, false))} disabled={loading || readOnly}>Skip All</button>
@@ -6828,14 +7301,12 @@ function CapabilityReviewWorkspace({
   readOnly,
   onUpdate,
   onMove,
-  onGenerateFeature,
 }: {
   result: EpicRefinement;
   loading: boolean;
   readOnly: boolean;
   onUpdate: (capabilityId: string, changes: Partial<CapabilityReview>) => void;
   onMove: (capabilityId: string, direction: -1 | 1) => void;
-  onGenerateFeature: (capabilityId: string) => void;
 }) {
   const capabilities = result.capability_review || [];
   const diagnostics = result.capability_review_diagnostics || {};
@@ -6912,7 +7383,6 @@ function CapabilityReviewWorkspace({
             </button>
             <button className="planner-button secondary" disabled={loading || readOnly || index === 0} onClick={() => onMove(capability.capabilityId, -1)}>Move Up</button>
             <button className="planner-button secondary" disabled={loading || readOnly || index === capabilities.length - 1} onClick={() => onMove(capability.capabilityId, 1)}>Move Down</button>
-            <button className="planner-button" disabled={loading || readOnly || capability.status !== 'Approved'} onClick={() => onGenerateFeature(capability.capabilityId)}>Generate Feature</button>
           </div>
         </div>
       ))}
@@ -7246,7 +7716,7 @@ function QAIntelligencePanel({ result }: { result: QATestSuiteResult }) {
               <Row label="Repository Snapshot" value={diagnostics.repositorySnapshotAvailable ? 'Available' : 'Not provided'} />
               <Row label="Knowledge Version" value={diagnostics.knowledgeRegistryAvailable ? 'Available' : 'Not provided'} />
               <Row label="Graph Nodes Used" value={diagnostics.engineeringGraphAvailable ? 'Available' : 'Not provided'} />
-              <Row label="Execution Package" value={diagnostics.consumedExecutionPackage ? 'Consumed' : 'Missing'} />
+              <Row label="Implementation Package" value={diagnostics.consumedExecutionPackage ? 'Consumed' : 'Missing'} />
               <Row label="Implementation Validation" value={diagnostics.consumedImplementationValidation ? 'Consumed' : 'Not provided'} />
               <Row label="Coverage Calculation" value={`${formatNumber(result.coverage_summary?.covered_acceptance_criteria_count)} / ${formatNumber(result.coverage_summary?.acceptance_criteria_count)} AC covered`} />
             </div>
@@ -7554,7 +8024,7 @@ function DeveloperWorkspace({
   refineStory: () => void;
   analyzeImpact: () => void;
   generateChildren: (forceRegenerate?: boolean) => void;
-  generateQATestCases: () => void;
+  generateQATestCases: (forceRefresh?: boolean, action?: 'analyze' | 'generate_missing_tests') => void;
   approveStory: () => void;
   approveTasks: () => void;
   approveExecutionPackage: () => void;
@@ -7586,19 +8056,18 @@ function DeveloperWorkspace({
   return (
     <>
       <section className="planner-card hei-execution-workspace">
-        <LifecycleStrip workflow={workflow} />
-        <div className="planner-label">{isBug ? 'Bug Fix Workspace' : 'Execution Workspace'}</div>
+        <div className="planner-label">{isBug ? 'Bug Fix Workspace' : 'Implementation Workspace'}</div>
         <div className="planner-subtle">
           {isBug
             ? 'Analyze impact, prepare fix context, and generate regression coverage.'
             : isTask
-              ? 'Execute this Task through the shared package, prompt, validation, and PR review pipeline.'
-              : 'Execute this Story directly, or generate Tasks in Planning and execute a Task later.'}
+              ? 'Convert this Task into an implementation package, implementation plan, AI prompt, validation, and QA flow.'
+              : 'Convert this Story into an implementation package first, then move into implementation, validation, and QA.'}
         </div>
         <div className="planner-summary-grid">
           <SummaryTile title="Executing" value={`${executionSourceType}: ${executionSourceTitle}`} />
-          <SummaryTile title="Tasks" value={isStory ? (hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Optional') : 'Not Required'} />
-          <SummaryTile title="Execution Package" value={executionContext ? 'Built' : 'Not Built'} />
+          <SummaryTile title="Planning Tasks" value={isStory ? (hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Optional') : 'Not Required'} />
+          <SummaryTile title="Implementation Package" value={executionContext ? 'Built' : 'Not Built'} />
         </div>
         {readOnly ? <div className="planner-error">This work item is Closed. Execution output is read-only.</div> : null}
         <RefinementInput input={storyInput} setInput={setStoryInput} titlePlaceholder={isBug ? 'Bug title' : isTask ? 'Task title' : 'Story title'} descriptionPlaceholder={isBug ? 'Bug symptoms, expected behavior, and observed behavior.' : 'Approved story/task scope for execution.'} />
@@ -7609,7 +8078,7 @@ function DeveloperWorkspace({
           placeholder={isBug ? 'Regression expectations or reproduction notes, one per line' : 'Acceptance criteria or task validation notes, one per line'}
         />
         {isStory ? <ApprovalStatusStrip label="Story" status={approvalWorkflow.story} qualityScore={qualityScoreForStory(storyResult)} /> : null}
-        {isTask || isBug ? <ApprovalStatusStrip label={isBug ? 'Fix Context' : 'Execution Package'} status={approvalWorkflow.execution} qualityScore={executionContext?.execution_readiness_score} /> : null}
+        {isTask || isBug ? <ApprovalStatusStrip label={isBug ? 'Fix Context' : 'Implementation Package'} status={approvalWorkflow.execution} qualityScore={executionContext?.execution_readiness_score} /> : null}
         <div className="planner-summary-grid">
           <label className="planner-field">
             <span className="planner-label">Execution Mode</span>
@@ -7621,14 +8090,14 @@ function DeveloperWorkspace({
               <option value="spike_investigation">Spike / Investigation</option>
             </select>
           </label>
-          <SummaryTile title="Plan" value={executionPlan ? `${executionPlan.executionModeLabel || executionPlan.executionMode} ready` : 'Not Generated'} />
+          <SummaryTile title="Implementation Plan" value={executionPlan ? `${executionPlan.executionModeLabel || executionPlan.executionMode} ready` : 'Not Generated'} />
         </div>
         <div className="planner-actions">
-          <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : 'Build Execution Package'}</button>
-          <button className="planner-button" onClick={onGenerateExecutionPlan} disabled={loading || readOnly || !storyInput.title.trim()}>{executionPlan ? 'Regenerate Execution Plan' : 'Generate Execution Plan'}</button>
+          <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : 'Build Implementation Package'}</button>
+          <button className="planner-button" onClick={onGenerateExecutionPlan} disabled={loading || readOnly || !storyInput.title.trim()}>{executionPlan ? 'Regenerate Implementation Plan' : 'Generate Implementation Plan'}</button>
           {isBug ? <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>Root Cause / Execution Impact</button> : null}
           {executionContext ? <button className="planner-button secondary" onClick={onEnhanceWithAi} disabled={loading || readOnly}>Enhance with AI</button> : null}
-          {hasPackage ? <button className="planner-button secondary" onClick={approveExecutionPackage} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.execution)}>Approve Package</button> : null}
+          {hasPackage ? <button className="planner-button secondary" onClick={approveExecutionPackage} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.execution)}>Approve Implementation Package</button> : null}
           {vsCodeUri ? (
             <button className="planner-button secondary" onClick={onOpenVsCode} disabled={loading}>Open Execution Workspace</button>
           ) : null}
@@ -7651,7 +8120,7 @@ function DeveloperWorkspace({
         <IntelligenceTracePanel trace={executionContext?.intelligence_trace} />
         {!hasPackage ? (
           <section className="planner-card">
-            <div className="planner-subtle">No execution package generated yet. Generate one from this workspace when the scope is ready.</div>
+            <div className="planner-subtle">No implementation package generated yet. Build one from this workspace when the scope is ready.</div>
           </section>
         ) : null}
         {executionContext?.context_capsule ? (
@@ -7664,7 +8133,7 @@ function DeveloperWorkspace({
           />
         ) : null}
         {executionContext ? <ExecutionContextBlock context={executionContext} /> : null}
-        {executionPlan ? <PromptBlock title="Execution Plan" value={executionPlan.plan || executionPlan.finalPlan || executionPlan.prompt || ''} metadata={executionPlan} copyable /> : null}
+        {executionPlan ? <PromptBlock title="Implementation Plan" value={executionPlan.plan || executionPlan.finalPlan || executionPlan.prompt || ''} metadata={executionPlan} copyable /> : null}
         {executionContext ? (
           <ImplementationValidationPanel
             report={implementationValidation}
@@ -7688,18 +8157,18 @@ function DeveloperWorkspace({
           <section className="planner-card">
             <details>
               <summary className="planner-label">Advanced Execution Artifacts</summary>
-              <div className="planner-subtle">Optional artifacts for specialized review. Most implementation work should use the Execution Plan.</div>
+              <div className="planner-subtle">Optional artifacts for specialized review. Most implementation work should use the Developer Prompt. The Implementation Package JSON stays here for advanced inspection.</div>
               <div className="planner-actions">
                 <button className="planner-button secondary" onClick={() => onGeneratePrompt('copilot')} disabled={loading || readOnly}>Generate Context Capsule</button>
-                <button className="planner-button secondary" onClick={() => onGeneratePrompt('ui')} disabled={loading || readOnly}>Generate UI Refinement Prompt</button>
+                <button className="planner-button secondary" onClick={() => onGeneratePrompt('ui')} disabled={loading || readOnly}>Generate Specialized UI Prompt</button>
                 <button className="planner-button secondary" onClick={onOpenQA}>Open QA Intelligence</button>
-                <button className="planner-button secondary" onClick={() => void copyText(JSON.stringify(executionContext.execution_package_v2 || executionContext.executionPackageV2 || executionContext, null, 2))}>Export Execution Package</button>
+                <button className="planner-button secondary" onClick={() => void copyText(JSON.stringify(executionContext.execution_package_v2 || executionContext.executionPackageV2 || executionContext.implementation_package_v2 || executionContext.implementationPackageV2 || executionContext, null, 2))}>Copy Implementation Package JSON</button>
               </div>
             </details>
           </section>
         ) : null}
-        {devPrompt ? <PromptBlock title="Dev Prompt" value={devPrompt.prompt} metadata={devPrompt} copyable /> : null}
-        {uiPrompt ? <PromptBlock title="UI Prompt" value={uiPrompt.prompt} metadata={uiPrompt} copyable /> : null}
+        {devPrompt ? <PromptBlock title="Developer Prompt" value={devPrompt.prompt} metadata={devPrompt} copyable /> : null}
+        {uiPrompt ? <PromptBlock title="Specialized UI Prompt" value={uiPrompt.prompt} metadata={uiPrompt} copyable /> : null}
         {copilotContext ? (
           <div className="planner-task">
             <div className="planner-label">Context Capsule</div>
@@ -7745,7 +8214,7 @@ function QAWorkspace({
   qaTestSuite?: QATestSuiteResult;
   approvalWorkflow: ApprovalWorkflowState;
   storyImpact?: StoryImpact;
-  generateQATestCases: () => void;
+  generateQATestCases: (forceRefresh?: boolean, action?: 'analyze' | 'generate_missing_tests') => void;
   approveTestSuite: () => void;
   canContribute: boolean;
   itemType: WorkItemKind;
@@ -7771,6 +8240,11 @@ function QAWorkspace({
     gaps: qaTestSuite?.qa_intelligence?.testGapAnalysis,
     release: qaTestSuite?.release_recommendation || qaTestSuite?.qa_intelligence?.releaseRecommendation,
   });
+  const qaReadinessStatus = qaTestSuite?.qa_status || qaTestSuite?.qa_readiness?.status || (hasExecutionPackage ? 'Ready To Analyze' : 'Implementation Package Required');
+  const acceptanceCoverageScore = qaTestSuite ? (qaTestSuite.qa_readiness?.acceptanceCoverage ?? qaTestSuite.coverage_score) : undefined;
+  const regressionRisk = qaTestSuite?.qa_readiness?.regressionRisk || 'Pending';
+  const releaseRecommendation = qaTestSuite?.release_status || qaTestSuite?.release_recommendation?.recommendation || 'Not Assessed';
+  const missingTestCount = qaTestSuite?.coverage_gaps?.length || qaTestSuite?.qa_intelligence?.testGapAnalysis?.missingTests?.length || qaTestSuite?.qa_intelligence?.testGapAnalysis?.untestedAcceptanceCriteria?.length || 0;
   if (itemType !== 'Test Case' && itemType !== 'Story' && itemType !== 'Bug') {
     return (
       <section className="planner-card">
@@ -7782,7 +8256,6 @@ function QAWorkspace({
   return (
     <>
       <section className="planner-card hei-qa-workspace">
-        <LifecycleStrip workflow={workflow} />
         <div className="planner-section-header">
           <div>
             <div className="planner-label">{isTestCase ? 'Test Case Workspace' : 'QA & Release'}</div>
@@ -7792,36 +8265,67 @@ function QAWorkspace({
                 : 'Assess QA readiness, coverage, regression risk, missing tests, and release recommendation in one place.'}
             </div>
           </div>
-          <button className="planner-button" onClick={primary.onRun === 'copy' ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite)) : generateQATestCases} disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()}>{primary.label}</button>
+          <button
+            className="planner-button"
+            onClick={
+              primary.onRun === 'copy'
+                ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite))
+                : () => void generateQATestCases(false, primary.label === 'Generate Missing Tests' ? 'generate_missing_tests' : 'analyze')
+            }
+            disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()}
+          >
+            {primary.label}
+          </button>
         </div>
         <div className="planner-summary-grid">
-          <SummaryTile title="QA Readiness" value={qaTestSuite?.qa_status || qaTestSuite?.qa_readiness?.status || (hasExecutionPackage ? 'Ready To Analyze' : 'Execution Package Required')} />
-          <SummaryTile title="Acceptance Coverage" value={qaTestSuite ? `${qaTestSuite.qa_readiness?.acceptanceCoverage ?? qaTestSuite.coverage_score}%` : 'Not Assessed'} />
-          <SummaryTile title="Regression Risk" value={qaTestSuite?.qa_readiness?.regressionRisk || 'Pending'} />
-          <SummaryTile title="Release Recommendation" value={qaTestSuite?.release_status || qaTestSuite?.release_recommendation?.recommendation || 'Not Assessed'} />
+          <SummaryTile title="QA Readiness" value={qaReadinessStatus} />
+          <SummaryTile title="Acceptance Coverage" value={qaTestSuite ? `${acceptanceCoverageScore}%` : 'Not Assessed'} />
+          <SummaryTile title="Regression Risk" value={regressionRisk} />
+          <SummaryTile title="Release Recommendation" value={releaseRecommendation} />
         </div>
         {!hasExecutionPackage && !isTestCase ? (
-          <div className="planner-banner">Build an Execution Package before running QA Intelligence.</div>
+          <div className="planner-banner">Build an Implementation Package before running QA Intelligence.</div>
         ) : null}
         {!hasValidation ? (
           <div className="planner-banner">Run Implementation Validation to improve QA accuracy.</div>
         ) : null}
-        <div className="hei-release-grid">
-          <ActionTile title="QA Readiness" detail={qaTestSuite ? qaTestSuite.qa_status || 'QA ready for review.' : 'Run QA analysis to measure coverage and release readiness.'} action={primary.label} onRun={primary.onRun === 'copy' ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite)) : generateQATestCases} disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()} primary />
-          <ActionTile title="Acceptance Coverage" detail={qaTestSuite ? `${qaTestSuite.coverage_score}% coverage score.` : 'Map acceptance criteria to verification coverage.'} action="Run QA Analysis" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
-          <ActionTile title="Regression Risk" detail={qaTestSuite?.qa_readiness?.regressionRisk || 'Identify impacted modules, APIs, and regression scope.'} action="Review Regression" onRun={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()} />
-          <ActionTile title="Missing Tests" detail={qaTestSuite?.coverage_gaps?.length ? `${qaTestSuite.coverage_gaps.length} gaps detected.` : 'Generate or refresh missing tests.'} action="Generate Missing Tests" onRun={generateQATestCases} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()} />
-          <ActionTile title="Release Recommendation" detail={qaTestSuite?.release_recommendation?.reason || 'Release guidance appears after QA analysis.'} action="Export QA Report" onRun={() => void copyText(formatQATestSuiteForCopy(qaTestSuite))} disabled={!qaTestSuite} />
+        <div className="planner-actions">
+          <button
+            className="planner-button"
+            onClick={
+              primary.onRun === 'copy'
+                ? () => void copyText(formatQATestSuiteForCopy(qaTestSuite))
+                : () => void generateQATestCases(false, primary.label === 'Generate Missing Tests' ? 'generate_missing_tests' : 'analyze')
+            }
+            disabled={loading || readOnly || primary.disabled || !storyInput.title.trim()}
+          >
+            {primary.label}
+          </button>
+          <button className="planner-button secondary" onClick={() => void generateQATestCases(true, 'analyze')} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()}>
+            {qaTestSuite ? 'Refresh QA Analysis' : 'Run QA Analysis'}
+          </button>
+          <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>
+            Review Regression
+          </button>
+          <button className="planner-button secondary" onClick={() => void copyText(formatQATestSuiteForCopy(qaTestSuite))} disabled={!qaTestSuite}>
+            Export QA Report
+          </button>
+          {qaTestSuite && isApprovalPending(approvalWorkflow.qa) ? (
+            <button className="planner-button secondary" onClick={approveTestSuite} disabled={loading || readOnly}>
+              Approve Test Suite
+            </button>
+          ) : null}
         </div>
+        {qaTestSuite ? (
+          <div className="planner-summary-grid">
+            <SummaryTile title="Missing Tests" value={missingTestCount ? `${missingTestCount} gap${missingTestCount === 1 ? '' : 's'}` : 'No blocking gaps'} />
+            <SummaryTile title="Test Suite Status" value={approvalStatusLabel(approvalWorkflow.qa)} />
+            <SummaryTile title="Quality Gate" value={qaTestSuite.coverage_score >= 80 ? `${qaTestSuite.coverage_score} - Ready For Approval` : `${qaTestSuite.coverage_score} - Needs Work`} />
+          </div>
+        ) : null}
       </section>
       {qaTestSuite ? (
         <>
-          <section className="planner-card">
-            <ApprovalStatusStrip label="Test Suite" status={approvalWorkflow.qa} qualityScore={qaTestSuite.coverage_score} />
-            <div className="planner-actions">
-              <button className="planner-button" onClick={approveTestSuite} disabled={loading || readOnly || !isApprovalPending(approvalWorkflow.qa)}>Approve Test Suite</button>
-            </div>
-          </section>
           <details className="planner-nested">
             <summary>Show details</summary>
             {storyImpact ? <StoryImpactResult result={storyImpact} /> : null}
@@ -7845,9 +8349,9 @@ function QAWorkspace({
       ) : (
         <section className="planner-card">
           <div className="planner-label">QA & Release</div>
-          <div className="planner-subtle">{hasExecutionPackage ? 'No tests generated yet. Generate tests to evaluate coverage and release readiness.' : 'Build an Execution Package before running QA Intelligence.'}</div>
+          <div className="planner-subtle">{hasExecutionPackage ? 'No tests generated yet. Generate tests to evaluate coverage and release readiness.' : 'Build an Implementation Package before running QA Intelligence.'}</div>
           <div className="planner-summary-grid">
-            <SummaryTile title="Execution Package" value={hasExecutionPackage ? 'Ready' : 'Missing'} />
+            <SummaryTile title="Implementation Package" value={hasExecutionPackage ? 'Ready' : 'Missing'} />
             <SummaryTile title="Implementation Validation" value={hasValidation ? 'Ready' : 'Recommended'} />
             <SummaryTile title="Repository Intelligence" value={executionContext ? 'Available' : 'Pending'} />
             <SummaryTile title="QA Analysis" value="Not Run" />
@@ -7907,7 +8411,7 @@ function ContextCapsuleCard({
       </details>
       <div className="planner-actions">
         <button className="planner-button secondary" onClick={onRefresh} disabled={loading || readOnly}>Refresh Capsule</button>
-        <button className="planner-button" onClick={onBuild} disabled={loading || readOnly}>Build Execution Package</button>
+        <button className="planner-button" onClick={onBuild} disabled={loading || readOnly}>Build Implementation Package</button>
       </div>
     </section>
   );
@@ -7968,12 +8472,12 @@ function EngineeringDNASection({ dna, summary }: { dna?: WorkItemDNA; summary?: 
 function ExecutionContextBlock({ context }: { context: ExecutionContextResult }) {
   return (
     <section className="planner-card" id="execution-package-details">
-      <div className="planner-label">Execution Context</div>
+      <div className="planner-label">Implementation Package</div>
       <SourceBadge metadata={context} />
       <RelevanceSummary metadata={context} />
       <div className="planner-status-grid">
         <Row label="Story Summary" value={context.story_summary || 'Not generated yet'} />
-        <Row label="Package Source" value={titleCase(context.execution_package_source || 'context_capsule')} />
+        <Row label="Package Source" value={titleCase(context.execution_package_source || context.implementation_package_source || 'context_capsule')} />
         <Row label="Task Focus" value={context.task_focus || 'Not selected'} />
         <Row label="Implementation Boundary" value={context.implementation_boundary || 'Not generated'} />
         <Row label="Execution Readiness" value={`${context.execution_readiness_result || context.execution_readiness || 'Not assessed'} (${context.execution_readiness_score || 0}%)`} />
@@ -7996,12 +8500,6 @@ function ExecutionContextBlock({ context }: { context: ExecutionContextResult })
         <ListBlock title="Engineering Rules" items={context.engineering_rules || []} />
         <ListBlock title="Rejected Context" items={(context.rejected_context || []).map((item) => `${item.name}${item.reason ? `: ${item.reason}` : ''}`)} />
       </div>
-      {context.proposed_tasks?.length ? (
-        <div className="planner-task">
-          <div className="planner-label">Task Intelligence</div>
-          <StructuredTaskList tasks={context.proposed_tasks} />
-        </div>
-      ) : null}
       <div className="planner-task">
         <div className="planner-label">Acceptance Criteria Mapping</div>
         {(context.acceptance_criteria_mapping || []).length ? (
@@ -8051,7 +8549,7 @@ function ImplementationValidationPanel({
       <div className="planner-section-header">
         <div>
           <div className="planner-label">Implementation Validation</div>
-          <div className="planner-subtle">Validate completed code changes against the approved task, story, execution package, and developer prompt.</div>
+          <div className="planner-subtle">Validate completed code changes against the approved task, story, implementation package, and AI prompt.</div>
         </div>
         <StatusBadge label={report?.status || 'Not Run'} tone={report?.status === 'Passed' ? 'success' : report?.status === 'Failed' ? 'error' : 'warning'} />
       </div>
@@ -8111,7 +8609,7 @@ function PRReviewPanel({
       <div className="planner-section-header">
         <div>
           <div className="planner-label">PR Review</div>
-          <div className="planner-subtle">Review a PR against its linked work item, Execution Package, standards, tests, and approved scope.</div>
+          <div className="planner-subtle">Review a PR against its linked work item, implementation package, standards, tests, and approved scope.</div>
         </div>
         <StatusBadge label={report?.status || 'Not Run'} tone={report?.status === 'Passed' ? 'success' : report?.status === 'Blocked' ? 'error' : 'warning'} />
       </div>
@@ -9413,7 +9911,7 @@ function StoryPlanningWorkspace({
             <Row label="Validation" value={validationState} />
             <Row label="Execution" value={hasExecutionPackage ? 'Ready' : 'Locked'} />
             <Row label="Prompt" value={hasExecutionPackage ? 'Ready To Generate' : 'Not Generated'} />
-            <Row label="Execution Package" value={hasExecutionPackage ? 'Built' : 'Not Built'} />
+            <Row label="Implementation Package" value={hasExecutionPackage ? 'Built' : 'Not Built'} />
           </div>
           <div className="hei-stage-summary-card">
             <div>
@@ -9533,7 +10031,7 @@ function StoryKnowledgePanel({ result }: { result: StoryRefinement }) {
       <InfoBlock title="QA Considerations" items={result.qa_considerations || []} empty="QA considerations pending." />
       <div className="hei-info-block">
         <span>Engineering DNA</span>
-        <p>DNA is available in engineering details and is used by execution packages when generated.</p>
+        <p>DNA is available in engineering details and is used by implementation packages when generated.</p>
       </div>
     </div>
   );
@@ -9544,7 +10042,7 @@ function StoryHistoryPanel({ result, taskCount, hasExecutionPackage }: { result:
     <div className="hei-business-grid">
       <InfoBlock title="Story Generated" value={result.story_summary ? 'Story refinement completed.' : 'Story refinement pending.'} />
       <InfoBlock title="Tasks" value={taskCount ? `${taskCount} proposed tasks` : 'No tasks generated yet. Generate Tasks to continue planning.'} />
-      <InfoBlock title="Execution Package" value={hasExecutionPackage ? 'Execution Package built.' : 'Execution Package Not Generated'} />
+      <InfoBlock title="Implementation Package" value={hasExecutionPackage ? 'Implementation Package built.' : 'Implementation Package Not Generated'} />
       <InfoBlock title="Validation" value={qualityScoreForStory(result) ? 'Validation available.' : 'Validation Pending'} />
     </div>
   );
@@ -9823,9 +10321,9 @@ function StoryPromptGeneration({
       </div>
       {prompts ? (
         <div className="planner-status-grid">
-          <PromptBlock title="UI Prompt" value={prompts.ui_prompt} metadata={prompts} />
-          <PromptBlock title="Dev Prompt" value={prompts.dev_prompt} metadata={prompts} />
-          <PromptBlock title="QA Prompt" value={prompts.qa_prompt} metadata={prompts} />
+          <PromptBlock title="Specialized UI Prompt" value={prompts.ui_prompt} metadata={prompts} />
+          <PromptBlock title="Developer Prompt" value={prompts.dev_prompt} metadata={prompts} />
+          <PromptBlock title="Specialized QA Prompt" value={prompts.qa_prompt} metadata={prompts} />
         </div>
       ) : null}
     </section>
@@ -9843,7 +10341,7 @@ function RoadmapCard() {
             <li>Planning</li>
             <li>Story Generation</li>
             <li>Task Generation</li>
-            <li>Execution Packages</li>
+            <li>Implementation Packages</li>
             <li>QA Intelligence</li>
             <li>Coverage Analysis</li>
           </ul>
@@ -9919,6 +10417,24 @@ function StructuredChildDraftList({ drafts }: { drafts: ChildDraft[] }) {
   );
 }
 
+function StructuredChildDraftGrid({ drafts }: { drafts: ChildDraft[] }) {
+  return (
+    <div className="hei-package-grid">
+      {drafts.map((draft) => (
+        <article className="hei-package-card" key={draft.id}>
+          <div className="planner-task-header">
+            <strong>{draft.title}</strong>
+            <span className={`planner-badge ${statusTone(draft.status)}`}>{draft.status}</span>
+          </div>
+          <p>{draft.description}</p>
+          <Row label="Acceptance Criteria" value={String(draft.acceptanceCriteria?.length || 0)} />
+          <ListBlock title="Acceptance Criteria" items={draft.acceptanceCriteria || []} empty="Acceptance criteria pending." />
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function splitAcceptanceCriteriaText(value: string): string[] {
   return splitLines(value).map((item) => item.replace(/^[*-]\s*/, '').trim()).filter(Boolean);
 }
@@ -9964,8 +10480,8 @@ function ExecutionPackageCards({
     <section className="planner-card">
       <div className="planner-section-header">
         <div>
-          <div className="planner-label">Execution Packages</div>
-          <div className="planner-subtle">Package cards keep the execution view focused. Advanced artifacts stay collapsed below.</div>
+          <div className="planner-label">Implementation Packages</div>
+          <div className="planner-subtle">Package cards keep the implementation view focused. Advanced artifacts stay collapsed below.</div>
         </div>
       </div>
       <div className="hei-package-grid">
@@ -9987,10 +10503,10 @@ function ExecutionPackageCards({
               <div className="planner-actions">
                 <button className="planner-button secondary" onClick={() => document.getElementById('execution-package-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} disabled={!executionContext}>View Package</button>
                 <button className="planner-button secondary" onClick={() => promptText ? void copyText(promptText) : onGeneratePrompt(card.kind)} disabled={loading || (!promptText && !executionContext)}>
-                  Copy Prompt
+                  Copy Developer Prompt
                 </button>
                 <button className="planner-button secondary" onClick={onOpenVsCode} disabled={!executionContext}>
-                  Send to Copilot
+                  Open Copilot Chat
                 </button>
               </div>
             </article>
@@ -10811,7 +11327,7 @@ function lifecycleTypesForApproval(approval: ApprovalArtifact): ArtifactType[] {
     story: ['Story'],
     tasks: ['Task'],
     qa: ['Test Suite', 'Test Plan', 'QA Prompt', 'Coverage Report'],
-    execution: ['Execution Package', 'Dev Prompt', 'UI Prompt', 'QA Prompt', 'Copilot Context'],
+    execution: ['Implementation Package', 'Dev Prompt', 'UI Prompt', 'QA Prompt', 'Context Capsule'],
   };
   return mapping[approval];
 }
@@ -11629,12 +12145,20 @@ function buildWorkflowOrchestration({
   const featureDrafts = childDrafts.filter((draft) => draft.type === 'Feature');
   const storyDrafts = childDrafts.filter((draft) => draft.type === 'User Story');
   const taskDrafts = childDrafts.filter((draft) => draft.type === 'Task');
-  const featureCandidates = featureDrafts.length ? featureDrafts : (epicResult?.recommended_features?.length ? featureDraftsFromEpic(epicResult, false) : []);
-  const storyCandidates = storyDrafts.length ? storyDrafts : (featureResult?.recommended_stories?.length ? storyDraftsFromFeature(featureResult) : []);
-  const taskCandidates = taskDrafts.length ? taskDrafts : (storyResult ? taskDraftsFromStory(storyResult) : []);
-  const featuresApproved = approvalWorkflow.features === 'approved' || featureDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
-  const storiesApproved = approvalWorkflow.stories === 'approved' || storyDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
-  const tasksApproved = approvalWorkflow.tasks === 'approved' || taskDrafts.some((draft) => draft.status === 'approved' || draft.status === 'created');
+  const featureCandidates = featureDrafts;
+  const storyCandidates = storyDrafts;
+  const taskCandidates = taskDrafts;
+  const capabilities = epicResult?.capability_review || [];
+  const hasEpicAnalysis = Boolean(epicResult || capabilities.length);
+  const hasFeatureAnalysis = Boolean(featureResult);
+  const hasStoryAnalysis = Boolean(storyResult);
+  const allCapabilitiesReviewed = !capabilities.length || capabilities.every((capability) => ['Approved', 'Rejected'].includes(String(capability.status)));
+  const approvedCapabilities = capabilities.filter((capability) => capability.status === 'Approved').length;
+  const featuresApproved = approvalWorkflow.features === 'approved' || areAllDraftsApproved(featureCandidates);
+  const selectableFeatureDrafts = featureCandidates.filter((draft) => draft.selected && draft.status !== 'created');
+  const storiesApproved = approvalWorkflow.stories === 'approved' || areAllDraftsReviewed(storyCandidates);
+  const selectableStoryDrafts = mergeFeatureStoryDraftsFromReviewState(featureResult, childDrafts).filter((draft) => draft.selected && draft.status !== 'created');
+  const tasksApproved = approvalWorkflow.tasks === 'approved' || areAllDraftsApproved(taskCandidates);
   const blockers = [
     !hasKnowledge ? 'Project knowledge is missing. Repository analysis will improve recommendations.' : '',
     !standardsReady ? 'Development or UI standards are missing.' : '',
@@ -11649,35 +12173,62 @@ function buildWorkflowOrchestration({
   let currentStage = 'Planning';
 
   if (itemType === 'Epic') {
-    if (isApprovalPending(approvalWorkflow.epic)) {
-      nextAction = { label: 'Approve Epic', action: 'approve_epic', workspace: 'planning', reason: 'The epic draft is ready and needs approval before feature generation.' };
-      currentStage = 'Epic Approval';
-    } else if (!featureCandidates.length) {
-      nextAction = { label: 'Generate Features', action: 'generate_features', workspace: 'planning', reason: 'The epic is ready. Generate child Features next.' };
+    if (!hasEpicAnalysis) {
+      nextAction = { label: 'Analyze Epic', action: 'analyze_epic', workspace: 'planning', reason: 'Start by analyzing the Epic before capability review or feature generation.' };
+      currentStage = 'Epic Analysis';
+    } else if (capabilities.length && !allCapabilitiesReviewed) {
+      nextAction = {
+        label: 'Review Remaining Capabilities',
+        action: 'open_planning',
+        workspace: 'planning',
+        reason: `${capabilities.filter((capability) => !['Approved', 'Rejected'].includes(String(capability.status))).length} capabilities still require approval before feature generation.`,
+      };
+      currentStage = 'Capability Review';
+    } else if (!featureDrafts.length) {
+      nextAction = {
+        label: 'Generate Features',
+        action: 'generate_features',
+        workspace: 'planning',
+        reason: capabilities.length && approvedCapabilities === 0
+          ? 'Approve at least one capability before generating Features.'
+          : 'The epic is ready. Generate child Features next.',
+      };
       currentStage = 'Feature Generation';
     } else if (!featuresApproved || isApprovalPending(approvalWorkflow.features)) {
       nextAction = { label: 'Approve Features', action: 'approve_features', workspace: 'planning', reason: 'Generated Features are waiting for approval.' };
       currentStage = 'Feature Approval';
+    } else if (selectableFeatureDrafts.length) {
+      nextAction = { label: 'Create Selected Features', action: 'create_children', workspace: 'planning', reason: 'Selected Feature drafts are ready to be created in Azure DevOps.' };
+      currentStage = 'Feature Ready';
     } else {
-      nextAction = { label: 'Open Feature Planning', action: 'open_planning', workspace: 'planning', reason: 'Epic planning has approved Features. Open a Feature work item to continue story planning.' };
+      nextAction = { label: 'Feature Creation Complete', action: 'open_planning', workspace: 'planning', reason: 'Feature drafts have already been created or deselected for this Epic.' };
       currentStage = 'Feature Ready';
     }
   } else if (itemType === 'Feature') {
-    if (isApprovalPending(approvalWorkflow.feature)) {
+    if (!hasFeatureAnalysis) {
+      nextAction = { label: 'Analyze Feature', action: 'analyze_feature', workspace: 'planning', reason: 'Start by analyzing the Feature before story generation.' };
+      currentStage = 'Feature Analysis';
+    } else if (isApprovalPending(approvalWorkflow.feature)) {
       nextAction = { label: 'Approve Feature', action: 'approve_feature', workspace: 'planning', reason: 'The feature draft is ready and needs approval before story generation.' };
       currentStage = 'Feature Approval';
     } else if (!storyCandidates.length) {
       nextAction = { label: 'Generate Stories', action: 'generate_stories', workspace: 'planning', reason: 'The feature is ready. Generate child Stories next.' };
       currentStage = 'Story Generation';
-    } else if (!storiesApproved || isApprovalPending(approvalWorkflow.stories)) {
+    } else if (!storiesApproved || storyCandidates.some((draft) => !['approved', 'created', 'failed', 'skipped'].includes(draft.status)) || isApprovalPending(approvalWorkflow.stories)) {
       nextAction = { label: 'Approve Stories', action: 'approve_stories', workspace: 'planning', reason: 'Generated Stories are waiting for approval.' };
       currentStage = 'Story Approval';
+    } else if (selectableStoryDrafts.length) {
+      nextAction = { label: 'Create Selected Stories', action: 'create_children', workspace: 'planning', reason: 'Selected Story drafts are ready to be created in Azure DevOps.' };
+      currentStage = 'Story Ready';
     } else {
-      nextAction = { label: 'Open Story Planning', action: 'open_planning', workspace: 'planning', reason: 'Feature planning has approved Stories. Open a Story work item to generate Tasks.' };
+      nextAction = { label: 'Story Creation Complete', action: 'open_planning', workspace: 'planning', reason: 'Story drafts have already been created or deselected for this Feature.' };
       currentStage = 'Story Ready';
     }
   } else if (itemType === 'Story') {
-    if (isApprovalPending(approvalWorkflow.story)) {
+    if (!hasStoryAnalysis) {
+      nextAction = { label: 'Analyze Story', action: 'analyze_story', workspace: 'planning', reason: 'Start by analyzing the Story before task generation.' };
+      currentStage = 'Story Analysis';
+    } else if (isApprovalPending(approvalWorkflow.story)) {
       nextAction = { label: 'Approve Story', action: 'approve_story', workspace: 'planning', reason: 'The story draft is ready and must be approved before delivery artifacts are generated.' };
       currentStage = 'Story Approval';
     } else if (!taskCandidates.length) {
@@ -11687,21 +12238,21 @@ function buildWorkflowOrchestration({
       nextAction = { label: 'Approve Tasks', action: 'approve_tasks', workspace: 'planning', reason: 'Generated Tasks are waiting for approval.' };
       currentStage = 'Task Approval';
     } else if (!hasExecution) {
-      nextAction = { label: 'Open Execution Workspace', action: 'open_execution', workspace: 'execution', reason: 'Tasks are approved. Open Execution to build the developer package from the selected Task.' };
-      currentStage = 'Execution Package';
+      nextAction = { label: 'Open Execution Workspace', action: 'open_execution', workspace: 'execution', reason: 'Tasks are approved. Open Execution to build the implementation package from the selected Task.' };
+      currentStage = 'Implementation Package';
     } else {
       nextAction = { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'Execution package is ready for implementation.' };
       currentStage = 'Execution Ready';
     }
   } else if (itemType === 'Task') {
     nextAction = hasExecutionPackage
-      ? { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'The execution package is ready.' }
-      : { label: 'Build Execution Package', action: 'build_execution', workspace: 'execution', reason: 'Build the implementation package for this task.' };
-    currentStage = hasExecutionPackage ? 'Execution Ready' : 'Execution Package';
+      ? { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'The implementation package is ready.' }
+      : { label: 'Build Implementation Package', action: 'build_execution', workspace: 'execution', reason: 'Build the implementation package for this task.' };
+    currentStage = hasExecutionPackage ? 'Execution Ready' : 'Implementation Package';
   } else if (itemType === 'Bug') {
     nextAction = hasExecutionPackage
       ? { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'The fix package is ready.' }
-      : { label: 'Build Execution Package', action: 'build_execution', workspace: 'execution', reason: 'Build the fix context and regression prompt.' };
+      : { label: 'Build Implementation Package', action: 'build_execution', workspace: 'execution', reason: 'Build the fix context and regression prompt.' };
     currentStage = hasExecutionPackage ? 'Fix Ready' : 'Fix Context';
   } else {
     nextAction = { label: 'Coverage Analysis', action: 'generate_tests', workspace: 'qa', reason: 'Analyze test coverage and regression scope.' };
@@ -11775,7 +12326,15 @@ function workflowStatusesForStage({
   if (itemType === 'Epic') {
     pending.epic = approvalWorkflow.epic === 'approved' ? 'complete' : currentStage === 'Epic Approval' ? 'current' : 'pending';
     pending.features = featureDrafts.length ? (featuresApproved ? 'complete' : 'current') : currentStage === 'Feature Generation' ? 'current' : 'pending';
-    return onlyOneCurrent(pending, currentStage === 'Epic Approval' ? 'epic' : currentStage.includes('Feature') ? 'features' : undefined);
+    pending.stories = currentStage === 'Capability Review' ? 'blocked' : 'pending';
+    return onlyOneCurrent(
+      pending,
+      currentStage === 'Epic Approval'
+        ? 'epic'
+        : currentStage === 'Capability Review' || currentStage.includes('Feature')
+          ? 'features'
+          : undefined,
+    );
   }
   if (itemType === 'Feature') {
     pending.epic = 'complete';
@@ -11842,7 +12401,7 @@ function profileReadinessBreakdown(profile: ProjectProfile): Array<{ title: stri
     { label: 'Modules', ready: Boolean(profile.knowledge_registry.modules.length) },
     { label: 'Flows', ready: Boolean(profile.knowledge_registry.flows.length) },
     { label: 'Standards', ready: hasDevelopmentStandards(profile) },
-    { label: 'Execution Package Support', ready: true },
+    { label: 'Implementation Package Support', ready: true },
   ];
   return [
     { title: 'Profile Setup', ...readinessSection(profileChecks) },
@@ -11902,7 +12461,7 @@ function enterpriseReadiness(profile: ProjectProfile, qaReady: boolean, executio
     {
       title: 'Execution Ready',
       status: setup.complete ? 'Ready' as const : 'Missing' as const,
-      detail: setup.complete ? (executionReady ? 'Execution package generated' : 'Ready to generate execution packages') : 'Complete project setup first',
+      detail: setup.complete ? (executionReady ? 'Implementation package generated' : 'Ready to generate implementation packages') : 'Complete project setup first',
     },
     {
       title: 'QA Ready',

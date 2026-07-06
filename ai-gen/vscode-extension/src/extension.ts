@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import {
   BackendResolution,
@@ -19,6 +20,8 @@ let backendResolution: BackendResolution = {
 let currentSession: PlannerSession | undefined;
 let currentExecutionWorkspace: ExecutionWorkspaceState | undefined;
 let sidebarProvider: AiGenSidebarViewProvider | undefined;
+let recentEngineeringPackages: string[] = [];
+let lastSyncAt: number | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   sidebarProvider = new AiGenSidebarViewProvider(context.extensionUri, {
@@ -29,7 +32,9 @@ export function activate(context: vscode.ExtensionContext) {
     copyPrompt,
     createWorkItems,
     generateExecutionPlan,
+    generateDeveloperPrompt,
     rebuildExecutionPackage,
+    openCopilotChat,
     openPlanning,
     refreshState,
     getState,
@@ -50,6 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('ai-gen.openExecution', async (payload?: unknown) => {
       if (payload && typeof payload === 'object') {
         currentExecutionWorkspace = executionWorkspaceFromPayload(payload as Record<string, unknown>);
+        rememberRecentEngineeringPackage(currentExecutionWorkspace.title);
       }
       await vscode.commands.executeCommand('workbench.view.extension.aiGen');
       sidebarProvider?.update(getState('Execution Workspace opened.'));
@@ -72,6 +78,12 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      sidebarProvider?.update(getState());
+    })
+  );
+
   void refreshBackendResolution();
 }
 
@@ -83,6 +95,8 @@ async function startPlanning(requirement: string): Promise<PlannerViewState> {
   const backendUrl = await ensureBackendUrl();
   const session = await postJson<PlannerSession>(storyPlannerSessionsUrl(backendUrl), { requirement });
   currentSession = session;
+  rememberRecentEngineeringPackage(session.story?.title || requirement);
+  markSynced();
   return getState('Story planning started.');
 }
 
@@ -93,6 +107,7 @@ async function saveEdits(stage: string, payload: Record<string, unknown>): Promi
     stage,
     payload,
   });
+  markSynced();
   return getState('Edits saved.');
 }
 
@@ -103,6 +118,7 @@ async function regenerate(stage: string, userInput: string): Promise<PlannerView
     stage,
     user_input: userInput,
   });
+  markSynced();
   return getState('Stage regenerated.');
 }
 
@@ -112,29 +128,34 @@ async function approve(stage: string): Promise<PlannerViewState> {
   currentSession = await postJson<PlannerSession>(storyPlannerStageUrl(backendUrl, session.session_id, 'approve'), {
     stage,
   });
+  markSynced();
   return getState('Stage approved.');
 }
 
 async function copyPrompt(): Promise<PlannerViewState> {
   if (currentExecutionWorkspace) {
-    if (!currentExecutionWorkspace.executionPlan) {
-      throw new Error('Generate the Execution Plan before copying it.');
+    if (!currentExecutionWorkspace.developerPrompt) {
+      await generateDeveloperPrompt();
     }
-    await vscode.env.clipboard.writeText(currentExecutionWorkspace.executionPlan);
-    return getState('Execution Plan copied.');
+    if (!currentExecutionWorkspace?.developerPrompt) {
+      throw new Error('Generate the Developer Prompt before copying it.');
+    }
+    await vscode.env.clipboard.writeText(currentExecutionWorkspace.developerPrompt);
+    return getState('Developer Prompt copied.');
   }
   const session = requireSession();
   if (!session.code_generation_prompt) {
-    throw new Error('Final code-generation prompt is not ready yet.');
+    throw new Error('The Developer Prompt is not ready yet.');
   }
   await vscode.env.clipboard.writeText(session.code_generation_prompt);
-  return getState('Final code-generation prompt copied.');
+  return getState('Developer Prompt copied.');
 }
 
 async function createWorkItems(): Promise<PlannerViewState> {
   const session = requireSession();
   const backendUrl = await ensureBackendUrl();
   currentSession = await postJson<PlannerSession>(storyPlannerStageUrl(backendUrl, session.session_id, 'create-work-items'), {});
+  markSynced();
   return getState('Azure DevOps creation completed.');
 }
 
@@ -143,6 +164,7 @@ async function refreshState(): Promise<PlannerViewState> {
   if (currentSession && backendResolution.url) {
     currentSession = await getJson<PlannerSession>(storyPlannerSessionUrl(backendResolution.url, currentSession.session_id));
   }
+  markSynced();
   return getState('State refreshed.');
 }
 
@@ -165,10 +187,36 @@ async function generateExecutionPlan(): Promise<PlannerViewState> {
     statusMessage: 'Execution Plan generated.',
     executionPlan: String(result.plan || result.finalPlan || result.prompt || ''),
   };
+  markSynced();
   if (currentExecutionWorkspace.executionPlan) {
     await vscode.env.clipboard.writeText(currentExecutionWorkspace.executionPlan);
   }
-  return getState(currentExecutionWorkspace.executionPlan ? 'Execution Plan generated and copied.' : 'Execution Plan generated.');
+  return getState('Implementation Plan generated.');
+}
+
+async function generateDeveloperPrompt(): Promise<PlannerViewState> {
+  if (!currentExecutionWorkspace?.executionPackage) {
+    return await executionPackageMissing('Implementation Package not found.');
+  }
+  const backendUrl = await ensureBackendUrl();
+  const profile = await getJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/profile`);
+  const result = await postJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/build-dev-prompt`, {
+    profile,
+    knowledge_profile: profile.knowledge_registry || {},
+    story: storyFromExecutionWorkspace(currentExecutionWorkspace),
+    mode: 'deterministic_only',
+  });
+  currentExecutionWorkspace = {
+    ...currentExecutionWorkspace,
+    status: 'ready',
+    statusMessage: 'Developer Prompt generated.',
+    developerPrompt: String(result.prompt || result.finalPrompt || ''),
+  };
+  markSynced();
+  if (currentExecutionWorkspace.developerPrompt) {
+    await vscode.env.clipboard.writeText(currentExecutionWorkspace.developerPrompt);
+  }
+  return getState(currentExecutionWorkspace.developerPrompt ? 'Developer Prompt generated and copied.' : 'Developer Prompt generated.');
 }
 
 async function rebuildExecutionPackage(): Promise<PlannerViewState> {
@@ -177,7 +225,25 @@ async function rebuildExecutionPackage(): Promise<PlannerViewState> {
   }
   const rebuilt = await requestExecutionPackage(currentExecutionWorkspace);
   currentExecutionWorkspace = rebuilt;
-  return getState('Execution Package rebuilt.');
+  markSynced();
+  return getState('Implementation Package reloaded.');
+}
+
+async function openCopilotChat(): Promise<PlannerViewState> {
+  const commands = [
+    'workbench.panel.chat.view.copilot.focus',
+    'github.copilot-chat.focus',
+    'workbench.action.chat.open',
+  ];
+  for (const command of commands) {
+    try {
+      await vscode.commands.executeCommand(command);
+      return getState('Copilot Chat opened.');
+    } catch {
+      // try next command
+    }
+  }
+  throw new Error('Unable to open Copilot Chat from this VS Code environment.');
 }
 
 async function openPlanning(): Promise<PlannerViewState> {
@@ -188,10 +254,12 @@ async function openPlanning(): Promise<PlannerViewState> {
 
 async function handleAiGenUri(uri: vscode.Uri): Promise<void> {
   const command = aiGenCommandFromUri(uri);
-  if (command === 'loadExecutionPackage' || command === 'openExecution' || command === 'generateExecutionPlan' || command === 'openContextCapsule') {
+  const normalizedCommand = normalizeAiGenCommand(command, uri);
+  if (normalizedCommand === 'loadExecutionPackage' || normalizedCommand === 'openExecution' || normalizedCommand === 'generateExecutionPlan' || normalizedCommand === 'openContextCapsule') {
     let loaded: ExecutionWorkspaceState;
     try {
-      loaded = await openExecutionFromUri(uri, command);
+      loaded = await openExecutionFromUri(uri, normalizedCommand);
+      rememberRecentEngineeringPackage(loaded.title);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       currentExecutionWorkspace = missingExecutionWorkspace('', '', message || 'Malformed execution link.');
@@ -200,14 +268,14 @@ async function handleAiGenUri(uri: vscode.Uri): Promise<void> {
     }
     sidebarProvider?.update(getState(loaded.statusMessage));
     await vscode.commands.executeCommand('workbench.view.extension.aiGen');
-    if (command === 'generateExecutionPlan') {
+    if (normalizedCommand === 'generateExecutionPlan') {
       await generateExecutionPlan();
       sidebarProvider?.update(getState('Execution Plan generated.'));
     }
     vscode.window.showInformationMessage(loaded.statusMessage);
     return;
   }
-  if (command !== 'loadStoryPrompt') {
+  if (normalizedCommand !== 'loadStoryPrompt') {
     vscode.window.showErrorMessage(`Unknown ai-gen link action: ${command || uri.toString()}`);
     return;
   }
@@ -220,8 +288,8 @@ async function handleAiGenUri(uri: vscode.Uri): Promise<void> {
   }
   currentSession = await getJson<PlannerSession>(storyPlannerSessionUrl(backendUrl, sessionId));
   if (!currentSession.code_generation_prompt) {
-    vscode.window.showErrorMessage('The linked Story Planner session does not have a final code-generation prompt yet.');
-    sidebarProvider?.update(getState('Story prompt link loaded, but no prompt is ready yet.'));
+    vscode.window.showErrorMessage('The linked HEI session does not have an AI Prompt yet.');
+    sidebarProvider?.update(getState('HEI session loaded, but no AI Prompt is ready yet.'));
     await vscode.commands.executeCommand('workbench.view.extension.aiGen');
     return;
   }
@@ -230,12 +298,13 @@ async function handleAiGenUri(uri: vscode.Uri): Promise<void> {
     source: 'uri',
     healthy: true,
     mode: 'auto',
-    reason: 'Loaded from Azure DevOps Story Planner link.',
+    reason: 'Loaded from HEI Azure DevOps link.',
   };
   await vscode.env.clipboard.writeText(currentSession.code_generation_prompt);
-  sidebarProvider?.update(getState('Exact Story Planner prompt copied from Azure DevOps.'));
+  markSynced();
+  sidebarProvider?.update(getState('AI Prompt copied from Azure DevOps.'));
   await vscode.commands.executeCommand('workbench.view.extension.aiGen');
-  vscode.window.showInformationMessage('ai-gen code-generation prompt copied from Azure DevOps.');
+  vscode.window.showInformationMessage('HEI AI Prompt copied from Azure DevOps.');
 }
 
 function aiGenCommandFromUri(uri: vscode.Uri): string {
@@ -245,6 +314,32 @@ function aiGenCommandFromUri(uri: vscode.Uri): string {
     return path;
   }
   return authority;
+}
+
+function normalizeAiGenCommand(command: string, uri: vscode.Uri): string {
+  const raw = String(command || '').trim();
+  const normalized = raw.replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const folded = normalized.toLowerCase();
+  if (folded === 'openexecution') {
+    return 'openExecution';
+  }
+  if (folded === 'loadexecutionpackage') {
+    return 'loadExecutionPackage';
+  }
+  if (folded === 'generateexecutionplan') {
+    return 'generateExecutionPlan';
+  }
+  if (folded === 'opencontextcapsule') {
+    return 'openContextCapsule';
+  }
+  if (folded === 'loadstoryprompt') {
+    return 'loadStoryPrompt';
+  }
+  const params = new URLSearchParams(uri.query);
+  if (params.get('payload') || params.get('artifactType') || params.get('artifactId') || params.get('type') || params.get('id')) {
+    return 'openExecution';
+  }
+  return normalized;
 }
 
 async function openExecutionFromUri(uri: vscode.Uri, command: string): Promise<ExecutionWorkspaceState> {
@@ -292,10 +387,77 @@ function payloadFromParams(params: URLSearchParams): Record<string, unknown> | u
   if (!encodedPayload) {
     return undefined;
   }
+  const directJson = tryParseJsonObject(encodedPayload);
+  if (directJson) {
+    return directJson;
+  }
+  const normalizedVariants = [
+    encodedPayload,
+    encodedPayload.replace(/ /g, '+'),
+    encodedPayload.replace(/-/g, '+').replace(/_/g, '/'),
+    safeDecodeURIComponent(encodedPayload),
+  ].filter((value, index, list): value is string => Boolean(value) && list.indexOf(value) === index);
+
+  for (const variant of normalizedVariants) {
+    const decoded = decodeExecutionPayload(variant);
+    if (decoded) {
+      return decoded;
+    }
+  }
+
+  throw new Error('Malformed execution link. The payload could not be decoded.');
+}
+
+function decodeExecutionPayload(encodedPayload: string): Record<string, unknown> | undefined {
+  const base64Candidates = [
+    encodedPayload,
+    encodedPayload.padEnd(encodedPayload.length + ((4 - (encodedPayload.length % 4)) % 4), '='),
+  ].filter((value, index, list) => list.indexOf(value) === index);
+
+  for (const candidate of base64Candidates) {
+    try {
+      const utf8Text = Buffer.from(candidate, 'base64').toString('utf8');
+      const parsedUtf8 = tryParseJsonObject(utf8Text);
+      if (parsedUtf8) {
+        return parsedUtf8;
+      }
+    } catch {
+      // try next strategy
+    }
+
+    try {
+      const binaryText = Buffer.from(candidate, 'base64').toString('latin1');
+      const repairedUtf8 = safeDecodeURIComponent(binaryText.split('').map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, '0')}`).join(''));
+      const parsedBinary = tryParseJsonObject(repairedUtf8);
+      if (parsedBinary) {
+        return parsedBinary;
+      }
+    } catch {
+      // try next strategy
+    }
+  }
+
+  return undefined;
+}
+
+function tryParseJsonObject(value: string): Record<string, unknown> | undefined {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+    return undefined;
+  }
   try {
-    return JSON.parse(Buffer.from(encodedPayload, 'base64').toString('utf8')) as Record<string, unknown>;
+    const parsed = JSON.parse(trimmed) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
   } catch {
-    throw new Error('Malformed execution link. The payload could not be decoded.');
+    return undefined;
+  }
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
 }
 
@@ -308,6 +470,7 @@ function executionWorkspaceFromPayload(payload: Record<string, unknown>): Execut
   const artifactId = String(executionSource.artifactId || executionContext.artifact_id || executionPackage.artifactId || executionPackage.taskId || executionPackage.storyId || '');
   const title = String(executionSource.title || objectValue(executionContext.parent_story).title || objectValue(executionPackage.businessContext).taskObjective || objectValue(executionPackage.businessContext).storyTitle || 'Execution artifact');
   const executionPlan = String(payload.execution_plan || payload.executionPlan || payload.dev_prompt || '').trim();
+  const developerPrompt = String(payload.dev_prompt || payload.prompt || '').trim();
   const relatedFiles = relatedFilesFromPackage(executionPackage);
   const workspace: ExecutionWorkspaceState = {
     artifactType,
@@ -319,6 +482,7 @@ function executionWorkspaceFromPayload(payload: Record<string, unknown>): Execut
     executionContext,
     contextCapsule,
     executionPlan,
+    developerPrompt,
     repositoryContext: objectValue(executionPackage.repositoryContext),
     relatedFiles,
     currentBranch: String(objectValue(executionContext.repository).branch || ''),
@@ -406,19 +570,55 @@ async function executionPackageMissing(message: string): Promise<PlannerViewStat
 }
 
 function getState(statusMessage = ''): PlannerViewState {
+  const activeFile = vscode.window.activeTextEditor?.document?.fileName;
   return {
+    workspaceName: vscode.workspace.name || 'Workspace',
     backendStatus: backendResolution.healthy ? `Connected (${backendResolution.source})` : 'Disconnected',
     backendUrl: backendResolution.url || '',
+    backendSource: backendResolution.source,
+    backendReason: backendResolution.reason,
+    currentFileName: activeFile ? path.basename(activeFile) : '',
+    currentBranch: currentExecutionWorkspace?.currentBranch || '',
+    lastSyncLabel: formatRelativeTime(lastSyncAt),
     loading: false,
     loadingMessage: statusMessage,
     errorMessage: currentSession?.error_message || '',
+    recentEngineeringPackages,
     session: currentSession,
     executionWorkspace: currentExecutionWorkspace,
   };
 }
 
+function rememberRecentEngineeringPackage(title: string): void {
+  const cleaned = String(title || '').trim();
+  if (!cleaned) {
+    return;
+  }
+  recentEngineeringPackages = [cleaned, ...recentEngineeringPackages.filter((item) => item !== cleaned)].slice(0, 6);
+}
+
 async function refreshBackendResolution(): Promise<void> {
   backendResolution = await resolveBackendUrl();
+  markSynced();
+}
+
+function markSynced(): void {
+  lastSyncAt = Date.now();
+}
+
+function formatRelativeTime(timestamp?: number): string {
+  if (!timestamp) {
+    return '—';
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 10) return 'Just now';
+  if (seconds < 60) return `${seconds} sec ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 async function ensureBackendUrl(): Promise<string> {
@@ -426,7 +626,7 @@ async function ensureBackendUrl(): Promise<string> {
     await refreshBackendResolution();
   }
   if (!backendResolution.url) {
-    throw new Error('Unable to reach the AI Story Planner backend. Check the backend URL and health endpoint.');
+    throw new Error('Unable to reach the HEI Engineering Assistant backend. Check the backend URL and health endpoint.');
   }
   return backendResolution.url;
 }
@@ -438,7 +638,7 @@ function normalizeUrlParam(value: string | null): string {
 
 function requireSession(): PlannerSession {
   if (!currentSession) {
-    throw new Error('Start planning from a requirement first.');
+    throw new Error('Start with an engineering request first.');
   }
   return currentSession;
 }

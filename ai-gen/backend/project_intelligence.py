@@ -33,7 +33,7 @@ from backend.prompt_budget import (
     probe_json_with_budget,
 )
 from backend.prompt_builder import build_developer_prompt_v2, build_execution_plan
-from backend.qa import QAWorkspaceService
+from backend.qa import AcceptanceCoverageEngine, QAWorkspaceService, TestGapAnalyzer
 from backend.pr_review import PRReviewEngine, review_pr
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 from backend.skills import SkillEngine
@@ -1359,6 +1359,8 @@ class ProjectIntelligenceService:
         flows = _string_list(story.get("flows")) or _string_list(story.get("affected_flows")) or impact["affected_flows"]
         dependencies = _string_list(story.get("dependencies")) or impact["dependencies"] or _impact_dependencies(active_profile, keywords, modules, flows)
         acceptance = _string_list(story.get("acceptance_criteria")) or _acceptance_criteria(title, flows, modules)
+        qa_action = _clean_text((options or {}).get("qa_action")).lower()
+        existing_suite = (options or {}).get("existing_test_suite") if isinstance((options or {}).get("existing_test_suite"), dict) else {}
         memory_context = self._memory_context(
             "qa",
             active_profile,
@@ -1383,6 +1385,21 @@ class ProjectIntelligenceService:
             "previous_successful_artifacts": memory_context.get("previousSuccessfulArtifacts", []),
         }
         suite["generation_review"] = _generation_review(active_profile, suite["test_suite"]["test_cases"], modules, keywords)
+        if qa_action == "generate_missing_tests" and existing_suite:
+            suite = _append_missing_qa_tests(existing_suite, acceptance, title, modules, flows, dependencies, keywords)
+            suite["memory_context"] = memory_context
+            suite["memory_diagnostics"] = memory_context.get("diagnostics", {})
+            suite["qa_memory"] = {
+                "prior_tests": memory_context.get("reusableTests", []),
+                "regression_patterns": [
+                    memory for memory in memory_context.get("relevantMemories", [])
+                    if "regression" in " ".join(_string_list(memory.get("tags"))).lower()
+                    or "regression" in _clean_text(memory.get("summary")).lower()
+                ],
+                "known_risks": memory_context.get("knownRisks", []),
+                "previous_successful_artifacts": memory_context.get("previousSuccessfulArtifacts", []),
+            }
+            suite["generation_review"] = _generation_review(active_profile, suite["test_suite"]["test_cases"], modules, keywords)
         phi_item = {
             **story,
             "title": title,
@@ -1695,7 +1712,7 @@ class ProjectIntelligenceService:
             metadata=metadata,
         )
         if not _execution_ai_enrichment_enabled(options):
-            return _with_provider_metadata(deterministic, metadata)
+            return _with_implementation_package_aliases(_with_provider_metadata(deterministic, metadata))
         phi = _project_phi_json("build_execution_context", active_profile, executable, deterministic, _execution_ai_options(options), _execution_enrichment_keys("build_execution_context", deterministic))
         if phi["used"]:
             merged = _merge_known_fields(deterministic, phi["parsed"], _execution_enrichment_keys("build_execution_context", deterministic))
@@ -1703,8 +1720,8 @@ class ProjectIntelligenceService:
             merged["task_intelligence_diagnostics"] = task_plan["diagnostics"]
             merged["implementation_tasks"] = implementation_tasks
             merged["ai_enrichment_status"] = "enriched"
-            return _with_provider_metadata(merged, phi["metadata"])
-        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
+            return _with_implementation_package_aliases(_with_provider_metadata(merged, phi["metadata"]))
+        return _with_implementation_package_aliases(_with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"])))
 
     def build_dev_prompt(
         self,
@@ -1733,11 +1750,11 @@ class ProjectIntelligenceService:
         deterministic.update(_prompt_validation_payload(context, "Dev Prompt", deterministic["prompt"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_dev_prompt")
         if not _execution_ai_enrichment_enabled(options):
-            return _with_provider_metadata(deterministic, metadata)
+            return _with_ai_prompt_aliases(_with_provider_metadata(deterministic, metadata))
         phi = _project_phi_json("build_dev_prompt", active_profile, phi_item, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
-            return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
-        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
+            return _with_ai_prompt_aliases(_with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"]))
+        return _with_ai_prompt_aliases(_with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"])))
 
     def build_execution_plan(
         self,
@@ -1792,7 +1809,7 @@ class ProjectIntelligenceService:
         }
         deterministic.update(_prompt_validation_payload(context, "Execution Plan", deterministic["plan"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_execution_plan")
-        return _with_provider_metadata(deterministic, metadata)
+        return _with_implementation_plan_aliases(_with_provider_metadata(deterministic, metadata))
 
     def build_ui_prompt(
         self,
@@ -1823,11 +1840,11 @@ class ProjectIntelligenceService:
         deterministic.update(_prompt_validation_payload(context, "UI Prompt", deterministic["prompt"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_ui_prompt")
         if not _execution_ai_enrichment_enabled(options):
-            return _with_provider_metadata(deterministic, metadata)
+            return _with_ai_prompt_aliases(_with_provider_metadata(deterministic, metadata), "ui")
         phi = _project_phi_json("build_ui_prompt", active_profile, phi_item, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
-            return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
-        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
+            return _with_ai_prompt_aliases(_with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"]), "ui")
+        return _with_ai_prompt_aliases(_with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"])), "ui")
 
     def build_qa_prompt(
         self,
@@ -1857,11 +1874,11 @@ class ProjectIntelligenceService:
         deterministic.update(_prompt_validation_payload(context, "QA Prompt", deterministic["prompt"]))
         metadata = _execution_primary_metadata(time.monotonic(), "build_qa_prompt")
         if not _execution_ai_enrichment_enabled(options):
-            return _with_provider_metadata(deterministic, metadata)
+            return _with_ai_prompt_aliases(_with_provider_metadata(deterministic, metadata), "qa")
         phi = _project_phi_json("build_qa_prompt", active_profile, phi_item, deterministic, _execution_ai_options(options), ["prompt"])
         if phi["used"]:
-            return _with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"])
-        return _with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"]))
+            return _with_ai_prompt_aliases(_with_provider_metadata({**deterministic, **_pick_string_fields(phi["parsed"], ["prompt"])}, phi["metadata"]), "qa")
+        return _with_ai_prompt_aliases(_with_provider_metadata(deterministic, _execution_timeout_metadata(metadata, phi["metadata"])), "qa")
 
     def build_copilot_context(
         self,
@@ -7923,6 +7940,93 @@ def _qa_test_suite(
     }
 
 
+def _append_missing_qa_tests(
+    base_suite: dict[str, Any],
+    acceptance: list[str],
+    title: str,
+    modules: list[str],
+    flows: list[str],
+    dependencies: list[str],
+    keywords: list[str],
+) -> dict[str, Any]:
+    existing_suite = base_suite.get("test_suite") if isinstance(base_suite.get("test_suite"), dict) else {}
+    existing_tests = existing_suite.get("test_cases") if isinstance(existing_suite.get("test_cases"), list) else []
+    current_tests = [dict(test) for test in existing_tests if isinstance(test, dict)]
+    coverage = AcceptanceCoverageEngine().analyze(acceptance, current_tests)
+    gaps = TestGapAnalyzer().analyze(acceptance, current_tests)
+    next_id = len(current_tests) + 1
+    generated: list[dict[str, Any]] = []
+
+    for index, criterion in enumerate(gaps.get("untestedAcceptanceCriteria", []), start=1):
+        primary = _qa_case(
+            "Functional",
+            f"Validate {title.lower()} - missing acceptance criterion {index}",
+            ["Approved story and data prerequisites are available."],
+            ["Execute the user path for the target acceptance criterion.", "Verify the expected outcome exactly matches the acceptance criterion."],
+            criterion,
+            "High",
+            "Medium",
+        )
+        primary["covers_acceptance_criteria"] = [criterion]
+        primary["test_id"] = f"TC{next_id:03d}"
+        next_id += 1
+        generated.append(primary)
+
+        secondary_category = "Permission" if any(token in criterion.lower() for token in ["permission", "role", "unauthorized", "access", "security"]) else "Regression"
+        secondary = _qa_case(
+            secondary_category,
+            f"{secondary_category} check for {title.lower()} - acceptance criterion {index}",
+            ["Primary behavior is available for verification."],
+            ["Exercise the guarded or follow-on path for the acceptance criterion.", "Confirm the criterion remains satisfied without regressions."],
+            criterion,
+            "Medium",
+            "Medium",
+        )
+        secondary["covers_acceptance_criteria"] = [criterion]
+        secondary["test_id"] = f"TC{next_id:03d}"
+        next_id += 1
+        generated.append(secondary)
+
+    existing_categories = {category_for(test) for test in current_tests}
+    for category in ["Functional", "Negative", "Permission", "Regression"]:
+        if category in existing_categories:
+            continue
+        if category == "Functional":
+            extra = _qa_positive_test(title, acceptance, flows, modules)
+        elif category == "Negative":
+            extra = (_qa_negative_tests(title, modules, keywords) or [_qa_case("Negative", f"Negative path for {title.lower()}", ["Approved context exists."], ["Execute an invalid or unsupported path.", "Verify the system rejects the action safely."], "System rejects invalid behavior safely.", "Medium", "Medium")])[0]
+        elif category == "Permission":
+            extra = (_qa_permission_tests(title) or [_qa_case("Permission", f"Permission check for {title.lower()}", ["Role-restricted access exists."], ["Attempt access with an unauthorized role.", "Verify access is denied."], "Unauthorized users cannot access the behavior.", "High", "High")])[0]
+        else:
+            extra = (_qa_regression_tests(title, modules, flows, dependencies) or [_qa_case("Regression", f"Regression check for {title.lower()}", ["Existing behavior is available."], ["Repeat the previously supported path.", "Verify no regression is introduced."], "Existing behavior remains intact.", "Medium", "Medium")])[0]
+        extra["test_id"] = f"TC{next_id:03d}"
+        next_id += 1
+        generated.append(extra)
+
+    merged_tests = current_tests + generated
+    if not generated:
+        return base_suite
+    updated_coverage = _qa_coverage_summary(acceptance, merged_tests)
+    updated_breakdown = _qa_coverage_breakdown(merged_tests, acceptance)
+    return {
+        **base_suite,
+        "test_suite": {
+            **existing_suite,
+            "test_cases": merged_tests,
+        },
+        "coverage_summary": updated_coverage,
+        "coverage_score": _qa_coverage_score(updated_breakdown, updated_coverage),
+        "coverage_breakdown": updated_breakdown,
+        "generated_test_count": len(merged_tests),
+        "coverage_gaps": updated_coverage["uncovered_acceptance_criteria"],
+        "gap_fill_summary": {
+            "untested_acceptance_criteria_before": coverage.get("missingCount", 0),
+            "generated_missing_tests": len(generated),
+            "remaining_gaps": len(updated_coverage.get("uncovered_acceptance_criteria", [])),
+        },
+    }
+
+
 def _attach_qa_intelligence(
     suite: dict[str, Any],
     story: dict[str, Any],
@@ -9911,6 +10015,57 @@ def _with_context_diagnostics(metadata: dict[str, Any], diagnostics: dict[str, A
 
 def _with_provider_metadata(payload: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
     return {**payload, **metadata}
+
+
+def _with_implementation_package_aliases(payload: dict[str, Any]) -> dict[str, Any]:
+    implementation_package = payload.get("execution_package_v2") if isinstance(payload.get("execution_package_v2"), dict) else {}
+    if not implementation_package and isinstance(payload.get("implementation_package_v2"), dict):
+        implementation_package = payload.get("implementation_package_v2") or {}
+    if not implementation_package:
+        return payload
+    merged = dict(payload)
+    merged["implementation_package_v2"] = implementation_package
+    merged["implementationPackageV2"] = implementation_package
+    merged["implementation_package"] = implementation_package
+    merged["implementationPackage"] = implementation_package
+    if payload.get("execution_package_source") and not merged.get("implementation_package_source"):
+        merged["implementation_package_source"] = payload.get("execution_package_source")
+    return merged
+
+
+def _with_implementation_plan_aliases(payload: dict[str, Any]) -> dict[str, Any]:
+    plan = payload.get("execution_plan") if isinstance(payload.get("execution_plan"), dict) else {}
+    if not plan:
+        plan = {
+            "planId": payload.get("planId"),
+            "packageId": payload.get("packageId"),
+            "executionMode": payload.get("executionMode"),
+            "executionModeLabel": payload.get("executionModeLabel"),
+            "finalPlan": payload.get("finalPlan") or payload.get("plan") or payload.get("prompt") or "",
+            "estimatedTokens": payload.get("estimatedTokens"),
+            "warnings": payload.get("warnings"),
+            "diagnostics": payload.get("diagnostics"),
+            "generatedAt": payload.get("generatedAt"),
+        }
+    merged = dict(payload)
+    merged["implementation_plan"] = plan
+    merged["implementationPlan"] = plan
+    return merged
+
+
+def _with_ai_prompt_aliases(payload: dict[str, Any], prompt_type: str = "implementation") -> dict[str, Any]:
+    prompt_text = _clean_text(payload.get("prompt"))
+    if not prompt_text:
+        return payload
+    merged = dict(payload)
+    merged["ai_prompt"] = prompt_text
+    merged["aiPrompt"] = {
+        "type": prompt_type,
+        "prompt": prompt_text,
+        "provider": payload.get("provider_used"),
+        "generatedAt": payload.get("generatedAt"),
+    }
+    return merged
 
 
 def _phi_error_response(phi: dict[str, Any]) -> dict[str, Any]:

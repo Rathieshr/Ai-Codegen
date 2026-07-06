@@ -118,6 +118,60 @@ class QAIntelligenceTests(unittest.TestCase):
         self.assertIn("release_recommendation", result)
         self.assertIn(result["release_status"], {"Ready For Release", "Ready With Warnings", "Needs More Testing", "Blocked"})
 
+    def test_generate_missing_tests_appends_gap_filling_cases(self) -> None:
+        story = {
+            "title": "Open Critical Fault Event Details",
+            "description": "As an Operations User, I want to open critical fault event details.",
+            "acceptance_criteria": [
+                "Operator can open a critical fault event from the event list.",
+                "Unauthorized users cannot view restricted fault event details.",
+            ],
+        }
+        profile = {
+            "project_name": "LineDefender",
+            "domain": "Utility Grid Management",
+            "knowledge_registry": {
+                "modules": ["Fault Monitoring", "Telemetry"],
+                "flows": ["Fault Event Review Flow"],
+            },
+        }
+        existing_suite = {
+            "test_suite": {
+                "title": "Open Critical Fault Event Details QA Test Suite",
+                "story": {"title": story["title"], "description": story["description"]},
+                "test_cases": [
+                    {
+                        "test_id": "TC001",
+                        "category": "Functional",
+                        "title": "Open valid critical fault event",
+                        "preconditions": ["User is signed in."],
+                        "steps": ["Open the event list.", "Select a critical fault event."],
+                        "expected_result": "Event details are displayed.",
+                    }
+                ],
+            },
+            "coverage_score": 40,
+            "coverage_gaps": ["Unauthorized users cannot view restricted fault event details."],
+        }
+
+        result = ProjectIntelligenceService().generate_qa_test_cases(
+            story,
+            profile,
+            execution_package=_execution_package(),
+            implementation_validation={"status": "Passed", "acceptanceCoverageScore": 90, "testCoverageScore": 85},
+            options={
+                "force_provider": "deterministic_fallback",
+                "qa_action": "generate_missing_tests",
+                "existing_test_suite": existing_suite,
+            },
+        )
+
+        self.assertGreater(result["generated_test_count"], 1)
+        self.assertIn("gap_fill_summary", result)
+        self.assertGreater(result["gap_fill_summary"]["generated_missing_tests"], 0)
+        joined_titles = " ".join(test["title"] for test in result["test_suite"]["test_cases"])
+        self.assertIn("acceptance criterion", joined_titles.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

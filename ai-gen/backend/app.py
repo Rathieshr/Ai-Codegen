@@ -514,10 +514,12 @@ class ProjectIntelligenceExecutionRequest(BaseModel):
     execution_package: dict[str, Any] = Field(default_factory=dict)
     execution_plan: dict[str, Any] | str = Field(default_factory=dict)
     implementation_validation: dict[str, Any] = Field(default_factory=dict)
+    existing_test_suite: dict[str, Any] = Field(default_factory=dict)
     force_provider: str = ""
     allow_fallback: bool = False
     mode: str = ""
     execution_mode: str = ""
+    qa_action: str = ""
 
 
 class ProjectIntelligenceImplementationValidationRequest(BaseModel):
@@ -1162,7 +1164,11 @@ def generate_project_qa_test_cases(request: ProjectIntelligenceExecutionRequest)
         request.execution_package,
         request.execution_plan,
         request.implementation_validation,
-        _project_intelligence_options(request),
+        {
+            **_project_intelligence_options(request),
+            "existing_test_suite": request.existing_test_suite,
+            "qa_action": request.qa_action,
+        },
     )
 
 
@@ -1397,6 +1403,7 @@ def _project_intelligence_options(request: Any) -> dict[str, Any]:
         "allow_fallback": bool(getattr(request, "allow_fallback", False)),
         "mode": getattr(request, "mode", ""),
         "execution_mode": getattr(request, "execution_mode", ""),
+        "qa_action": getattr(request, "qa_action", ""),
     }
 
 

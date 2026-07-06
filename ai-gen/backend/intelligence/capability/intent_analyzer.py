@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .domain_expander import expand_concepts
+
 
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have", "in", "into",
@@ -24,15 +26,36 @@ class IntentAnalyzer:
         inferred_modules = _list(intent_model.get("inferredModules"))
         inferred_flows = _list(intent_model.get("inferredFlows"))
 
-        domain_nouns = _unique([
+        business_concepts = _unique([
             *entities,
             *business_keywords,
             *[token for token in _tokenize(f"{title} {description}") if len(token) > 3],
         ])[:20]
+        domain_nouns = business_concepts[:]
         business_verbs = _unique([
             *actions,
             *[token for token in _tokenize(user_outcome) if token.endswith(("e", "t", "r"))],
         ])[:12]
+        operational_concepts = _unique([
+            *[token for token in business_concepts if token.lower() in {"operations", "dashboard", "monitoring", "review", "alert", "alarm", "outage", "escalation"}],
+            *[token for token in inferred_flows if token],
+        ])[:16]
+        technical_concepts = _unique([
+            *technical_keywords,
+            *inferred_modules,
+            *[token for token in _tokenize(description) if token in {"api", "telemetry", "firmware", "authentication", "authorization", "analytics", "reporting", "audit"}],
+        ])[:16]
+        expanded_concepts = expand_concepts([
+            *business_concepts,
+            *business_verbs,
+            *operational_concepts,
+            *technical_concepts,
+            title,
+            description,
+            business_goal,
+            user_outcome,
+            operational_goal,
+        ])[:48]
         technical_verbs = _unique([
             *technical_keywords,
             *[token for token in _tokenize(description) if token in {"monitor", "review", "display", "analyze", "detect", "export", "filter", "search", "manage", "deploy", "upgrade"}],
@@ -50,6 +73,7 @@ class IntentAnalyzer:
                 operational_goal,
                 " ".join(domain_nouns),
                 " ".join(business_verbs),
+                " ".join(expanded_concepts),
                 " ".join(technical_verbs),
                 " ".join(inferred_modules),
                 " ".join(inferred_flows),
@@ -59,8 +83,12 @@ class IntentAnalyzer:
             "businessGoal": business_goal,
             "operationalGoal": operational_goal,
             "userOutcome": user_outcome,
+            "businessConcepts": business_concepts,
             "domainNouns": domain_nouns,
             "businessVerbs": business_verbs,
+            "operationalConcepts": operational_concepts,
+            "technicalConcepts": technical_concepts,
+            "expandedConcepts": expanded_concepts,
             "technicalVerbs": technical_verbs,
             "affectedSystems": affected_systems,
             "corpus": corpus,

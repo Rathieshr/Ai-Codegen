@@ -16,6 +16,7 @@ def apply_repository_scores(candidates: list[dict[str, Any]], repository_snapsho
         keyword_hits = [keyword for keyword in _list(rules.get("keywords")) if keyword.lower() in repository_text]
         candidate["repository_score"] = min(100, 25 + len(module_hits) * 20 + len(flow_hits) * 18 + len(keyword_hits) * 8) if repository_text else 0
         candidate["repository_evidence"] = _unique([*module_hits, *flow_hits, *keyword_hits])[:6]
+        candidate["repository_support"] = "strengthens" if candidate["repository_score"] else "none"
 
 
 def _repository_text(repository_snapshot: dict[str, Any], knowledge_registry: dict[str, Any]) -> str:

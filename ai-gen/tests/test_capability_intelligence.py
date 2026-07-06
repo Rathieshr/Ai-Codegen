@@ -294,6 +294,70 @@ class CapabilityIntelligenceTests(unittest.TestCase):
         self.assertEqual(context["primaryCapability"]["name"], "Alert Management")
         self.assertIn("Operational Awareness", selected)
 
+    def test_alarm_notification_center_prioritizes_business_capabilities_before_supporting(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Build Centralized Alarm Notification Center",
+                "description": "Create a centralized alarm notification center for event review, acknowledgement, escalation, priority handling, dashboard visibility, and audit history.",
+            }
+        )
+
+        discovery = context["capabilityDiscovery"]
+        business = [item["name"] for item in discovery["recommendedBusinessCapabilities"]]
+        supporting = [item["name"] for item in discovery["supportingCapabilities"]]
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Alert Management", business)
+        self.assertIn("Notification Management", business)
+        self.assertIn("Event Management", business)
+        self.assertIn("Operational Awareness", supporting)
+        self.assertIn("Alert Management", selected)
+
+    def test_firmware_rollout_epic_recommends_deployment_and_compliance(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Firmware Rollout Management",
+                "description": "Manage firmware rollout, device upgrade sequencing, deployment visibility, version compliance, and device status.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Firmware Management", selected)
+        self.assertIn("Deployment", selected)
+        self.assertIn("Compliance", selected)
+        self.assertIn("Device Management", selected)
+
+    def test_user_administration_epic_recommends_user_management_and_audit_logging(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "User Administration Portal",
+                "description": "Administrators manage users, accounts, roles, authorization, secure login, audit history, and account permissions.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Authentication", selected)
+        self.assertIn("Authorization", selected)
+        self.assertIn("User Management", selected)
+        self.assertIn("Audit Logging", selected)
+
+    def test_energy_analytics_epic_recommends_analytics_reporting_telemetry_and_trends(self) -> None:
+        context = self.capability_context(
+            {
+                "type": "Epic",
+                "title": "Energy Consumption Analytics",
+                "description": "Provide energy analytics, reporting, telemetry trends, KPI visibility, export, and operational insight.",
+            }
+        )
+
+        selected = [context["primaryCapability"]["name"], *names(context["secondaryCapabilities"])]
+        self.assertIn("Analytics", selected)
+        self.assertIn("Reporting", selected)
+        self.assertIn("Telemetry", selected)
+        self.assertIn("Trend Analysis", selected)
+
     def test_capability_discovery_limits_recommendations_and_includes_evidence(self) -> None:
         context = self.capability_context(
             {
@@ -310,6 +374,8 @@ class CapabilityIntelligenceTests(unittest.TestCase):
         self.assertGreaterEqual(discovery["threshold"], 70)
         self.assertTrue(all(item["reason"] for item in recommendations[:3]))
         self.assertTrue(all(item["evidence"] for item in recommendations[:3]))
+        self.assertTrue(all(item["classification"] for item in recommendations[:3]))
+        self.assertTrue(all("businessPriority" in item for item in recommendations[:3]))
 
 
 if __name__ == "__main__":

@@ -39,8 +39,6 @@ def dedupe_capabilities(
 def _can_merge_purpose(existing: str, candidate: str) -> bool:
     if {existing, candidate} == {"Authentication", "Authorization"}:
         return False
-    if {existing, candidate} == {"Alert Management", "Notification"}:
-        return False
-    if {existing, candidate} == {"Reporting", "Export and Reporting"}:
+    if {existing, candidate} == {"Alert Management", "Notification Management"}:
         return False
     return True

@@ -133,7 +133,7 @@ def criterion_is_verifiable(criterion: str) -> bool:
     return not any(token in lowered for token in non_verifiable) or any(char.isdigit() for char in lowered)
 
 
-def test_covers_criterion(test: dict[str, Any], criterion: str) -> bool:
+def does_test_cover_criterion(test: dict[str, Any], criterion: str) -> bool:
     text = test_text(test)
     criterion_lower = criterion.lower()
     if any(token in criterion_lower for token in ["permission", "role", "unauthorized", "access", "security"]):

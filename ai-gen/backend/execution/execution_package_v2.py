@@ -297,10 +297,6 @@ def _task_objective(selected_task: dict[str, Any], story: dict[str, Any], normal
     if title:
         return _normalize_sentence(title)
     story_title = normalized_story_title or _normalize_story_title(story)
-    if _contains_keywords(story_title, "severity", "classify"):
-        return "Implement fault severity classification so Operations Users can identify high-risk fault events first."
-    if _contains_keywords(story_title, "fault", "details"):
-        return "Implement critical fault detail retrieval so Operations Users can assess device condition and outage impact quickly."
     return f"Implement {story_title or _clean(story.get('title'))} within the approved story boundary."
 
 
@@ -610,30 +606,15 @@ def _readiness(
 
 def _normalize_story_title(story: dict[str, Any]) -> str:
     title = _clean(story.get("title"))
-    lowered = title.casefold()
-    if _contains_keywords(lowered, "classify", "severity"):
-        return "Classify Fault Severity"
-    if _contains_keywords(lowered, "view", "detect", "fault"):
-        return "View Critical Fault Details"
-    if _contains_keywords(lowered, "newly", "arrived", "events"):
-        return "View Newly Arrived Fault Events"
-    tokens = [token for token in re.split(r"[^a-z0-9]+", lowered) if token and token not in {"use", "do", "complete"}]
-    normalized = " ".join(tokens).strip()
-    if normalized and not any(word in normalized for word in ("fault", "event", "severity", "outage", "telemetry")):
-        normalized = f"{normalized} fault details"
-    return _title_case(normalized or title or "Approved Story")
+    return _title_case(title) if title else "Approved Story"
 
 
 def _normalize_user_story(story: dict[str, Any], normalized_title: str, dna_summary: dict[str, Any]) -> str:
     raw = _clean(story.get("user_goal") or story.get("story_user_goal") or story.get("description"))
+    if raw:
+        return raw
     persona = _extract_persona(raw) or "Operations User"
     persona_phrase = f"As {_article_for(persona)} {persona},"
-    if _contains_keywords(normalized_title, "severity", "classify"):
-        return f"{persona_phrase} I want fault events classified by severity so that I can identify and respond to high-risk events first."
-    if _contains_keywords(normalized_title, "fault", "details"):
-        return f"{persona_phrase} I want to view critical fault details so that I can assess device condition and outage impact quickly."
-    if _contains_keywords(normalized_title, "newly", "arrived", "events"):
-        return f"{persona_phrase} I want newly arrived fault events highlighted so that I can respond to new operational risks without delay."
     outcome = dna_summary.get("businessOutcome") or "I can complete the approved operational workflow with confidence."
     action = _clean(normalized_title).casefold()
     if action.startswith("view "):

@@ -2720,8 +2720,8 @@ function ProjectIntelligenceTab() {
     const source = artifactType === 'Feature'
       ? epicFeatureGenerationSource(epicInput, epicResult)
       : artifactType === 'Story'
-        ? { feature: featureInput, purpose: 'generated_stories' }
-        : { story: storyInput, acceptance_criteria: splitLines(acceptanceCriteria), purpose: 'generated_tasks' };
+        ? { ...featureInput, type: 'Feature', purpose: 'generated_stories' }
+        : { ...storyInput, type: 'Story', acceptance_criteria: splitLines(acceptanceCriteria), purpose: 'generated_tasks' };
     await saveGeneratedArtifact(
       artifactType,
       artifactType === 'Feature'
@@ -5430,7 +5430,8 @@ function childDraftIdentity(draft: ChildDraft): string {
 
 function epicFeatureGenerationSource(epicInput: { title: string; description: string }, epicResult?: EpicRefinement): Record<string, unknown> {
   return {
-    epic: epicInput,
+    ...epicInput,
+    type: 'Epic',
     purpose: 'generated_features',
     approved_capabilities: (epicResult?.capability_review || [])
       .filter(isCapabilityApproved)
@@ -8290,9 +8291,11 @@ function QAWorkspace({
           >
             {primary.label}
           </button>
-          <button className="planner-button secondary" onClick={() => void generateQATestCases(true, 'analyze')} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()}>
-            {qaTestSuite ? 'Refresh QA Analysis' : 'Run QA Analysis'}
-          </button>
+          {qaTestSuite ? (
+            <button className="planner-button secondary" onClick={() => void generateQATestCases(true, 'analyze')} disabled={loading || readOnly || !qaInputReady || !storyInput.title.trim()}>
+              Refresh QA Analysis
+            </button>
+          ) : null}
           <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>
             Review Regression
           </button>

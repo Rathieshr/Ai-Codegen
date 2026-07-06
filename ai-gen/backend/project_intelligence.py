@@ -8002,7 +8002,7 @@ def _qa_test_suite(
     tests: list[dict[str, Any]] = []
     next_id = 1
     for test in [
-        _qa_positive_test(title, acceptance, flows, modules),
+        *_qa_positive_tests(title, acceptance, flows, modules),
         *_qa_negative_tests(title, modules, keywords),
         *_qa_boundary_tests(title, keywords),
         *_qa_permission_tests(title),
@@ -8220,25 +8220,45 @@ def _normalize_qa_category(value: str) -> str:
     return "Positive Tests"
 
 
-def _qa_positive_test(title: str, acceptance: list[str], flows: list[str], modules: list[str]) -> dict[str, Any]:
-    expected = acceptance[0] if acceptance else f"{title} completes successfully."
-    flow = flows[0] if flows else "approved user flow"
-    module = modules[0] if modules else "affected module"
-    return _qa_case(
-        "Positive Tests",
-        f"Open valid {title.lower()}",
-        [f"User has permission for {flow}.", f"{module} data is available."],
-        [
-            f"Navigate to the {flow} entry point.",
-            f"Select a valid record for {title}.",
-            "Review the displayed result.",
-        ],
-        expected,
-        "High",
-        "Medium",
-        [0],
-    )
-
+def _qa_positive_tests(title: str, acceptance: list[str], flows: list[str], modules: list[str]) -> list[dict[str, Any]]:
+    if not acceptance:
+        expected = f"{title} completes successfully."
+        flow = flows[0] if flows else "approved user flow"
+        module = modules[0] if modules else "affected module"
+        return [_qa_case(
+            "Positive Tests",
+            f"Open valid {title.lower()}",
+            [f"User has permission for {flow}.", f"{module} data is available."],
+            [
+                f"Navigate to the {flow} entry point.",
+                f"Select a valid record for {title}.",
+                "Review the displayed result.",
+            ],
+            expected,
+            "High",
+            "Medium",
+            [0],
+        )]
+    
+    tests = []
+    for i, criterion in enumerate(acceptance):
+        flow = flows[min(i, len(flows) - 1)] if flows else "approved user flow"
+        module = modules[min(i, len(modules) - 1)] if modules else "affected module"
+        tests.append(_qa_case(
+            "Positive Tests",
+            f"Validate {title.lower()} - scenario {i + 1}",
+            [f"User has permission for {flow}.", f"{module} data is available."],
+            [
+                f"Navigate to the {flow} entry point.",
+                f"Exercise the target functionality for {title}.",
+                "Verify the expected outcome matches the acceptance criterion.",
+            ],
+            criterion,
+            "High",
+            "Medium",
+            [i],
+        ))
+    return tests
 
 def _qa_negative_tests(title: str, modules: list[str], keywords: list[str]) -> list[dict[str, Any]]:
     record_name = "Event ID" if any(word in keywords for word in ["fault", "event"]) else "Record ID"
@@ -10426,17 +10446,7 @@ def _task_is_rejected(task: dict[str, Any], story_title: str) -> bool:
 
 
 def _task_subject(story_title: str) -> str:
-    cleaned = _clean_story_title(story_title)
-    lowered = cleaned.lower()
-    if "critical fault event details" in lowered or ("fault" in lowered and "detail" in lowered):
-        return "Critical Fault Event Detail"
-    if "critical fault" in lowered:
-        return "Critical Fault Event"
-    if "device health" in lowered:
-        return "Device Health"
-    if "telemetry" in lowered:
-        return "Telemetry"
-    return cleaned
+    return _clean_story_title(story_title)
 
 
 def _task_quality_score(task: dict[str, Any]) -> int:

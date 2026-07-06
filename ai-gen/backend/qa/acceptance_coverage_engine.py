@@ -11,7 +11,7 @@ from .qa_validation_rules import (
     STATUS_PARTIAL,
     clean,
     criterion_is_verifiable,
-    test_covers_criterion,
+    does_test_cover_criterion,
 )
 
 
@@ -27,7 +27,7 @@ class AcceptanceCoverageEngine:
         partial_count = 0
         missing: list[str] = []
         for index, criterion in enumerate(acceptance_criteria, start=1):
-            mapped = [test for test in tests if test_covers_criterion(test, criterion)]
+            mapped = [test for test in tests if does_test_cover_criterion(test, criterion)]
             verifiable = criterion_is_verifiable(criterion)
             if not verifiable and not mapped:
                 status = STATUS_NOT_VERIFIABLE

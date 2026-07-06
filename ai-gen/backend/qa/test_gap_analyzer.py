@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .qa_validation_rules import category_for, clean, test_covers_criterion
+from .qa_validation_rules import category_for, clean, does_test_cover_criterion
 
 
 class TestGapAnalyzer:
@@ -25,7 +25,7 @@ class TestGapAnalyzer:
             seen.add(key)
             if len(test.get("steps") or []) < 2 or not clean(test.get("expected_result") or test.get("expected")):
                 weak.append(title)
-        untested = [criterion for criterion in acceptance_criteria if not any(test_covers_criterion(test, criterion) for test in tests)]
+        untested = [criterion for criterion in acceptance_criteria if not any(does_test_cover_criterion(test, criterion) for test in tests)]
         categories = {category_for(test) for test in tests}
         missing_categories = [category for category in ["Functional", "Negative", "Permission", "Regression"] if category not in categories]
         return {

@@ -111,8 +111,8 @@ class EpicAnalysisIntelligenceTests(unittest.TestCase):
         )
 
         reviews = refined["capability_review"]
-        fault = next(item for item in reviews if item["capabilityName"] == "Fault Monitoring")
-        outage = next(item for item in reviews if item["capabilityName"] == "Outage Investigation")
+        fault = next(item for item in reviews if (item.get("capabilityCategory") or item["capabilityName"]) == "Fault Monitoring")
+        outage = next(item for item in reviews if (item.get("capabilityCategory") or item["capabilityName"]) == "Outage Investigation")
 
         self.assertGreaterEqual(len(reviews), 4)
         self.assertTrue(fault["responsibilities"])
@@ -137,6 +137,28 @@ class EpicAnalysisIntelligenceTests(unittest.TestCase):
         self.assertEqual([feature["capability"] for feature in refined["recommended_features"]], ["Fault Monitoring"])
         self.assertEqual(refined["recommended_features"][0]["title"], "Critical Fault Detection")
         self.assertEqual(refined["capability_diagnostics"]["approved_capability_count"], 1)
+
+    def test_device_health_dashboard_capabilities_are_contextualized(self) -> None:
+        refined = ProjectIntelligenceService().refine_epic(
+            {
+                "id": 193,
+                "type": "Epic",
+                "title": "Modernize Device Health Dashboard for Operations Center",
+                "description": "Provide Operations Users with a real-time view of device health, communication status, and operational alerts so unhealthy devices can be identified and acted on before failures occur.",
+            },
+            PROFILE,
+            options={"force_provider": "deterministic_fallback"},
+        )
+
+        capability_names = [item["capabilityName"] for item in refined["capability_review"]]
+        capability_categories = [item.get("capabilityCategory") for item in refined["capability_review"]]
+
+        self.assertIn("Device Health Overview", capability_names)
+        self.assertIn("Device Detail View", capability_names)
+        self.assertIn("Offline Device Detection", capability_names)
+        self.assertIn("Health Trend Analytics", capability_names)
+        self.assertIn("Operational Awareness", capability_categories)
+        self.assertIn("Asset Health", capability_categories)
 
 
 if __name__ == "__main__":

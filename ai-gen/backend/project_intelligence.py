@@ -947,7 +947,7 @@ class ProjectIntelligenceService:
             },
         )
         epic_analysis = _apply_capability_discovery_to_epic_analysis(epic_analysis, capability_context)
-        capability_review = buildCapabilityReview(epic_analysis, relevant_profile)
+        capability_review = buildCapabilityReview(epic, epic_analysis, relevant_profile)
         business_goal = _primary_epic_goal(epic_analysis, title, description, active_profile)
         capability_plan = _capability_decomposition_from_epic_analysis(title, business_goal, keywords, relevant_profile, epic_analysis_for_features, options)
         features = [

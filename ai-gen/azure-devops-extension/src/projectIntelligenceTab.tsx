@@ -1103,6 +1103,8 @@ type EpicRefinement = ProviderMetadata & {
 type CapabilityReview = {
   capabilityId: string;
   capabilityName: string;
+  capabilityCategory?: string;
+  suggestedFeatureTitle?: string;
   businessPurpose: string;
   responsibilities: string[];
   businessValue: string;
@@ -7586,6 +7588,7 @@ function CapabilityReviewWorkspace({
         <div className="planner-task" key={capability.capabilityId}>
           <div className="planner-status-grid">
             <Row label="Name" value={capability.capabilityName} />
+            <Row label="Category" value={capability.capabilityCategory || capability.capabilityName} />
             <Row label="Priority" value={capability.priority} />
             <Row label="Status" value={capability.status} />
             <Row label="Estimated Features" value={formatNumber(capability.estimatedFeatures || 1)} />
@@ -11248,38 +11251,62 @@ async function addAdoComment(workItem: AdoWorkItem, text: string): Promise<void>
 
 function featureDraftsFromEpic(result: EpicRefinement, approvedOnly = false): ChildDraft[] {
   const approvedCapabilitiesList = (result.capability_review || []).filter(isCapabilityApproved);
-  const approvedCapabilities = new Set(
-    approvedCapabilitiesList.map((capability) => (capability.capabilityName || '').trim().toLowerCase())
+  const approvedCapabilityCategories = new Set(
+    approvedCapabilitiesList.map((capability) => (capability.capabilityCategory || capability.capabilityName || '').trim().toLowerCase())
   );
 
   const matchedFeatures = approvedOnly && result.capability_review?.length
     ? result.recommended_features.filter((feature) => {
         const featureCapability = (feature.capability_category || feature.capability || feature.title || '').trim().toLowerCase();
-        return approvedCapabilities.has(featureCapability);
+        return approvedCapabilityCategories.has(featureCapability);
       })
     : result.recommended_features;
 
-  const features = [...matchedFeatures];
+  const features = matchedFeatures.map((feature) => {
+    const matchingCapability = approvedCapabilitiesList.find((capability) => {
+      const category = (capability.capabilityCategory || capability.capabilityName || '').trim().toLowerCase();
+      const featureCategory = (feature.capability_category || feature.capability || feature.title || '').trim().toLowerCase();
+      return category === featureCategory;
+    });
+    if (!matchingCapability) {
+      return feature;
+    }
+    return {
+      ...feature,
+      title: matchingCapability.suggestedFeatureTitle || matchingCapability.capabilityName || feature.title,
+      description: matchingCapability.businessPurpose || feature.description,
+      business_goal: matchingCapability.businessPurpose || feature.business_goal,
+      user_problem: feature.user_problem || matchingCapability.explainability?.businessProblemSolved,
+      business_value: feature.business_value || matchingCapability.businessValue,
+      business_outcome: feature.business_outcome || matchingCapability.businessValue,
+      impacted_applications: feature.impacted_applications?.length ? feature.impacted_applications : matchingCapability.relatedApplications,
+      impacted_modules: feature.impacted_modules?.length ? feature.impacted_modules : matchingCapability.relatedModules,
+      impacted_flows: feature.impacted_flows?.length ? feature.impacted_flows : matchingCapability.relatedFlows,
+      dependencies: feature.dependencies?.length ? feature.dependencies : matchingCapability.dependencies,
+      capability: matchingCapability.capabilityCategory || feature.capability,
+      capability_category: matchingCapability.capabilityCategory || feature.capability_category || feature.capability,
+    };
+  });
 
   if (approvedOnly) {
     const matchedCapabilityNames = new Set(
-      matchedFeatures.map((feature) => (feature.capability_category || feature.capability || feature.title || '').trim().toLowerCase())
+      features.map((feature) => (feature.capability_category || feature.capability || feature.title || '').trim().toLowerCase())
     );
 
     // Synthesize missing features from approved capabilities
     for (const capability of approvedCapabilitiesList) {
-      const capabilityName = (capability.capabilityName || '').trim().toLowerCase();
+      const capabilityName = (capability.capabilityCategory || capability.capabilityName || '').trim().toLowerCase();
       if (!matchedCapabilityNames.has(capabilityName)) {
         features.push({
-          title: capability.capabilityName || 'New Feature',
+          title: capability.suggestedFeatureTitle || capability.capabilityName || 'New Feature',
           description: capability.businessPurpose || 'Implement capability requirements.',
           acceptance_criteria: capability.inScope || [],
           business_goal: capability.businessPurpose,
           user_problem: capability.businessValue,
           business_value: capability.businessValue,
           business_outcome: capability.businessValue,
-          capability: capability.capabilityName,
-          capability_category: capability.capabilityName,
+          capability: capability.capabilityCategory || capability.capabilityName,
+          capability_category: capability.capabilityCategory || capability.capabilityName,
           primary_personas: result.users || [],
           primary_users: result.users || [],
           impacted_applications: capability.relatedApplications || [],

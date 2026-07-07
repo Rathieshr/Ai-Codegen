@@ -32,14 +32,47 @@ class ProjectKnowledgeGraphService:
             "relationships": list(graph["relationships"].values()),
         }
 
-    def summary(self) -> dict[str, Any]:
+    def summary(self, item_id: str = "") -> dict[str, Any]:
         graph = self._read_graph()
+        if item_id:
+            return self._scoped_summary(graph, item_id)
         nodes = list(graph["nodes"].values())
         relationships = list(graph["relationships"].values())
         counts: dict[str, int] = {}
         for node in nodes:
             counts[node["type"]] = counts.get(node["type"], 0) + 1
         coverage = self.coverage_summary()
+        return {
+            "version": graph["version"],
+            "updated_at": graph["updated_at"],
+            "counts": counts,
+            "relationship_count": len(relationships),
+            "coverage": coverage,
+            "chain": {
+                "projects": counts.get("Project", 0),
+                "epics": counts.get("Epic", 0),
+                "features": counts.get("Feature", 0),
+                "stories": counts.get("Story", 0),
+                "tasks": counts.get("Task", 0),
+                "tests": counts.get("Test Case", 0),
+                "execution_packages": counts.get("Execution Package", 0),
+            },
+        }
+
+    def _scoped_summary(self, graph: dict[str, Any], item_id: str) -> dict[str, Any]:
+        node = self._resolve_node(graph, item_id)
+        if not node:
+            return self.summary()
+        scoped_nodes = self._summary_scope_nodes(graph, node)
+        scoped_ids = {item["id"] for item in scoped_nodes}
+        relationships = [
+            rel for rel in graph["relationships"].values()
+            if rel["from"] in scoped_ids or rel["to"] in scoped_ids
+        ]
+        counts: dict[str, int] = {}
+        for scoped in scoped_nodes:
+            counts[scoped["type"]] = counts.get(scoped["type"], 0) + 1
+        coverage = self.coverage_summary(item_id)
         return {
             "version": graph["version"],
             "updated_at": graph["updated_at"],
@@ -222,7 +255,8 @@ class ProjectKnowledgeGraphService:
 
     def uncovered_acceptance_criteria(self, story_id: str = "") -> list[dict[str, Any]]:
         graph = self._read_graph()
-        criteria = self._related(story_id, "HAS", "Acceptance Criteria") if story_id else [
+        resolved_story_id = self._resolve_node_id(graph, story_id)
+        criteria = self._related(resolved_story_id, "HAS", "Acceptance Criteria") if resolved_story_id else [
             node for node in graph["nodes"].values() if node["type"] == "Acceptance Criteria"
         ]
         covered_ids = {
@@ -234,11 +268,12 @@ class ProjectKnowledgeGraphService:
 
     def coverage_summary(self, story_id: str = "") -> dict[str, Any]:
         graph = self._read_graph()
-        criteria = self._related(story_id, "HAS", "Acceptance Criteria") if story_id else [
+        resolved_story_id = self._resolve_node_id(graph, story_id)
+        criteria = self._related(resolved_story_id, "HAS", "Acceptance Criteria") if resolved_story_id else [
             node for node in graph["nodes"].values() if node["type"] == "Acceptance Criteria"
         ]
         total = len(criteria)
-        covered = total - len(self.uncovered_acceptance_criteria(story_id))
+        covered = total - len(self.uncovered_acceptance_criteria(resolved_story_id))
         return {
             "acceptance_criteria_count": total,
             "covered_acceptance_criteria_count": covered,
@@ -346,14 +381,16 @@ class ProjectKnowledgeGraphService:
         }
 
     def impact_from_graph(self, story_id: str) -> dict[str, Any]:
+        graph = self._read_graph()
+        resolved_story_id = self._resolve_node_id(graph, story_id)
         return {
-            "tasks": self._children(story_id, "Task"),
-            "test_cases": self._related(story_id, "VERIFIED_BY", "Test Case"),
-            "execution_packages": self._incoming(story_id, "GENERATED_FROM", "Execution Package"),
-            "modules": self._related(story_id, "IMPACTS", "Module"),
-            "flows": self._related(story_id, "USES", "Flow"),
-            "components": self._related(story_id, "AFFECTS", "Component"),
-            "coverage": self.coverage_summary(story_id),
+            "tasks": self._children(resolved_story_id, "Task"),
+            "test_cases": self._related(resolved_story_id, "VERIFIED_BY", "Test Case"),
+            "execution_packages": self._incoming(resolved_story_id, "GENERATED_FROM", "Execution Package"),
+            "modules": self._related(resolved_story_id, "IMPACTS", "Module"),
+            "flows": self._related(resolved_story_id, "USES", "Flow"),
+            "components": self._related(resolved_story_id, "AFFECTS", "Component"),
+            "coverage": self.coverage_summary(resolved_story_id),
         }
 
     def _story_coverage_report(self, graph: dict[str, Any], story: dict[str, Any], threshold: int) -> dict[str, Any]:
@@ -423,7 +460,7 @@ class ProjectKnowledgeGraphService:
         graph = self._read_graph()
         if not item_id:
             return [node for node in graph["nodes"].values() if node["type"] == "Story"]
-        node = graph["nodes"].get(item_id)
+        node = self._resolve_node(graph, item_id)
         if not node:
             return []
         if node["type"] == "Story":
@@ -440,7 +477,7 @@ class ProjectKnowledgeGraphService:
         graph = self._read_graph()
         if not item_id:
             return [node for node in graph["nodes"].values() if node["type"] == "Feature"]
-        node = graph["nodes"].get(item_id)
+        node = self._resolve_node(graph, item_id)
         if not node:
             return []
         if node["type"] == "Feature":
@@ -589,6 +626,90 @@ class ProjectKnowledgeGraphService:
         graph["schema_version"] = GRAPH_SCHEMA_VERSION
         graph["version"] = int(graph.get("version", 0) or 0) + 1
         graph["updated_at"] = _now_iso()
+
+    def _resolve_node_id(self, graph: dict[str, Any], item_id: str) -> str:
+        node = self._resolve_node(graph, item_id)
+        return node["id"] if node else ""
+
+    def _resolve_node(self, graph: dict[str, Any], item_id: str) -> dict[str, Any] | None:
+        clean_item_id = _clean_text(item_id)
+        if not clean_item_id:
+            return None
+        direct = graph["nodes"].get(clean_item_id)
+        if isinstance(direct, dict):
+            return direct
+        for node in graph["nodes"].values():
+            payload = _as_dict(node.get("payload"))
+            payload_id = _clean_text(payload.get("id"))
+            title = _clean_text(node.get("title"))
+            if clean_item_id == payload_id or clean_item_id == title:
+                return node
+        return None
+
+    def _summary_scope_nodes(self, graph: dict[str, Any], node: dict[str, Any]) -> list[dict[str, Any]]:
+        node_type = _clean_text(node.get("type"))
+        scoped: list[dict[str, Any]] = []
+
+        def add(items: list[dict[str, Any]]) -> None:
+            for item in items:
+                if item and all(existing["id"] != item["id"] for existing in scoped):
+                    scoped.append(item)
+
+        add([node])
+        if node_type == "Task":
+            stories = self._incoming(node["id"], "CONTAINS", "Story")
+            add(stories)
+            features = [feature for story in stories for feature in self._incoming(story["id"], "CONTAINS", "Feature")]
+            add(features)
+            epics = [epic for feature in features for epic in self._incoming(feature["id"], "CONTAINS", "Epic")]
+            add(epics)
+            add([project for epic in epics for project in self._incoming(epic["id"], "CONTAINS", "Project")])
+            if stories:
+                add(self._related(stories[0]["id"], "VERIFIED_BY", "Test Case"))
+                add(self._incoming(stories[0]["id"], "GENERATED_FROM", "Execution Package"))
+            return scoped
+        if node_type == "Story":
+            add(self._children(node["id"], "Task"))
+            add(self._related(node["id"], "VERIFIED_BY", "Test Case"))
+            add(self._incoming(node["id"], "GENERATED_FROM", "Execution Package"))
+            features = self._incoming(node["id"], "CONTAINS", "Feature")
+            add(features)
+            epics = [epic for feature in features for epic in self._incoming(feature["id"], "CONTAINS", "Epic")]
+            add(epics)
+            add([project for epic in epics for project in self._incoming(epic["id"], "CONTAINS", "Project")])
+            return scoped
+        if node_type == "Feature":
+            stories = self._children(node["id"], "Story")
+            add(stories)
+            add([task for story in stories for task in self._children(story["id"], "Task")])
+            add([test for story in stories for test in self._related(story["id"], "VERIFIED_BY", "Test Case")])
+            add([pkg for story in stories for pkg in self._incoming(story["id"], "GENERATED_FROM", "Execution Package")])
+            epics = self._incoming(node["id"], "CONTAINS", "Epic")
+            add(epics)
+            add([project for epic in epics for project in self._incoming(epic["id"], "CONTAINS", "Project")])
+            return scoped
+        if node_type == "Epic":
+            features = self._children(node["id"], "Feature")
+            add(features)
+            stories = [story for feature in features for story in self._children(feature["id"], "Story")]
+            add(stories)
+            add([task for story in stories for task in self._children(story["id"], "Task")])
+            add([test for story in stories for test in self._related(story["id"], "VERIFIED_BY", "Test Case")])
+            add([pkg for story in stories for pkg in self._incoming(story["id"], "GENERATED_FROM", "Execution Package")])
+            add(self._incoming(node["id"], "CONTAINS", "Project"))
+            return scoped
+        if node_type == "Project":
+            epics = self._children(node["id"], "Epic")
+            add(epics)
+            features = [feature for epic in epics for feature in self._children(epic["id"], "Feature")]
+            add(features)
+            stories = [story for feature in features for story in self._children(feature["id"], "Story")]
+            add(stories)
+            add([task for story in stories for task in self._children(story["id"], "Task")])
+            add([test for story in stories for test in self._related(story["id"], "VERIFIED_BY", "Test Case")])
+            add([pkg for story in stories for pkg in self._incoming(story["id"], "GENERATED_FROM", "Execution Package")])
+            return scoped
+        return scoped
 
 
 def _empty_graph() -> dict[str, Any]:

@@ -648,6 +648,15 @@ type ProjectSessionSnapshot = {
   auto_route_by_work_item_type?: boolean;
   approval_workflow?: ApprovalWorkflowState;
   knowledge_governance?: KnowledgeGovernance;
+  execution_context?: ExecutionContextResult;
+  execution_plan?: ExecutionPlanResult;
+  dev_prompt?: PromptBuilderResult;
+  ui_prompt?: PromptBuilderResult;
+  qa_prompt?: PromptBuilderResult;
+  copilot_context?: CopilotContextResult;
+  qa_test_suite?: QATestSuiteResult;
+  implementation_validation?: ImplementationValidationReport;
+  pr_review?: PRReviewReport;
   saved_at: string;
 };
 
@@ -1586,6 +1595,7 @@ function ProjectIntelligenceTab() {
   const [error, setError] = useState('');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'error'>('saved');
   const initializedRef = useRef(false);
+  const engineeringMemoryBackfillRef = useRef(false);
   const lastSavedProfileRef = useRef('');
   const latestProvider = latestProviderMetadata([qaTestSuite, executionPlan, copilotContext, qaPrompt, uiPrompt, devPrompt, executionContext, storyImpact, featureImpact, epicImpact, storyResult, featureResult, epicResult, prompts]);
   const canAdmin = permissionState.role === 'admin';
@@ -1673,6 +1683,33 @@ function ProjectIntelligenceTab() {
           setAutoRouteByWorkItemType(effectiveSession.auto_route_by_work_item_type !== false);
           setApprovalWorkflow(normalizeApprovalWorkflowState(effectiveSession.approval_workflow));
         }
+        if (effectiveSession?.execution_context) {
+          setExecutionContext(effectiveSession.execution_context);
+        }
+        if (effectiveSession?.execution_plan) {
+          setExecutionPlan(effectiveSession.execution_plan);
+        }
+        if (effectiveSession?.dev_prompt) {
+          setDevPrompt(effectiveSession.dev_prompt);
+        }
+        if (effectiveSession?.ui_prompt) {
+          setUiPrompt(effectiveSession.ui_prompt);
+        }
+        if (effectiveSession?.qa_prompt) {
+          setQaPrompt(effectiveSession.qa_prompt);
+        }
+        if (effectiveSession?.copilot_context) {
+          setCopilotContext(effectiveSession.copilot_context);
+        }
+        if (effectiveSession?.qa_test_suite) {
+          setQaTestSuite(effectiveSession.qa_test_suite);
+        }
+        if (effectiveSession?.implementation_validation) {
+          setImplementationValidation(effectiveSession.implementation_validation);
+        }
+        if (effectiveSession?.pr_review) {
+          setPrReview(effectiveSession.pr_review);
+        }
         if (!effectiveSession?.knowledge_governance) {
           setKnowledgeGovernance(defaultKnowledgeGovernance(seeded, permissions.role === 'admin'));
         }
@@ -1704,6 +1741,9 @@ function ProjectIntelligenceTab() {
           seedPlannerFromWorkItem(workItem, effectiveSession?.auto_route_by_work_item_type !== false);
           restorePlanningArtifactForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
           restoreGeneratedChildArtifactForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
+          restoreExecutionArtifactsForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
+          restoreQaArtifactsForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
+          await refreshGraphInsights(workItem);
         }
         if (hasReadyCache) {
           setRepositoryLoadMessage('Loaded cached project knowledge. Continue without repository discovery, or refresh knowledge when documents change.');
@@ -1738,7 +1778,26 @@ function ProjectIntelligenceTab() {
     if (JSON.stringify(nextGovernance) !== JSON.stringify(knowledgeGovernance)) {
       setKnowledgeGovernance(nextGovernance);
     }
-    const session = buildProjectSession(profile, activeTab, lastAnalysisTimestamp, nextGovernance, currentWorkItem, autoRouteByWorkItemType, approvalWorkflow);
+    const session = buildProjectSession(
+      profile,
+      activeTab,
+      lastAnalysisTimestamp,
+      nextGovernance,
+      currentWorkItem,
+      autoRouteByWorkItemType,
+      approvalWorkflow,
+      {
+        execution_context: executionContext,
+        execution_plan: executionPlan,
+        dev_prompt: devPrompt,
+        ui_prompt: uiPrompt,
+        qa_prompt: qaPrompt,
+        copilot_context: copilotContext,
+        qa_test_suite: qaTestSuite,
+        implementation_validation: implementationValidation,
+        pr_review: prReview,
+      },
+    );
     writeProjectSession(session);
     setResumeSession(session);
     void saveBackendProjectSession(session);
@@ -1761,7 +1820,23 @@ function ProjectIntelligenceTab() {
       }
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [profile, activeTab, lastAnalysisTimestamp, knowledgeGovernance, canAdmin, currentWorkItem, autoRouteByWorkItemType, approvalWorkflow]);
+  }, [profile, activeTab, lastAnalysisTimestamp, knowledgeGovernance, canAdmin, currentWorkItem, autoRouteByWorkItemType, approvalWorkflow, executionContext, executionPlan, devPrompt, uiPrompt, qaPrompt, copilotContext, qaTestSuite, implementationValidation, prReview]);
+
+  useEffect(() => {
+    if (!initializedRef.current || engineeringMemoryBackfillRef.current) {
+      return;
+    }
+    if (!profile.project_name.trim() || engineeringMemories.length > 0 || artifactRecords.length === 0) {
+      return;
+    }
+    const approvedArtifacts = artifactRecords.filter((artifact) => artifact.state === 'approved' || artifact.state === 'locked');
+    if (!approvedArtifacts.length) {
+      return;
+    }
+    engineeringMemoryBackfillRef.current = true;
+    setEngineeringMemoryStatus('Backfilling Engineering Memory from approved artifacts...');
+    void syncEngineeringMemoryForArtifacts(approvedArtifacts);
+  }, [profile.project_name, engineeringMemories.length, artifactRecords]);
 
   useEffect(() => {
     if (!initializedRef.current || !currentWorkItem || !autoRouteByWorkItemType) {
@@ -1916,6 +1991,33 @@ function ProjectIntelligenceTab() {
     if (resumeSession?.profile) {
       setProfile(resumeSession.profile);
     }
+    if (resumeSession?.execution_context) {
+      setExecutionContext(resumeSession.execution_context);
+    }
+    if (resumeSession?.execution_plan) {
+      setExecutionPlan(resumeSession.execution_plan);
+    }
+    if (resumeSession?.dev_prompt) {
+      setDevPrompt(resumeSession.dev_prompt);
+    }
+    if (resumeSession?.ui_prompt) {
+      setUiPrompt(resumeSession.ui_prompt);
+    }
+    if (resumeSession?.qa_prompt) {
+      setQaPrompt(resumeSession.qa_prompt);
+    }
+    if (resumeSession?.copilot_context) {
+      setCopilotContext(resumeSession.copilot_context);
+    }
+    if (resumeSession?.qa_test_suite) {
+      setQaTestSuite(resumeSession.qa_test_suite);
+    }
+    if (resumeSession?.implementation_validation) {
+      setImplementationValidation(resumeSession.implementation_validation);
+    }
+    if (resumeSession?.pr_review) {
+      setPrReview(resumeSession.pr_review);
+    }
     setShowResumePanel(false);
     setEditingProfile(false);
     setShowQuickStart(false);
@@ -1995,6 +2097,20 @@ function ProjectIntelligenceTab() {
     }).catch(() => undefined);
     if (response?.status) {
       setContextCapsuleStatus(response.status);
+    }
+  }
+
+  async function refreshGraphInsights(workItem: AdoWorkItem | undefined = currentWorkItem) {
+    const scopeId = workItem?.id ? String(workItem.id) : '';
+    const [summary, coverage] = await Promise.all([
+      getGraphSummary(scopeId).catch(() => undefined),
+      getCoverageReport(scopeId).catch(() => undefined),
+    ]);
+    if (summary) {
+      setGraphSummary(summary);
+    }
+    if (coverage) {
+      setCoverageReport(coverage);
     }
   }
 
@@ -2104,6 +2220,67 @@ function ProjectIntelligenceTab() {
     }
   }
 
+  function restoreExecutionArtifactsForWorkItem(workItem: AdoWorkItem, artifacts: ArtifactRecord[]) {
+    const sourceItemId = String(workItem.id);
+    const packageArtifact = latestArtifactForSource(artifacts, 'Execution Package', sourceItemId)
+      || latestArtifactForSource(artifacts, 'Implementation Package', sourceItemId);
+    if (packageArtifact && !Array.isArray(packageArtifact.payload)) {
+      const payload = packageArtifact.payload as ExecutionContextResult | { context?: ExecutionContextResult };
+      const context = typeof payload === 'object' && payload && 'context' in payload
+        ? payload.context
+        : payload as ExecutionContextResult;
+      if (context) {
+        setExecutionContext(context);
+        setApprovalWorkflow((current) => ({
+          ...current,
+          execution: packageArtifact.state === 'approved' || packageArtifact.state === 'locked'
+            ? 'approved'
+            : isReadyForApproval(context.execution_readiness_score) ? 'ready_for_approval' : 'draft',
+        }));
+      }
+    }
+
+    const planArtifact = latestArtifactForSource(artifacts, 'Implementation Plan', sourceItemId)
+      || latestArtifactForSource(artifacts, 'Execution Plan', sourceItemId);
+    if (planArtifact && !Array.isArray(planArtifact.payload)) {
+      setExecutionPlan(planArtifact.payload as ExecutionPlanResult);
+    }
+
+    const devArtifact = latestArtifactForSource(artifacts, 'Dev Prompt', sourceItemId);
+    if (devArtifact && !Array.isArray(devArtifact.payload)) {
+      setDevPrompt(devArtifact.payload as PromptBuilderResult);
+    }
+    const uiArtifact = latestArtifactForSource(artifacts, 'UI Prompt', sourceItemId);
+    if (uiArtifact && !Array.isArray(uiArtifact.payload)) {
+      setUiPrompt(uiArtifact.payload as PromptBuilderResult);
+    }
+    const qaArtifact = latestArtifactForSource(artifacts, 'QA Prompt', sourceItemId);
+    if (qaArtifact && !Array.isArray(qaArtifact.payload)) {
+      setQaPrompt(qaArtifact.payload as PromptBuilderResult);
+    }
+    const contextCapsuleArtifact = latestArtifactForSource(artifacts, 'Context Capsule', sourceItemId);
+    if (contextCapsuleArtifact && !Array.isArray(contextCapsuleArtifact.payload)) {
+      setCopilotContext(contextCapsuleArtifact.payload as CopilotContextResult);
+    }
+  }
+
+  function restoreQaArtifactsForWorkItem(workItem: AdoWorkItem, artifacts: ArtifactRecord[]) {
+    const sourceItemId = String(workItem.id);
+    const artifact = latestArtifactForSource(artifacts, 'Test Suite', sourceItemId)
+      || latestArtifactForSource(artifacts, 'Test Plan', sourceItemId);
+    if (!artifact || Array.isArray(artifact.payload)) {
+      return;
+    }
+    const payload = artifact.payload as QATestSuiteResult;
+    setQaTestSuite(payload);
+    setApprovalWorkflow((current) => ({
+      ...current,
+      qa: artifact.state === 'approved' || artifact.state === 'locked'
+        ? 'approved'
+        : isReadyForApproval(payload.coverage_score) ? 'ready_for_approval' : 'draft',
+    }));
+  }
+
   async function persistEpicReviewArtifact(nextResult: EpicRefinement, state: ArtifactLifecycleState = 'draft') {
     const sourceItem = sourceItemForArtifact('Epic');
     const fingerprint = artifactFingerprint('Epic', sourceItem, epicInput);
@@ -2161,16 +2338,88 @@ function ProjectIntelligenceTab() {
     }).catch(() => undefined);
     if (artifact) {
       setArtifactRecords((current) => [artifact, ...current.filter((item) => item.artifact_id !== artifact.artifact_id)]);
-      const summary = await getGraphSummary().catch(() => undefined);
-      const coverage = await getCoverageReport().catch(() => undefined);
-      if (summary) {
-        setGraphSummary(summary);
-      }
-      if (coverage) {
-        setCoverageReport(coverage);
-      }
+      await refreshGraphInsights();
     }
     return artifact;
+  }
+
+  function memoryCategoryForArtifactType(artifactType: ArtifactType): string {
+    if (artifactType === 'Epic' || artifactType === 'Feature' || artifactType === 'Story' || artifactType === 'Task') {
+      return 'Planning Memory';
+    }
+    if (artifactType === 'Implementation Package' || artifactType === 'Execution Package' || artifactType === 'Implementation Plan' || artifactType === 'Execution Plan' || artifactType === 'Dev Prompt' || artifactType === 'UI Prompt' || artifactType === 'Context Capsule') {
+      return 'Execution Memory';
+    }
+    if (artifactType === 'Test Suite' || artifactType === 'Test Plan' || artifactType === 'QA Prompt' || artifactType === 'Coverage Report') {
+      return 'QA Memory';
+    }
+    return 'Project Memory';
+  }
+
+  function memoryPayloadFromArtifact(artifact: ArtifactRecord): Record<string, unknown> {
+    const payload = artifact.payload && typeof artifact.payload === 'object' ? artifact.payload as Record<string, unknown> : {};
+    const repositoryEvidence = Array.isArray((payload as any)?.context?.execution_package_v2?.repositoryContext?.relevantFiles)
+      ? (payload as any).context.execution_package_v2.repositoryContext.relevantFiles
+      : Array.isArray((payload as any)?.execution_package_v2?.repositoryContext?.relevantFiles)
+        ? (payload as any).execution_package_v2.repositoryContext.relevantFiles
+        : [];
+    const tags = uniqueStrings([
+      artifact.artifact_type,
+      artifact.source_item?.type || '',
+      artifact.source_item?.title || '',
+    ]);
+    return {
+      projectId: profile.project_id || profile.project_name || 'default',
+      category: memoryCategoryForArtifactType(artifact.artifact_type as ArtifactType),
+      title: artifact.title,
+      summary: `${artifact.artifact_type} derived from ${artifact.source_item?.type || 'work item'} ${artifact.source_item?.title || ''}`.trim(),
+      content: typeof artifact.payload === 'string' ? artifact.payload : JSON.stringify(artifact.payload, null, 2),
+      artifactType: artifact.artifact_type,
+      artifactId: artifact.artifact_id,
+      repositoryEvidence,
+      knowledgeReferences: profile.knowledge_registry.source_files || [],
+      graphReferences: [String(currentWorkItem?.id || artifact.source_item?.id || '')].filter(Boolean),
+      tags,
+      confidence: Number((payload as any)?.confidence || (payload as any)?.execution_readiness_score || (payload as any)?.coverage_score || 0.85),
+      approvalStatus: 'Approved',
+      source: {
+        state: artifact.state,
+        artifactType: artifact.artifact_type,
+        approved_on: artifact.approved_on,
+        status: artifact.state,
+      },
+    };
+  }
+
+  async function syncEngineeringMemoryForArtifacts(artifactsToSync: ArtifactRecord[]) {
+    const actor = permissionState.user_display_name || permissionState.user_name || 'AI Gen User';
+    const indexed: EngineeringMemoryItem[] = [];
+    for (const artifact of artifactsToSync) {
+      try {
+        const stored = await storeEngineeringMemory(memoryPayloadFromArtifact(artifact), actor);
+        const memoryId = stored.memory?.id;
+        if (!memoryId) {
+          continue;
+        }
+        await validateEngineeringMemory(memoryId, actor);
+        await approveEngineeringMemory(memoryId, actor);
+        await indexEngineeringMemory(memoryId, actor);
+        const available = await makeEngineeringMemoryAvailable(memoryId, actor);
+        if (available.memory) {
+          indexed.push(available.memory);
+        }
+      } catch {
+        // Engineering Memory indexing should not block artifact approval.
+      }
+    }
+    if (indexed.length) {
+      const refreshed = await getEngineeringMemory().catch(() => undefined);
+      if (refreshed) {
+        setEngineeringMemories(refreshed.memories || refreshed.results || []);
+        setEngineeringMemoryDiagnostics(refreshed.diagnostics || {});
+        setEngineeringMemoryStatus(`${refreshed.count || indexed.length} validated memory items loaded.`);
+      }
+    }
   }
 
   async function generatePrompts(forceRefresh = false) {
@@ -2439,6 +2688,10 @@ function ProjectIntelligenceTab() {
     if (result) {
       setExecutionPlan(result);
       setMessage('Implementation Plan generated.');
+      await saveGeneratedArtifact('Implementation Plan', currentStoryPayload().title || 'Implementation plan', result, {
+        story: currentStoryPayload(),
+        execution_mode: mode,
+      });
       window.setTimeout(() => setMessage(''), 1800);
     }
   }
@@ -2469,10 +2722,23 @@ function ProjectIntelligenceTab() {
     if (!result) {
       return;
     }
-    if (kind === 'dev') setDevPrompt(result as PromptBuilderResult);
-    if (kind === 'ui') setUiPrompt(result as PromptBuilderResult);
-    if (kind === 'qa') setQaPrompt(result as PromptBuilderResult);
-    if (kind === 'copilot') setCopilotContext(result as CopilotContextResult);
+    const story = currentStoryPayload();
+    if (kind === 'dev') {
+      setDevPrompt(result as PromptBuilderResult);
+      await saveGeneratedArtifact('Dev Prompt', story.title || 'Developer prompt', result, { story, execution_mode: executionMode });
+    }
+    if (kind === 'ui') {
+      setUiPrompt(result as PromptBuilderResult);
+      await saveGeneratedArtifact('UI Prompt', story.title || 'UI prompt', result, { story, execution_mode: executionMode });
+    }
+    if (kind === 'qa') {
+      setQaPrompt(result as PromptBuilderResult);
+      await saveGeneratedArtifact('QA Prompt', story.title || 'QA prompt', result, { story, execution_mode: executionMode });
+    }
+    if (kind === 'copilot') {
+      setCopilotContext(result as CopilotContextResult);
+      await saveGeneratedArtifact('Context Capsule', story.title || 'Context capsule', result, { story, execution_mode: executionMode });
+    }
   }
 
   async function validateImplementation() {
@@ -2494,6 +2760,10 @@ function ProjectIntelligenceTab() {
     if (result) {
       setImplementationValidation(result);
       setMessage(`Implementation validation ${result.status}.`);
+      await saveGeneratedArtifact('Coverage Report', currentStoryPayload().title || 'Implementation validation', result, {
+        story: currentStoryPayload(),
+        changed_files: parseChangedFilesInput(implementationChangedFiles),
+      });
       window.setTimeout(() => setMessage(''), 1800);
     }
   }
@@ -2930,14 +3200,8 @@ function ProjectIntelligenceTab() {
     if (lockedRecords.length) {
       setArtifactRecords((current) => current.map((artifact) => lockedRecords.find((lockedArtifact) => lockedArtifact.artifact_id === artifact.artifact_id) || artifact));
       setArtifactReuseStatus(`${approvalLabel(approval)} approved and locked for reuse.`);
-      const summary = await getGraphSummary().catch(() => undefined);
-      const coverage = await getCoverageReport().catch(() => undefined);
-      if (summary) {
-        setGraphSummary(summary);
-      }
-      if (coverage) {
-        setCoverageReport(coverage);
-      }
+      await refreshGraphInsights();
+      await syncEngineeringMemoryForArtifacts(lockedRecords);
     }
   }
 
@@ -8083,7 +8347,7 @@ function DeveloperWorkspace({
           <SummaryTile title="Implementation Plan" value={executionPlan ? `${executionPlan.executionModeLabel || executionPlan.executionMode} ready` : 'Not Generated'} />
         </div>
         <div className="planner-actions">
-          <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : 'Build Implementation Package'}</button>
+          <button className="planner-button" onClick={onGenerate} disabled={loading || readOnly || !storyInput.title.trim()}>{isBug ? 'Build Fix Context' : executionContext ? 'Rebuild Implementation Package' : 'Build Implementation Package'}</button>
           <button className="planner-button" onClick={onGenerateExecutionPlan} disabled={loading || readOnly || !storyInput.title.trim()}>{executionPlan ? 'Regenerate Implementation Plan' : 'Generate Implementation Plan'}</button>
           {isBug ? <button className="planner-button secondary" onClick={analyzeImpact} disabled={loading || readOnly || !storyInput.title.trim()}>Root Cause / Execution Impact</button> : null}
           {executionContext ? <button className="planner-button secondary" onClick={onEnhanceWithAi} disabled={loading || readOnly}>Enhance with AI</button> : null}
@@ -10722,6 +10986,9 @@ async function saveBackendProjectSession(session: ProjectSessionSnapshot): Promi
     session: {
       active_project: session.active_project,
       project_id: session.profile.project_id,
+      auto_route_by_work_item_type: session.auto_route_by_work_item_type,
+      approval_workflow: session.approval_workflow,
+      knowledge_governance: session.knowledge_governance,
       last_active_workspace: session.last_active_tab,
       last_active_tab: session.last_active_tab,
       last_work_item_id: session.last_work_item_id,
@@ -10732,6 +10999,15 @@ async function saveBackendProjectSession(session: ProjectSessionSnapshot): Promi
       last_branch: session.branch,
       last_analysis_timestamp: session.last_analysis_timestamp,
       knowledge_version: session.knowledge_version,
+      execution_context: session.execution_context,
+      execution_plan: session.execution_plan,
+      dev_prompt: session.dev_prompt,
+      ui_prompt: session.ui_prompt,
+      qa_prompt: session.qa_prompt,
+      copilot_context: session.copilot_context,
+      qa_test_suite: session.qa_test_suite,
+      implementation_validation: session.implementation_validation,
+      pr_review: session.pr_review,
     },
   });
 }
@@ -11232,16 +11508,44 @@ function getArtifacts(): Promise<{ artifacts: ArtifactRecord[]; count: number }>
   return getJson<{ artifacts: ArtifactRecord[]; count: number }>('/artifacts');
 }
 
-function getGraphSummary(): Promise<GraphSummary> {
-  return getJson<GraphSummary>('/graph/summary');
+function getGraphSummary(itemId = ''): Promise<GraphSummary> {
+  const params = new URLSearchParams();
+  if (itemId) {
+    params.set('item_id', itemId);
+  }
+  return getJson<GraphSummary>(`/graph/summary${params.toString() ? `?${params.toString()}` : ''}`);
 }
 
-function getCoverageReport(): Promise<CoverageIntelligenceReport> {
-  return getJson<CoverageIntelligenceReport>('/coverage/report');
+function getCoverageReport(itemId = ''): Promise<CoverageIntelligenceReport> {
+  const params = new URLSearchParams();
+  if (itemId) {
+    params.set('item_id', itemId);
+  }
+  return getJson<CoverageIntelligenceReport>(`/coverage/report${params.toString() ? `?${params.toString()}` : ''}`);
 }
 
 function getEngineeringMemory(): Promise<EngineeringMemoryResponse> {
   return getJson<EngineeringMemoryResponse>('/engineering-memory');
+}
+
+function storeEngineeringMemory(memory: Record<string, unknown>, actor: string): Promise<{ stored?: boolean; memory?: EngineeringMemoryItem }> {
+  return postJson<{ stored?: boolean; memory?: EngineeringMemoryItem }>('/engineering-memory', { memory, actor });
+}
+
+function validateEngineeringMemory(memoryId: string, actor: string): Promise<{ updated?: boolean; memory?: EngineeringMemoryItem }> {
+  return postJson<{ updated?: boolean; memory?: EngineeringMemoryItem }>(`/engineering-memory/${encodeURIComponent(memoryId)}/validate`, { actor });
+}
+
+function approveEngineeringMemory(memoryId: string, actor: string): Promise<{ updated?: boolean; memory?: EngineeringMemoryItem }> {
+  return postJson<{ updated?: boolean; memory?: EngineeringMemoryItem }>(`/engineering-memory/${encodeURIComponent(memoryId)}/approve`, { actor });
+}
+
+function indexEngineeringMemory(memoryId: string, actor: string): Promise<{ updated?: boolean; memory?: EngineeringMemoryItem }> {
+  return postJson<{ updated?: boolean; memory?: EngineeringMemoryItem }>(`/engineering-memory/${encodeURIComponent(memoryId)}/index`, { actor });
+}
+
+function makeEngineeringMemoryAvailable(memoryId: string, actor: string): Promise<{ updated?: boolean; memory?: EngineeringMemoryItem }> {
+  return postJson<{ updated?: boolean; memory?: EngineeringMemoryItem }>(`/engineering-memory/${encodeURIComponent(memoryId)}/available`, { actor });
 }
 
 function searchEngineeringMemoryItems(query: Record<string, unknown>): Promise<EngineeringMemoryResponse> {
@@ -11438,7 +11742,7 @@ function lifecycleTypesForApproval(approval: ApprovalArtifact): ArtifactType[] {
     story: ['Story'],
     tasks: ['Task'],
     qa: ['Test Suite', 'Test Plan', 'QA Prompt', 'Coverage Report'],
-    execution: ['Implementation Package', 'Dev Prompt', 'UI Prompt', 'QA Prompt', 'Context Capsule'],
+    execution: ['Execution Package', 'Implementation Package', 'Execution Plan', 'Implementation Plan', 'Dev Prompt', 'UI Prompt', 'QA Prompt', 'Context Capsule'],
   };
   return mapping[approval];
 }
@@ -12085,6 +12389,15 @@ function readProjectSession(): ProjectSessionSnapshot | undefined {
       auto_route_by_work_item_type: parsed.auto_route_by_work_item_type !== false,
       approval_workflow: normalizeApprovalWorkflowState(parsed.approval_workflow),
       knowledge_governance: parsed.knowledge_governance,
+      execution_context: parsed.execution_context,
+      execution_plan: parsed.execution_plan,
+      dev_prompt: parsed.dev_prompt,
+      ui_prompt: parsed.ui_prompt,
+      qa_prompt: parsed.qa_prompt,
+      copilot_context: parsed.copilot_context,
+      qa_test_suite: parsed.qa_test_suite,
+      implementation_validation: parsed.implementation_validation,
+      pr_review: parsed.pr_review,
       saved_at: parsed.saved_at || new Date().toISOString(),
     };
   } catch {
@@ -12113,6 +12426,15 @@ function sessionFromBackend(response?: BackendProjectSessionResponse, cachedProf
     last_work_item_title: String(session.last_work_item_title || ''),
     auto_route_by_work_item_type: session.auto_route_by_work_item_type !== false,
     approval_workflow: normalizeApprovalWorkflowState(session.approval_workflow),
+    execution_context: session.execution_context as ExecutionContextResult | undefined,
+    execution_plan: session.execution_plan as ExecutionPlanResult | undefined,
+    dev_prompt: session.dev_prompt as PromptBuilderResult | undefined,
+    ui_prompt: session.ui_prompt as PromptBuilderResult | undefined,
+    qa_prompt: session.qa_prompt as PromptBuilderResult | undefined,
+    copilot_context: session.copilot_context as CopilotContextResult | undefined,
+    qa_test_suite: session.qa_test_suite as QATestSuiteResult | undefined,
+    implementation_validation: session.implementation_validation as ImplementationValidationReport | undefined,
+    pr_review: session.pr_review as PRReviewReport | undefined,
     saved_at: String(session.saved_at || new Date().toISOString()),
   };
 }
@@ -12133,6 +12455,7 @@ function buildProjectSession(
   currentWorkItem?: AdoWorkItem,
   autoRouteByWorkItemType = true,
   approvalWorkflow: ApprovalWorkflowState = defaultApprovalWorkflowState(),
+  workspaceState: Partial<ProjectSessionSnapshot> = {},
 ): ProjectSessionSnapshot {
   const mapping = getAdoMapping(profile);
   const now = new Date().toISOString();
@@ -12152,6 +12475,15 @@ function buildProjectSession(
     auto_route_by_work_item_type: autoRouteByWorkItemType,
     approval_workflow: approvalWorkflow,
     knowledge_governance: governance,
+    execution_context: workspaceState.execution_context,
+    execution_plan: workspaceState.execution_plan,
+    dev_prompt: workspaceState.dev_prompt,
+    ui_prompt: workspaceState.ui_prompt,
+    qa_prompt: workspaceState.qa_prompt,
+    copilot_context: workspaceState.copilot_context,
+    qa_test_suite: workspaceState.qa_test_suite,
+    implementation_validation: workspaceState.implementation_validation,
+    pr_review: workspaceState.pr_review,
     saved_at: now,
   };
 }

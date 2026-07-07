@@ -1074,8 +1074,8 @@ def get_project_intelligence_graph() -> dict:
 
 
 @app.get("/project-intelligence/graph/summary")
-def get_project_intelligence_graph_summary() -> dict:
-    return project_knowledge_graph_service.summary()
+def get_project_intelligence_graph_summary(item_id: str = "") -> dict:
+    return project_knowledge_graph_service.summary(item_id)
 
 
 @app.post("/project-intelligence/graph/ingest")

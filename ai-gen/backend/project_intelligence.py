@@ -4345,6 +4345,9 @@ def _normalize_project_session(session: dict[str, Any]) -> dict[str, Any]:
     return {
         "active_project": _clean_text(session.get("active_project")),
         "project_id": _clean_text(session.get("project_id")),
+        "auto_route_by_work_item_type": bool(session.get("auto_route_by_work_item_type", True)),
+        "approval_workflow": session.get("approval_workflow") if isinstance(session.get("approval_workflow"), dict) else {},
+        "knowledge_governance": session.get("knowledge_governance") if isinstance(session.get("knowledge_governance"), dict) else {},
         "last_active_workspace": _clean_text(session.get("last_active_workspace")) or _clean_text(session.get("last_workspace")) or "overview",
         "last_active_tab": _clean_text(session.get("last_active_tab")) or _clean_text(session.get("last_active_workspace")) or "overview",
         "last_work_item_id": session.get("last_work_item_id"),
@@ -4355,6 +4358,15 @@ def _normalize_project_session(session: dict[str, Any]) -> dict[str, Any]:
         "last_branch": _clean_text(session.get("last_branch")) or _clean_text(session.get("branch")) or "main",
         "last_analysis_timestamp": _clean_text(session.get("last_analysis_timestamp")),
         "knowledge_version": _clean_text(session.get("knowledge_version")),
+        "execution_context": session.get("execution_context") if isinstance(session.get("execution_context"), dict) else {},
+        "execution_plan": session.get("execution_plan") if isinstance(session.get("execution_plan"), dict) else {},
+        "dev_prompt": session.get("dev_prompt") if isinstance(session.get("dev_prompt"), dict) else {},
+        "ui_prompt": session.get("ui_prompt") if isinstance(session.get("ui_prompt"), dict) else {},
+        "qa_prompt": session.get("qa_prompt") if isinstance(session.get("qa_prompt"), dict) else {},
+        "copilot_context": session.get("copilot_context") if isinstance(session.get("copilot_context"), dict) else {},
+        "qa_test_suite": session.get("qa_test_suite") if isinstance(session.get("qa_test_suite"), dict) else {},
+        "implementation_validation": session.get("implementation_validation") if isinstance(session.get("implementation_validation"), dict) else {},
+        "pr_review": session.get("pr_review") if isinstance(session.get("pr_review"), dict) else {},
         "saved_at": _clean_text(session.get("saved_at")) or _now_iso(),
     }
 

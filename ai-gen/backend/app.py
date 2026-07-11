@@ -20,6 +20,14 @@ from backend.auth import ApiKeyMiddleware, get_api_key_status, validate_approver
 from backend.guardrails import guard_stage_output, has_blocking_violation
 from backend.ado import AdoAutomation, AdoClient
 from backend.engineering_memory import EngineeringMemoryEngine
+from backend.context_orchestration import (
+    ContextOrchestrator,
+    EngineeringMemoryContextSource,
+    LocalWorkspaceContextSource,
+    PlanningContextSource,
+    RepositoryContextSource,
+    build_context_orchestration_router,
+)
 from backend.governance import GovernanceEngine
 from backend.intelligence_trace import TraceEngine
 from backend.skills import SkillEngine
@@ -27,6 +35,7 @@ from backend.skills import SkillEngine
 logger = logging.getLogger("ai_gen.app")
 
 from backend.execution_corrector import build_corrected_execution_prompt, generate_retry_plan
+from backend.execution import ExecutionPackageService, build_execution_package_router
 from backend.handoff.storage import list_handoffs, load_handoff_markdown
 from backend.lifecycle import EngineeringLifecycleManager
 from backend.execution_mode import detect_prompt_mode, score_execution_confidence
@@ -34,9 +43,13 @@ from backend.execution_validator import ExecutionContext, snapshot_selected_file
 from backend.intent_detector import detect_intent
 from backend.model_router import detect_execution_target, get_available_targets
 from backend.orchestrator.react_controller import PipelineController
+from backend.platform import PlatformFoundation
+from backend.platform.shared import JsonMapStore
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
 from backend.prompt_budget import default_json_sections, probe_json_with_budget
+from backend.repository_intelligence import register_repository_intelligence
+from backend.repository_intelligence.api import build_repository_router
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
 from backend.refinement.refinement_decider import should_use_refiner
 from backend.refinement.schema_validator import validate_task_refinement
@@ -85,6 +98,10 @@ app.add_middleware(
 # API key auth — add AFTER CORS so OPTIONS pre-flights pass through
 app.add_middleware(ApiKeyMiddleware)
 print(f"ai-gen backend starting in {os.getenv('AI_GEN_BACKEND_MODE', 'local')} mode")
+repository_intelligence_module = register_repository_intelligence(
+    Path(os.getenv("AI_GEN_REPOSITORY_INTELLIGENCE_ROOT", "data/repository_intelligence"))
+)
+app.include_router(build_repository_router(repository_intelligence_module))
 
 logic_store = LogicStore()
 context_builder = ContextBuilder(logic_store=logic_store)
@@ -99,6 +116,24 @@ engineering_memory_engine = EngineeringMemoryEngine()
 governance_engine = GovernanceEngine()
 trace_engine = TraceEngine()
 skill_engine = SkillEngine()
+platform_foundation = PlatformFoundation()
+context_orchestrator = ContextOrchestrator(
+    sources=[
+        PlanningContextSource(),
+        RepositoryContextSource(repository_intelligence_module.application),
+        EngineeringMemoryContextSource(engineering_memory_engine),
+        LocalWorkspaceContextSource(),
+    ],
+    store=JsonMapStore(platform_foundation.storage_root / "context_requests.json"),
+    platform=platform_foundation,
+)
+platform_foundation.context_orchestrator = context_orchestrator
+app.include_router(build_context_orchestration_router(context_orchestrator))
+execution_package_service = ExecutionPackageService(
+    JsonMapStore(platform_foundation.storage_root / "execution_packages.json"),
+    platform=platform_foundation,
+)
+app.include_router(build_execution_package_router(execution_package_service))
 
 class ContextRequest(BaseModel):
     """Request body accepted by POST /context."""
@@ -567,6 +602,46 @@ class ProjectIntelligenceRepositoryFileRequest(BaseModel):
     path: str = "/README.md"
 
 
+class PlatformEventRequest(BaseModel):
+    event_type: str = Field(alias="eventType")
+    source: str = "Manual"
+    project_id: str = Field(default="", alias="projectId")
+    repository_id: str = Field(default="", alias="repositoryId")
+    work_item_id: str = Field(default="", alias="workItemId")
+    correlation_id: str = Field(default="", alias="correlationId")
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        populate_by_name = True
+
+
+class PlatformJobRequest(BaseModel):
+    job_type: str = Field(alias="jobType")
+    source: str = "Manual"
+    priority: str = "Normal"
+    status: str = "Queued"
+    correlation_id: str = Field(default="", alias="correlationId")
+    payload: dict[str, Any] = Field(default_factory=dict)
+    progress: dict[str, Any] = Field(default_factory=dict)
+    max_retries: int = Field(default=0, alias="maxRetries", ge=0)
+
+    class Config:
+        populate_by_name = True
+
+
+class PlatformNotificationRequest(BaseModel):
+    type: str = "PlatformNotification"
+    title: str = ""
+    message: str = ""
+    severity: str = "Info"
+    source: str = "Manual"
+    correlation_id: str = Field(default="", alias="correlationId")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        populate_by_name = True
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Lightweight readiness check for local CLI calls."""
@@ -581,6 +656,121 @@ def capabilities() -> dict:
     status = get_status()
     status["auth"] = get_api_key_status()
     return status
+
+
+@app.get("/platform/health")
+def get_platform_health() -> dict:
+    return platform_foundation.platform_health()
+
+
+@app.post("/platform/events")
+def publish_platform_event(request: PlatformEventRequest) -> dict:
+    return platform_foundation.events.publish(request.model_dump(by_alias=True))
+
+
+@app.get("/platform/events")
+def list_platform_events(event_type: str = "", limit: int = 50) -> dict:
+    return platform_foundation.events.list_recent(event_type=event_type, limit=limit)
+
+
+@app.get("/platform/events/recent")
+def list_recent_platform_events(event_type: str = "", limit: int = 20) -> dict:
+    return platform_foundation.events.list_recent(event_type=event_type, limit=limit)
+
+
+@app.post("/platform/jobs")
+def create_platform_job(request: PlatformJobRequest) -> dict:
+    return platform_foundation.jobs.enqueue(request.model_dump(by_alias=True))
+
+
+@app.get("/platform/jobs")
+def list_platform_jobs(limit: int = 50) -> dict:
+    return platform_foundation.jobs.list_recent(limit=limit)
+
+
+@app.get("/platform/jobs/recent")
+def list_recent_platform_jobs(limit: int = 20) -> dict:
+    return platform_foundation.jobs.list_recent(limit=limit)
+
+
+@app.get("/platform/jobs/{job_id}")
+def get_platform_job(job_id: str) -> dict:
+    job = platform_foundation.jobs.get(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": f"Platform job '{job_id}' was not found."})
+    return job
+
+
+@app.post("/platform/jobs/{job_id}/cancel")
+def cancel_platform_job(job_id: str) -> dict:
+    job = platform_foundation.jobs.cancel(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": f"Platform job '{job_id}' was not found."})
+    return job
+
+
+@app.get("/platform/agents/runs")
+def list_platform_agent_runs(limit: int = 50) -> dict:
+    return platform_foundation.agent_runs.list_recent(limit=limit)
+
+
+@app.get("/platform/agents/runs/recent")
+def list_recent_platform_agent_runs(limit: int = 20) -> dict:
+    return platform_foundation.agent_runs.list_recent(limit=limit)
+
+
+@app.get("/platform/agents/runs/{run_id}")
+def get_platform_agent_run(run_id: str) -> dict:
+    run = platform_foundation.agent_runs.get(run_id)
+    if not run:
+        return JSONResponse(status_code=404, content={"error": f"Platform agent run '{run_id}' was not found."})
+    return run
+
+
+@app.post("/platform/notifications")
+def create_platform_notification(request: PlatformNotificationRequest) -> dict:
+    return platform_foundation.notifications.create(request.model_dump(by_alias=True))
+
+
+@app.get("/platform/notifications")
+def list_platform_notifications(unread_only: bool = False, limit: int = 50) -> dict:
+    return platform_foundation.notifications.list_recent(unread_only=unread_only, limit=limit)
+
+
+@app.get("/platform/notifications/recent")
+def list_recent_platform_notifications(unread_only: bool = False, limit: int = 20) -> dict:
+    return platform_foundation.notifications.list_recent(unread_only=unread_only, limit=limit)
+
+
+@app.post("/platform/notifications/{notification_id}/read")
+def mark_platform_notification_read(notification_id: str) -> dict:
+    notification = platform_foundation.notifications.mark_read(notification_id)
+    if not notification:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Platform notification '{notification_id}' was not found."},
+        )
+    return notification
+
+
+@app.get("/platform/activity")
+def list_platform_activity(limit: int = 50, activity_type: str = "", source: str = "", correlation_id: str = "") -> dict:
+    return platform_foundation.activity.list_recent(
+        limit=limit,
+        activityType=activity_type,
+        source=source,
+        correlationId=correlation_id,
+    )
+
+
+@app.get("/platform/activity/recent")
+def list_recent_platform_activity(limit: int = 20, activity_type: str = "", source: str = "", correlation_id: str = "") -> dict:
+    return platform_foundation.activity.list_recent(
+        limit=limit,
+        activityType=activity_type,
+        source=source,
+        correlationId=correlation_id,
+    )
 
 
 @app.get("/project-intelligence/profile")

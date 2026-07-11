@@ -13,6 +13,9 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from .package_builder import ExecutionPackageBuilder
+from .package_models import ExecutionRequest
+
 
 FILE_RANKING_UNAVAILABLE = "Repository file ranking not available"
 SOURCE_CODE_NOT_INDEXED = "Source Code: Not Indexed"
@@ -86,11 +89,13 @@ def build_execution_package_v2(
         "relevantModules": _repository_items(modules, item_type="module", source="context_capsule"),
         "relevantFlows": _repository_items(flows, item_type="flow", source="context_capsule"),
         "relevantServices": _repository_named_items(profile, "services"),
-        "relevantAPIs": _repository_named_items(profile, "apis"),
+        "relevantAPIs": _repository_items(capsule.get("relevantAPIs"), item_type="api", source="context_capsule")
+        or _repository_named_items(profile, "apis"),
         "relevantFiles": relevant_files,
         "relatedTests": _repository_named_items(profile, "tests"),
         "dependencies": _repository_items(dependencies, item_type="dependency", source="context_capsule"),
         "fileRankingStatus": _clean(capsule.get("fileRankingStatus")) or FILE_RANKING_UNAVAILABLE,
+        "moduleContext": capsule.get("moduleContext") if isinstance(capsule.get("moduleContext"), list) else [],
     }
     if not relevant_files:
         repository_context["fileRankingStatus"] = FILE_RANKING_UNAVAILABLE
@@ -107,6 +112,9 @@ def build_execution_package_v2(
     risks = _execution_risks(capsule, validation_report)
     engineering_rules = _engineering_rules(profile, standards, modules, flows)
     suggested_tests = _suggested_tests(story, selected_task, acceptance_mapping, modules, flows, risks)
+    capsule_suggested_tests = capsule.get("suggestedTests") if isinstance(capsule.get("suggestedTests"), list) else []
+    if capsule_suggested_tests:
+        suggested_tests = _dedupe_named_dicts([*_normalize_suggested_tests(capsule_suggested_tests), *suggested_tests], key="title")[:8]
     readiness_payload = _readiness(
         readiness,
         acceptance_mapping,
@@ -187,6 +195,57 @@ def build_execution_package_v2(
         },
     }
     package["diagnostics"]["tokenEstimate"] = _estimate_tokens(json.dumps(package, sort_keys=True, default=str))
+    # Compatibility adapter: legacy callers keep their established fields while
+    # all canonical Milestone 3.3 sections are built through the strict
+    # ContextCapsule + ExecutionRequest contract.
+    canonical_capsule = {
+        **capsule,
+        "planningContext": {
+            "businessGoal": package["businessContext"].get("epicBusinessGoal"),
+            "epic": {"id": epic_id} if epic_id else {},
+            "feature": {"id": feature_id} if feature_id else {},
+            "story": {**story, "title": normalized_story_title},
+            "task": selected_task,
+            "acceptanceCriteria": normalized_acceptance,
+            "assumptions": package["implementationBoundary"].get("assumptions", []),
+            "planningConfidence": float(capsule.get("confidence") or 0),
+        },
+        "repositoryContext": {
+            "repositoryMode": readiness_payload.get("repositoryMode") or "Unavailable",
+            "snapshot": capsule.get("repositorySnapshotVersion"),
+            "relevantModules": modules,
+            "relevantFiles": [item.get("name") for item in relevant_files],
+            "relevantAPIs": [item.get("name") for item in repository_context.get("relevantAPIs", [])],
+            "dependencies": dependencies,
+            "repositoryConfidence": float(capsule.get("confidence") or 0),
+        },
+        "knowledge": {
+            "capabilities": _string_list(capsule.get("selectedCapabilities")),
+            "flows": flows,
+            "engineeringStandards": standards,
+            "knownRisks": [item.get("description") or item.get("title") for item in risks],
+            "securityRules": [item.get("rule") or item.get("title") for item in engineering_rules if "security" in str(item).casefold()],
+        },
+        "suggestedTests": [item.get("title") for item in suggested_tests],
+    }
+    canonical = ExecutionPackageBuilder().build(
+        canonical_capsule,
+        ExecutionRequest(
+            purpose="ImplementationPackage", story_id=str(story_id or ""), task_id=str(task_id or ""),
+            repository_snapshot_version=_clean(capsule.get("repositorySnapshotVersion")),
+            execution_mode="Implement",
+        ),
+    )
+    for section in ("metadata", "planningContext", "engineeringMemory", "knowledge", "implementationGuidance", "validationGuidance", "qaGuidance", "tokenGuidance"):
+        package[section] = canonical[section]
+    package["diagnostics"].update({
+        "contextSourcesUsed": canonical["diagnostics"]["contextSourcesUsed"],
+        "missingContext": canonical["diagnostics"]["missingContext"],
+        "excludedContext": canonical["diagnostics"]["excludedContext"],
+        "builderVersion": canonical["diagnostics"]["builderVersion"],
+        "retrievalPerformed": False,
+        "llmUsed": False,
+    })
     return package
 
 
@@ -482,6 +541,37 @@ def _engineering_rules(profile: dict[str, Any], standards: list[str], modules: l
     if not rules:
         rules.append({"type": "coding", "category": "Coding Standards", "rule": "Follow existing repository conventions and project standards.", "source": "deterministic_default"})
     return rules[:16]
+
+
+def _normalize_suggested_tests(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        title = _clean(item.get("title"))
+        if not title:
+            continue
+        normalized.append(
+            {
+                "type": _clean(item.get("type")) or "test",
+                "title": title,
+                "coverage": _string_list(item.get("coverage")) or [],
+                "priority": _clean(item.get("priority")) or "Medium",
+            }
+        )
+    return normalized
+
+
+def _dedupe_named_dicts(items: list[dict[str, Any]], *, key: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for item in items:
+        marker = _clean(item.get(key)).casefold()
+        if not marker or marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(item)
+    return deduped
 
 
 def _stack_rule_items(stack: Any) -> list[dict[str, Any]]:

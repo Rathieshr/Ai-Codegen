@@ -1,0 +1,52 @@
+{
+  "manifestVersion": 1,
+  "id": "hei-engineering-platform",
+  "publisher": "AiIntelliCodegen",
+  "version": "0.1.0",
+  "name": "HEI",
+  "description": "Hubbell Engineering Intelligence for repository-aware planning, execution, QA, and engineering operations in Azure DevOps.",
+  "public": false,
+  "categories": [
+    "Azure Boards"
+  ],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "icons": {
+    "default": "static/icon.png"
+  },
+  "files": [
+    {
+      "path": "dist",
+      "addressable": true
+    },
+    {
+      "path": "static",
+      "addressable": true
+    },
+    {
+      "path": "projectIntelligenceTab.html",
+      "addressable": true
+    }
+  ],
+  "contributions": [
+    {
+      "id": "hei.project-intelligence-tab",
+      "type": "ms.vss-work-web.work-item-form-page",
+      "targets": [
+        "ms.vss-work-web.work-item-form"
+      ],
+      "properties": {
+        "name": "HEI",
+        "uri": "projectIntelligenceTab.html"
+      }
+    }
+  ],
+  "scopes": [
+    "vso.work_write",
+    "vso.code",
+    "vso.graph"
+  ]
+}

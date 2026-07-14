@@ -1,11 +1,12 @@
 {
-  "name": "ai-gen-azure-devops-extension",
+  "name": "hei-azure-devops-extension",
   "version": "1.0.41",
   "private": true,
-  "description": "Azure DevOps work item integration for ai-gen execution packets.",
+  "description": "HEI Engineering Platform integration for Azure DevOps.",
   "scripts": {
     "build": "webpack --mode production",
-    "package": "npm run build && tfx extension create --manifest-globs azure-devops-extension.json"
+    "package": "npm run build && tfx extension create --manifest-globs azure-devops-extension.json",
+    "package:hei": "npm run build && tfx extension create --manifest-globs azure-devops-extension.hei.json"
   },
   "dependencies": {
     "azure-devops-extension-api": "^4.240.0",

@@ -53,7 +53,11 @@ class RepositoryAlignmentValidator:
 
 def _repo_item_names(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [clean(item.get("path") or item.get("name") or item.get("title") or item) for item in value]
+        return [
+            clean(item.get("path") or item.get("name") or item.get("title") or item)
+            if isinstance(item, dict) else clean(item)
+            for item in value
+        ]
     return string_list(value)
 
 

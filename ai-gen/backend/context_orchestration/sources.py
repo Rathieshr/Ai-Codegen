@@ -20,6 +20,29 @@ class PlanningContextSource:
         return ContextSourceResult(self.source_type, bool(items), "Fresh" if items else "Unavailable", items=items)
 
 
+class RequestKnowledgeContextSource:
+    """Supplies compact, request-scoped Knowledge Registry facts to the pipeline."""
+
+    source_type = ContextSourceType.KNOWLEDGE_REGISTRY
+
+    def retrieve(self, request: ContextRequest) -> ContextSourceResult:
+        registry = request.artifact.get("knowledgeRegistry")
+        if not isinstance(registry, dict) or not request.options.get("includeKnowledge", True):
+            return ContextSourceResult(self.source_type, False, "Unavailable", diagnostics={"reason": "not_supplied"})
+        items: list[dict[str, Any]] = []
+        for key, category in (("modules", "Module"), ("flows", "Flow"), ("applications", "Application"), ("standards", "Standard"), ("components", "Component")):
+            for value in registry.get(key) or []:
+                item = value if isinstance(value, dict) else {"name": str(value)}
+                name = str(item.get("name") or item.get("title") or "").strip()
+                if name:
+                    items.append({**item, "title": name, "content": name, "category": category, "directEvidence": True})
+        for note in registry.get("architecture_notes") or registry.get("architectureNotes") or []:
+            if str(note).strip():
+                items.append({"title": "Architecture", "content": str(note), "category": "Architecture", "directEvidence": True})
+        version = str(request.artifact.get("knowledgeVersion") or registry.get("version") or "")
+        return ContextSourceResult(self.source_type, bool(items), "Fresh" if items else "Unavailable", version=version, items=items, diagnostics={"itemCount": len(items), "requestScoped": True})
+
+
 class LocalWorkspaceContextSource:
     source_type = ContextSourceType.LOCAL_WORKSPACE
     def retrieve(self, request: ContextRequest) -> ContextSourceResult:

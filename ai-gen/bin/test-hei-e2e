@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+python3 -m compileall -q backend tests
+python3 -m unittest \
+  tests.test_hei_platform_hardening \
+  tests.test_context_orchestration \
+  tests.test_execution_package_milestone_3_3 \
+  tests.test_execution_manifest_milestone_4_1 \
+  tests.test_prompt_compiler_milestone_4_2 \
+  tests.test_token_intelligence_milestone_4_3 \
+  tests.test_model_registry_milestone_4_4 \
+  tests.test_model_adapters_milestone_4_5 \
+  tests.test_prompt_optimizer_milestone_4_6 \
+  tests.test_prompt_diagnostics_milestone_4_7 \
+  tests.test_provider_router_milestone_4_8 \
+  tests.test_prompt_cache_milestone_4_9 \
+  tests.test_prompt_intelligence_hardening_milestone_4_10 \
+  tests.test_platform_convergence \
+  tests.test_engineering_memory \
+  -v

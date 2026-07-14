@@ -2,13 +2,15 @@
 
 ## Purpose and responsibilities
 
-The Context Orchestrator is the centralized, deterministic entry point for assembling HEI context. It retrieves through adapters over existing systems, normalizes candidates, ranks and filters them, enforces project and repository boundaries, applies a model-safe token budget, preserves provenance, stores diagnostics, and emits platform activity, audit, and event records. It does not call an LLM and it does not replace existing context builders in Milestone 3.1.
+The Context Orchestrator is the centralized, deterministic entry point for assembling HEI context. It retrieves through adapters over existing systems, normalizes candidates, ranks and filters them, enforces project and repository boundaries, applies a model-safe token budget, preserves provenance, stores diagnostics, and emits platform activity, audit, and event records. It does not call an LLM. As of Milestone 3.5, the converged Execution Package path uses this orchestrator as its only context authority; legacy compatibility endpoints remain while migration completes.
 
 ## Pipeline
 
 `Validate request -> resolve/retrieve snapshot -> retrieve sources -> normalize -> rank -> filter policies -> budget -> build/store result -> publish activity and events`
 
 Each source failure is isolated. Permitted planning, memory, or workspace context can still be returned when repository intelligence is unavailable.
+
+Available sources marked `Stale` remain usable but produce an explicit refresh warning, set the capsule freshness status to `Stale`, and reduce downstream readiness.
 
 ## Source adapters
 
@@ -60,4 +62,6 @@ Read the stored result with `GET /context/requests/{requestId}`, bounded diagnos
 
 ## Migration strategy
 
-Existing Planning, Implementation Package, Developer Prompt, Validation, QA, Agent Runtime, and editor flows continue using their current builders. Later milestones can migrate one consumer at a time to `IContextOrchestrator`; compatibility adapters can translate orchestration results into a legacy builder contract where required. No existing route or builder is removed by this foundation.
+Planning and repository authorities still feed the orchestrator. The converged path is now `Context Orchestrator -> Unified Context Capsule -> Execution Package -> package-only consumers`. Execution Manifest compilation (`DeveloperPrompt` internally), Validation, QA, Memory Capture, Agent Runtime, and VS Code use the package consumer gateway. Compatibility adapters may project legacy response shapes, but they may not retrieve context again. No existing route is removed by this migration.
+
+The Milestone 3.5 hardening harness uses instrumented adapters and local JSON stores to verify this contract without external services. This differs from a production deployment's repository and persistence infrastructure but exercises the same orchestrator, package builder, and consumer gateway.

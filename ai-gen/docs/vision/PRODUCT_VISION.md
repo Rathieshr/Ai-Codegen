@@ -1,5 +1,7 @@
 # PRODUCT_VISION.md
 
+> Legacy vision source. The canonical product vision is [Product Vision](../00-Vision/Product%20Vision.md), and current naming is defined in [HEI Terminology](../TERMINOLOGY.md).
+
 ---
 
 # HEI (Hubbell Engineering Intelligence)

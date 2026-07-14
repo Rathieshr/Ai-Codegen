@@ -78,6 +78,7 @@ type SidebarHandlers = {
   regenerate(stage: string, userInput: string): Promise<PlannerViewState>;
   approve(stage: string): Promise<PlannerViewState>;
   copyPrompt(): Promise<PlannerViewState>;
+  copyPromptAndOpenCopilot(): Promise<PlannerViewState>;
   createWorkItems(): Promise<PlannerViewState>;
   generateExecutionPlan(): Promise<PlannerViewState>;
   generateDeveloperPrompt(): Promise<PlannerViewState>;
@@ -152,6 +153,9 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'copyPrompt':
         state = await this.handlers.copyPrompt();
+        break;
+      case 'copyPromptAndOpenCopilot':
+        state = await this.handlers.copyPromptAndOpenCopilot();
         break;
       case 'createWorkItems':
         state = await this.handlers.createWorkItems();
@@ -780,7 +784,8 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
               <span class="pill">\${session.code_generation_prompt ? 'Developer Prompt Available' : 'Developer Prompt Pending'}</span>
             </div>
             <div class="actions">
-              <button id="copyPromptBtn">Generate Developer Prompt</button>
+              <button id="copyPromptBtn">\${session.code_generation_prompt ? 'Copy Prompt' : 'Generate &amp; Copy Prompt'}</button>
+              <button id="copyAndOpenCopilotBtn" class="secondary">\${session.code_generation_prompt ? 'Copy Prompt &amp; Open Copilot' : 'Generate, Copy &amp; Open Copilot'}</button>
               <button id="createWorkItemsBtn" class="secondary">Continue to Planning</button>
             </div>
             \${session.code_generation_prompt ? \`<details><summary>Show Developer Prompt</summary><div class="readout">\${escapeHtml(session.code_generation_prompt)}</div></details>\` : ''}
@@ -791,7 +796,8 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
         <div class="detail-stack">
           <div class="banner">Planning is ready. Continue into implementation or Azure DevOps creation from the HEI workspace.</div>
           <div class="actions">
-            <button id="copyPromptBtn">Generate Developer Prompt</button>
+            <button id="copyPromptBtn">\${session.code_generation_prompt ? 'Copy Prompt' : 'Generate &amp; Copy Prompt'}</button>
+            <button id="copyAndOpenCopilotBtn" class="secondary">\${session.code_generation_prompt ? 'Copy Prompt &amp; Open Copilot' : 'Generate, Copy &amp; Open Copilot'}</button>
             <button id="refreshBtn" class="secondary">Refresh State</button>
           </div>
           \${session.code_generation_prompt ? \`<details><summary>Show Developer Prompt</summary><div class="readout">\${escapeHtml(session.code_generation_prompt)}</div></details>\` : ''}
@@ -845,9 +851,10 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
               <div class="summary-item"><div class="status-label">Developer Prompt</div><strong>\${developerPrompt ? 'Ready' : 'Not generated'}</strong></div>
             </div>
             <div class="toolbar-inline">
-              <button id="generateDeveloperPromptBtn" \${workspace.executionPackage ? '' : 'disabled'}>Generate Developer Prompt</button>
+              <button id="generateDeveloperPromptBtn" \${workspace.executionPackage ? '' : 'disabled'}>\${developerPrompt ? 'Regenerate Prompt' : 'Generate Prompt'}</button>
               <button id="copyExecutionPlanBtn" class="secondary" \${developerPrompt ? '' : 'disabled'}>Copy Prompt</button>
-              <button id="openCopilotChatBtn" class="secondary" \${developerPrompt ? '' : 'disabled'}>Open Copilot Chat</button>
+              <button id="copyPromptAndOpenCopilotBtn" class="secondary" \${developerPrompt ? '' : 'disabled'}>Copy Prompt &amp; Open Copilot</button>
+              <button id="openCopilotChatBtn" class="secondary" \${developerPrompt ? '' : 'disabled'}>Open Copilot Only</button>
             </div>
           </section>
           <section class="card">
@@ -1024,6 +1031,7 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       byId('generateExecutionPlanBtn')?.addEventListener('click', () => post('generateExecutionPlan'));
       byId('generateDeveloperPromptBtn')?.addEventListener('click', () => post('generateDeveloperPrompt'));
       byId('copyExecutionPlanBtn')?.addEventListener('click', () => post('copyPrompt'));
+      byId('copyPromptAndOpenCopilotBtn')?.addEventListener('click', () => post('copyPromptAndOpenCopilot'));
       byId('openCopilotChatBtn')?.addEventListener('click', () => post('openCopilotChat'));
       const session = latestState.session;
       if (!session) {
@@ -1058,6 +1066,7 @@ export class AiGenSidebarViewProvider implements vscode.WebviewViewProvider {
       byId('regenTasksBtn')?.addEventListener('click', () => post('regenerate', { stage: 'tasks', userInput: userInput() }));
       byId('approveTasksBtn')?.addEventListener('click', () => post('approve', { stage: 'tasks' }));
       byId('copyPromptBtn')?.addEventListener('click', () => post('copyPrompt'));
+      byId('copyAndOpenCopilotBtn')?.addEventListener('click', () => post('copyPromptAndOpenCopilot'));
       byId('createWorkItemsBtn')?.addEventListener('click', () => post('createWorkItems'));
     }
 

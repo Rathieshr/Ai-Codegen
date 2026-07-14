@@ -22,6 +22,9 @@ class IAuditService(Protocol):
     def by_correlation(self, correlation_id: str) -> dict:
         ...
 
+    def list_recent(self, limit: int = 50) -> dict:
+        ...
+
 
 class AuditService:
     def __init__(self, storage_path: Path) -> None:
@@ -49,3 +52,7 @@ class AuditService:
     def by_correlation(self, correlation_id: str) -> dict:
         items = [item for item in self._store.read() if item.get("correlationId") == correlation_id]
         return {"events": list(reversed(items)), "count": len(items)}
+
+    def list_recent(self, limit: int = 50) -> dict:
+        items = self._store.read()
+        return {"events": list(reversed(items[-max(1, limit):])), "count": len(items)}

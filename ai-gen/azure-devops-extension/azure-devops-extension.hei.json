@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "hei-engineering-platform",
   "publisher": "AiIntelliCodegen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "HEI",
   "description": "Hubbell Engineering Intelligence for repository-aware planning, execution, QA, and engineering operations in Azure DevOps.",
   "public": false,
@@ -29,9 +29,39 @@
     {
       "path": "projectIntelligenceTab.html",
       "addressable": true
+    },
+    {
+      "path": "openHeiAction.html",
+      "addressable": true
     }
   ],
   "contributions": [
+    {
+      "id": "hei-hub-group",
+      "type": "ms.vss-web.hub-group",
+      "description": "Adds HEI to Azure DevOps project navigation.",
+      "targets": [
+        "ms.vss-web.project-hub-groups-collection"
+      ],
+      "properties": {
+        "name": "HEI",
+        "order": 85
+      }
+    },
+    {
+      "id": "hei-command-center",
+      "type": "ms.vss-web.hub",
+      "description": "Hosts the complete HEI Engineering Command Center.",
+      "targets": [
+        ".hei-hub-group"
+      ],
+      "properties": {
+        "name": "HEI",
+        "order": 1,
+        "uri": "dist/hei/index.html",
+        "iconName": "EngineeringGroup"
+      }
+    },
     {
       "id": "hei.project-intelligence-tab",
       "type": "ms.vss-work-web.work-item-form-page",
@@ -41,6 +71,18 @@
       "properties": {
         "name": "HEI",
         "uri": "projectIntelligenceTab.html"
+      }
+    },
+    {
+      "id": "hei.open-command-center",
+      "type": "ms.vss-web.action",
+      "targets": [
+        "work-item-toolbar"
+      ],
+      "properties": {
+        "text": "Open in HEI",
+        "title": "Open this work item in the HEI Command Center",
+        "uri": "openHeiAction.html"
       }
     }
   ],

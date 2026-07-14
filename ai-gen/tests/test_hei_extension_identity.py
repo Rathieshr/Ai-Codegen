@@ -22,7 +22,7 @@ class HEIExtensionIdentityTests(unittest.TestCase):
 
     def test_hei_work_item_page_uses_hei_branding(self) -> None:
         hei = self.load_manifest("azure-devops-extension.hei.json")
-        contribution = hei["contributions"][0]
+        contribution = next(item for item in hei["contributions"] if item["type"] == "ms.vss-work-web.work-item-form-page")
 
         self.assertEqual(contribution["properties"]["name"], "HEI")
         self.assertEqual(contribution["properties"]["uri"], "projectIntelligenceTab.html")

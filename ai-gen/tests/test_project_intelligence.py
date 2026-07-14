@@ -413,6 +413,7 @@ class ProjectIntelligenceTests(unittest.TestCase):
             "knowledge_registry": {
                 "modules": ["Fault Monitoring", "Telemetry"],
                 "flows": ["Fault Event Review Flow"],
+                "architecture_notes": ["Controllers must depend on services, not repositories directly."],
                 "ranked_files": [
                     {
                         "path": "src/fault/FaultEventViewModel.cs",
@@ -434,6 +435,9 @@ class ProjectIntelligenceTests(unittest.TestCase):
 
         self.assertEqual(with_files["recommended_files"], ["src/fault/FaultEventViewModel.cs"])
         self.assertEqual(with_files["context_capsule"]["relevantFiles"][0]["source"], "repository_intelligence")
+        self.assertTrue(with_files["context_capsule"]["architectureRules"])
+        self.assertTrue(with_files["context_capsule"]["suggestedTests"])
+        self.assertIsInstance(with_files["context_capsule"]["moduleContext"], list)
         self.assertEqual(without_files["recommended_files"], [])
         self.assertEqual(without_files["file_ranking_status"], "Repository file ranking not available")
 

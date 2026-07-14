@@ -1,8 +1,8 @@
 {
   "name": "ai-gen-vscode",
-  "displayName": "ai-gen",
-  "description": "AI Story Planner for guided Azure DevOps user story planning.",
-  "version": "0.2.3",
+  "displayName": "HEI Engineering Assistant",
+  "description": "Repository-aware Engineering Intelligence for HEI.",
+  "version": "0.2.10",
   "publisher": "rathiesh",
   "engines": {
     "vscode": "^1.85.0"
@@ -22,7 +22,7 @@
       "activitybar": [
         {
           "id": "aiGen",
-          "title": "ai-gen",
+          "title": "HEI",
           "icon": "media/ai-gen.svg"
         }
       ]
@@ -31,7 +31,7 @@
       "aiGen": [
         {
           "id": "aiGen.sidebar",
-          "name": "ai-gen",
+          "name": "HEI Engineering Assistant",
           "type": "webview"
         }
       ]
@@ -39,27 +39,27 @@
     "commands": [
       {
         "command": "ai-gen.openStoryPlanner",
-        "title": "ai-gen: Open AI Story Planner"
+        "title": "HEI: Open Engineering Assistant"
       },
       {
         "command": "ai-gen.refreshBackendResolution",
-        "title": "ai-gen: Refresh Backend Resolution"
+        "title": "HEI: Refresh Backend Connection"
       },
       {
         "command": "ai-gen.openExecution",
-        "title": "ai-gen: Open Execution Workspace"
+        "title": "HEI: Open Execution Workspace"
       },
       {
         "command": "ai-gen.generateExecutionPlan",
-        "title": "ai-gen: Generate Execution Plan"
+        "title": "HEI: Generate Implementation Plan"
       },
       {
         "command": "ai-gen.openContextCapsule",
-        "title": "ai-gen: Open Context Capsule"
+        "title": "HEI: Open Context Capsule"
       }
     ],
     "configuration": {
-      "title": "ai-gen",
+      "title": "HEI",
       "properties": {
         "ai-gen.backendMode": {
           "type": "string",

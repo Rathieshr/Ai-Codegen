@@ -1,5 +1,7 @@
 # AI_GEN_ARCHITECTURE.md
 
+> Legacy architecture source. New architecture documentation starts at [HEI Product Documentation](../README.md), and canonical naming is defined in [HEI Terminology](../TERMINOLOGY.md). Existing AI Gen and Developer Prompt terms in this file describe compatibility-era names.
+
 ---
 
 # HEI (Hubbell Engineering Intelligence)

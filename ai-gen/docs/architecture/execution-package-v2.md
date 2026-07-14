@@ -42,4 +42,4 @@ The builder never synthesizes repository paths, symbols, APIs, or tests.
 
 ## Future consumers
 
-Developer Prompt, Validation, QA, PR Review, Agent Runtime, VS Code, and Azure DevOps automation can migrate incrementally to the canonical sections. Legacy aliases remain available during that migration; no current editor workflow needs a coordinated cutover.
+Execution Manifest compilation, Validation, QA, PR Review, Agent Runtime, VS Code, and Azure DevOps automation can migrate incrementally to the canonical sections. The compiler currently uses the `DeveloperPrompt` compatibility identifier. Legacy aliases remain available during that migration; no current editor workflow needs a coordinated cutover.

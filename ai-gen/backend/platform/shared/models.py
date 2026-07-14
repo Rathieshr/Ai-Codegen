@@ -34,6 +34,7 @@ class OperationSource(str, Enum):
     VSCODE = "VSCode"
     API = "API"
     AGENT = "Agent"
+    EXECUTION_RUNTIME = "ExecutionRuntime"
 
 
 def now_iso() -> str:

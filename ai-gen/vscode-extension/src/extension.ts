@@ -30,6 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
     regenerate,
     approve,
     copyPrompt,
+    copyPromptAndOpenCopilot,
     createWorkItems,
     generateExecutionPlan,
     generateDeveloperPrompt,
@@ -151,6 +152,15 @@ async function copyPrompt(): Promise<PlannerViewState> {
   return getState('Developer Prompt copied.');
 }
 
+async function copyPromptAndOpenCopilot(): Promise<PlannerViewState> {
+  const state = await copyPrompt();
+  try {
+    return await openCopilotChat('Developer Prompt copied. Copilot Chat opened. Paste the prompt to continue.');
+  } catch {
+    return getState('Developer Prompt copied. Open Copilot Chat manually and paste the prompt.');
+  }
+}
+
 async function createWorkItems(): Promise<PlannerViewState> {
   const session = requireSession();
   const backendUrl = await ensureBackendUrl();
@@ -172,20 +182,16 @@ async function generateExecutionPlan(): Promise<PlannerViewState> {
   if (!currentExecutionWorkspace?.executionPackage) {
     return await executionPackageMissing('Execution Package not found.');
   }
-  const backendUrl = await ensureBackendUrl();
-  const profile = await getJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/profile`);
-  const result = await postJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/build-execution-plan`, {
-    profile,
-    knowledge_profile: profile.knowledge_registry || {},
-    story: storyFromExecutionWorkspace(currentExecutionWorkspace),
-    execution_mode: 'implement',
-    mode: 'deterministic_only',
-  });
+  const guidance = objectValue(currentExecutionWorkspace.executionPackage.implementationGuidance);
+  const sequence = Array.isArray(guidance.recommendedSequence) ? guidance.recommendedSequence.map(String) : [];
+  const result = {
+    plan: [String(guidance.implementationObjective || currentExecutionWorkspace.title), ...sequence.map((item, index) => `${index + 1}. ${item}`)].filter(Boolean).join('\n'),
+  };
   currentExecutionWorkspace = {
     ...currentExecutionWorkspace,
     status: 'ready',
     statusMessage: 'Execution Plan generated.',
-    executionPlan: String(result.plan || result.finalPlan || result.prompt || ''),
+    executionPlan: String(result.plan || ''),
   };
   markSynced();
   if (currentExecutionWorkspace.executionPlan) {
@@ -199,12 +205,10 @@ async function generateDeveloperPrompt(): Promise<PlannerViewState> {
     return await executionPackageMissing('Implementation Package not found.');
   }
   const backendUrl = await ensureBackendUrl();
-  const profile = await getJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/profile`);
-  const result = await postJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/build-dev-prompt`, {
-    profile,
-    knowledge_profile: profile.knowledge_registry || {},
-    story: storyFromExecutionWorkspace(currentExecutionWorkspace),
-    mode: 'deterministic_only',
+  const packageId = String(currentExecutionWorkspace.executionPackage.packageId || '');
+  const result = await postJson<Record<string, unknown>>(`${backendUrl}/execution-packages/${encodeURIComponent(packageId)}/consume/DeveloperPrompt`, {
+    correlationId: `vscode-${Date.now()}`,
+    executionMode: 'Implement',
   });
   currentExecutionWorkspace = {
     ...currentExecutionWorkspace,
@@ -229,7 +233,7 @@ async function rebuildExecutionPackage(): Promise<PlannerViewState> {
   return getState('Implementation Package reloaded.');
 }
 
-async function openCopilotChat(): Promise<PlannerViewState> {
+async function openCopilotChat(successMessage = 'Copilot Chat opened.'): Promise<PlannerViewState> {
   const commands = [
     'workbench.panel.chat.view.copilot.focus',
     'github.copilot-chat.focus',
@@ -238,7 +242,7 @@ async function openCopilotChat(): Promise<PlannerViewState> {
   for (const command of commands) {
     try {
       await vscode.commands.executeCommand(command);
-      return getState('Copilot Chat opened.');
+      return getState(successMessage);
     } catch {
       // try next command
     }
@@ -492,14 +496,23 @@ function executionWorkspaceFromPayload(payload: Record<string, unknown>): Execut
 
 async function requestExecutionPackage(workspace: ExecutionWorkspaceState): Promise<ExecutionWorkspaceState> {
   const backendUrl = await ensureBackendUrl();
-  const profile = await getJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/profile`);
-  const executionContext = await postJson<Record<string, unknown>>(`${backendUrl}/project-intelligence/build-execution-context`, {
-    profile,
-    knowledge_profile: profile.knowledge_registry || {},
-    story: storyFromExecutionWorkspace(workspace),
-    mode: 'deterministic_only',
+  if (!workspace.contextCapsule || !Object.keys(workspace.contextCapsule).length) {
+    throw new Error('Unified Context Capsule not found. Refresh context through the Context Orchestrator first.');
+  }
+  const executionPackage = await postJson<Record<string, unknown>>(`${backendUrl}/execution-packages/build`, {
+    correlationId: `vscode-${Date.now()}`,
+    contextCapsule: workspace.contextCapsule,
+    executionRequest: {
+      purpose: 'ImplementationPackage',
+      storyId: workspace.artifactType === 'Story' ? workspace.artifactId : '',
+      taskId: workspace.artifactType === 'Task' ? workspace.artifactId : '',
+      branch: workspace.currentBranch,
+      targetPlatform: 'VSCode',
+      executionMode: 'Implement',
+      selectedFiles: workspace.relatedFiles,
+    },
   });
-  return executionWorkspaceFromPayload({ execution_context: executionContext });
+  return executionWorkspaceFromPayload({ execution_package: executionPackage, context_capsule: workspace.contextCapsule });
 }
 
 function storyFromExecutionWorkspace(workspace: ExecutionWorkspaceState): Record<string, unknown> {
@@ -534,6 +547,9 @@ function relatedFilesFromPackage(executionPackage: Record<string, unknown>): str
   const files = Array.isArray(repository.relevantFiles) ? repository.relevantFiles : [];
   return files
     .map((item) => {
+      if (typeof item === 'string') {
+        return item.trim();
+      }
       const file = objectValue(item);
       return String(file.name || file.path || '').trim();
     })

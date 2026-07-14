@@ -10,6 +10,9 @@ from .models import clean, lower_blob, score_from_results, violation
 class StandardsComplianceValidator:
     def validate(self, execution_package: dict[str, Any], changed_files: list[dict[str, Any]]) -> dict[str, Any]:
         rules = execution_package.get("engineeringRules") if isinstance(execution_package.get("engineeringRules"), list) else []
+        if not rules:
+            guidance = execution_package.get("validationGuidance") if isinstance(execution_package.get("validationGuidance"), dict) else {}
+            rules = guidance.get("architectureConstraints") if isinstance(guidance.get("architectureConstraints"), list) else []
         blob = lower_blob(*[file.get("path") for file in changed_files], *[file.get("diff") for file in changed_files])
         checks = []
         for name, keywords in _required_checks(rules).items():

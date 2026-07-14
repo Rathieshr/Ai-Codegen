@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from .package_models import ExecutionRequest, normalize_capsule
+from backend.platform_hardening.quality import validate_acceptance_criteria
 
 
 class IExecutionPackageBuilder(Protocol):
@@ -37,7 +38,8 @@ class ExecutionPackageBuilder:
         missing = _missing_context(planning, repository, knowledge, validation)
         token_guidance = _token_guidance(planning, repository, memory, knowledge, implementation, validation, qa)
         metadata = {
-            "packageId": package_id, "generatedAt": generated_at, "capsuleVersion": str(capsule.get("capsuleVersion") or "1"),
+            "packageId": package_id, "generatedAt": generated_at, "capsuleId": capsule.get("capsuleId"),
+            "capsuleVersion": str(capsule.get("capsuleVersion") or "1"),
             "repositorySnapshotVersion": repository.get("snapshot") or request.repository_snapshot_version,
             "knowledgeVersion": str(capsule.get("knowledgeVersion") or _version(capsule, "KnowledgeRegistry")),
             "planningVersion": str(capsule.get("planningVersion") or _version(capsule, "Planning")),
@@ -144,12 +146,15 @@ def _implementation(capsule: dict, request: ExecutionRequest, planning: dict, re
 
 def _validation(capsule: dict, planning: dict, repository: dict, knowledge: dict) -> dict:
     acceptance = planning["acceptanceCriteria"]
-    mapping = [{"acceptanceCriteriaId": f"AC{i:03d}", "acceptanceText": text, "validationExpectation": f"Verify: {text}"} for i, text in enumerate(acceptance, 1)]
+    implementation_areas = repository["relevantModules"] or knowledge["capabilities"]
+    acceptance_quality = validate_acceptance_criteria(acceptance, implementation_areas)
+    mapping = acceptance_quality["criteria"]
     return {
         "acceptanceMapping": mapping, "regressionAreas": _unique(repository["relevantModules"] + knowledge["flows"]),
         "permissionRequirements": knowledge["securityRules"], "riskAreas": knowledge["knownRisks"],
         "architectureConstraints": knowledge["architectureRules"] + knowledge["engineeringStandards"],
-        "validationCompleteness": 1.0 if mapping and (knowledge["validationRules"] or repository["repositoryMode"] != "Unavailable") else 0.5 if mapping else 0.0,
+        "validationCompleteness": 1.0 if mapping and acceptance_quality["status"] == "Approved" and (knowledge["validationRules"] or repository["repositoryMode"] != "Unavailable") else 0.5 if mapping else 0.0,
+        "acceptanceQuality": acceptance_quality,
     }
 
 
@@ -172,9 +177,14 @@ def _source_confidence(capsule: dict, source: str) -> float:
 
 
 def _readiness(capsule: dict, planning: dict, repository: dict, memory: dict, knowledge: dict, validation: dict) -> dict:
+    repository_confidence = repository["repositoryConfidence"]
+    if repository["repositoryMode"] == "KnowledgeSnapshot":
+        repository_confidence = min(repository_confidence, 0.65)
+    if repository["repositoryMode"] == "CodeIndexed" and not repository["relevantFiles"]:
+        repository_confidence = min(repository_confidence, 0.35)
     signals = {
         "planningCompleteness": _ratio([planning["story"], planning["acceptanceCriteria"]]),
-        "repositoryConfidence": repository["repositoryConfidence"], "memoryConfidence": _source_confidence(capsule, "EngineeringMemory"),
+        "repositoryConfidence": repository_confidence, "memoryConfidence": _source_confidence(capsule, "EngineeringMemory"),
         "knowledgeCompleteness": _ratio([knowledge["capabilities"] or knowledge["knowledgeItems"], knowledge["engineeringStandards"] or knowledge["architectureRules"]]),
         "acceptanceCompleteness": 1.0 if planning["acceptanceCriteria"] else 0.0,
         "validationCompleteness": validation["validationCompleteness"],
@@ -182,10 +192,16 @@ def _readiness(capsule: dict, planning: dict, repository: dict, memory: dict, kn
     }
     weights = {"planningCompleteness": .2, "repositoryConfidence": .15, "memoryConfidence": .1, "knowledgeCompleteness": .15, "acceptanceCompleteness": .2, "validationCompleteness": .1, "repositoryFreshness": .1}
     score = round(sum(signals[key] * weights[key] for key in weights) * 100)
-    blocked_modules, _ = _blocked(capsule)
-    status = "Blocked" if not planning["story"] or not planning["acceptanceCriteria"] else "Ready" if score >= 75 and not blocked_modules else "Needs Review"
-    confidence = round(float(capsule.get("confidence") or sum(signals.values()) / len(signals)), 3)
-    return {"score": score, "status": status, "confidence": confidence, "signals": signals}
+    hard_blockers = _strings(capsule.get("blockers"))
+    quality_status = str((validation.get("acceptanceQuality") or {}).get("status") or "Rejected")
+    if quality_status != "Approved":
+        score = min(score, 69 if quality_status == "NeedsReview" else 49)
+    status = "Blocked" if hard_blockers or not planning["story"] or not planning["acceptanceCriteria"] or quality_status == "Rejected" else "Ready" if score >= 75 and quality_status == "Approved" else "Needs Review"
+    raw_confidence = float(capsule.get("confidence") or sum(signals.values()) / len(signals))
+    # Readiness includes evidence availability and freshness; confidence must not
+    # imply greater certainty than the package can substantiate.
+    confidence = round(min(raw_confidence, score / 100), 3)
+    return {"score": score, "status": status, "confidence": confidence, "signals": signals, "blockers": hard_blockers + list((validation.get("acceptanceQuality") or {}).get("blockers") or []), "warnings": list((validation.get("acceptanceQuality") or {}).get("warnings") or [])}
 
 
 def _ratio(values: list[Any]) -> float: return sum(bool(value) for value in values) / len(values)

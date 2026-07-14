@@ -25,17 +25,62 @@ from backend.context_orchestration import (
     EngineeringMemoryContextSource,
     LocalWorkspaceContextSource,
     PlanningContextSource,
+    RequestKnowledgeContextSource,
     RepositoryContextSource,
     build_context_orchestration_router,
 )
+from backend.ado_intelligence import build_ado_intelligence_router, register_ado_work_item_intelligence
+from backend.ado_agent import build_ado_agent_router, register_ado_agent
+from backend.ado_hardening import (
+    AzureDevOpsArchitectureVerifier,
+    AzureDevOpsHardeningHarness,
+    AzureDevOpsOperationalExecutor,
+    AzureDevOpsOperationalValidator,
+    AzureDevOpsPhase6Executor,
+    build_ado_hardening_router,
+    build_ado_operational_router,
+)
+from backend.convergence import ExecutionPackageConsumerService, build_convergence_router
 from backend.governance import GovernanceEngine
 from backend.intelligence_trace import TraceEngine
+from backend.integrations.azure_devops import build_azure_devops_router, register_azure_devops_integration
+from backend.integrations.azure_devops.automation import build_ado_automation_router, register_ado_automation
 from backend.skills import SkillEngine
 
 logger = logging.getLogger("ai_gen.app")
 
 from backend.execution_corrector import build_corrected_execution_prompt, generate_retry_plan
 from backend.execution import ExecutionPackageService, build_execution_package_router
+from backend.execution_runtime import (
+    EngineeringDiffRepository,
+    EngineeringDiffService,
+    ExecutionRuntime,
+    ExecutionRuntimeRepository,
+    MemoryCandidateRepository,
+    MemoryCandidateService,
+    PRCandidateRepository,
+    PRCandidateService,
+    QAExecutionPlanRepository,
+    QATriggerService,
+    ResponseInterpretationRepository,
+    ResponseInterpretationService,
+    RuntimeObservabilityService,
+    RuntimeHardeningHarness,
+    RuntimeTraceRepository,
+    ValidationTriggerRepository,
+    ValidationTriggerService,
+    build_engineering_diff_router,
+    build_execution_runtime_router,
+    build_memory_candidate_router,
+    build_pr_candidate_router,
+    build_qa_trigger_router,
+    build_response_interpreter_router,
+    build_runtime_observability_router,
+    build_runtime_hardening_router,
+    build_runtime_recovery_router,
+    build_validation_trigger_router,
+)
+from backend.execution_manifest import ExecutionManifestService, build_execution_manifest_router
 from backend.handoff.storage import list_handoffs, load_handoff_markdown
 from backend.lifecycle import EngineeringLifecycleManager
 from backend.execution_mode import detect_prompt_mode, score_execution_confidence
@@ -44,10 +89,30 @@ from backend.intent_detector import detect_intent
 from backend.model_router import detect_execution_target, get_available_targets
 from backend.orchestrator.react_controller import PipelineController
 from backend.platform import PlatformFoundation
+from backend.platform_hardening.api import build_platform_hardening_router
+from backend.platform_hardening.harness import HEIEndToEndHarness
 from backend.platform.shared import JsonMapStore
+from backend.platform_sdk import HEIPhase6Sdk
+from backend.workspace import WorkspaceService, build_workspace_router
+from backend.dashboard import DashboardService, build_dashboard_router
+from backend.planning_center import PlanningCenterService, build_planning_center_router
+from backend.execution_center import ExecutionCenterService, build_execution_center_router
+from backend.approval_center import ApprovalCenterService, build_approval_center_router
+from backend.ado_center import AzureDevOpsCenterService, build_ado_center_router
+from backend.agent_center import AgentCenterService, build_agent_center_router
+from backend.activity_center import ActivityCenterService, build_activity_center_router
+from backend.command_center_hardening import CommandCenterHardeningService, build_command_center_hardening_router
+from backend.requirement_intake import RequirementIntakeService, build_requirement_intake_router
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
 from backend.prompt_budget import default_json_sections, probe_json_with_budget
+from backend.prompt_compiler import PromptCompilerService, build_prompt_compiler_router
+from backend.token_intelligence import TokenIntelligenceService, build_token_intelligence_router
+from backend.model_registry import ModelRegistry, build_model_registry_router
+from backend.prompt_diagnostics import PromptDiagnosticsService, build_prompt_diagnostics_router
+from backend.prompt_cache import PromptCacheService, build_prompt_cache_router
+from backend.prompt_intelligence_hardening import PromptIntelligenceHardeningHarness, build_prompt_intelligence_hardening_router
+from backend.provider_router import ProviderRouter, ProviderRouterService, build_provider_router_api
 from backend.repository_intelligence import register_repository_intelligence
 from backend.repository_intelligence.api import build_repository_router
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
@@ -117,10 +182,26 @@ governance_engine = GovernanceEngine()
 trace_engine = TraceEngine()
 skill_engine = SkillEngine()
 platform_foundation = PlatformFoundation()
+workspace_service = WorkspaceService(
+    JsonMapStore(platform_foundation.storage_root / "workspace_preferences.json"),
+    platform=platform_foundation,
+)
+app.include_router(build_workspace_router(workspace_service))
+azure_devops_integration = register_azure_devops_integration(
+    platform_foundation.storage_root / "azure_devops_integrations",
+    platform=platform_foundation,
+)
+app.include_router(build_azure_devops_router(azure_devops_integration))
+platform_hardening_harness = HEIEndToEndHarness(
+    platform_foundation.storage_root / "hardening",
+    platform=platform_foundation,
+)
+app.include_router(build_platform_hardening_router(platform_hardening_harness))
 context_orchestrator = ContextOrchestrator(
     sources=[
         PlanningContextSource(),
         RepositoryContextSource(repository_intelligence_module.application),
+        RequestKnowledgeContextSource(),
         EngineeringMemoryContextSource(engineering_memory_engine),
         LocalWorkspaceContextSource(),
     ],
@@ -129,11 +210,283 @@ context_orchestrator = ContextOrchestrator(
 )
 platform_foundation.context_orchestrator = context_orchestrator
 app.include_router(build_context_orchestration_router(context_orchestrator))
+requirement_intake_service = RequirementIntakeService(
+    JsonMapStore(platform_foundation.storage_root / "requirements.json"),
+    context_orchestrator=context_orchestrator,
+    artifact_writer=project_intelligence_service.save_artifact,
+    platform=platform_foundation,
+)
+app.include_router(build_requirement_intake_router(requirement_intake_service))
+ado_work_item_intelligence = register_ado_work_item_intelligence(
+    platform_foundation.storage_root / "ado_work_item_intelligence",
+    azure_devops=azure_devops_integration,
+    context_orchestrator=context_orchestrator,
+    profile_provider=project_intelligence_service.get_profile,
+    engineering_memory=engineering_memory_engine,
+    platform=platform_foundation,
+)
+app.include_router(build_ado_intelligence_router(ado_work_item_intelligence))
+
+
+def _find_approved_planning_pack(planning_pack_id: str) -> dict[str, Any] | None:
+    artifacts = project_intelligence_service.list_artifacts()["artifacts"]
+    return next(
+        (
+            artifact for artifact in artifacts
+            if artifact.get("artifact_id") == planning_pack_id
+            and artifact.get("artifact_type") in {"PlanningPack", "Planning Pack"}
+        ),
+        None,
+    )
+
+
+ado_automation_service = register_ado_automation(
+    platform_foundation.storage_root / "ado_automation",
+    azure_devops=azure_devops_integration,
+    recommendations=ado_work_item_intelligence.repository,
+    planning_pack_provider=_find_approved_planning_pack,
+    platform=platform_foundation,
+)
+app.include_router(build_ado_automation_router(ado_automation_service))
+ado_agent_service = register_ado_agent(
+    platform_foundation.storage_root / "ado_agent",
+    platform=platform_foundation,
+    intelligence=ado_work_item_intelligence,
+    automation=ado_automation_service,
+    azure_devops=azure_devops_integration,
+    planning_pack_provider=_find_approved_planning_pack,
+)
+app.include_router(build_ado_agent_router(ado_agent_service))
+ado_hardening_harness = AzureDevOpsHardeningHarness(
+    platform_foundation.storage_root / "ado_hardening",
+    executor=AzureDevOpsPhase6Executor(
+        azure_devops=azure_devops_integration,
+        intelligence=ado_work_item_intelligence,
+        automation=ado_automation_service,
+        agent=ado_agent_service,
+        platform=platform_foundation,
+    ),
+    platform=platform_foundation,
+)
+app.include_router(build_ado_hardening_router(ado_hardening_harness))
+phase6_sdk = HEIPhase6Sdk(
+    intelligence=ado_work_item_intelligence,
+    automation=ado_automation_service,
+    agent=ado_agent_service,
+    azure_devops=azure_devops_integration,
+    platform=platform_foundation,
+)
+ado_operational_validator = AzureDevOpsOperationalValidator(
+    platform_foundation.storage_root / "ado_operational_validation",
+    executor=AzureDevOpsOperationalExecutor(
+        phase6_sdk
+    ),
+    architecture=AzureDevOpsArchitectureVerifier(Path(__file__).parent),
+    platform=platform_foundation,
+)
+app.include_router(build_ado_operational_router(ado_operational_validator))
 execution_package_service = ExecutionPackageService(
     JsonMapStore(platform_foundation.storage_root / "execution_packages.json"),
     platform=platform_foundation,
 )
 app.include_router(build_execution_package_router(execution_package_service))
+execution_manifest_service = ExecutionManifestService(
+    JsonMapStore(platform_foundation.storage_root / "execution_manifests.json"),
+    platform=platform_foundation,
+)
+app.include_router(build_execution_manifest_router(execution_manifest_service, execution_package_service))
+prompt_compiler_service = PromptCompilerService(
+    JsonMapStore(platform_foundation.storage_root / "compiled_prompts.json"),
+    platform=platform_foundation,
+)
+app.include_router(build_prompt_compiler_router(prompt_compiler_service, execution_manifest_service))
+token_intelligence_service = TokenIntelligenceService(
+    JsonMapStore(platform_foundation.storage_root / "budgeted_prompts.json"),
+    platform=platform_foundation,
+)
+app.include_router(build_token_intelligence_router(token_intelligence_service, prompt_compiler_service))
+model_registry = ModelRegistry()
+app.include_router(build_model_registry_router(model_registry))
+prompt_cache_service = PromptCacheService(
+    JsonMapStore(platform_foundation.storage_root / "prompt_cache.json"),
+    JsonMapStore(platform_foundation.storage_root / "prompt_cache_metrics.json"),
+    platform=platform_foundation,
+)
+app.include_router(build_prompt_cache_router(prompt_cache_service))
+provider_router_service = ProviderRouterService(
+    JsonMapStore(platform_foundation.storage_root / "provider_routes.json"),
+    router=ProviderRouter(model_registry=model_registry),
+    prompt_cache=prompt_cache_service,
+    platform=platform_foundation,
+)
+app.include_router(build_provider_router_api(provider_router_service, execution_manifest_service))
+prompt_diagnostics_service = PromptDiagnosticsService(
+    JsonMapStore(platform_foundation.storage_root / "prompt_diagnostics.json"),
+    model_registry=model_registry,
+    platform=platform_foundation,
+)
+app.include_router(build_prompt_diagnostics_router(
+    prompt_diagnostics_service,
+    execution_manifest_service,
+    execution_package_service,
+))
+prompt_intelligence_hardening_harness = PromptIntelligenceHardeningHarness(
+    platform_foundation.storage_root / "prompt_intelligence_hardening",
+    platform=platform_foundation,
+)
+app.include_router(build_prompt_intelligence_hardening_router(prompt_intelligence_hardening_harness))
+execution_package_consumer_service = ExecutionPackageConsumerService(
+    platform_foundation,
+    execution_manifest_service,
+    prompt_compiler_service,
+    token_intelligence_service,
+)
+app.include_router(build_convergence_router(execution_package_service, execution_package_consumer_service))
+execution_runtime_repository = ExecutionRuntimeRepository(JsonMapStore(platform_foundation.storage_root / "execution_runtime_sessions.json"))
+runtime_observability = RuntimeObservabilityService(
+    RuntimeTraceRepository(JsonMapStore(platform_foundation.storage_root / "runtime_traces.json")),
+    execution_runtime_repository,
+)
+platform_foundation.event_handlers.subscribe("*", runtime_observability)
+app.include_router(build_runtime_observability_router(runtime_observability))
+execution_runtime = ExecutionRuntime(
+    execution_runtime_repository,
+    platform=platform_foundation,
+)
+app.include_router(build_execution_runtime_router(execution_runtime))
+app.include_router(build_runtime_recovery_router(execution_runtime))
+runtime_hardening_harness = RuntimeHardeningHarness(
+    platform_foundation.storage_root / "runtime_hardening",
+    platform=platform_foundation,
+)
+app.include_router(build_runtime_hardening_router(runtime_hardening_harness))
+response_interpretation_service = ResponseInterpretationService(
+    ResponseInterpretationRepository(JsonMapStore(platform_foundation.storage_root / "response_interpretations.json")),
+    runtime=execution_runtime,
+    platform=platform_foundation,
+)
+app.include_router(build_response_interpreter_router(response_interpretation_service))
+engineering_diff_service = EngineeringDiffService(
+    EngineeringDiffRepository(JsonMapStore(platform_foundation.storage_root / "engineering_diffs.json")),
+    platform=platform_foundation,
+)
+app.include_router(build_engineering_diff_router(engineering_diff_service))
+validation_trigger_service = ValidationTriggerService(
+    ValidationTriggerRepository(JsonMapStore(platform_foundation.storage_root / "validation_trigger_decisions.json")),
+    governance=governance_engine,
+    platform=platform_foundation,
+)
+app.include_router(build_validation_trigger_router(validation_trigger_service))
+qa_trigger_service = QATriggerService(
+    QAExecutionPlanRepository(JsonMapStore(platform_foundation.storage_root / "qa_execution_plans.json")),
+    platform=platform_foundation,
+)
+app.include_router(build_qa_trigger_router(qa_trigger_service))
+memory_candidate_service = MemoryCandidateService(
+    MemoryCandidateRepository(JsonMapStore(platform_foundation.storage_root / "engineering_memory_candidates.json")),
+    platform=platform_foundation,
+)
+app.include_router(build_memory_candidate_router(memory_candidate_service))
+pr_candidate_service = PRCandidateService(
+    PRCandidateRepository(JsonMapStore(platform_foundation.storage_root / "pr_candidates.json")),
+    platform=platform_foundation,
+)
+app.include_router(build_pr_candidate_router(pr_candidate_service))
+execution_center_service = ExecutionCenterService(
+    package_provider=execution_package_service.store.read,
+    plan_provider=execution_manifest_service.store.read,
+    prompt_provider=prompt_compiler_service.store.read,
+    runtime_provider=execution_runtime_repository.store.read,
+    trace_provider=lambda: runtime_observability.list(limit=500),
+    validation_provider=validation_trigger_service.repository.store.read,
+    qa_provider=qa_trigger_service.repository.store.read,
+    memory_provider=lambda: memory_candidate_service.list(),
+    pr_provider=lambda: pr_candidate_service.list(),
+    retry_runtime=execution_runtime.retry,
+)
+app.include_router(build_execution_center_router(execution_center_service))
+dashboard_service = DashboardService(
+    platform=platform_foundation,
+    profile_provider=project_intelligence_service.get_profile,
+    repository_service=repository_intelligence_module.application,
+    ado_sync=azure_devops_integration.sync,
+    sprint_service=ado_work_item_intelligence.sprints,
+    agent_service=agent_orchestrator,
+    governance_service=governance_engine,
+    runtime_service=runtime_observability,
+    memory_candidate_service=memory_candidate_service,
+    artifact_provider=project_intelligence_service.list_artifacts,
+)
+app.include_router(build_dashboard_router(dashboard_service))
+planning_center_service = PlanningCenterService(
+    artifact_provider=project_intelligence_service.list_artifacts,
+    artifact_approver=project_intelligence_service.approve_artifact,
+    artifact_rejecter=project_intelligence_service.archive_artifact,
+    work_item_provider=lambda project_id: list(ado_work_item_intelligence.ado_sdk.cached_collection(project_id, "workItems").values()) if project_id else [],
+    recommendation_provider=lambda: [item.to_dict() for item in ado_work_item_intelligence.repository.list_all()],
+    recommendation_approver=ado_work_item_intelligence.approve,
+    recommendation_rejecter=ado_work_item_intelligence.reject,
+    estimate_provider=lambda project_id: [item.to_dict() for item in ado_work_item_intelligence.estimation.estimates.list_project(project_id)] if project_id else [],
+)
+app.include_router(build_planning_center_router(planning_center_service))
+approval_center_service = ApprovalCenterService(
+    planning_provider=lambda: planning_center_service.list(limit=250),
+    planning_approve=planning_center_service.approve,
+    planning_reject=planning_center_service.reject,
+    execution_plan_provider=execution_manifest_service.store.read,
+    memory_provider=memory_candidate_service.list,
+    memory_approve=memory_candidate_service.approve,
+    memory_reject=memory_candidate_service.reject,
+    ado_pack_provider=ado_agent_service.list_packs,
+    ado_pack_approve=lambda pack_id, actor, reason: ado_agent_service.approve(pack_id, actor, reason=reason),
+    ado_pack_reject=lambda pack_id, actor, reason: ado_agent_service.reject(pack_id, actor, reason=reason),
+    pr_comment_provider=ado_work_item_intelligence.pull_requests.repository.comments.read,
+    pr_comment_approve=ado_work_item_intelligence.pull_requests.approve_comment_preview,
+    pr_comment_reject=ado_work_item_intelligence.pull_requests.reject_comment_preview,
+    recommendation_provider=lambda: [item.to_dict() for item in ado_work_item_intelligence.repository.list_all()],
+    recommendation_approve=ado_work_item_intelligence.approve,
+    recommendation_reject=ado_work_item_intelligence.reject,
+    governance_provider=lambda: governance_engine.dashboard()["approvals"],
+    governance_request=governance_engine.request_approval,
+    governance_update=governance_engine.update_approval,
+    audit_provider=governance_engine.audit_timeline,
+    audit_recorder=governance_engine.record_audit,
+)
+app.include_router(build_approval_center_router(approval_center_service))
+ado_center_service = AzureDevOpsCenterService(
+    sync_service=azure_devops_integration.sync,
+    connection_provider=azure_devops_integration.connections.list,
+    sprint_service=ado_work_item_intelligence.sprints,
+    recommendation_provider=lambda: [item.to_dict() for item in ado_work_item_intelligence.repository.list_all()],
+    pr_report_provider=ado_work_item_intelligence.pull_requests.repository.reports.read,
+    action_pack_provider=ado_agent_service.list_packs,
+)
+app.include_router(build_ado_center_router(ado_center_service))
+agent_center_service = AgentCenterService(
+    orchestrator=agent_orchestrator,
+    platform=platform_foundation,
+    ado_agent=ado_agent_service,
+)
+app.include_router(build_agent_center_router(agent_center_service))
+activity_center_service = ActivityCenterService(
+    platform=platform_foundation,
+    intelligence_trace=trace_engine,
+    runtime_observability=runtime_observability,
+    governance_audit=governance_engine.audit_timeline,
+)
+app.include_router(build_activity_center_router(activity_center_service))
+command_center_hardening_service = CommandCenterHardeningService(
+    platform=platform_foundation,
+    sdk=phase6_sdk,
+    service_probes={
+        "repositoryIntelligence": repository_intelligence_module.application.get_repository_monitoring_dashboard,
+        "contextIntelligence": context_orchestrator.health,
+        "runtime": lambda: runtime_observability.list(limit=1),
+        "workspace": lambda: workspace_service.get_navigation("viewer"),
+        "azureDevOps": azure_devops_integration.connections.list,
+    },
+)
+app.include_router(build_command_center_hardening_router(command_center_hardening_service))
 
 class ContextRequest(BaseModel):
     """Request body accepted by POST /context."""
@@ -1344,7 +1697,7 @@ def refine_project_story(request: ProjectIntelligenceRefinementRequest) -> dict:
     return project_intelligence_service.refine_story(request.story, request.profile, request.knowledge_profile, _project_intelligence_options(request))
 
 
-@app.post("/project-intelligence/generate-qa-test-cases")
+@app.post("/project-intelligence/generate-qa-test-cases", deprecated=True)
 def generate_project_qa_test_cases(request: ProjectIntelligenceExecutionRequest) -> dict:
     return project_intelligence_service.generate_qa_test_cases(
         request.story,
@@ -1377,7 +1730,7 @@ def analyze_project_epic_impact(request: ProjectIntelligenceRefinementRequest) -
     return project_intelligence_service.analyze_epic_impact(request.epic, request.profile, request.knowledge_profile)
 
 
-@app.post("/project-intelligence/build-execution-context")
+@app.post("/project-intelligence/build-execution-context", deprecated=True)
 def build_project_execution_context(request: ProjectIntelligenceExecutionRequest) -> dict:
     return project_intelligence_service.build_execution_context(
         request.story,
@@ -1388,7 +1741,7 @@ def build_project_execution_context(request: ProjectIntelligenceExecutionRequest
     )
 
 
-@app.post("/project-intelligence/build-dev-prompt")
+@app.post("/project-intelligence/build-dev-prompt", deprecated=True)
 def build_project_dev_prompt(request: ProjectIntelligenceExecutionRequest) -> dict:
     return project_intelligence_service.build_dev_prompt(
         request.story,
@@ -1399,7 +1752,7 @@ def build_project_dev_prompt(request: ProjectIntelligenceExecutionRequest) -> di
     )
 
 
-@app.post("/project-intelligence/build-execution-plan")
+@app.post("/project-intelligence/build-execution-plan", deprecated=True)
 def build_project_execution_plan(request: ProjectIntelligenceExecutionRequest) -> dict:
     return project_intelligence_service.build_execution_plan(
         request.story,
@@ -1421,7 +1774,7 @@ def build_project_ui_prompt(request: ProjectIntelligenceExecutionRequest) -> dic
     )
 
 
-@app.post("/project-intelligence/build-qa-prompt")
+@app.post("/project-intelligence/build-qa-prompt", deprecated=True)
 def build_project_qa_prompt(request: ProjectIntelligenceExecutionRequest) -> dict:
     return project_intelligence_service.build_qa_prompt(
         request.story,
@@ -1443,7 +1796,7 @@ def build_project_copilot_context(request: ProjectIntelligenceExecutionRequest) 
     )
 
 
-@app.post("/project-intelligence/validate-implementation")
+@app.post("/project-intelligence/validate-implementation", deprecated=True)
 def validate_project_implementation(request: ProjectIntelligenceImplementationValidationRequest) -> dict:
     return project_intelligence_service.validate_implementation(
         execution_package=request.execution_package,

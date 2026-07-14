@@ -368,6 +368,62 @@ class RepositoryIntelligenceApplicationService:
     def get_repository_monitoring_dashboard(self) -> dict:
         return self.monitoring_service.dashboard_summary()
 
+    def get_repository_health(self, repository_id: str) -> dict | None:
+        repository = self.repository_service.get_repository(repository_id)
+        if not repository:
+            return None
+        monitoring = self.monitoring_service.dashboard(repository_id) or {}
+        snapshot = self.snapshot_service.get_latest_snapshot(repository_id)
+        graph = self.graph_service.get_graph(repository_id)
+        symbols = self.parser_service.list_symbols(repository_id, snapshot_id=snapshot.snapshot_id if snapshot else "")
+        graph_counts: dict[str, int] = {}
+        graph_items: dict[str, list[dict]] = {}
+        if graph:
+            for node in graph.nodes:
+                node_type = node.node_type.value
+                graph_counts[node_type] = graph_counts.get(node_type, 0) + 1
+                if node_type in {"Module", "Service", "API", "Test"}:
+                    graph_items.setdefault(node_type, []).append(node.to_dict())
+        symbol_counts: dict[str, int] = {}
+        for symbol in symbols:
+            kind = symbol.kind.value
+            symbol_counts[kind] = symbol_counts.get(kind, 0) + 1
+        jobs = self.agent.list_jobs(repository_id, limit=20)
+        latest_scan = monitoring.get("lastScan") if isinstance(monitoring.get("lastScan"), dict) else {}
+        availability = "Available"
+        if latest_scan.get("status") == "Failed":
+            availability = "Offline" if snapshot else "Unavailable"
+        elif not snapshot:
+            availability = "Pending"
+        return {
+            **monitoring,
+            "availability": availability,
+            "branch": snapshot.branch if snapshot else repository.default_branch,
+            "snapshotId": snapshot.snapshot_id if snapshot else "",
+            "snapshotVersion": snapshot.version if snapshot else 0,
+            "snapshotCreatedAt": snapshot.created_at if snapshot else "",
+            "syncStatus": latest_scan.get("status") or repository.status.value,
+            "engineeringGraphStatus": "Ready" if graph and graph.nodes else "Pending",
+            "engineeringGraph": {
+                "nodeCount": len(graph.nodes) if graph else 0,
+                "relationshipCount": len(graph.relationships) if graph else 0,
+                "counts": graph_counts,
+            },
+            "modules": [item["name"] for item in graph_items.get("Module", [])[:100]],
+            "services": graph_items.get("Service", [])[:100],
+            "apis": graph_items.get("API", [])[:100],
+            "tests": graph_items.get("Test", [])[:100],
+            "symbolsIndexed": len(symbols),
+            "symbolCounts": symbol_counts,
+            "backgroundJobs": jobs.get("jobs", [])[:20],
+            "backgroundJobSummary": {
+                "total": jobs.get("count", 0),
+                "pending": sum(1 for item in jobs.get("jobs", []) if item.get("status") in {"Queued", "Pending", "Running"}),
+                "failed": sum(1 for item in jobs.get("jobs", []) if item.get("status") == "Failed"),
+            },
+            "warnings": _repository_health_warnings(repository, latest_scan, snapshot),
+        }
+
     def cancel_scan(self, repository_id: str) -> dict | None:
         scan = self.scanner.cancel_scan(repository_id)
         return scan.to_dict() if scan else None
@@ -402,3 +458,16 @@ class RepositoryIntelligenceApplicationService:
         if repository_type == "GitHub":
             return host == "github.com" or host.endswith(".github.com")
         return False
+
+
+def _repository_health_warnings(repository: Repository, latest_scan: dict, snapshot: object | None) -> list[str]:
+    warnings: list[str] = []
+    if repository.status == RepositoryStatus.DISABLED:
+        warnings.append("Repository synchronization is disabled.")
+    if latest_scan.get("status") == "Failed":
+        warnings.append("The latest repository synchronization failed.")
+        if snapshot:
+            warnings.append("The previous completed snapshot remains available.")
+    if not snapshot:
+        warnings.append("No completed repository snapshot is available.")
+    return warnings

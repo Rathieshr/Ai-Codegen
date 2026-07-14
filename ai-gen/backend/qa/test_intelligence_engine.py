@@ -8,6 +8,25 @@ from .qa_validation_rules import TEST_CATEGORIES, category_for, clean, string_li
 
 
 class TestIntelligenceEngine:
+    def generate_from_execution_package(self, execution_package: dict[str, Any]) -> dict[str, Any]:
+        """Canonical package-only QA entry point."""
+        package = execution_package or {}
+        planning = package.get("planningContext") if isinstance(package.get("planningContext"), dict) else {}
+        story = planning.get("story") if isinstance(planning.get("story"), dict) else {}
+        acceptance = string_list(planning.get("acceptanceCriteria"))
+        result = self.generate(story, acceptance, execution_package=package)
+        guidance = package.get("qaGuidance") if isinstance(package.get("qaGuidance"), dict) else {}
+        result.update({
+            "regressionMatrix": guidance.get("regressionTests", []),
+            "negativeTests": guidance.get("negativeTests", []),
+            "permissionTests": guidance.get("permissionTests", []),
+            "performanceTests": guidance.get("performanceTests", []),
+            "coverageExpectations": guidance.get("coverageExpectations", {}),
+            "releaseReadiness": (package.get("metadata") or {}).get("status", "Needs Review"),
+            "contextSource": "ExecutionPackage",
+        })
+        return result
+
     def generate(
         self,
         story: dict[str, Any],

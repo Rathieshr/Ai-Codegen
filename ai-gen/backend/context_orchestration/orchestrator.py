@@ -48,6 +48,9 @@ class ContextOrchestrator:
                     result = ContextSourceResult(source.source_type, False, "Unavailable", warnings=[f"{source.source_type.value} source failed: {type(exc).__name__}"], diagnostics={"error": str(exc)[:300]})
                 results.append(result)
                 warnings.extend(result.warnings)
+            stale_sources = [result.source_type.value for result in results if result.available and result.freshness == "Stale"]
+            if stale_sources:
+                warnings.append(f"Stale context detected for: {', '.join(stale_sources)}. Refresh is recommended before implementation.")
             candidates = self._normalize(request, results)
             ranked = self.ranking_engine.rank(request, candidates)
             filtered, rejected = self.context_filter.apply(request, ranked)
@@ -62,13 +65,18 @@ class ContextOrchestrator:
             duration = round((time.perf_counter() - started) * 1000, 2)
             result = {
                 "requestId": request.request_id, "correlationId": request.correlation_id, "purpose": request.purpose,
+                "capsuleId": f"capsule_{request.request_id}", "capsuleVersion": "3.5",
                 "projectId": request.project_id, "repositoryId": request.repository_id or None,
                 "repositorySnapshotVersion": request.repository_snapshot_version or self._snapshot_version(results) or None,
+                "planningVersion": self._source_version(results, ContextSourceType.PLANNING),
+                "knowledgeVersion": self._source_version(results, ContextSourceType.KNOWLEDGE_REGISTRY),
+                "engineeringMemoryVersion": self._source_version(results, ContextSourceType.ENGINEERING_MEMORY),
+                "freshnessStatus": self._overall_freshness(results),
                 "status": status, "selectedContext": [c.to_dict() for c in selected],
                 "rejectedContext": [{"candidate": item["candidate"].to_dict(), "reason": item["reason"]} for item in rejected],
                 "sourceSummary": self._source_summary(results, selected, rejected), "tokenBudget": budget,
                 "confidence": confidence, "warnings": list(dict.fromkeys(warnings)), "blockers": blockers,
-                "diagnostics": {"rankingVersion": self.ranking_engine.version, "budgetPolicyVersion": self.budget_manager.version, "durationMs": duration, "sources": {r.source_type.value: r.diagnostics for r in results}},
+                "diagnostics": {"rankingVersion": self.ranking_engine.version, "budgetPolicyVersion": self.budget_manager.version, "durationMs": duration, "sources": {r.source_type.value: r.diagnostics for r in results}, "retrievalCounts": {r.source_type.value: 1 for r in results}, "contextOrchestrationRequests": 1},
             }
             self._save(result)
             event = "ContextOrchestrationCompleted" if status == "Ready" else "ContextOrchestrationNeedsReview"
@@ -132,6 +140,21 @@ class ContextOrchestrator:
     @staticmethod
     def _snapshot_version(results: list[ContextSourceResult]) -> str:
         return next((r.version for r in results if r.source_type == ContextSourceType.REPOSITORY and r.version), "")
+
+    @staticmethod
+    def _source_version(results: list[ContextSourceResult], source_type: ContextSourceType) -> str:
+        return next((r.version for r in results if r.source_type == source_type and r.version), "")
+
+    @staticmethod
+    def _overall_freshness(results: list[ContextSourceResult]) -> str:
+        available = [result.freshness for result in results if result.available]
+        if not available:
+            return "Unavailable"
+        if any(value == "Stale" for value in available):
+            return "Stale"
+        if all(value == "Fresh" for value in available):
+            return "Fresh"
+        return "Unknown"
 
     @staticmethod
     def _source_summary(results: list[ContextSourceResult], selected: list[ContextCandidate], rejected: list[dict]) -> list[dict]:

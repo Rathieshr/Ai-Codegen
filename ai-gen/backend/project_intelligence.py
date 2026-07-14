@@ -37,6 +37,7 @@ from backend.prompt_builder import build_developer_prompt_v2, build_execution_pl
 from backend.qa import AcceptanceCoverageEngine, QAWorkspaceService, TestGapAnalyzer
 from backend.pr_review import PRReviewEngine, review_pr
 from backend.refinement.provider import get_refiner_status, get_refinement_provider
+from backend.repository_intelligence.infrastructure import RepositoryContextCapsuleBuilder
 from backend.skills import SkillEngine
 
 
@@ -3627,8 +3628,36 @@ def _pipeline_context_capsule(
     )
     selected_standards = _string_list(work_item_dna.get("engineeringStandards") if isinstance(work_item_dna, dict) else []) or _names_from_context(planning_context.get("selectedStandards"))
     selected_capabilities = _string_list(work_item_dna.get("capability") if isinstance(work_item_dna, dict) else "") or _names_from_context(planning_context.get("selectedCapabilities")) or _names_from_context(capability_context.get("selectedCapabilities"))
-    relevant_files = _ranked_relevant_files(profile, selected_modules, selected_flows, source_work_item)
+    repository_capsule = RepositoryContextCapsuleBuilder().build_capsule(
+        story={
+            "id": _item_id(source_work_item),
+            "title": _clean_text(source_work_item.get("title")) or _clean_text(parent_story.get("title")),
+            "description": _clean_text(source_work_item.get("description")) or _clean_text(parent_story.get("description")),
+            "acceptance_criteria": acceptance_criteria,
+        },
+        repository_snapshot={
+            **repository_snapshot,
+            "metadata": {
+                **(repository_snapshot.get("metadata") if isinstance(repository_snapshot.get("metadata"), dict) else {}),
+                "architectureNotes": _string_list(profile.get("knowledge_registry", {}).get("architecture_notes") if isinstance(profile.get("knowledge_registry"), dict) else []),
+            },
+        },
+        engineering_graph=profile.get("engineering_graph") if isinstance(profile.get("engineering_graph"), dict) else {},
+        repository_ranking=(profile.get("knowledge_registry", {}).get("ranked_files") if isinstance(profile.get("knowledge_registry"), dict) else [])
+        or (profile.get("knowledge_registry", {}).get("repository_file_ranking") if isinstance(profile.get("knowledge_registry"), dict) else [])
+        or profile.get("repository_file_ranking")
+        or [],
+        selected_modules=selected_modules,
+        selected_flows=selected_flows,
+    ).to_dict()
+    relevant_files = repository_capsule.get("relevantFiles") if isinstance(repository_capsule.get("relevantFiles"), list) else _ranked_relevant_files(profile, selected_modules, selected_flows, source_work_item)
     file_ranking_status = "Repository file ranking available" if relevant_files else "Repository file ranking not available"
+    repository_dependencies = [
+        _clean_text(item.get("name") or item.get("path") or item.get("title"))
+        for item in list(repository_capsule.get("dependencies") or [])
+        if isinstance(item, dict)
+    ]
+    selected_dependencies = _unique([*selected_dependencies, *repository_dependencies])
     rejected_context = _capsule_rejected_context(planning_context)
     story_keywords = _context_keywords(_clean_text(parent_story.get("title")), _clean_text(parent_story.get("description")), profile)
     risks = _unique(
@@ -3637,6 +3666,7 @@ def _pipeline_context_capsule(
             *_string_list(planning_context.get("risks")),
             *_string_list(source_work_item.get("risks")),
             *_risks_for_profile(profile, story_keywords),
+            *_string_list(repository_capsule.get("risks")),
             *[
                 _clean_text(issue.get("message") or issue.get("reason") or issue.get("title"))
                 for report in validation_reports
@@ -3688,6 +3718,11 @@ def _pipeline_context_capsule(
         "inScope": _string_list(dna_boundary.get("inScope")),
         "outOfScope": _string_list(dna_boundary.get("outOfScope")),
         "relevantFiles": relevant_files,
+        "relevantAPIs": repository_capsule.get("relevantAPIs") if isinstance(repository_capsule.get("relevantAPIs"), list) else [],
+        "architectureRules": _string_list(repository_capsule.get("architectureRules")),
+        "suggestedTests": repository_capsule.get("suggestedTests") if isinstance(repository_capsule.get("suggestedTests"), list) else [],
+        "moduleContext": repository_capsule.get("moduleContext") if isinstance(repository_capsule.get("moduleContext"), list) else [],
+        "graphReferences": repository_capsule.get("graphReferences") if isinstance(repository_capsule.get("graphReferences"), list) else [],
         "fileRankingStatus": file_ranking_status,
         "rejectedContext": rejected_context,
         "risks": risks,
@@ -3731,11 +3766,14 @@ def _pipeline_context_capsule(
             "selected_modules": selected_modules,
             "selected_flows": selected_flows,
             "selected_files": [_clean_text(item.get("path")) for item in relevant_files if isinstance(item, dict)],
+            "selected_apis": [_clean_text(item.get("name")) for item in payload["relevantAPIs"] if isinstance(item, dict)],
+            "architecture_rules": payload["architectureRules"],
             "rejected_context": rejected_context,
             "confidence": payload["confidence"],
             "freshness_status": payload["freshnessStatus"],
             "dna_id": (work_item_dna or {}).get("dnaId"),
             "dna_version": (work_item_dna or {}).get("version"),
+            "repository_capsule": repository_capsule.get("diagnostics") if isinstance(repository_capsule.get("diagnostics"), dict) else {},
         },
     }
     return capsule
@@ -3765,6 +3803,11 @@ def _capsule_public_payload(capsule: dict[str, Any]) -> dict[str, Any]:
         "inScope": _string_list(payload.get("inScope")),
         "outOfScope": _string_list(payload.get("outOfScope")),
         "relevantFiles": payload.get("relevantFiles") if isinstance(payload.get("relevantFiles"), list) else [],
+        "relevantAPIs": payload.get("relevantAPIs") if isinstance(payload.get("relevantAPIs"), list) else [],
+        "architectureRules": _string_list(payload.get("architectureRules")),
+        "suggestedTests": payload.get("suggestedTests") if isinstance(payload.get("suggestedTests"), list) else [],
+        "moduleContext": payload.get("moduleContext") if isinstance(payload.get("moduleContext"), list) else [],
+        "graphReferences": payload.get("graphReferences") if isinstance(payload.get("graphReferences"), list) else [],
         "fileRankingStatus": _clean_text(payload.get("fileRankingStatus")) or "Repository file ranking not available",
         "rejectedContext": payload.get("rejectedContext") if isinstance(payload.get("rejectedContext"), list) else [],
         "risks": _string_list(payload.get("risks")),
@@ -3791,6 +3834,7 @@ def _context_capsule_metadata(capsule: dict[str, Any]) -> dict[str, Any]:
         "selectedModules": public["selectedModules"],
         "selectedFlows": public["selectedFlows"],
         "selectedFiles": [_clean_text(item.get("path")) for item in public["relevantFiles"] if isinstance(item, dict)],
+        "selectedAPIs": [_clean_text(item.get("name")) for item in public["relevantAPIs"] if isinstance(item, dict)],
         "rejectedContext": public["rejectedContext"],
         "tokenEstimate": public["tokenEstimate"],
         "confidence": public["confidence"],

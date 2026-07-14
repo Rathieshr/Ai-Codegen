@@ -17,6 +17,8 @@ class MemoryWriter:
         self.versioning = MemoryVersionManager()
 
     def write(self, memories: list[dict[str, Any]], incoming: dict[str, Any], actor: str = "") -> dict[str, Any]:
+        if self._contains_raw_prompt(incoming):
+            return {"stored": False, "reason": "Raw prompts cannot become Engineering Memory.", "memory": {}}
         source = incoming.get("source") if isinstance(incoming.get("source"), dict) else incoming
         allowed, reason = self.policies.can_learn_from_source(source)
         if not allowed:
@@ -27,6 +29,16 @@ class MemoryWriter:
             return {"stored": False, "duplicate": True, "reason": "Duplicate Engineering Memory rejected.", "memory": duplicate}
         indexed = self.indexer.index(draft)
         return {"stored": True, "reason": reason, "memory": indexed}
+
+    @staticmethod
+    def _contains_raw_prompt(incoming: dict[str, Any]) -> bool:
+        raw_keys = {"rawprompt", "finalprompt", "providerprompt"}
+        if any(str(key).replace("_", "").casefold() in raw_keys for key in incoming):
+            return True
+        content = incoming.get("content")
+        if isinstance(content, dict) and any(str(key).replace("_", "").casefold() in raw_keys for key in content):
+            return True
+        return False
 
     def update(self, existing: dict[str, Any], incoming: dict[str, Any], actor: str = "") -> dict[str, Any]:
         normalized = normalize_memory(incoming, existing)

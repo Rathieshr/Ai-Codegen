@@ -77,6 +77,26 @@ def build_repository_router(module: object) -> APIRouter:
             )
         return status
 
+    @router.get("/{repository_id}/health")
+    def get_repository_health(repository_id: str) -> dict:
+        health = module.application.get_repository_health(repository_id)
+        if not health:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Repository '{repository_id}' was not found."},
+            )
+        return health
+
+    @router.get("/{repository_id}/snapshot")
+    def get_repository_snapshot(repository_id: str) -> dict:
+        snapshot = module.application.get_current_snapshot(repository_id)
+        if snapshot is None:
+            repository = module.application.get_repository(repository_id)
+            if not repository:
+                return JSONResponse(status_code=404, content={"error": f"Repository '{repository_id}' was not found."})
+            return JSONResponse(status_code=404, content={"error": f"Repository '{repository_id}' does not have a completed snapshot yet."})
+        return snapshot
+
     @router.get("/{repository_id}/snapshots/current")
     def get_current_snapshot(repository_id: str) -> dict:
         snapshot = module.application.get_current_snapshot(repository_id)

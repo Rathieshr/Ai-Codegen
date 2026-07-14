@@ -7,9 +7,26 @@ import { GitRepository } from 'azure-devops-extension-api/Git/Git';
 import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import {
+  EngineeringCommandCenterShell,
+  EngineeringWorkspace,
+  WorkspaceNavigationItem,
+  WorkspacePreferences,
+} from './engineeringCommandCenterShell';
+import { DashboardOverview, OperationalOverviewDashboard } from './overviewDashboard';
+import { PlanningCenter } from './planningCenter';
+import { RepositoryCenter } from './repositoryCenter';
+import { ExecutionCenter } from './executionCenter';
+import { ApprovalCenter } from './approvalCenter';
+import { AzureDevOpsCenter } from './azureDevOpsCenter';
+import { AgentCenter } from './agentCenter';
 import './storyPlanner.css';
 
+const ActivityCenter = React.lazy(() => import('./activityCenter').then((module) => ({ default: module.ActivityCenter })));
+const CommandCenterHealth = React.lazy(() => import('./commandCenterHealth').then((module) => ({ default: module.CommandCenterHealth })));
+
 const BASE_URL = 'https://ai-codegen-production.up.railway.app/project-intelligence';
+const PLATFORM_BASE_URL = BASE_URL.replace(/\/project-intelligence$/, '');
 
 const DOMAIN_OPTIONS = [
   'Utility Grid Management',
@@ -1527,6 +1544,9 @@ const EMPTY_PROFILE: ProjectProfile = {
 
 function ProjectIntelligenceTab() {
   const [activeTab, setActiveTab] = useState<PlannerTab>('overview');
+  const [activeNavigationId, setActiveNavigationId] = useState('overview');
+  const [engineeringWorkspace, setEngineeringWorkspace] = useState<EngineeringWorkspace | undefined>();
+  const [dashboardOverview, setDashboardOverview] = useState<DashboardOverview | undefined>();
   const [selectedItemType, setSelectedItemType] = useState<WorkItemKind>('Epic');
   const [autoRouteByWorkItemType, setAutoRouteByWorkItemType] = useState(true);
   const [profile, setProfile] = useState<ProjectProfile>(EMPTY_PROFILE);
@@ -1673,12 +1693,24 @@ function ProjectIntelligenceTab() {
         const projectContext = await loadAzureProjectContext();
         const permissions = await resolveCurrentUserPermission(projectContext);
         setPermissionState(permissions);
+        const workspace = await getEngineeringWorkspace(permissions.user_name || permissions.user_display_name, permissions.role).catch(() => undefined);
+        if (workspace) {
+          setEngineeringWorkspace(workspace);
+        }
         const profileFromCache = cachedProfile ? mergeProfile(loaded, cachedProfile) : undefined;
         const seeded = effectiveSession?.profile?.project_name
           ? effectiveSession.profile
           : profileFromCache?.project_name
             ? profileFromCache
             : seedProfileFromAzureProject(loaded, projectContext);
+        const overview = await getDashboardOverview(seeded.project_id).catch(() => undefined);
+        if (overview) {
+          setDashboardOverview(overview);
+          setEngineeringWorkspace((current) => current ? {
+            ...current,
+            notifications: dashboardNotifications(overview),
+          } : current);
+        }
         if (effectiveSession && !storedSession) {
           setResumeSession(effectiveSession);
           setLastAnalysisTimestamp(effectiveSession.last_analysis_timestamp);
@@ -1731,7 +1763,9 @@ function ProjectIntelligenceTab() {
           lastSavedProfileRef.current = JSON.stringify(seeded);
         }
         if (effectiveSession?.last_active_tab) {
-          setActiveTab(effectiveSession.last_active_tab === 'admin' && permissions.role !== 'admin' ? 'overview' : effectiveSession.last_active_tab);
+          const restoredTab = effectiveSession.last_active_tab === 'admin' && permissions.role !== 'admin' ? 'overview' : effectiveSession.last_active_tab;
+          setActiveTab(restoredTab);
+          setActiveNavigationId(navigationIdForPlannerTab(restoredTab));
           setShowResumePanel(true);
         }
         const hasReadyCache = knowledgeCache?.knowledge_status === 'ready' && Boolean(cachedProfile);
@@ -1847,8 +1881,27 @@ function ProjectIntelligenceTab() {
     const nextWorkspace = routedWorkspaceForWorkflow(normalizePlannerItemType(currentWorkItem.type), workflowOrchestration);
     if (activeTab !== nextWorkspace) {
       setActiveTab(nextWorkspace);
+      setActiveNavigationId(navigationIdForPlannerTab(nextWorkspace));
     }
   }, [currentWorkItem?.id, currentWorkItem?.type, workflowOrchestration.nextAction.workspace, autoRouteByWorkItemType]);
+
+  useEffect(() => {
+    if (!initializedRef.current || activeTab !== 'overview') {
+      return;
+    }
+    void refreshDashboardOverview();
+  }, [activeTab, profile.project_id, artifactRecords.length, engineeringMemories.length]);
+
+  useEffect(() => {
+    if (!permissionState.user_name && !permissionState.user_display_name) return;
+    const refresh = () => { if (document.visibilityState === 'visible' && navigator.onLine) void refreshCommandCenterSignals(); };
+    refresh();
+    const interval = window.setInterval(refresh, 30000);
+    const visibility = () => refresh();
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('online', refresh);
+    return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('online', refresh); };
+  }, [permissionState.user_name, permissionState.user_display_name, engineeringWorkspace?.preferences.notificationsEnabled]);
 
   async function withLoading<T>(nextMessage: string, action: () => Promise<T>): Promise<T | undefined> {
     setLoading(true);
@@ -1980,15 +2033,15 @@ function ProjectIntelligenceTab() {
       setSaveStatus('saved');
       setEditingProfile(false);
       setShowQuickStart(false);
-      setActiveTab('planning');
+      changeWorkspace('planning');
     }
   }
 
   function continueProjectSession() {
     if (resumeSession?.last_active_tab && resumeSession.last_active_tab !== 'overview') {
-      setActiveTab(resumeSession.last_active_tab);
+      changeWorkspace(resumeSession.last_active_tab);
     } else {
-      setActiveTab(recommendedWorkspace);
+      changeWorkspace(recommendedWorkspace);
     }
     if (resumeSession?.profile) {
       setProfile(resumeSession.profile);
@@ -2031,14 +2084,14 @@ function ProjectIntelligenceTab() {
     setEditingProfile(true);
     setShowQuickStart(false);
     if (canAdmin) {
-      setActiveTab('admin');
+      changeWorkspace('admin', 'repository');
       if (!repositories.length && !repositoryLoadMessage.includes('Loaded')) {
         await loadAdoProjects(profile);
       }
       setRepositoryLoadMessage((current) => current || 'Repository settings are open. Select a repository and branch, then analyze documents.');
       return;
     }
-    setActiveTab('overview');
+    changeWorkspace('overview');
     setShowQuickStart(true);
     setError('Repository changes are restricted to AI Gen Admins. Your current role is read-only.');
   }
@@ -2075,7 +2128,7 @@ function ProjectIntelligenceTab() {
       if (cache) {
         setKnowledgeCacheStatus(cache);
       }
-      setActiveTab('overview');
+      changeWorkspace('overview');
     }
   }
 
@@ -2586,7 +2639,7 @@ function ProjectIntelligenceTab() {
     if (!forceRefresh && await loadReusableArtifact<QATestSuiteResult>('Test Plan', source, (payload) => {
       setQaTestSuite(payload);
       markApprovalGenerated('qa', payload.coverage_score);
-      setActiveTab('qa');
+      changeWorkspace('qa');
     })) {
       return;
     }
@@ -2608,7 +2661,7 @@ function ProjectIntelligenceTab() {
       markApprovalGenerated('qa', result.coverage_score);
       await saveGeneratedArtifact('Test Plan', title, result, source);
       await refreshContextCapsules(profile, ['feature', 'qa']);
-      setActiveTab('qa');
+      changeWorkspace('qa');
     }
   }
 
@@ -2632,7 +2685,7 @@ function ProjectIntelligenceTab() {
       setQaPrompt(payload.qa);
       setCopilotContext(payload.copilot);
       markApprovalGenerated('execution', payload.context.execution_readiness_score);
-      setActiveTab('execution');
+      changeWorkspace('execution');
     })) {
       return;
     }
@@ -2658,7 +2711,7 @@ function ProjectIntelligenceTab() {
       markApprovalGenerated('execution', context.execution_readiness_score);
       await saveGeneratedArtifact('Execution Package', story.title || 'Implementation package', { context }, source);
       await refreshContextCapsules(profile, ['story', 'execution', 'qa']);
-      setActiveTab('execution');
+      changeWorkspace('execution');
     }
   }
 
@@ -2885,11 +2938,11 @@ function ProjectIntelligenceTab() {
       } else if (currentItemType === 'Feature') {
         setPlanningFocusRequest({ target: 'stories', nonce: Date.now() });
       }
-      setActiveTab('planning');
+      changeWorkspace('planning');
     } else if (action === 'open_execution') {
-      setActiveTab('execution');
+      changeWorkspace('execution');
     } else if (action === 'open_qa') {
-      setActiveTab('qa');
+      changeWorkspace('qa');
     }
   }
 
@@ -2976,7 +3029,7 @@ function ProjectIntelligenceTab() {
       setAcceptanceCriteria(htmlToText(workItem.acceptanceCriteria));
     }
     if (shouldAutoRoute) {
-      setActiveTab(recommendedWorkspaceForItem(type));
+      changeWorkspace(recommendedWorkspaceForItem(type));
     }
   }
 
@@ -3074,7 +3127,7 @@ function ProjectIntelligenceTab() {
     const existingDrafts = childDraftsForTarget(targetType, childDrafts);
     if (existingDrafts.length && !forceRegenerate) {
       setMessage(`${childGenerationNoun(targetType)} already generated. Review the existing preview, create it in Azure DevOps, or use Regenerate from the advanced action.`);
-      setActiveTab(targetType === 'Story' ? 'execution' : 'planning');
+      changeWorkspace(targetType === 'Story' ? 'execution' : 'planning');
       window.setTimeout(() => setMessage(''), 2200);
       return;
     }
@@ -3729,46 +3782,98 @@ function approveFeatures() {
     }
   }
 
-  function changeWorkspace(tab: PlannerTab) {
+  function changeWorkspace(tab: PlannerTab, navigationId?: string) {
     setActiveTab(tab);
+    setActiveNavigationId(navigationId || navigationIdForPlannerTab(tab));
     if (tab !== recommendedWorkspace && tab !== 'admin' && tab !== 'overview') {
       setAutoRouteByWorkItemType(false);
     }
   }
 
+  function navigateCommandCenter(item: WorkspaceNavigationItem) {
+    if (!item.enabled) {
+      return;
+    }
+    changeWorkspace(item.target as PlannerTab, item.id);
+  }
+
+  async function updateWorkspacePreferences(changes: Partial<WorkspacePreferences>) {
+    const userId = permissionState.user_name || permissionState.user_display_name || 'current-user';
+    setEngineeringWorkspace((current) => current ? {
+      ...current,
+      preferences: { ...current.preferences, ...changes },
+    } : current);
+    try {
+      const preferences = await putWorkspacePreferences(userId, permissionState.role, changes);
+      setEngineeringWorkspace((current) => current ? { ...current, preferences } : current);
+    } catch (preferenceError) {
+      setError(preferenceError instanceof Error ? preferenceError.message : 'Unable to save workspace preferences.');
+      const workspace = await getEngineeringWorkspace(userId, permissionState.role).catch(() => undefined);
+      if (workspace) {
+        setEngineeringWorkspace(workspace);
+      }
+    }
+  }
+
+  async function refreshDashboardOverview() {
+    try {
+      const overview = await getDashboardOverview(profile.project_id);
+      setDashboardOverview(overview);
+      setEngineeringWorkspace((current) => current ? {
+        ...current,
+        notifications: dashboardNotifications(overview),
+      } : current);
+    } catch (dashboardError) {
+      setError(dashboardError instanceof Error ? dashboardError.message : 'Unable to refresh Engineering Command Center state.');
+    }
+  }
+
+  async function refreshCommandCenterSignals() {
+    try {
+      const response = await fetch(`${PLATFORM_BASE_URL}/command-center/health`);
+      if (!response.ok) return;
+      const value = await response.json();
+      const notices = Array.isArray(value?.notifications?.items) ? value.notifications.items.map((item: any) => ({
+        id: item.notificationId || item.id,
+        title: item.title || 'HEI update',
+        message: item.message || '',
+        severity: item.severity || 'Info',
+      })) : [];
+      setEngineeringWorkspace((current) => current ? {
+        ...current,
+        status: { state: value.status || 'Ready', message: value.status === 'Healthy' ? 'HEI services available' : 'HEI services need attention', checkedAt: value.generatedAt || new Date().toISOString() },
+        notifications: current.preferences.notificationsEnabled ? notices : [],
+      } : current);
+    } catch {
+      // Background status refresh must not interrupt the active engineering workflow.
+    }
+  }
+
   return (
+    <EngineeringCommandCenterShell
+      workspace={engineeringWorkspace}
+      activeNavigationId={activeNavigationId}
+      projectName={profile.project_name || currentWorkItem?.project || ''}
+      userName={permissionState.user_display_name || permissionState.user_name || 'HEI User'}
+      roleLabel={roleLabel(permissionState.role)}
+      busy={loading}
+      onNavigate={navigateCommandCenter}
+      onPreferencesChange={(changes) => void updateWorkspacePreferences(changes)}
+      headerActions={canAdmin ? (
+        <button
+          className="planner-button secondary"
+          onClick={() => {
+            const next = !(editingProfile || showQuickStart);
+            setEditingProfile(next);
+            setShowQuickStart(next);
+          }}
+          disabled={loading}
+        >
+          {editingProfile || showQuickStart ? 'Hide Setup' : 'Project Setup'}
+        </button>
+      ) : null}
+    >
     <main className="planner-shell">
-      <header className="planner-header">
-        <div className="planner-header-brand">
-          <img className="planner-header-logo" src="static/hei-logo.png" alt="Hubbell Engineering Intelligence" />
-          <div className="planner-header-copy">
-            <div className="planner-eyebrow">Hubbell Planning & Engineering Intelligence Platform</div>
-            <div className="planner-title">Project Intelligence</div>
-            <div className="planner-subtitle">
-              {editingProfile
-                ? 'Connect the project once. The platform turns repository knowledge into planning, execution, and QA context.'
-                : 'Project-aware planning, implementation packages, and QA coverage for enterprise delivery teams.'}
-            </div>
-            <div className={`planner-save-status ${saveStatus}`}>{saveStatusLabel(saveStatus)}</div>
-          </div>
-        </div>
-        <div className="planner-header-actions">
-          <RoleBadge permission={permissionState} />
-          {canAdmin ? (
-            <button
-              className="planner-button secondary"
-              onClick={() => {
-                const next = !(editingProfile || showQuickStart);
-                setEditingProfile(next);
-                setShowQuickStart(next);
-              }}
-              disabled={loading}
-            >
-              {editingProfile || showQuickStart ? 'Hide Setup' : 'Edit Project Profile'}
-            </button>
-          ) : null}
-        </div>
-      </header>
 
       {showResumePanel && resumeSession ? (
         <ProjectSessionResumeCard
@@ -3783,8 +3888,6 @@ function approveFeatures() {
       {loading ? <div className="planner-banner">{message || 'Working...'}</div> : null}
       {error ? <div className="planner-error">{error}</div> : null}
       {isViewer ? <div className="planner-banner">Viewer access: Project Intelligence is read-only for your Azure DevOps group.</div> : null}
-
-      <WorkflowTabs activeTab={activeTab} onChange={changeWorkspace} canAdmin={canAdmin} />
 
       <StickyContextBar
         workItem={currentWorkItem}
@@ -3802,6 +3905,7 @@ function approveFeatures() {
 
       {activeTab === 'overview' ? (
         <CommandCenterWorkspace
+          dashboardOverview={dashboardOverview}
           profile={profile}
           workItem={currentWorkItem}
           workflow={workflowOrchestration}
@@ -3829,11 +3933,24 @@ function approveFeatures() {
           onSelectRepository={(repositoryId) => void selectRepository(repositoryId)}
           onReloadRepositories={() => void loadAdoProjects()}
           onAnalyzeProject={() => void analyzeProject()}
+          onRefreshDashboard={() => void refreshDashboardOverview()}
         />
       ) : null}
 
       {activeTab === 'planning' ? (
-        <AIPlannerWorkspace
+        <>
+        <PlanningCenter
+          baseUrl={PLATFORM_BASE_URL}
+          projectId={profile.project_id || ''}
+          actor={permissionState.user_display_name || permissionState.user_name || 'HEI User'}
+          currentWorkItemId={currentWorkItem?.id ? String(currentWorkItem.id) : undefined}
+          canContribute={canContribute}
+          onGenerateExecutionPackage={() => void buildExecutionPackage(true)}
+          onError={setError}
+        />
+        <details className="hei-planning-intelligence-workspace">
+          <summary>Planning Intelligence Workspace</summary>
+          <AIPlannerWorkspace
           profile={profile}
           loading={loading}
           currentWorkItem={currentWorkItem}
@@ -3881,11 +3998,17 @@ function approveFeatures() {
           artifactReuseStatus={artifactReuseStatus}
           workflow={workflowOrchestration}
           planningFocusRequest={planningFocusRequest}
-        />
+          />
+        </details>
+        </>
       ) : null}
 
       {activeTab === 'execution' ? (
-        <DeveloperWorkspace
+        <>
+        <ExecutionCenter baseUrl={PLATFORM_BASE_URL} onError={setError} />
+        <details className="hei-execution-intelligence-workspace">
+          <summary>Execution Intelligence Workspace</summary>
+          <DeveloperWorkspace
           executionContext={executionContext}
           executionPlan={executionPlan}
           executionMode={executionMode}
@@ -3928,11 +4051,13 @@ function approveFeatures() {
           updateDraftSelection={updateDraftSelection}
           createSelectedChildren={() => void createSelectedChildWorkItems()}
           onOpenVsCode={() => openVsCodeExecutionPackage()}
-          onOpenQA={() => setActiveTab('qa')}
+          onOpenQA={() => changeWorkspace('qa')}
           validateImplementation={() => void validateImplementation()}
           runPRReview={() => void runPRReview()}
           postPRReviewComment={() => void postPRReviewComment()}
-        />
+          />
+        </details>
+        </>
       ) : null}
 
       {activeTab === 'qa' ? (
@@ -3972,7 +4097,17 @@ function approveFeatures() {
         />
       ) : null}
 
-      {activeTab === 'governance' ? (
+      {activeTab === 'governance' && activeNavigationId === 'approvals' ? (
+        <ApprovalCenter
+          baseUrl={PLATFORM_BASE_URL}
+          actor={permissionState.user_display_name || permissionState.user_name || 'HEI User'}
+          role={permissionState.role}
+          canApprove={canContribute}
+          onError={setError}
+        />
+      ) : null}
+
+      {activeTab === 'governance' && activeNavigationId !== 'approvals' ? (
         <GovernanceWorkspace
           dashboard={governanceDashboard}
           status={governanceStatus}
@@ -3981,12 +4116,11 @@ function approveFeatures() {
       ) : null}
 
       {activeTab === 'agents' ? (
-        <AgentWorkspace
-          dashboard={agentDashboard}
-          status={agentStatus}
-          canAdmin={canAdmin}
-          onRefresh={() => void refreshAgentDashboard()}
-          onToggleFlag={(flag, enabled) => void updateAgentFeatureFlag(flag, enabled)}
+        <AgentCenter
+          baseUrl={PLATFORM_BASE_URL}
+          canRetry={canContribute}
+          onOpenActivity={() => changeWorkspace('diagnostics', 'activity')}
+          onError={setError}
         />
       ) : null}
 
@@ -3998,7 +4132,15 @@ function approveFeatures() {
         />
       ) : null}
 
-      {activeTab === 'diagnostics' ? (
+      {activeTab === 'diagnostics' && activeNavigationId === 'activity' ? (
+        <React.Suspense fallback={<div className="hei-workspace-loading" role="status">Loading Activity Center...</div>}><ActivityCenter baseUrl={PLATFORM_BASE_URL} onError={setError} /></React.Suspense>
+      ) : null}
+
+      {activeTab === 'diagnostics' && activeNavigationId === 'health' ? (
+        <React.Suspense fallback={<div className="hei-workspace-loading" role="status">Loading Platform Health...</div>}><CommandCenterHealth baseUrl={PLATFORM_BASE_URL} role={permissionState.role} onError={setError} /></React.Suspense>
+      ) : null}
+
+      {activeTab === 'diagnostics' && !['activity', 'health'].includes(activeNavigationId) ? (
         <DiagnosticsWorkspace
           providerMetadata={latestProvider}
           workflow={workflowOrchestration}
@@ -4011,7 +4153,27 @@ function approveFeatures() {
         />
       ) : null}
 
-      {activeTab === 'admin' && canAdmin ? (
+      {activeTab === 'admin' && activeNavigationId === 'repository' ? (
+        <RepositoryCenter
+          baseUrl={PLATFORM_BASE_URL}
+          preferredRepositoryId={profile.repository_connection?.repository_id || ''}
+          actor={permissionState.user_display_name || permissionState.user_name || 'HEI User'}
+          canManage={canAdmin}
+          onError={setError}
+        />
+      ) : null}
+
+      {activeTab === 'admin' && activeNavigationId === 'azure-devops' ? (
+        <AzureDevOpsCenter
+          baseUrl={PLATFORM_BASE_URL}
+          projectId={profile.project_id || ''}
+          canApprove={canContribute}
+          onOpenApprovals={() => changeWorkspace('governance', 'approvals')}
+          onError={setError}
+        />
+      ) : null}
+
+      {activeTab === 'admin' && !['repository', 'azure-devops'].includes(activeNavigationId) && canAdmin ? (
         <AdminWorkspace
           permission={permissionState}
           profile={profile}
@@ -4041,6 +4203,7 @@ function approveFeatures() {
         />
       ) : null}
     </main>
+    </EngineeringCommandCenterShell>
   );
 }
 
@@ -4833,6 +4996,7 @@ function StickyContextBar({
 }
 
 function CommandCenterWorkspace({
+  dashboardOverview,
   profile,
   workItem,
   workflow,
@@ -4858,7 +5022,9 @@ function CommandCenterWorkspace({
   onSelectRepository,
   onReloadRepositories,
   onAnalyzeProject,
+  onRefreshDashboard,
 }: {
+  dashboardOverview?: DashboardOverview;
   profile: ProjectProfile;
   workItem?: AdoWorkItem;
   workflow: WorkflowOrchestrationState;
@@ -4884,6 +5050,7 @@ function CommandCenterWorkspace({
   onSelectRepository: (repositoryId: string) => void;
   onReloadRepositories: () => void;
   onAnalyzeProject: () => void;
+  onRefreshDashboard: () => void;
 }) {
   return (
     <div className="hei-command-center">
@@ -4891,6 +5058,7 @@ function CommandCenterWorkspace({
         <CurrentWorkCard profile={profile} workItem={workItem} workflow={workflow} />
         <RecommendedActionHero workflow={workflow} loading={loading} canContribute={canContribute} onContinue={onContinueWorkflow} />
       </div>
+      <OperationalOverviewDashboard overview={dashboardOverview} loading={loading} onRefresh={onRefreshDashboard} />
       <details className="planner-nested">
         <summary>Show details</summary>
         <div className="hei-command-row metrics">
@@ -10980,6 +11148,54 @@ async function getProfile(): Promise<ProjectProfile> {
   return response.json() as Promise<ProjectProfile>;
 }
 
+async function getEngineeringWorkspace(userId: string, role: AIGenRole): Promise<EngineeringWorkspace> {
+  const params = new URLSearchParams({ userId: userId || 'current-user', role });
+  const response = await fetch(`${PLATFORM_BASE_URL}/workspace?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(await response.text() || `Workspace service returned HTTP ${response.status}`);
+  }
+  return response.json() as Promise<EngineeringWorkspace>;
+}
+
+async function getDashboardOverview(projectId = ''): Promise<DashboardOverview> {
+  const params = new URLSearchParams();
+  if (projectId) {
+    params.set('projectId', projectId);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await fetch(`${PLATFORM_BASE_URL}/dashboard/overview${suffix}`);
+  if (!response.ok) {
+    throw new Error(await response.text() || `Dashboard service returned HTTP ${response.status}`);
+  }
+  return response.json() as Promise<DashboardOverview>;
+}
+
+function dashboardNotifications(overview: DashboardOverview): EngineeringWorkspace['notifications'] {
+  return overview.notifications.items.slice(0, 8).map((item, index) => ({
+    id: String(item.notificationId || item.id || index),
+    title: String(item.title || item.type || 'HEI notification'),
+    message: String(item.message || item.description || ''),
+    severity: String(item.severity || 'information'),
+  }));
+}
+
+async function putWorkspacePreferences(
+  userId: string,
+  role: AIGenRole,
+  changes: Partial<WorkspacePreferences>,
+): Promise<WorkspacePreferences> {
+  const response = await fetch(`${PLATFORM_BASE_URL}/workspace/preferences`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, role, ...changes }),
+  });
+  const payload = await response.json() as WorkspacePreferences & { error?: { message?: string } };
+  if (!response.ok) {
+    throw new Error(payload.error?.message || `Workspace service returned HTTP ${response.status}`);
+  }
+  return payload;
+}
+
 async function getBackendProjectSession(): Promise<BackendProjectSessionResponse> {
   return getJson<BackendProjectSessionResponse>('/session');
 }
@@ -11871,6 +12087,22 @@ function saveStatusLabel(status: 'saved' | 'saving' | 'unsaved' | 'error'): stri
   if (status === 'unsaved') return 'Unsaved changes';
   if (status === 'error') return 'Autosave failed';
   return 'Saved';
+}
+
+function navigationIdForPlannerTab(tab: PlannerTab): string {
+  const mapping: Record<PlannerTab, string> = {
+    overview: 'overview',
+    planning: 'planning',
+    execution: 'execution',
+    qa: 'execution',
+    memory: 'memory',
+    governance: 'approvals',
+    agents: 'agents',
+    skills: 'agents',
+    admin: 'administration',
+    diagnostics: 'activity',
+  };
+  return mapping[tab];
 }
 
 function defaultPermissionState(): PermissionState {

@@ -34,14 +34,18 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_context(context: dict[str, Any]) -> dict[str, Any]:
+    package = context.get("executionPackage") if isinstance(context.get("executionPackage"), dict) else {}
     return {
         "projectId": clean(context.get("projectId") or context.get("project_id") or "default"),
         "repository": clean(context.get("repository")),
         "branch": clean(context.get("branch")),
         "workItem": context.get("workItem") if isinstance(context.get("workItem"), dict) else {},
         "parent": context.get("parent") if isinstance(context.get("parent"), dict) else {},
-        "memoryContext": context.get("memoryContext") if isinstance(context.get("memoryContext"), dict) else {},
-        "repositoryContext": context.get("repositoryContext") if isinstance(context.get("repositoryContext"), dict) else {},
+        "executionPackage": package,
+        "executionMode": clean(context.get("executionMode") or "Implement"),
+        "agentContext": context.get("agentContext") if isinstance(context.get("agentContext"), dict) else {},
+        "memoryContext": package.get("engineeringMemory") if isinstance(package.get("engineeringMemory"), dict) else {},
+        "repositoryContext": package.get("repositoryContext") if isinstance(package.get("repositoryContext"), dict) else {},
         "approvalRequired": context.get("approvalRequired", True) is not False,
     }
 

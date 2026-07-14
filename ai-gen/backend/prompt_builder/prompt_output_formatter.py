@@ -9,7 +9,7 @@ from backend.prompt_budget import PromptSection, estimateTokens
 from .developer_prompt_model import clean
 
 
-def format_developer_prompt(sections: list[PromptSection]) -> str:
+def format_developer_prompt(sections: list[PromptSection], *, title: str = "Developer Prompt V2") -> str:
     section_map = {section.id: section for section in sections}
     ordered_ids = [
         "role",
@@ -26,7 +26,7 @@ def format_developer_prompt(sections: list[PromptSection]) -> str:
         "instructions",
         "output_schema",
     ]
-    parts: list[str] = ["# Developer Prompt V2", ""]
+    parts: list[str] = [f"# {title}", ""]
     for section_id in ordered_ids:
         section = section_map.get(section_id)
         if not section:

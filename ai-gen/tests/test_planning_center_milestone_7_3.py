@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -92,6 +93,16 @@ class PlanningCenterTests(unittest.TestCase):
         self.assertEqual(200, client.get("/planning/artifact-1").status_code)
         self.assertEqual(200, client.get("/planning/recommendations").status_code)
         self.assertEqual(200, client.post("/planning/artifact-1/approve", json={"actor": "Planner"}).status_code)
+
+    def test_planning_review_shows_estimation_report_before_approval(self):
+        source = (Path(__file__).parents[1] / "azure-devops-extension" / "src" / "planningCenter.tsx").read_text()
+        self.assertIn("Engineering Estimation Report", source)
+        self.assertIn("/planning/estimate", source)
+        self.assertIn("Top Estimation Drivers", source)
+        self.assertIn("Repository Reuse", source)
+        self.assertIn("Edit Estimate", source)
+        self.assertIn("!selectedEstimate", source)
+        self.assertLess(source.index("<EstimationReport"), source.index("className=\"hei-planning-actions\""))
 
 
 if __name__ == "__main__":

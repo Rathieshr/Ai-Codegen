@@ -102,6 +102,7 @@ from backend.ado_center import AzureDevOpsCenterService, build_ado_center_router
 from backend.agent_center import AgentCenterService, build_agent_center_router
 from backend.activity_center import ActivityCenterService, build_activity_center_router
 from backend.command_center_hardening import CommandCenterHardeningService, build_command_center_hardening_router
+from backend.engineering_estimation import EngineeringEstimationEngine, EngineeringEstimationRepository, build_engineering_estimation_router
 from backend.requirement_intake import RequirementIntakeService, build_requirement_intake_router
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
@@ -182,6 +183,16 @@ governance_engine = GovernanceEngine()
 trace_engine = TraceEngine()
 skill_engine = SkillEngine()
 platform_foundation = PlatformFoundation()
+engineering_estimation_engine = EngineeringEstimationEngine(
+    EngineeringEstimationRepository(
+        JsonMapStore(platform_foundation.storage_root / "engineering_estimates.json"),
+        JsonMapStore(platform_foundation.storage_root / "engineering_estimation_outcomes.json"),
+    ),
+    platform=platform_foundation,
+    memory=engineering_memory_engine,
+    repository_intelligence=repository_intelligence_module.application,
+)
+app.include_router(build_engineering_estimation_router(engineering_estimation_engine))
 workspace_service = WorkspaceService(
     JsonMapStore(platform_foundation.storage_root / "workspace_preferences.json"),
     platform=platform_foundation,

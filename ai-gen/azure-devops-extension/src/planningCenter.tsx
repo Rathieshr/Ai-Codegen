@@ -36,6 +36,16 @@ type PlanningCenterResponse = {
   pagination: { total: number; offset: number; limit: number; returned: number; hasMore: boolean };
 };
 
+type EngineeringEstimation = {
+  estimateId: string; artifactId: string; artifactType: string; version: number; status: string; overrideReason?: string;
+  effectiveEstimate: {
+    engineeringHours: number; engineeringDays: number; storyPoints: number; confidence: number; risk: string; complexity: string;
+    estimatedSprintCount: number; estimatedTestCases: number; estimatedPullRequests: number; repositoryReuse: number;
+    topEstimationDrivers: string[]; warnings: string[]; taskEstimates: Array<{ taskId: string; taskName: string; estimatedDuration: string; storyPointContribution: number; complexity: string; confidence: number }>;
+    report: { features: number; stories: number; tasks: number; engineeringDays: number; storyPoints: number; estimatedSprintCount: number; averageStorySize: number; confidence: number; risk: string; repositoryReuse: number; estimatedTestCases: number; estimatedPullRequests: number; highRiskStories: number; suggestedTeamSize: number };
+  };
+};
+
 type Props = {
   baseUrl: string;
   projectId: string;
@@ -68,6 +78,12 @@ export function PlanningCenter({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [estimates, setEstimates] = useState<Record<string, EngineeringEstimation>>({});
+  const [estimationBusy, setEstimationBusy] = useState('');
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideHours, setOverrideHours] = useState('');
+  const [overridePoints, setOverridePoints] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
 
   useEffect(() => { void load(true); }, [projectId]);
   useEffect(() => {
@@ -85,6 +101,7 @@ export function PlanningCenter({
   const visibleNodes = useMemo(() => flattenVisible(tree, expandedIds), [tree, expandedIds]);
   const breadcrumbs = useMemo(() => selected ? buildBreadcrumbs(selected, hierarchyItems) : [], [selected, hierarchyItems]);
   const selectedForReview = useMemo(() => hierarchyItems.filter((item) => checkedIds.has(item.id)), [checkedIds, hierarchyItems]);
+  const selectedEstimate = selected ? estimates[selected.id] : undefined;
 
   useEffect(() => {
     if (!hierarchyItems.length) return;
@@ -97,6 +114,10 @@ export function PlanningCenter({
     if (breadcrumbs.length < 2) return;
     setExpandedIds((current) => new Set([...current, ...breadcrumbs.slice(0, -1).map((item) => item.id)]));
   }, [breadcrumbs]);
+  useEffect(() => {
+    if (!selected || selected.type === 'Recommendation' || estimates[selected.id] || estimationBusy === selected.id) return;
+    void estimate(selected);
+  }, [selected?.id, data?.items]);
 
   async function load(reset = true) {
     setLoading(true);
@@ -147,7 +168,11 @@ export function PlanningCenter({
     }
     setActionId('bulk');
     try {
-      for (const item of actionable) await submitDecision(item, decision);
+      for (const item of actionable) {
+        const itemEstimate = decision === 'approve' ? estimates[item.id] || await estimate(item) : undefined;
+        if (decision === 'approve' && !itemEstimate) throw new Error(`Generate the Engineering Estimation Report before approving ${item.title}.`);
+        await submitDecision(item, decision, itemEstimate);
+      }
       setCheckedIds(new Set());
       await load(false);
     } catch (error) {
@@ -157,12 +182,60 @@ export function PlanningCenter({
     }
   }
 
-  async function submitDecision(item: PlanningCenterItem, decision: 'approve' | 'reject') {
+  async function submitDecision(item: PlanningCenterItem, decision: 'approve' | 'reject', suppliedEstimate?: EngineeringEstimation) {
+    const estimateValue = suppliedEstimate || estimates[item.id];
+    if (decision === 'approve' && estimateValue && estimateValue.status !== 'Approved') {
+      const estimateResponse = await fetch(`${baseUrl}/planning/estimate/${encodeURIComponent(estimateValue.estimateId)}/approve?actor=${encodeURIComponent(actor)}`, { method: 'POST' });
+      if (!estimateResponse.ok) throw new Error('The Engineering Estimation Report could not be approved with this planning item.');
+    }
     const response = await fetch(`${baseUrl}/planning/${encodeURIComponent(item.id)}/${decision}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actor }),
     });
     const payload = await response.json() as { error?: { message?: string } };
     if (!response.ok) throw new Error(payload.error?.message || `Unable to ${decision} ${item.type} '${item.title}'.`);
+  }
+
+  async function estimate(item: PlanningCenterItem, recalculate = false): Promise<EngineeringEstimation | undefined> {
+    setEstimationBusy(item.id);
+    try {
+      const children = descendantsOf(item.id, hierarchyItems);
+      const details = item.details || {};
+      const repositoryContext = firstObject(details.repositoryContext, details.repository, details.repositoryIntelligence);
+      const payload = {
+        ...(recalculate && estimates[item.id] ? { estimateId: estimates[item.id].estimateId } : {}),
+        artifact: item, children,
+        repositoryContext,
+        engineeringMemory: firstObject(details.memoryContext, details.engineeringMemory),
+        acceptanceCriteria: arrayValue(details.acceptanceCriteria || details.acceptance_criteria),
+        dependencyAnalysis: item.dependencies,
+        riskAnalysis: item.risks,
+      };
+      const response = await fetch(`${baseUrl}/planning/estimate${recalculate ? '/recalculate' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const result = await response.json() as EngineeringEstimation & { error?: { message?: string } };
+      if (!response.ok) throw new Error(result.error?.message || 'Unable to generate the Engineering Estimation Report.');
+      setEstimates((current) => ({ ...current, [item.id]: result }));
+      setOverrideHours(String(result.effectiveEstimate.engineeringHours || ''));
+      setOverridePoints(String(result.effectiveEstimate.storyPoints || ''));
+      return result;
+    } catch (error) { onError(error instanceof Error ? error.message : 'Unable to generate the Engineering Estimation Report.'); return undefined; }
+    finally { setEstimationBusy(''); }
+  }
+
+  async function overrideEstimate(item: PlanningCenterItem) {
+    const current = estimates[item.id];
+    if (!current) return;
+    setEstimationBusy(item.id);
+    try {
+      const response = await fetch(`${baseUrl}/planning/estimate/${encodeURIComponent(current.estimateId)}/override`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engineeringHours: Number(overrideHours), storyPoints: Number(overridePoints), overrideReason, actor }),
+      });
+      const result = await response.json() as EngineeringEstimation & { error?: { message?: string } };
+      if (!response.ok) throw new Error(result.error?.message || 'Unable to save the estimate override.');
+      setEstimates((values) => ({ ...values, [item.id]: result }));
+      setOverrideOpen(false); setOverrideReason('');
+    } catch (error) { onError(error instanceof Error ? error.message : 'Unable to save the estimate override.'); }
+    finally { setEstimationBusy(''); }
   }
 
   function toggleExpanded(itemId: string) {
@@ -248,8 +321,20 @@ export function PlanningCenter({
               </div>
               <DetailList title="Dependencies" values={selected.dependencies} empty="No dependencies identified." />
               <DetailList title="Risks" values={selected.risks} empty="No planning risks identified." />
+              <EstimationReport estimate={selectedEstimate} loading={estimationBusy === selected.id} onRecalculate={() => void estimate(selected, true)} onEdit={() => {
+                setOverrideHours(String(selectedEstimate?.effectiveEstimate.engineeringHours || ''));
+                setOverridePoints(String(selectedEstimate?.effectiveEstimate.storyPoints || ''));
+                setOverrideOpen((value) => !value);
+              }} />
+              {overrideOpen && selectedEstimate ? <div className="hei-estimation-override">
+                <label><span>Engineering Hours</span><input type="number" min="1" value={overrideHours} onChange={(event) => setOverrideHours(event.target.value)} /></label>
+                <label><span>Story Points</span><input type="number" min="1" value={overridePoints} onChange={(event) => setOverridePoints(event.target.value)} /></label>
+                <label className="wide"><span>Override Reason</span><textarea value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} placeholder="Explain the engineering evidence behind this adjustment." /></label>
+                <button className="planner-button primary" type="button" onClick={() => void overrideEstimate(selected)} disabled={!overrideHours || !overridePoints || !overrideReason.trim() || Boolean(estimationBusy)}>Save Override</button>
+                <button className="planner-button secondary" type="button" onClick={() => setOverrideOpen(false)}>Cancel</button>
+              </div> : null}
               <div className="hei-planning-actions">
-                <button className="planner-button primary" type="button" onClick={() => void decide(selected, 'approve')} disabled={!canContribute || !selected.canApprove || Boolean(actionId)}>Approve</button>
+                <button className="planner-button primary" type="button" onClick={() => void decide(selected, 'approve')} disabled={!canContribute || !selected.canApprove || Boolean(actionId) || !selectedEstimate || estimationBusy === selected.id}>Approve</button>
                 <button className="planner-button secondary" type="button" onClick={() => void decide(selected, 'reject')} disabled={!canContribute || !selected.canReject || Boolean(actionId)}>Reject</button>
                 <button className="planner-button secondary" type="button" onClick={() => setDetailsOpen((value) => !value)}>{detailsOpen ? 'Hide Details' : 'Open Details'}</button>
                 {selected.type === 'Story' || selected.type === 'Task' ? <button className="planner-button secondary" type="button" onClick={() => generate(selected)} disabled={!selected.canGenerateExecutionPackage}>Generate Execution Package</button> : null}
@@ -275,6 +360,28 @@ function Detail({ label, value }: { label: string; value: string | number }) {
 
 function DetailList({ title, values, empty }: { title: string; values: string[]; empty: string }) {
   return <section className="hei-planning-list"><strong>{title}</strong>{values.length ? <ul>{values.map((value) => <li key={value}>{value}</li>)}</ul> : <p>{empty}</p>}</section>;
+}
+
+function EstimationReport({ estimate, loading, onRecalculate, onEdit }: { estimate?: EngineeringEstimation; loading: boolean; onRecalculate: () => void; onEdit: () => void }) {
+  if (!estimate) return <section className="hei-estimation-report loading"><div><span>Engineering Estimation</span><h4>{loading ? 'Calculating from engineering evidence...' : 'Estimation Report not available'}</h4></div><p>HEI uses task decomposition, repository context, acceptance criteria, risk, dependencies, and approved Engineering Memory.</p>{!loading ? <button className="planner-button secondary" type="button" onClick={onRecalculate}>Retry Estimation</button> : null}</section>;
+  const value = estimate.effectiveEstimate;
+  const report = value.report;
+  return <section className="hei-estimation-report" aria-label="Engineering Estimation Report">
+    <header><div><span>Planning Summary</span><h4>Engineering Estimation Report</h4><p>Standard Engineering Estimation · Version {estimate.version}{estimate.status === 'Overridden' ? ' · Human override applied' : ''}</p></div><StatusBadge value={estimate.status} /></header>
+    <div className="hei-estimation-metrics">
+      <Detail label="Engineering Effort" value={`${report.engineeringDays} days`} />
+      <Detail label="Story Points" value={report.storyPoints} />
+      <Detail label="Confidence" value={`${report.confidence}%`} />
+      <Detail label="Repository Reuse" value={`${report.repositoryReuse}%`} />
+      <Detail label="High Risk Stories" value={report.highRiskStories} />
+      <Detail label="Estimated Tests" value={report.estimatedTestCases} />
+      <Detail label="Estimated PRs" value={report.estimatedPullRequests} />
+      <Detail label="Sprint Count" value={report.estimatedSprintCount} />
+    </div>
+    <div className="hei-estimation-body"><section><strong>Top Estimation Drivers</strong>{value.topEstimationDrivers.length ? <ul>{value.topEstimationDrivers.map((driver) => <li key={driver}>{driver}</li>)}</ul> : <p>No estimation drivers were supplied.</p>}</section><section><strong>Task Foundation</strong>{value.taskEstimates.slice(0, 8).map((task) => <div className="hei-estimation-task" key={task.taskId || task.taskName}><span>{task.taskName}</span><strong>{task.estimatedDuration} · {task.storyPointContribution} pts</strong><small>{task.complexity} · {task.confidence}% confidence</small></div>)}</section></div>
+    {value.warnings.length ? <details><summary>{value.warnings.length} confidence warning{value.warnings.length === 1 ? '' : 's'}</summary><ul>{value.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details> : null}
+    <div className="hei-estimation-actions"><button className="planner-button secondary" type="button" onClick={onRecalculate} disabled={loading}>{loading ? 'Recalculating...' : 'Recalculate'}</button><button className="planner-button secondary" type="button" onClick={onEdit}>Edit Estimate</button></div>
+  </section>;
 }
 
 function buildTree(items: PlanningCenterItem[]): PlanningTreeNode[] {
@@ -314,6 +421,21 @@ function buildBreadcrumbs(selected: PlanningCenterItem, items: PlanningCenterIte
   }
   return path;
 }
+
+function descendantsOf(parentId: string, items: PlanningCenterItem[]): PlanningCenterItem[] {
+  const output: PlanningCenterItem[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const sourceId = items.find((candidate) => candidate.id === id)?.sourceItemId;
+    items.filter((item) => item.parentId === id || Boolean(sourceId && item.parentId === sourceId)).forEach((item) => { output.push(item); visit(item.id); });
+  };
+  visit(parentId);
+  return output;
+}
+function firstObject(...values: unknown[]): Record<string, unknown> { return values.find((value) => value && typeof value === 'object' && !Array.isArray(value)) as Record<string, unknown> || {}; }
+function arrayValue(value: unknown): unknown[] { return Array.isArray(value) ? value : value == null ? [] : [value]; }
 
 function TypeBadge({ value }: { value: string }) { return <span className="hei-type-badge">{value}</span>; }
 function StatusBadge({ value }: { value: string }) { return <span className={`hei-status-badge status-${value.toLowerCase().replace(/[^a-z]+/g, '-')}`}>{value}</span>; }

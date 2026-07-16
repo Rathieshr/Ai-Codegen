@@ -129,7 +129,9 @@ class AzureDevOpsCenterService:
                 "workItemId": item_id, "title": _text(source.get("title")) or f"Work Item {item_id}",
                 "type": _text(source.get("workItemType") or source.get("type")) or "Work Item", "state": _text(source.get("state")) or "Unknown",
                 "assignedTo": _identity(source.get("assignedTo")), "iterationPath": _text(source.get("iterationPath")),
-                "storyPoints": source.get("storyPoints"), "blocked": blocked, "recommendationCount": counts.get(item_id, 0),
+                "storyPoints": source.get("storyPoints"), "effort": source.get("effort"),
+                "originalEstimate": source.get("originalEstimate"), "remainingWork": source.get("remainingWork"),
+                "completedWork": source.get("completedWork"), "blocked": blocked, "recommendationCount": counts.get(item_id, 0),
                 "webUrl": _text(source.get("url") or source.get("webUrl")), "changedAt": _text(source.get("changedAt")),
             })
         query = search.strip().casefold()

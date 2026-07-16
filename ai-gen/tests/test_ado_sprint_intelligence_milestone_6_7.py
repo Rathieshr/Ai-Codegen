@@ -87,6 +87,26 @@ class SprintIntelligenceTests(unittest.TestCase):
         self.assertFalse(report["privacy"]["individualRanking"])
         self.assertNotIn("assignedTo", str(report))
 
+    def test_active_unestimated_scope_is_not_reported_as_healthy(self):
+        for item in self.cache.collection("project-1", "workItems").values():
+            item["state"] = "Active"
+            item["storyPoints"] = None
+            item["closedAt"] = ""
+        report = self.service.current("project-1")
+        self.assertEqual("InsufficientData", report["health"])
+        self.assertEqual("InsufficientData", report["forecast"]["status"])
+        self.assertEqual(4, report["metrics"]["plannedScope"]["unestimatedItemCount"])
+
+    def test_task_hours_are_reported_without_inflating_story_points(self):
+        self.put_item("5", "Implement device query", "Active", None, work_type="Task")
+        task = self.cache.collection("project-1", "workItems")["5"]
+        task["originalEstimate"] = 8
+        task["remainingWork"] = 6
+        report = self.service.current("project-1")
+        self.assertEqual(10, report["metrics"]["plannedScope"]["storyPoints"])
+        self.assertEqual(8, report["metrics"]["plannedScope"]["taskEstimateHours"])
+        self.assertEqual(6, report["metrics"]["plannedScope"]["remainingWorkHours"])
+
     def test_scope_increase_detects_late_addition(self):
         self.service.clock = lambda: datetime(2026, 7, 12, 12, tzinfo=timezone.utc)
         self.put_item("5", "Late alert change", "New", 3, created="2026-07-10T09:00:00Z")

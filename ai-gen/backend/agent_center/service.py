@@ -115,6 +115,7 @@ class AgentCenterService:
             "status": agent["status"], "health": agent["health"], "enabled": agent["enabled"],
             "queue": agent["queue"], "failures": agent["failures"], "successRate": agent["successRate"],
             "averageDurationMs": agent["averageDurationMs"], "lastRun": agent["lastRun"],
+            "lastExecution": agent["lastExecution"], "currentActivity": agent["currentActivity"],
             "nextRun": agent["nextRun"], "warnings": agent["warnings"], "checkedAt": _now(),
         }
 
@@ -177,8 +178,12 @@ class AgentCenterService:
         running = any(item["status"] == "Running" for item in [*jobs, *runs])
         queued = any(item["status"] in {"Queued", "Pending", "WaitingApproval", "NeedsApproval"} for item in jobs)
         latest = self._latest([*jobs, *runs])
+        current = next((item for item in [*jobs, *runs] if item["status"] == "Running"), None)
+        if not current:
+            current = next((item for item in jobs if item["status"] in {"Queued", "Pending", "WaitingApproval", "NeedsApproval"}), None)
         status = "Disabled" if not enabled else "Running" if running else "Queued" if queued else "Failed" if latest and latest["status"] == "Failed" else "Idle"
         terminal = [item for item in [*jobs, *runs] if item["status"] in {"Completed", "Failed"}]
+        last_execution = self._latest(terminal)
         completed = sum(item["status"] == "Completed" for item in terminal)
         success_rate = round((completed / len(terminal)) * 100, 1) if terminal else None
         durations = [float(item["durationMs"]) for item in [*jobs, *runs] if item.get("durationMs") is not None]
@@ -193,7 +198,8 @@ class AgentCenterService:
             "featureFlag": feature_flag, "status": status, "health": health, "queue": queue,
             "jobCount": len(jobs), "runtimeCount": len(runs), "failures": failures,
             "successRate": success_rate, "averageDurationMs": average_duration,
-            "lastRun": self._last_run(latest), "nextRun": _text(definition.get("nextRun")),
+            "lastRun": self._last_run(latest), "lastExecution": self._execution_summary(last_execution),
+            "currentActivity": self._activity_summary(current), "nextRun": _text(definition.get("nextRun")),
             "triggers": list(definition.get("triggers") or []), "actions": list(definition.get("actions") or []),
             "checkpoint": _text(definition.get("checkpoint")), "warnings": warnings,
         }
@@ -274,6 +280,28 @@ class AgentCenterService:
     def _last_run(item: dict[str, Any] | None) -> dict[str, Any]:
         if not item: return {"status": "NeverRun", "at": "", "id": ""}
         return {"status": item.get("status"), "at": item.get("completedAt") or item.get("createdAt") or item.get("startedAt") or "", "id": item.get("jobId") or item.get("runId") or ""}
+
+    @staticmethod
+    def _activity_summary(item: dict[str, Any] | None) -> dict[str, Any]:
+        if not item:
+            return {"status": "Idle", "title": "No active work", "step": "Waiting for an engineering event", "since": "", "id": "", "sourceType": ""}
+        return {
+            "status": item.get("status") or "Unknown", "title": item.get("title") or item.get("runId") or "Agent activity",
+            "step": item.get("currentStep") or item.get("nextAction") or "Processing",
+            "since": item.get("createdAt") or item.get("startedAt") or "",
+            "id": item.get("jobId") or item.get("runId") or "", "sourceType": item.get("sourceType") or "Runtime",
+        }
+
+    @staticmethod
+    def _execution_summary(item: dict[str, Any] | None) -> dict[str, Any]:
+        if not item:
+            return {"status": "NeverRun", "title": "No execution recorded", "at": "", "durationMs": 0, "id": "", "sourceType": ""}
+        return {
+            "status": item.get("status") or "Unknown", "title": item.get("title") or item.get("runId") or "Agent execution",
+            "at": item.get("completedAt") or item.get("createdAt") or item.get("startedAt") or "",
+            "durationMs": item.get("durationMs") or 0, "id": item.get("jobId") or item.get("runId") or "",
+            "sourceType": item.get("sourceType") or "Runtime",
+        }
 
 
 def _duration(start: Any, end: Any) -> float | None:

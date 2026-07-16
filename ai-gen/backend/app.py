@@ -93,7 +93,7 @@ from backend.platform_hardening.api import build_platform_hardening_router
 from backend.platform_hardening.harness import HEIEndToEndHarness
 from backend.platform.shared import JsonMapStore
 from backend.platform_sdk import HEIPhase6Sdk
-from backend.workspace import WorkspaceService, build_workspace_router
+from backend.workspace import WorkspaceSearchService, WorkspaceService, build_workspace_router
 from backend.dashboard import DashboardService, build_dashboard_router
 from backend.planning_center import PlanningCenterService, build_planning_center_router
 from backend.execution_center import ExecutionCenterService, build_execution_center_router
@@ -186,7 +186,8 @@ workspace_service = WorkspaceService(
     JsonMapStore(platform_foundation.storage_root / "workspace_preferences.json"),
     platform=platform_foundation,
 )
-app.include_router(build_workspace_router(workspace_service))
+workspace_search_service = WorkspaceSearchService()
+app.include_router(build_workspace_router(workspace_service, workspace_search_service))
 azure_devops_integration = register_azure_devops_integration(
     platform_foundation.storage_root / "azure_devops_integrations",
     platform=platform_foundation,
@@ -475,6 +476,13 @@ activity_center_service = ActivityCenterService(
     governance_audit=governance_engine.audit_timeline,
 )
 app.include_router(build_activity_center_router(activity_center_service))
+workspace_search_service.planning = planning_center_service
+workspace_search_service.execution = execution_center_service
+workspace_search_service.repositories = repository_intelligence_module.application
+workspace_search_service.ado = ado_center_service
+workspace_search_service.agents = agent_center_service
+workspace_search_service.memory = engineering_memory_engine
+workspace_search_service.activity = activity_center_service
 command_center_hardening_service = CommandCenterHardeningService(
     platform=platform_foundation,
     sdk=phase6_sdk,

@@ -1,6 +1,6 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { EngineeringCommandCenterShell, EngineeringWorkspace, WorkspaceNavigationItem, WorkspacePreferences } from './engineeringCommandCenterShell';
+import { CommandPaletteResult, EngineeringCommandCenterShell, EngineeringWorkspace, WorkspaceNavigationItem, WorkspacePreferences } from './engineeringCommandCenterShell';
 import { DashboardOverview } from './overviewDashboard';
 import { createHostAdapter, HEIHostAdapter, HEIHostContext } from './host';
 import type { RepositoryMapping } from './settingsWorkspace';
@@ -130,6 +130,40 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
     } catch (reason) { setError(message(reason)); }
   }
 
+  const searchWorkspace = useCallback(async (query: string): Promise<CommandPaletteResult[]> => {
+    const parameters = new URLSearchParams({ q: query, projectId, limit: '60' });
+    const response = await fetchWithTimeout(`${BASE_URL}/workspace/search?${parameters.toString()}`, undefined, 6000);
+    if (!response.ok) throw new Error(`HEI search returned HTTP ${response.status}.`);
+    const payload = await response.json() as { results?: CommandPaletteResult[] };
+    return payload.results || [];
+  }, [projectId]);
+
+  async function runCommand(commandId: string) {
+    if (!context) return;
+    if (commandId.startsWith('open:')) {
+      navigate(normalizeRoute(commandId.slice(5)));
+      return;
+    }
+    if (commandId === 'refresh-dashboard') {
+      if (route !== 'overview') navigate('overview');
+      await loadOverview(context);
+      return;
+    }
+    if (commandId === 'sync-repository') {
+      navigate('repository');
+      const repositoryId = repositoryMapping?.intelligenceRepositoryId;
+      if (!repositoryId) throw new Error('Configure and register a repository before synchronization.');
+      const encodedId = encodeURIComponent(repositoryId);
+      const snapshot = await fetchWithTimeout(`${BASE_URL}/repositories/${encodedId}/snapshots/current`, undefined, 6000);
+      const endpoint = snapshot.ok ? 'incremental-scan' : 'scan';
+      const response = await fetchWithTimeout(`${BASE_URL}/repositories/${encodedId}/${endpoint}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: endpoint === 'scan' ? JSON.stringify({ mode: 'Full', requestedBy: actor }) : undefined,
+      }, 12000);
+      if (!response.ok) throw new Error(`Repository synchronization returned HTTP ${response.status}.`);
+      void recordDiagnostic(context, 'CommandPaletteAction', { commandId, repositoryId });
+    }
+  }
+
   if (error && !context) return (
     <div className="hei-hub-startup-error" role="alert">
       <strong>HEI could not start</strong>
@@ -152,10 +186,28 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
       busy={busy}
       onNavigate={(item) => navigate(normalizeRoute(item.id))}
       onPreferencesChange={(changes) => void updatePreferences(changes)}
+      onSearch={searchWorkspace}
+      onCommand={(commandId) => void runCommand(commandId).catch((reason) => reportError(message(reason)))}
     >
       {error ? <div className="hei-hub-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError('')}>Dismiss</button></div> : null}
       <Suspense fallback={<div className="hei-hub-route-loading" role="status">Loading {routeLabel(route)}...</div>}>
-        {route === 'overview' ? <OverviewDashboard overview={overview} loading={busy} repositoryName={repositoryMapping?.repository_name || context.repository.name} onOpenRepository={() => navigate('repository')} onConfigureRepository={() => navigate('settings')} onRefresh={() => void loadOverview(context)} /> : null}
+        {route === 'overview' ? <OverviewDashboard
+          overview={overview}
+          loading={busy}
+          repositoryName={repositoryMapping?.repository_name || context.repository.name}
+          onOpenRepository={() => navigate('repository')}
+          onConfigureRepository={canAdmin ? () => navigate('settings') : undefined}
+          onContinueLastWork={() => navigate(overview?.pendingApprovals.count ? 'approvals' : overview?.execution?.approved ? 'execution' : overview?.planning?.count ? 'planning' : 'activity')}
+          onCreateRequirement={canContribute ? () => navigate('new-requirement') : undefined}
+          onReviewPlanning={() => navigate('planning')}
+          onOpenExecution={() => navigate('execution')}
+          onOpenApprovals={canContribute ? () => navigate('approvals') : undefined}
+          onOpenPrIntelligence={() => navigate('azure-devops')}
+          onOpenAgents={canContribute ? () => navigate('agents') : undefined}
+          onOpenActivity={() => navigate('activity')}
+          onOpenSprint={() => navigate('azure-devops')}
+          onRefresh={() => void loadOverview(context)}
+        /> : null}
         {route === 'new-requirement' ? <NewRequirementWorkspace baseUrl={BASE_URL} context={context} onOpenApprovals={() => navigate('approvals')} onError={reportError} /> : null}
         {route === 'planning' ? <PlanningCenter baseUrl={BASE_URL} projectId={projectId} actor={actor} currentWorkItemId={context.route.workItemId} canContribute={canContribute} onGenerateExecutionPackage={() => navigate('execution')} onError={reportError} /> : null}
         {route === 'repository' ? <RepositoryCenter baseUrl={BASE_URL} preferredRepositoryId={repositoryMapping?.intelligenceRepositoryId || context.repository.id} actor={actor} canManage={canAdmin} onError={reportError} /> : null}

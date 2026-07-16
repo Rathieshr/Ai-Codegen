@@ -133,7 +133,14 @@ class SprintIntelligenceService:
 
 def _scope(items: list[dict[str, Any]]) -> dict[str, Any]:
     estimated = [item for item in items if _estimate(item) is not None]
-    return {"itemCount": len(items), "storyPoints": round(sum(_points(item) for item in items), 1), "estimatedItemCount": len(estimated), "unestimatedItemCount": len(items) - len(estimated)}
+    return {
+        "itemCount": len(items),
+        "storyPoints": round(sum(_points(item) for item in items), 1),
+        "taskEstimateHours": round(sum(_number(item.get("originalEstimate")) or 0 for item in items), 1),
+        "remainingWorkHours": round(sum(_number(item.get("remainingWork")) or 0 for item in items), 1),
+        "completedWorkHours": round(sum(_number(item.get("completedWork")) or 0 for item in items), 1),
+        "estimatedItemCount": len(estimated), "unestimatedItemCount": len(items) - len(estimated),
+    }
 
 
 def _capacity(iteration: dict[str, Any], planned: dict[str, Any]) -> dict[str, Any]:
@@ -250,6 +257,7 @@ def _risks(items, remaining, iteration, start, finish, today, blockers, aging, p
 def _health(items, remaining, risks, forecast, finish, today) -> str:
     if not items: return "InsufficientData"
     if not remaining: return "Completed"
+    if forecast.get("status") == "InsufficientData": return "InsufficientData"
     if any(item["severity"] == "High" for item in risks) or forecast.get("status") == "AtRisk": return "AtRisk"
     if risks or (finish and today > finish): return "NeedsAttention"
     return "Healthy"
@@ -288,7 +296,7 @@ def _blocker_public(entry):
 def _risk(signal, severity, reason, evidence): return {"signal": signal, "severity": severity, "reason": reason, "evidence": evidence}
 def _complete(item): return str(item.get("state") or "").lower() in COMPLETED_STATES
 def _estimate(item): return next((value for value in (item.get("storyPoints"), item.get("effort"), item.get("originalEstimate")) if value is not None), None)
-def _points(item): return float(_estimate(item) or 0)
+def _points(item): return float(next((value for value in (item.get("storyPoints"), item.get("effort")) if value is not None), 0) or 0)
 def _number(value):
     try: return float(value) if value not in (None, "") else None
     except (TypeError, ValueError): return None

@@ -383,13 +383,14 @@ class RepositoryIntelligenceApplicationService:
             for node in graph.nodes:
                 node_type = node.node_type.value
                 graph_counts[node_type] = graph_counts.get(node_type, 0) + 1
-                if node_type in {"Module", "Service", "API", "Test"}:
+                if node_type in {"Module", "Service", "Controller", "Repository", "API", "Test"}:
                     graph_items.setdefault(node_type, []).append(node.to_dict())
         symbol_counts: dict[str, int] = {}
         for symbol in symbols:
             kind = symbol.kind.value
             symbol_counts[kind] = symbol_counts.get(kind, 0) + 1
         jobs = self.agent.list_jobs(repository_id, limit=20)
+        snapshots = list(reversed(self.snapshot_service.list_snapshots(repository_id)))[:8]
         latest_scan = monitoring.get("lastScan") if isinstance(monitoring.get("lastScan"), dict) else {}
         availability = "Available"
         if latest_scan.get("status") == "Failed":
@@ -420,8 +421,19 @@ class RepositoryIntelligenceApplicationService:
             )[:1000],
             "rootFiles": list(snapshot_metadata.get("rootFiles") or [])[:200],
             "services": graph_items.get("Service", [])[:100],
+            "controllers": graph_items.get("Controller", [])[:100],
+            "repositories": graph_items.get("Repository", [])[:100],
             "apis": graph_items.get("API", [])[:100],
             "tests": graph_items.get("Test", [])[:100],
+            "entities": [
+                symbol.to_dict()
+                for symbol in symbols
+                if symbol.kind.value in {"Class", "Interface", "Enum"}
+                and any(token in symbol.name.lower() for token in ("entity", "model", "record", "schema"))
+            ][:100],
+            "topModifiedFiles": _top_modified_files(snapshot_metadata, limit=10),
+            "recentSnapshots": [item.to_dict() for item in snapshots],
+            "syncHistory": [_repository_sync_summary(item) for item in jobs.get("jobs", [])[:10]],
             "symbolsIndexed": len(symbols),
             "symbolCounts": symbol_counts,
             "backgroundJobs": jobs.get("jobs", [])[:20],
@@ -484,3 +496,33 @@ def _repository_health_warnings(repository: Repository, latest_scan: dict, snaps
     if not snapshot:
         warnings.append("No completed repository snapshot is available.")
     return warnings
+
+
+def _top_modified_files(metadata: dict, *, limit: int) -> list[dict]:
+    diff = metadata.get("diff") if isinstance(metadata.get("diff"), dict) else {}
+    output: list[dict] = []
+    for change_type, key in (("Modified", "changed"), ("Added", "added"), ("Renamed", "renamed"), ("Deleted", "deleted")):
+        for raw_path in list(diff.get(key) or []):
+            if isinstance(raw_path, (list, tuple)):
+                path = " -> ".join(str(item) for item in raw_path if str(item))
+            else:
+                path = str(raw_path or "")
+            if path:
+                output.append({"path": path, "changeType": change_type})
+            if len(output) >= limit:
+                return output
+    return output
+
+
+def _repository_sync_summary(job: dict) -> dict:
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    return {
+        "jobId": str(job.get("jobId") or ""),
+        "status": str(job.get("status") or "Pending"),
+        "trigger": str(payload.get("trigger") or job.get("source") or "Manual"),
+        "mode": str(payload.get("mode") or ""),
+        "requestedAt": str(job.get("createdAt") or job.get("requestedAt") or ""),
+        "completedAt": str(job.get("completedAt") or job.get("updatedAt") or ""),
+        "durationMs": int(job.get("durationMs") or 0),
+        "error": str(job.get("error") or ""),
+    }

@@ -21,7 +21,7 @@ class WorkspacePreferencesRequest(BaseModel):
     command_palette_enabled: bool | None = Field(default=None, alias="commandPaletteEnabled")
 
 
-def build_workspace_router(service: Any) -> APIRouter:
+def build_workspace_router(service: Any, search_service: Any | None = None) -> APIRouter:
     router = APIRouter(prefix="/workspace", tags=["Engineering Command Center"])
 
     def identity(user_id: str, header_user: str) -> str:
@@ -48,6 +48,10 @@ def build_workspace_router(service: Any) -> APIRouter:
     @router.get("/navigation")
     def navigation(role: str = Query(default="viewer")):
         return service.get_navigation(role)
+
+    @router.get("/search")
+    def search(q: str = "", project_id: str = Query(default="", alias="projectId"), limit: int = Query(default=60, ge=1, le=100)):
+        return search_service.search(q, project_id, limit) if search_service else {"query": q, "results": [], "count": 0}
 
     @router.post("/diagnostics")
     def diagnostics(request: dict = Body(...)):

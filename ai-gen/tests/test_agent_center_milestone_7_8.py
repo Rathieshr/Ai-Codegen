@@ -80,6 +80,7 @@ class AgentCenterTests(unittest.TestCase):
         names = {item["name"] for item in result["agents"]}
         self.assertTrue({"Planning Agent", "Repository Agent", "Execution Agent", "Validation Agent", "QA Agent", "Memory Agent", "ADO Agent"}.issubset(names))
         self.assertTrue(all(item["status"] == "Idle" for item in result["agents"]))
+        self.assertTrue(all(item["currentActivity"]["title"] == "No active work" for item in result["agents"]))
 
     def test_running_agent_reports_runtime_queue_health_and_duration(self):
         service = AgentCenterService(orchestrator=Orchestrator([workflow("execution", "Running")]), platform=Platform())
@@ -88,6 +89,9 @@ class AgentCenterTests(unittest.TestCase):
         self.assertEqual("Healthy", agent["health"])
         self.assertEqual(120.0, agent["averageDurationMs"])
         self.assertEqual(1, agent["jobCount"])
+        self.assertEqual("Manual Trigger", agent["currentActivity"]["title"])
+        self.assertEqual("Working", agent["currentActivity"]["step"])
+        self.assertEqual("No execution recorded", agent["lastExecution"]["title"])
 
     def test_failed_agent_is_degraded_and_failed_job_can_retry(self):
         orchestrator = Orchestrator([workflow("qa", "Failed", "failed-workflow")])
@@ -140,8 +144,10 @@ class AgentCenterTests(unittest.TestCase):
     def test_ui_exposes_required_operations(self):
         from pathlib import Path
         source = (Path(__file__).resolve().parents[1] / "azure-devops-extension/src/agentCenter.tsx").read_text()
-        for label in ("View Details", "Retry Failed Job", "Open Activity", "View Logs"):
+        for label in ("View Activity", "View History", "View Logs", "Retry Failed Job", "Diagnostics"):
             self.assertIn(label, source)
+        self.assertNotIn("Run Agent", source)
+        self.assertNotIn("Start Agent", source)
 
 
 if __name__ == "__main__":

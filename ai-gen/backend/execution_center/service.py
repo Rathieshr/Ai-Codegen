@@ -9,15 +9,24 @@ from typing import Any, Callable
 
 STAGES = (
     "Planning",
+    "Planning Pack",
     "Execution Package",
-    "Execution Plan",
-    "Prompt",
+    "Prompt Generation",
     "AI Runtime",
     "Validation",
     "QA",
-    "Memory",
+    "Memory Candidate",
+    "PR Intelligence",
     "Completed",
 )
+
+STAGE_AGENTS = {
+    "Planning": "Planning Agent", "Planning Pack": "Planning Agent",
+    "Execution Package": "Execution Agent", "Prompt Generation": "Execution Agent",
+    "AI Runtime": "Execution Agent", "Validation": "Validation Agent",
+    "QA": "QA Agent", "Memory Candidate": "Memory Agent",
+    "PR Intelligence": "Azure DevOps Agent", "Completed": "Lifecycle Manager",
+}
 
 FAILED_STATUSES = {"failed", "timedout", "timeout", "validationfailed"}
 CANCELLED_STATUSES = {"cancelled", "canceled"}
@@ -38,6 +47,17 @@ def _list(value: Any) -> list[Any]:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _elapsed_ms(start: str, end: str) -> int:
+    if not start or not end:
+        return 0
+    try:
+        left = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        right = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        return max(0, int((right - left).total_seconds() * 1000))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _values(provider: Callable[[], Any]) -> list[dict[str, Any]]:
@@ -190,9 +210,9 @@ class ExecutionCenterService:
         qa = self._related(qa_plans, package_id, session_id, correlation_id)
         related_memory = [item for item in memories if self._matches(item, package_id, session_id, correlation_id)]
         pr = next((item for item in prs if self._matches(item, package_id, session_id, correlation_id)), {})
-        timeline = self._timeline(package, plan, prompt, runtime, validation, qa, related_memory, trace)
+        timeline = self._timeline(package, plan, prompt, runtime, validation, qa, related_memory, pr, trace, correlation_id)
         current = next((item["stage"] for item in timeline if item["status"] in {"Failed", "Cancelled"}), "")
-        current = current or next((item["stage"] for item in timeline if item["status"] == "Active"), "Completed" if timeline[-1]["status"] == "Completed" else "Planning")
+        current = current or next((item["stage"] for item in timeline if item["status"] in {"Active", "Missing", "Not Started"}), "Completed" if timeline[-1]["status"] == "Completed" else "Planning")
         source = _dict(package.get("planningContext"))
         story = _dict(source.get("story"))
         task = _dict(source.get("task"))
@@ -216,6 +236,7 @@ class ExecutionCenterService:
             "qa": self._stage_artifact(qa, "planId", "Not Started"),
             "memory": {"status": self._memory_status(related_memory), "count": len(related_memory), "candidates": related_memory},
             "prCandidate": self._stage_artifact(pr, "candidateId", "Not Generated"),
+            "executionDetails": self._execution_details(prompt, runtime, validation, qa, related_memory, pr),
             "timeline": timeline,
             "lineage": {"packageId": package_id, "planId": _text(plan.get("manifestId")), "promptId": _text(prompt.get("compiledPromptId")), "sessionId": session_id, "correlationId": correlation_id, "repositorySnapshotVersion": _text(runtime.get("repositorySnapshotVersion") or _dict(package.get("metadata")).get("repositorySnapshotVersion"))},
             "correlationId": correlation_id,
@@ -223,21 +244,24 @@ class ExecutionCenterService:
             "updatedAt": updated,
         }
 
-    def _timeline(self, package: dict, plan: dict, prompt: dict, runtime: dict, validation: dict, qa: dict, memories: list[dict], trace: dict) -> list[dict[str, Any]]:
+    def _timeline(self, package: dict, plan: dict, prompt: dict, runtime: dict, validation: dict, qa: dict, memories: list[dict], pr: dict, trace: dict, correlation_id: str) -> list[dict[str, Any]]:
         runtime_status = _text(runtime.get("status")).casefold()
-        exists = [True, bool(package), bool(plan), bool(prompt), bool(runtime), bool(validation), bool(qa), bool(memories)]
-        timestamps = [
-            _text(_dict(package.get("planningContext")).get("approvedAt") or package.get("generatedAt")),
+        planning_context = _dict(package.get("planningContext"))
+        exists = [bool(planning_context or package), bool(plan or planning_context), bool(package), bool(prompt), bool(runtime), bool(validation), bool(qa), bool(memories), bool(pr)]
+        starts = [
+            _text(planning_context.get("approvedAt") or package.get("generatedAt")),
+            _text(plan.get("generatedAt") or planning_context.get("approvedAt") or package.get("generatedAt")),
             _text(package.get("generatedAt") or _dict(package.get("metadata")).get("generatedAt")),
-            _text(plan.get("generatedAt")), _text(prompt.get("compiledAt")), _text(runtime.get("startedAt")),
+            _text(prompt.get("compiledAt")), _text(runtime.get("startedAt")),
             _text(validation.get("decidedAt") or validation.get("generatedAt")), _text(qa.get("generatedAt")),
-            max((_text(item.get("createdAt")) for item in memories), default=""), _text(runtime.get("completedAt") or trace.get("completedAt")),
+            max((_text(item.get("createdAt")) for item in memories), default=""), _text(pr.get("createdAt") or pr.get("generatedAt")),
+            _text(trace.get("completedAt") or runtime.get("completedAt") or pr.get("createdAt") or pr.get("generatedAt")),
         ]
         failure_index = 4 if runtime_status in FAILED_STATUSES | CANCELLED_STATUSES else -1
-        complete = runtime_status in RUNTIME_COMPLETE and bool(validation) and bool(qa) and bool(memories)
+        complete = runtime_status in RUNTIME_COMPLETE and bool(validation) and bool(qa) and bool(memories) and bool(pr)
         result = []
         for index, stage in enumerate(STAGES):
-            if index == 8:
+            if index == len(STAGES) - 1:
                 status = "Completed" if complete else "Not Started"
             elif index == failure_index:
                 status = "Cancelled" if runtime_status in CANCELLED_STATUSES else "Failed"
@@ -252,22 +276,73 @@ class ExecutionCenterService:
                 status = "Active"
             else:
                 status = "Not Started"
-            result.append({"stage": stage, "status": status, "at": timestamps[index], "detail": self._stage_detail(stage, package, plan, prompt, runtime, validation, qa, memories)})
+            started_at = starts[index]
+            next_start = next((value for value in starts[index + 1:] if value), "")
+            ended_at = _text(runtime.get("completedAt")) if stage == "AI Runtime" else started_at if status in {"Failed", "Cancelled", "Skipped"} else next_start if status == "Completed" else ""
+            result.append({
+                "stage": stage, "status": status, "startTime": started_at, "endTime": ended_at,
+                "durationMs": _elapsed_ms(started_at, ended_at), "detail": self._stage_detail(stage, package, plan, prompt, runtime, validation, qa, memories, pr),
+                "logs": self._stage_logs(trace, stage), "diagnostics": self._stage_diagnostics(stage, package, plan, prompt, runtime, validation, qa, memories, pr, trace),
+                "responsibleAgent": STAGE_AGENTS[stage], "correlationId": correlation_id,
+                "retryable": stage == "AI Runtime" and status in {"Failed", "Cancelled"} and bool(_dict(runtime.get("diagnostics")).get("recoverable") or runtime.get("recoverable")),
+            })
         return result
 
     @staticmethod
-    def _stage_detail(stage: str, package: dict, plan: dict, prompt: dict, runtime: dict, validation: dict, qa: dict, memories: list[dict]) -> str:
+    def _stage_detail(stage: str, package: dict, plan: dict, prompt: dict, runtime: dict, validation: dict, qa: dict, memories: list[dict], pr: dict) -> str:
         return {
             "Planning": "Approved source artifact" if package else "Waiting for approved Story or Task",
+            "Planning Pack": _text(plan.get("manifestId")) or "Planning context not prepared",
             "Execution Package": _text(package.get("packageId")) or "Package not built",
-            "Execution Plan": _text(plan.get("manifestId")) or "Plan not generated",
-            "Prompt": _text(prompt.get("compiledPromptId")) or "Prompt not compiled",
+            "Prompt Generation": _text(prompt.get("compiledPromptId")) or "Prompt not compiled",
             "AI Runtime": _text(runtime.get("status")) or "Runtime not started",
             "Validation": _text(validation.get("decision") or validation.get("status")) or "Validation not run",
             "QA": _text(qa.get("decision") or qa.get("status")) or "QA not run",
-            "Memory": f"{len(memories)} candidate(s)" if memories else "No memory candidate",
-            "Completed": "Execution lifecycle complete" if memories else "Downstream work remains",
+            "Memory Candidate": f"{len(memories)} candidate(s)" if memories else "No memory candidate",
+            "PR Intelligence": _text(pr.get("summary") or pr.get("candidateId")) or "PR intelligence not generated",
+            "Completed": "Execution lifecycle complete" if pr else "Downstream work remains",
         }[stage]
+
+    @staticmethod
+    def _stage_logs(trace: dict, stage: str) -> list[dict[str, str]]:
+        aliases = {
+            "Prompt Generation": {"Prompt Generated"},
+            "AI Runtime": {"Execution Started", "Provider Called", "Response Received", "Interpreted", "Engineering Diff"},
+            "Validation": {"Validation"}, "QA": {"QA"}, "Memory Candidate": {"Memory"}, "Completed": {"Completed"},
+        }
+        names = aliases.get(stage, set())
+        return [
+            {"event": _text(event.get("eventType")), "at": _text(event.get("at"))}
+            for item in _list(trace.get("timeline")) if _text(item.get("stage")) in names
+            for event in _list(item.get("events"))
+        ][:20]
+
+    @staticmethod
+    def _stage_diagnostics(stage: str, package: dict, plan: dict, prompt: dict, runtime: dict, validation: dict, qa: dict, memories: list[dict], pr: dict, trace: dict) -> dict[str, Any]:
+        values = {
+            "Planning": {"sourceArtifact": _dict(package.get("planningContext")).get("story") or _dict(package.get("planningContext")).get("task") or {}},
+            "Planning Pack": _dict(plan.get("diagnostics")), "Execution Package": _dict(package.get("diagnostics")),
+            "Prompt Generation": _dict(prompt.get("diagnostics")), "AI Runtime": {**_dict(runtime.get("diagnostics")), "metrics": _dict(trace.get("metrics"))},
+            "Validation": _dict(validation.get("diagnostics")) or {"decision": validation.get("decision"), "reason": validation.get("reason")},
+            "QA": _dict(qa.get("diagnostics")) or {"decision": qa.get("decision"), "reason": qa.get("reason")},
+            "Memory Candidate": {"candidateCount": len(memories), "candidateIds": [_text(item.get("candidateId")) for item in memories]},
+            "PR Intelligence": _dict(pr.get("diagnostics")) or {"candidateId": pr.get("candidateId"), "confidence": pr.get("confidence")},
+            "Completed": {"traceStatus": trace.get("status"), "durationMs": trace.get("durationMs")},
+        }
+        return _dict(values.get(stage))
+
+    @staticmethod
+    def _execution_details(prompt: dict, runtime: dict, validation: dict, qa: dict, memories: list[dict], pr: dict) -> dict[str, Any]:
+        validation_data = _dict(validation.get("data")) or validation
+        qa_data = _dict(qa.get("data")) or qa
+        files = _list(pr.get("filesChanged")) or _list(validation_data.get("changedFiles"))
+        return {
+            "promptUsed": {"id": _text(prompt.get("compiledPromptId")), "sections": _list(prompt.get("sections")), "warnings": _list(prompt.get("warnings"))},
+            "provider": _text(runtime.get("provider")), "model": _text(runtime.get("model")), "filesChanged": files,
+            "validationScore": validation_data.get("validationScore") or validation_data.get("acceptanceCoverageScore") or validation_data.get("score"),
+            "qaSummary": _text(qa_data.get("summary") or qa_data.get("reason") or qa.get("summary")),
+            "prSummary": _text(pr.get("summary")), "memoryCandidate": memories[0] if memories else {},
+        }
 
     @staticmethod
     def _artifact(identifier: str, status: str, generated_at: Any, value: dict) -> dict[str, Any]:

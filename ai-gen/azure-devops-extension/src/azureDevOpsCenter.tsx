@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 type Warning = { code: string; message: string };
-type WorkItem = { workItemId: string; title: string; type: string; state: string; assignedTo: string; iterationPath: string; storyPoints?: number; blocked: boolean; recommendationCount: number; webUrl: string };
+type WorkItem = { workItemId: string; title: string; type: string; state: string; assignedTo: string; iterationPath: string; storyPoints?: number; effort?: number; originalEstimate?: number; remainingWork?: number; completedWork?: number; blocked: boolean; recommendationCount: number; webUrl: string };
 type PullRequest = { pullRequestId: string; title: string; status: string; createdBy: string; sourceBranch: string; targetBranch: string; webUrl: string; intelligenceStatus: string; missingTests: number; acceptanceCoverage?: number };
 type Recommendation = { recommendationId: string; workItemId: string; type: string; status: string; title: string; confidence?: number; actionable: boolean };
 type ActionPack = { packId: string; trigger: string; status: string; actionable: boolean; expiresAt: string };
@@ -36,10 +36,14 @@ export function AzureDevOpsCenter({
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { void load(); }, [baseUrl, projectId]);
+  useEffect(() => {
+    void load();
+    const refresh = window.setInterval(() => void load(true), 30000);
+    return () => window.clearInterval(refresh);
+  }, [baseUrl, projectId]);
 
-  async function load() {
-    setLoading(true);
+  async function load(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
       const [summary, work, prs] = await Promise.all([
@@ -49,7 +53,7 @@ export function AzureDevOpsCenter({
       ]);
       setDashboard(summary); setWorkItems(work.items || []); setPullRequests(prs.items || []);
     } catch (error) { onError?.(error instanceof Error ? error.message : String(error)); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }
 
   const visibleWorkItems = useMemo(() => filter(workItems, search, (item) => `${item.workItemId} ${item.title} ${item.type} ${item.state}`), [workItems, search]);
@@ -96,16 +100,16 @@ function SprintView({ sprint, burndown }: { sprint: Sprint; burndown: Array<Reco
   if (sprint.status === 'NoSprint' || !Object.keys(sprint.iteration || {}).length) return <Empty title="No current sprint" detail={sprint.message || 'No current sprint is synchronized for this project.'} />;
   const metrics = sprint.metrics || {};
   const planned = metrics.plannedScope || {}; const completed = metrics.completedScope || {}; const remaining = metrics.remainingScope || {};
-  const maxRemaining = Math.max(1, ...burndown.map((point) => Number(point.remainingItems ?? point.remaining ?? 0)));
+  const maxRemaining = Math.max(1, ...burndown.map((point) => Number(point.remainingItemCount ?? point.remainingItems ?? point.remaining ?? 0)));
   return <div className="ado-sprint-view">
     <section className="ado-sprint-overview"><div><span>Current Sprint</span><h3>{sprintName(sprint)}</h3><p>{String(sprint.forecast?.status || 'Forecast unavailable')}</p></div><AdoStatus value={String(sprint.health || 'Unknown')} /></section>
-    <div className="ado-sprint-metrics"><Metric label="Planned" value={planned.itemCount || 0} detail={`${planned.storyPoints || 0} points`} /><Metric label="Completed" value={completed.itemCount || 0} detail={`${completed.storyPoints || 0} points`} /><Metric label="Remaining" value={remaining.itemCount || 0} detail={`${remaining.storyPoints || 0} points`} /><Metric label="Confidence" value={`${sprint.completionConfidence?.score || 0}%`} detail={sprint.completionConfidence?.level || 'Low'} /></div>
-    <section className="ado-burndown"><div><h3>Burndown</h3><span>{burndown.length ? `${burndown.length} synchronized points` : 'No burndown data'}</span></div>{burndown.length ? <div className="ado-burndown-bars" aria-label="Sprint burndown">{burndown.map((point, index) => { const value = Number(point.remainingItems ?? point.remaining ?? 0); return <div key={String(point.date || index)} title={`${point.date || `Point ${index + 1}`}: ${value}`}><span style={{ height: `${Math.max(4, (value / maxRemaining) * 100)}%` }} /><small>{shortDate(String(point.date || index + 1))}</small></div>; })}</div> : <Empty title="Burndown unavailable" detail="Synchronize iteration history to calculate sprint burndown." />}</section>
+    <div className="ado-sprint-metrics"><Metric label="Planned" value={planned.itemCount || 0} detail={scopeEstimateDetail(planned)} /><Metric label="Completed" value={completed.itemCount || 0} detail={scopeEstimateDetail(completed)} /><Metric label="Remaining" value={remaining.itemCount || 0} detail={scopeEstimateDetail(remaining)} /><Metric label="Confidence" value={`${sprint.completionConfidence?.score || 0}%`} detail={sprint.completionConfidence?.level || 'Low'} /></div>
+    <section className="ado-burndown"><div><h3>Burndown</h3><span>{burndown.length ? `${burndown.length} sprint days` : 'No burndown data'}</span></div>{burndown.length ? <div className="ado-burndown-bars" aria-label="Sprint burndown">{burndown.map((point, index) => { const value = Number(point.remainingItemCount ?? point.remainingItems ?? point.remaining ?? 0); return <div key={String(point.date || index)} title={`${point.date || `Point ${index + 1}`}: ${value} remaining`}><span style={{ height: `${Math.max(4, (value / maxRemaining) * 100)}%` }} /><small>{shortDate(String(point.date || index + 1))}</small></div>; })}</div> : <Empty title="Burndown unavailable" detail={burndownUnavailableReason(sprint, planned, completed)} />}</section>
   </div>;
 }
 
 function ListView({ title, search, setSearch, count, children }: { title: string; search: string; setSearch: (value: string) => void; count: number; children: React.ReactNode }) { return <section className="ado-list-view"><header><div><h3>{title}</h3><span>{count} visible</span></div><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}`} aria-label={`Search ${title}`} /></header><div className="ado-card-grid">{children}</div></section>; }
-function WorkItemCard({ item }: { item: WorkItem }) { return <article className="ado-item-card"><div><span>{item.type} #{item.workItemId}</span><AdoStatus value={item.blocked ? 'Blocked' : item.state} /></div><h4>{item.title}</h4><dl><div><dt>Owner</dt><dd>{item.assignedTo || 'Unassigned'}</dd></div><div><dt>Iteration</dt><dd>{item.iterationPath || 'Not assigned'}</dd></div><div><dt>Points</dt><dd>{item.storyPoints ?? 'Not estimated'}</dd></div><div><dt>Recommendations</dt><dd>{item.recommendationCount}</dd></div></dl><ExternalButton label="Open Work Item" url={item.webUrl} /></article>; }
+function WorkItemCard({ item }: { item: WorkItem }) { const estimate = workItemEstimate(item); return <article className="ado-item-card"><div><span>{item.type} #{item.workItemId}</span><AdoStatus value={item.blocked ? 'Blocked' : item.state} /></div><h4>{item.title}</h4><dl><div><dt>Owner</dt><dd>{item.assignedTo || 'Unassigned'}</dd></div><div><dt>Iteration</dt><dd>{item.iterationPath || 'Not assigned'}</dd></div><div><dt>{estimate.label}</dt><dd>{estimate.value}</dd></div><div><dt>Recommendations</dt><dd>{item.recommendationCount}</dd></div></dl><ExternalButton label="Open Work Item" url={item.webUrl} /></article>; }
 function PullRequestCard({ item }: { item: PullRequest }) { return <article className="ado-item-card"><div><span>PR #{item.pullRequestId}</span><AdoStatus value={item.intelligenceStatus || item.status} /></div><h4>{item.title}</h4><dl><div><dt>Author</dt><dd>{item.createdBy || 'Not recorded'}</dd></div><div><dt>Branch</dt><dd>{cleanBranch(item.sourceBranch)} → {cleanBranch(item.targetBranch)}</dd></div><div><dt>Acceptance</dt><dd>{item.acceptanceCoverage == null ? 'Not analyzed' : `${item.acceptanceCoverage}%`}</dd></div><div><dt>Missing tests</dt><dd>{item.missingTests}</dd></div></dl><ExternalButton label="Open PR" url={item.webUrl} /></article>; }
 
 function RecommendationView({ items, onReview }: { items: Recommendation[]; onReview: () => void }) { return <section className="ado-list-view"><header><div><h3>Recommendations</h3><span>{items.length} available</span></div>{items.length ? <button type="button" onClick={onReview}>Review Recommendation</button> : null}</header><div className="ado-card-grid">{items.length ? items.map((item) => <article className="ado-item-card" key={item.recommendationId}><div><span>{item.type}</span><AdoStatus value={item.status} /></div><h4>{item.title || `Recommendation for #${item.workItemId}`}</h4><p>Work Item #{item.workItemId} · {item.confidence == null ? 'Confidence not scored' : `${item.confidence}% confidence`}</p><button type="button" onClick={onReview}>Review Recommendation</button></article>) : <Empty title="No recommendations" detail="Work item analysis recommendations will appear here for review." />}</div></section>; }
@@ -131,6 +135,26 @@ function sprintName(sprint: Sprint) { return String(sprint.iteration?.name || sp
 function metricValue(value: unknown) { return value == null ? '—' : String(value); }
 function velocityDetail(value?: Record<string, any>) { return value?.historicalAverageStoryPoints == null ? 'History unavailable' : `${value.historicalAverageStoryPoints} historical average`; }
 function riskLabel(items?: Array<Record<string, any>>) { const first = items?.[0]; return first ? String(first.severity || first.level || 'Needs attention') : 'No active risks'; }
+function burndownUnavailableReason(sprint: Sprint, planned: Record<string, any>, completed: Record<string, any>) {
+  const iteration = sprint.iteration || {};
+  if (!iteration.startDate || !iteration.finishDate) return 'Set start and end dates for this Azure DevOps iteration, then synchronize again.';
+  if (Number(planned.storyPoints || 0) === 0 && Number(planned.unestimatedItemCount || 0) > 0) return `${planned.unestimatedItemCount} sprint items have no Story Points or Effort. Add estimates to enable point-based reporting.`;
+  if (Number(completed.itemCount || 0) === 0) return 'No sprint work is completed yet. Burndown and forecast confidence will improve after state changes are synchronized.';
+  return 'Sprint history is not sufficient to calculate burndown yet.';
+}
+function workItemEstimate(item: WorkItem) {
+  if (item.storyPoints != null) return { label: 'Story Points', value: item.storyPoints };
+  if (item.effort != null) return { label: 'Effort', value: item.effort };
+  if (item.originalEstimate != null) return { label: 'Task Estimate', value: `${item.originalEstimate}h` };
+  if (item.remainingWork != null) return { label: 'Remaining Work', value: `${item.remainingWork}h` };
+  return { label: 'Estimate', value: 'Not estimated' };
+}
+function scopeEstimateDetail(scope: Record<string, any>) {
+  const parts = [`${scope.storyPoints || 0} points`];
+  if (Number(scope.taskEstimateHours || 0) > 0) parts.push(`${scope.taskEstimateHours}h tasks`);
+  if (Number(scope.remainingWorkHours || 0) > 0) parts.push(`${scope.remainingWorkHours}h remaining`);
+  return parts.join(' · ');
+}
 function cleanBranch(value: string) { return value.replace(/^refs\/heads\//, '') || 'Not recorded'; }
 function shortDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(); }

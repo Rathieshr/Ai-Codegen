@@ -47,7 +47,14 @@ type Props = {
   children: ReactNode;
   onNavigate: (item: WorkspaceNavigationItem) => void;
   onPreferencesChange: (changes: Partial<WorkspacePreferences>) => void;
+  onSearch?: (query: string) => Promise<CommandPaletteResult[]>;
+  onCommand?: (commandId: string) => void;
 };
+
+export type CommandPaletteResult = { id: string; category: string; title: string; subtitle: string; route: string; entityId?: string; score?: number };
+type PaletteEntry = CommandPaletteResult & { commandId?: string };
+const EMPTY_SEARCH = async (): Promise<CommandPaletteResult[]> => [];
+const NOOP_COMMAND = () => undefined;
 
 const FALLBACK_NAVIGATION: WorkspaceNavigationItem[] = [
   { id: 'overview', label: 'Overview', target: 'overview', icon: 'O', enabled: true },
@@ -83,20 +90,28 @@ export function EngineeringCommandCenterShell({
   children,
   onNavigate,
   onPreferencesChange,
+  onSearch = EMPTY_SEARCH,
+  onCommand = NOOP_COMMAND,
 }: Props) {
   const preferences = workspace?.preferences || FALLBACK_PREFERENCES;
   const navigation = workspace?.navigation?.length ? workspace.navigation : fallbackNavigation(roleLabel);
-  const [search, setSearch] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const [remoteResults, setRemoteResults] = useState<CommandPaletteResult[]>([]);
+  const [paletteLoading, setPaletteLoading] = useState(false);
+  const [activeResult, setActiveResult] = useState(0);
+  const [recentIds, setRecentIds] = useState<string[]>(() => readStoredList('hei.palette.recent'));
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() => readStoredList('hei.palette.pinned'));
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const activeItem = navigation.find((item) => item.id === activeNavigationId) || navigation[0];
   const availableItems = useMemo(() => navigation.filter((item) => item.enabled), [navigation]);
-  const searchResults = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return [];
-    return navigation.filter((item) => item.label.toLowerCase().includes(query)).slice(0, 6);
-  }, [navigation, search]);
+  const commands = useMemo(() => buildCommands(navigation, activeNavigationId), [navigation, activeNavigationId]);
+  const paletteResults = useMemo(() => {
+    const query = paletteQuery.trim();
+    const local = query ? commands.filter((item) => fuzzyMatch(query, `${item.title} ${item.subtitle}`)) : suggestedCommands(commands, pinnedIds, recentIds, activeNavigationId);
+    return dedupeEntries([...local, ...remoteResults]).slice(0, 80);
+  }, [commands, paletteQuery, remoteResults, pinnedIds, recentIds, activeNavigationId]);
 
   useEffect(() => {
     document.documentElement.dataset.heiTheme = preferences.theme;
@@ -107,27 +122,58 @@ export function EngineeringCommandCenterShell({
     const handler = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        setPaletteOpen((value) => !value);
+        setPaletteOpen(true);
       }
       if (event.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
         event.preventDefault();
-        searchRef.current?.focus();
+        setPaletteOpen(true);
       }
       if (event.key === 'Escape') {
         setPaletteOpen(false);
         setNotificationsOpen(false);
-        setSearch('');
+        setPaletteQuery('');
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  useEffect(() => {
+    if (!paletteOpen) return;
+    window.setTimeout(() => searchRef.current?.focus(), 0);
+  }, [paletteOpen]);
+
+  useEffect(() => {
+    if (!paletteOpen || paletteQuery.trim().length < 2) { setRemoteResults([]); setPaletteLoading(false); return; }
+    let active = true;
+    setPaletteLoading(true);
+    const timer = window.setTimeout(() => void onSearch(paletteQuery.trim()).then((items) => { if (active) setRemoteResults(items); }).catch(() => { if (active) setRemoteResults([]); }).finally(() => { if (active) setPaletteLoading(false); }), 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [paletteOpen, paletteQuery, onSearch]);
+
+  useEffect(() => { setActiveResult(0); }, [paletteQuery, paletteResults.length]);
+
   function select(item: WorkspaceNavigationItem) {
     if (!item.enabled) return;
     onNavigate(item);
-    setSearch('');
+    setPaletteQuery('');
     setPaletteOpen(false);
+  }
+
+  function runEntry(entry: PaletteEntry) {
+    if (entry.commandId) onCommand(entry.commandId);
+    else {
+      const target = navigation.find((item) => item.id === entry.route);
+      if (target) onNavigate(target);
+    }
+    const next = [entry.id, ...recentIds.filter((id) => id !== entry.id)].slice(0, 10);
+    setRecentIds(next); storeList('hei.palette.recent', next);
+    setPaletteOpen(false); setPaletteQuery(''); setRemoteResults([]);
+  }
+
+  function togglePin(entry: PaletteEntry) {
+    const next = pinnedIds.includes(entry.id) ? pinnedIds.filter((id) => id !== entry.id) : [entry.id, ...pinnedIds].slice(0, 12);
+    setPinnedIds(next); storeList('hei.palette.pinned', next);
   }
 
   return (
@@ -143,27 +189,9 @@ export function EngineeringCommandCenterShell({
             <span>Engineering Command Center</span>
           </div>
         </div>
-        <div className="hei-global-search" role="search">
-          <label htmlFor="hei-global-search">Global search</label>
-          <input
-            id="hei-global-search"
-            ref={searchRef}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search workspaces and commands"
-            aria-label="Search HEI workspaces and commands"
-          />
-          <kbd>Ctrl K</kbd>
-          {searchResults.length ? (
-            <div className="hei-search-results" role="listbox">
-              {searchResults.map((item) => (
-                <button key={item.id} type="button" onClick={() => select(item)} disabled={!item.enabled}>
-                  <span>{item.label}</span><small>{item.enabled ? 'Open workspace' : 'Future'}</small>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <button className="hei-global-search" type="button" onClick={() => setPaletteOpen(true)} aria-label="Search HEI and open command palette">
+          <span>Search HEI or run a command</span><kbd>{isMacPlatform() ? 'Cmd K' : 'Ctrl K'}</kbd>
+        </button>
         <div className="hei-command-header-actions">
           <label className="hei-workspace-switcher">
             <span>Workspace</span>
@@ -261,12 +289,26 @@ export function EngineeringCommandCenterShell({
       {paletteOpen ? (
         <div className="hei-command-palette-backdrop" role="presentation" onMouseDown={() => setPaletteOpen(false)}>
           <section className="hei-command-palette" role="dialog" aria-modal="true" aria-label="HEI command palette" onMouseDown={(event) => event.stopPropagation()}>
-            <div><strong>Command Palette</strong><button type="button" onClick={() => setPaletteOpen(false)} aria-label="Close command palette">Close</button></div>
-            {navigation.map((item) => (
-              <button key={item.id} type="button" onClick={() => select(item)} disabled={!item.enabled}>
-                <span>Open {item.label}</span><small>{item.future ? 'Future workspace' : item.lazy ? 'Loads on selection' : 'Available now'}</small>
-              </button>
-            ))}
+            <div className="hei-palette-search">
+              <input ref={searchRef} value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder="Search commands, work items, files, APIs, memory..." aria-label="Search the HEI engineering platform" onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') { event.preventDefault(); setActiveResult((value) => Math.min(value + 1, Math.max(0, paletteResults.length - 1))); }
+                if (event.key === 'ArrowUp') { event.preventDefault(); setActiveResult((value) => Math.max(0, value - 1)); }
+                if (event.key === 'Enter' && paletteResults[activeResult]) { event.preventDefault(); runEntry(paletteResults[activeResult]); }
+              }} />
+              <kbd>ESC</kbd>
+            </div>
+            <div className="hei-palette-context"><span>{paletteQuery ? `${paletteResults.length} results` : `Suggested for ${activeItem?.label || 'HEI'}`}</span>{paletteLoading ? <small>Searching platform...</small> : <small>↑↓ navigate · Enter open · Pin to keep</small>}</div>
+            <div className="hei-palette-results" role="listbox" aria-label="Command palette results">
+              {paletteResults.map((entry, index) => (
+                <div className={`hei-palette-result ${index === activeResult ? 'active' : ''}`} key={entry.id} role="option" aria-selected={index === activeResult}>
+                  <button type="button" onMouseEnter={() => setActiveResult(index)} onClick={() => runEntry(entry)}>
+                    <span><small>{entry.category}</small><strong>{entry.title}</strong></span><em>{entry.subtitle}</em>
+                  </button>
+                  <button className="hei-palette-pin" type="button" onClick={() => togglePin(entry)} aria-label={`${pinnedIds.includes(entry.id) ? 'Unpin' : 'Pin'} ${entry.title}`}>{pinnedIds.includes(entry.id) ? 'Pinned' : 'Pin'}</button>
+                </div>
+              ))}
+              {!paletteResults.length && !paletteLoading ? <div className="hei-palette-empty"><strong>No matching engineering context</strong><span>Try a work item ID, service, file, repository, or command.</span></div> : null}
+            </div>
           </section>
         </div>
       ) : null}
@@ -289,3 +331,30 @@ function fallbackNavigation(roleLabel: string): WorkspaceNavigationItem[] {
     return true;
   });
 }
+
+function buildCommands(navigation: WorkspaceNavigationItem[], activeId: string): PaletteEntry[] {
+  const routes = navigation.filter((item) => item.enabled).map((item) => ({ id: `command:open-${item.id}`, category: item.id === 'settings' ? 'Settings' : 'Commands', title: item.id === 'agents' ? 'Open Agent Center' : `Open ${item.label}`, subtitle: item.id === activeId ? 'Current workspace' : 'Navigate workspace', route: item.id, commandId: `open:${item.id}` }));
+  const quick: PaletteEntry[] = [
+    { id: 'command:new-requirement', category: 'Commands', title: 'New Requirement', subtitle: 'Start an engineering requirement', route: 'new-requirement', commandId: 'open:new-requirement' },
+    { id: 'command:sync-repository', category: 'Commands', title: 'Sync Repository', subtitle: 'Run repository synchronization', route: 'repository', commandId: 'sync-repository' },
+    { id: 'command:open-planning', category: 'Commands', title: 'Open Planning', subtitle: 'Requirements, recommendations, and approvals', route: 'planning', commandId: 'open:planning' },
+    { id: 'command:open-execution', category: 'Commands', title: 'Open Execution', subtitle: 'Implementation packages and runtime', route: 'execution', commandId: 'open:execution' },
+    { id: 'command:open-activity', category: 'Commands', title: 'Open Activity', subtitle: 'Engineering activity and correlation traces', route: 'activity', commandId: 'open:activity' },
+    { id: 'command:refresh-dashboard', category: 'Commands', title: 'Refresh Dashboard', subtitle: 'Reload operational engineering state', route: 'overview', commandId: 'refresh-dashboard' },
+    { id: 'command:generate-planning-pack', category: 'Commands', title: 'Generate Planning Pack', subtitle: 'Open requirement intake', route: 'new-requirement', commandId: 'open:new-requirement' },
+    { id: 'command:open-repository', category: 'Commands', title: 'Open Repository', subtitle: 'Repository snapshots and engineering graph', route: 'repository', commandId: 'open:repository' },
+    { id: 'command:current-sprint', category: 'Commands', title: 'Open Current Sprint', subtitle: 'Azure DevOps sprint intelligence', route: 'azure-devops', commandId: 'open:azure-devops' },
+    { id: 'command:open-agents', category: 'Commands', title: 'Open Agent Center', subtitle: 'Agent jobs, health, and failures', route: 'agents', commandId: 'open:agents' },
+  ];
+  return dedupeEntries([...quick, ...routes]);
+}
+
+function suggestedCommands(items: PaletteEntry[], pinned: string[], recent: string[], activeId: string) {
+  const priority = [...pinned, ...recent, `command:open-${activeId}`];
+  return [...priority.map((id) => items.find((item) => item.id === id)).filter(Boolean) as PaletteEntry[], ...items].filter((item, index, values) => values.findIndex((value) => value.id === item.id) === index).slice(0, 14);
+}
+function dedupeEntries(items: PaletteEntry[]) { return items.filter((item, index) => items.findIndex((value) => value.id === item.id) === index); }
+function fuzzyMatch(query: string, value: string) { let index = 0; const source = value.toLowerCase(); for (const character of query.toLowerCase()) { index = source.indexOf(character, index); if (index < 0) return false; index += 1; } return true; }
+function readStoredList(key: string): string[] { try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : []; } catch { return []; } }
+function storeList(key: string, value: string[]) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Storage is optional in restricted hosts. */ } }
+function isMacPlatform() { return typeof navigator !== 'undefined' && String(navigator.platform || navigator.userAgent || '').toLowerCase().includes('mac'); }

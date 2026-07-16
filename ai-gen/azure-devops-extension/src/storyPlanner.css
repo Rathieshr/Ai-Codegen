@@ -177,34 +177,23 @@ body {
 }
 
 .hei-global-search {
-  position: relative;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
-}
-
-.hei-global-search > label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-
-.hei-global-search input {
   width: 100%;
-  min-width: 0;
   height: 36px;
-  padding: 0 62px 0 12px;
+  padding: 0 8px 0 12px;
   border: 1px solid var(--hei-border);
   border-radius: 6px;
   background: var(--hei-surface-subtle);
   color: var(--hei-text);
+  text-align: left;
 }
 
 .hei-global-search kbd {
-  position: absolute;
-  right: 8px;
+  flex: 0 0 auto;
   border: 1px solid var(--hei-border);
   border-radius: 4px;
   padding: 2px 5px;
@@ -515,7 +504,7 @@ body {
 .hei-command-palette {
   width: min(620px, calc(100vw - 28px));
   max-height: 70vh;
-  overflow: auto;
+  overflow: hidden;
   display: grid;
   gap: 3px;
   padding: 10px;
@@ -525,7 +514,8 @@ body {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
 }
 
-.hei-command-palette > div {
+.hei-palette-search,
+.hei-palette-context {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -533,10 +523,86 @@ body {
   border-bottom: 1px solid var(--hei-border-soft);
 }
 
-.hei-command-palette > div button {
+.hei-palette-search input {
+  flex: 1;
+  min-width: 0;
   border: 0;
   background: transparent;
   color: var(--hei-text);
+  font-size: 16px;
+}
+
+.hei-palette-search kbd,
+.hei-palette-context small {
+  color: var(--hei-muted);
+}
+
+.hei-palette-results {
+  max-height: calc(70vh - 95px);
+  overflow: auto;
+}
+
+.hei-palette-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: 5px;
+}
+
+.hei-palette-result.active {
+  background: var(--hei-surface-subtle);
+  box-shadow: inset 3px 0 var(--hei-blue);
+}
+
+.hei-palette-result > button {
+  border: 0;
+  background: transparent;
+  color: var(--hei-text);
+}
+
+.hei-palette-result > button:first-child {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(170px, 0.7fr) minmax(160px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.hei-palette-result span {
+  display: grid;
+  min-width: 0;
+}
+
+.hei-palette-result small,
+.hei-palette-result em {
+  color: var(--hei-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.hei-palette-result strong,
+.hei-palette-result em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hei-palette-pin {
+  margin-right: 7px;
+  padding: 5px 7px;
+  border: 1px solid var(--hei-border) !important;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.hei-palette-empty {
+  display: grid;
+  gap: 4px;
+  padding: 22px 10px;
+  color: var(--hei-muted);
+  text-align: center;
 }
 
 [data-hei-density='compact'] .hei-command-header {
@@ -889,13 +955,198 @@ body {
   color: var(--hei-muted);
 }
 
+.hei-morning-hero {
+  padding-block: 18px;
+}
+
+.hei-morning-hero h2 {
+  font-size: 24px;
+}
+
+.hei-todays-focus {
+  display: grid;
+  gap: 9px;
+}
+
+.hei-morning-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hei-morning-section-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.hei-morning-section-heading span {
+  color: var(--hei-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.hei-morning-section-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.hei-morning-section-heading small {
+  color: var(--hei-muted);
+}
+
+.hei-focus-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.hei-focus-grid > button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  background: var(--hei-surface);
+  color: var(--hei-text);
+  text-align: left;
+}
+
+.hei-focus-grid > button:not(:disabled):hover {
+  border-color: var(--hei-blue);
+  background: var(--hei-surface-subtle);
+}
+
+.hei-focus-grid span,
+.hei-focus-grid small {
+  overflow: hidden;
+  color: var(--hei-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hei-focus-grid strong {
+  overflow: hidden;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hei-morning-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hei-morning-card {
+  min-width: 0;
+  min-height: 150px;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  background: var(--hei-surface);
+}
+
+.hei-morning-card > strong {
+  font-size: 22px;
+}
+
+.hei-morning-card p {
+  margin: 0;
+  color: var(--hei-muted);
+  line-height: 1.4;
+}
+
+.hei-morning-card > button,
+.hei-morning-section-heading > button,
+.hei-quick-actions > button {
+  justify-self: start;
+  padding: 6px 9px;
+  border: 1px solid var(--hei-border);
+  border-radius: 5px;
+  background: var(--hei-surface-subtle);
+  color: var(--hei-text);
+  font-weight: 600;
+}
+
+.hei-morning-card > button:hover,
+.hei-morning-section-heading > button:hover,
+.hei-quick-actions > button:hover {
+  border-color: var(--hei-blue);
+}
+
+.hei-morning-lower-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.5fr);
+  gap: 8px;
+}
+
+.hei-recent-work-row {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: minmax(130px, 0.35fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px;
+  border-top: 1px solid var(--hei-border-soft);
+}
+
+.hei-recent-work-row span,
+.hei-recent-work-row small {
+  color: var(--hei-muted);
+}
+
+.hei-recent-work-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hei-quick-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 7px;
+}
+
+.hei-quick-actions .hei-morning-section-heading {
+  grid-column: 1 / -1;
+  margin-bottom: 3px;
+}
+
+.hei-quick-actions > button {
+  justify-self: stretch;
+  min-height: 34px;
+  text-align: left;
+}
+
+.hei-quick-actions > button.primary {
+  border-color: var(--hei-yellow);
+  background: var(--hei-yellow);
+  color: #171717;
+}
+
 @media (max-width: 1100px) {
   .hei-overview-strip,
-  .hei-widget-grid {
+  .hei-widget-grid,
+  .hei-morning-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .hei-focus-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .hei-overview-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hei-morning-lower-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -908,13 +1159,19 @@ body {
   }
 
   .hei-overview-strip,
-  .hei-widget-grid {
+  .hei-widget-grid,
+  .hei-morning-grid,
+  .hei-focus-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .hei-overview-row,
   .hei-activity-entry {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .hei-recent-work-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .hei-overview-row small,
@@ -2927,10 +3184,73 @@ button.hei-story-list-card {
 .hei-settings-notice { margin: 0; border-left: 3px solid var(--hei-yellow); padding: 7px 9px; background: var(--hei-surface-subtle); }
 .hei-settings-help, .hei-settings-validation { margin: 0; color: var(--hei-muted); font-size: 12px; }
 .hei-settings-validation { border-left: 3px solid var(--hei-border); padding-left: 9px; }
+.hei-administration-center { min-width: 0; }
+.hei-administration-header > div { min-width: 0; }
+.hei-administration-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
+.hei-administration-nav { display: grid; gap: 3px; position: sticky; top: 8px; border: 1px solid var(--hei-border); border-radius: 6px; padding: 6px; background: var(--hei-surface); }
+.hei-administration-nav button { display: grid; gap: 2px; width: 100%; border: 0; border-left: 3px solid transparent; border-radius: 4px; padding: 9px 10px; background: transparent; color: var(--hei-text); text-align: left; }
+.hei-administration-nav button:hover { background: var(--hei-surface-subtle); }
+.hei-administration-nav button.active { border-left-color: var(--hei-yellow); background: var(--hei-surface-subtle); }
+.hei-administration-nav button strong { font-size: 13px; }
+.hei-administration-nav button span { color: var(--hei-muted); font-size: 11px; }
+.hei-administration-content { display: grid; gap: 12px; min-width: 0; }
+.hei-administration-section-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--hei-border); padding: 3px 0 11px; }
+.hei-administration-section-header h3 { margin: 2px 0; font-size: 21px; }
+.hei-administration-section-header p { margin: 0; color: var(--hei-muted); }
+.hei-administration-section-header > div:first-child > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-administration-metadata { display: flex; align-items: center; gap: 10px; text-align: right; }
+.hei-administration-metadata small { color: var(--hei-muted); line-height: 1.35; }
+.hei-administration-metadata small strong { color: var(--hei-text); font-weight: 600; }
+.hei-administration-status { display: inline-flex; width: fit-content; align-items: center; border: 1px solid var(--hei-border); border-radius: 999px; padding: 3px 8px; color: var(--hei-muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.hei-administration-status.status-healthy, .hei-administration-status.status-connected, .hei-administration-status.status-available, .hei-administration-status.status-recorded, .hei-administration-status.status-managedbyhei, .hei-administration-status.status-managedbybackend { border-color: #16875b; color: #16875b; }
+.hei-administration-status.status-degraded, .hei-administration-status.status-needsattention, .hei-administration-status.status-needsconfiguration, .hei-administration-status.status-loading, .hei-administration-status.status-controlled { border-color: #d6a800; color: #8a6500; }
+.hei-administration-status.status-notconnected, .hei-administration-status.status-unavailable, .hei-administration-status.status-failed, .hei-administration-status.status-error { border-color: #c42b1c; color: #c42b1c; }
+.hei-administration-panel { display: grid; gap: 12px; min-width: 0; }
+.hei-administration-summary { display: grid; grid-template-columns: .75fr 1.1fr 1.4fr 1.2fr 1fr; gap: 1px; overflow: hidden; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-border); }
+.hei-administration-summary > div { display: grid; align-content: start; gap: 5px; min-width: 0; padding: 10px; background: var(--hei-surface); }
+.hei-administration-summary span:first-child { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-administration-summary strong { overflow-wrap: anywhere; font-size: 12px; }
+.hei-administration-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.hei-administration-card { display: grid; align-content: start; gap: 8px; min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; padding: 11px; background: var(--hei-surface); }
+.hei-administration-card > div:first-child { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.hei-administration-card h4 { margin: 1px 0; font-size: 15px; }
+.hei-administration-card p { margin: 0; color: var(--hei-muted); }
+.hei-administration-card > div:not(:first-child) { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 7px; border-top: 1px solid var(--hei-border-soft); padding-top: 7px; }
+.hei-administration-card > div:not(:first-child) span { color: var(--hei-muted); }
+.hei-administration-card > div:not(:first-child) strong { overflow-wrap: anywhere; text-align: right; }
+.hei-administration-service-list { display: grid; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
+.hei-administration-service-list > div { display: grid; grid-template-columns: minmax(150px, 1fr) auto 90px; align-items: center; gap: 9px; padding: 9px 11px; }
+.hei-administration-service-list > div + div { border-top: 1px solid var(--hei-border-soft); }
+.hei-administration-service-list > div > span:last-child { color: var(--hei-muted); text-align: right; }
+.hei-administration-warning-list, .hei-administration-policy-list { display: grid; gap: 7px; }
+.hei-administration-warning-list p, .hei-administration-policy-list p { display: grid; grid-template-columns: minmax(110px, .25fr) 1fr; gap: 10px; margin: 0; border-left: 3px solid #d6a800; padding: 8px 10px; background: var(--hei-surface); }
+.hei-administration-policy-list p { display: block; border-left-color: #16875b; }
+.hei-administration-audit-list { display: grid; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
+.hei-administration-audit-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 9px 11px; }
+.hei-administration-audit-list article + article { border-top: 1px solid var(--hei-border-soft); }
+.hei-administration-audit-list article > div { display: flex; align-items: center; gap: 8px; }
+.hei-administration-audit-list article p { margin: 0; color: var(--hei-muted); }
+.hei-administration-audit-list article > span { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--hei-muted); }
+.hei-feature-flag-list { display: grid; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
+.hei-feature-flag-list label { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; }
+.hei-feature-flag-list label + label { border-top: 1px solid var(--hei-border-soft); }
+.hei-feature-flag-list label > span { display: grid; gap: 2px; }
+.hei-feature-flag-list label small { color: var(--hei-muted); }
+.hei-feature-flag-list input { width: 18px; height: 18px; }
+.hei-administration-empty { grid-column: 1 / -1; border: 1px dashed var(--hei-border); border-radius: 6px; padding: 18px; color: var(--hei-muted); text-align: center; }
 @media (max-width: 720px) {
   .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals, .hei-repository-mapping-form { grid-template-columns: 1fr; }
   .hei-requirement-form .wide, .hei-intake-context, .hei-requirement-form > button { grid-column: auto; }
   .hei-requirement-workspace > header { flex-direction: column; }
+  .hei-administration-header, .hei-administration-section-header { flex-direction: column; }
+  .hei-administration-layout { grid-template-columns: 1fr; }
+  .hei-administration-nav { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hei-administration-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hei-administration-metadata { text-align: left; }
+  .hei-administration-service-list > div { grid-template-columns: minmax(0, 1fr) auto; }
+  .hei-administration-service-list > div > span:last-child { grid-column: 1 / -1; text-align: left; }
+  .hei-administration-audit-list article { grid-template-columns: 1fr; }
+  .hei-administration-audit-list article > span { grid-column: auto; grid-row: auto; }
 }
 
 /* Agent Center */
@@ -2965,7 +3285,13 @@ button.hei-story-list-card {
 .agent-signals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .agent-signals > div { display: grid; gap: 2px; min-width: 0; border-radius: 4px; padding: 7px; background: var(--hei-surface-subtle); }
 .agent-signals strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.agent-card-actions { display: flex; gap: 6px; margin-top: auto; }
+.agent-current-activity, .agent-last-execution { display: grid; gap: 3px; min-width: 0; padding: 8px 9px; border-left: 3px solid var(--hei-border); background: var(--hei-surface-subtle); }
+.agent-current-activity { border-left-color: #16875b; }
+.agent-current-activity > span, .agent-last-execution > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.agent-current-activity strong, .agent-last-execution strong, .agent-current-activity small, .agent-last-execution small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-current-activity small, .agent-last-execution small { color: var(--hei-muted); }
+.agent-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.agent-card-actions button { flex: 1 1 auto; }
 .agent-detail { display: grid; gap: 10px; border: 1px solid var(--hei-border); border-radius: 6px; padding: 14px; background: var(--hei-surface); }
 .agent-detail > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .agent-detail > header span:first-child { color: var(--hei-muted); font-size: 10px; text-transform: uppercase; }
@@ -2985,6 +3311,14 @@ button.hei-story-list-card {
 .agent-detail-grid dd { margin: 2px 0 0; overflow-wrap: anywhere; font-weight: 600; }
 .agent-detail-grid details { grid-column: 1 / -1; }
 .agent-detail-grid pre { max-height: 260px; overflow: auto; white-space: pre-wrap; }
+.agent-diagnostics { display: grid; gap: 9px; }
+.agent-diagnostics > div, .agent-diagnostics > section, .agent-diagnostics > details { min-width: 0; padding: 11px; border: 1px solid var(--hei-border); border-radius: 5px; background: var(--hei-surface-subtle); }
+.agent-diagnostics > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.agent-diagnostics > div > div { min-width: 0; }
+.agent-diagnostics dt { color: var(--hei-muted); font-size: 10px; text-transform: uppercase; }
+.agent-diagnostics dd { margin: 3px 0 0; overflow-wrap: anywhere; font-weight: 600; }
+.agent-diagnostics summary { cursor: pointer; font-weight: 700; }
+.agent-diagnostics pre { max-height: 340px; overflow: auto; margin: 9px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-record-list { display: grid; gap: 7px; }
 .agent-record-list > article { display: flex; align-items: flex-start; gap: 9px; border-top: 1px solid var(--hei-border); padding: 9px 0 2px; }
 .agent-record-list > article > div { display: grid; flex: 1; min-width: 0; gap: 2px; }
@@ -2996,10 +3330,10 @@ button.hei-story-list-card {
 @media (max-width: 720px) {
   .agent-center-header, .agent-toolbar { align-items: stretch; flex-direction: column; }
   .agent-center-header > div:last-child { justify-content: space-between; }
-  .agent-summary, .agent-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agent-summary, .agent-detail-grid, .agent-diagnostics > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 440px) {
-  .agent-summary, .agent-detail-grid, .agent-detail-grid dl, .agent-signals { grid-template-columns: 1fr; }
+  .agent-summary, .agent-detail-grid, .agent-detail-grid dl, .agent-signals, .agent-diagnostics > div { grid-template-columns: 1fr; }
   .agent-detail-grid details { grid-column: auto; }
 }
 

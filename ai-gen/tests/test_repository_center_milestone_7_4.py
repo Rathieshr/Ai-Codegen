@@ -13,7 +13,9 @@ from backend.repository_intelligence.domain import (
     EngineeringGraph,
     EngineeringNode,
     EngineeringNodeType,
+    RepositoryParsedSymbol,
     RepositorySnapshot,
+    RepositorySymbolKind,
 )
 
 
@@ -114,6 +116,51 @@ class RepositoryCenterMilestone74Tests(unittest.TestCase):
         self.assertEqual(200, self.client.get(f"/repositories/{repository_id}").status_code)
         self.assertEqual(200, self.client.get(f"/repositories/{repository_id}/health").status_code)
         self.assertEqual(200, self.client.get(f"/repositories/{repository_id}/snapshot").status_code)
+
+    def test_repository_health_exposes_structure_and_operational_history(self) -> None:
+        repository = self.create_repository("Operational Repository", "operational")
+        repository_id = repository["repositoryId"]
+        first = RepositorySnapshot(
+            snapshot_id="snapshot-1", repository_id=repository_id, version=1,
+            total_files=2, modules=["src"], status="Completed",
+        )
+        current = RepositorySnapshot(
+            snapshot_id="snapshot-2", repository_id=repository_id, version=2,
+            total_files=3, modules=["src"], status="Completed",
+            metadata={"diff": {"changed": ["src/FaultService.ts"], "added": ["src/FaultController.ts"]}},
+        )
+        self.module.snapshot_service.save_snapshot(first)
+        self.module.snapshot_service.save_snapshot(current)
+        self.module.graph_service.save_graph(EngineeringGraph(
+            graph_id="graph-structure", repository_id=repository_id,
+            nodes=[
+                EngineeringNode(node_id="module", repository_id=repository_id, node_type=EngineeringNodeType.MODULE, name="Fault"),
+                EngineeringNode(node_id="service", repository_id=repository_id, node_type=EngineeringNodeType.SERVICE, name="FaultService"),
+                EngineeringNode(node_id="controller", repository_id=repository_id, node_type=EngineeringNodeType.CONTROLLER, name="FaultController"),
+                EngineeringNode(node_id="repository", repository_id=repository_id, node_type=EngineeringNodeType.REPOSITORY, name="FaultRepository"),
+                EngineeringNode(node_id="api", repository_id=repository_id, node_type=EngineeringNodeType.API, name="Fault API"),
+                EngineeringNode(node_id="test", repository_id=repository_id, node_type=EngineeringNodeType.TEST, name="FaultServiceTest"),
+            ],
+        ))
+        self.module.parser_service.save_symbols(repository_id, current.snapshot_id, [
+            RepositoryParsedSymbol(
+                symbol_id="entity", repository_id=repository_id, snapshot_id=current.snapshot_id,
+                path="src/FaultEventEntity.ts", kind=RepositorySymbolKind.CLASS, name="FaultEventEntity",
+            ),
+        ])
+
+        payload = self.client.get(f"/repositories/{repository_id}/health").json()
+
+        self.assertEqual("FaultService", payload["services"][0]["name"])
+        self.assertEqual("FaultController", payload["controllers"][0]["name"])
+        self.assertEqual("FaultRepository", payload["repositories"][0]["name"])
+        self.assertEqual("FaultEventEntity", payload["entities"][0]["name"])
+        self.assertEqual(
+            {"path": "src/FaultService.ts", "changeType": "Modified"},
+            payload["topModifiedFiles"][0],
+        )
+        self.assertEqual([2, 1], [item["version"] for item in payload["recentSnapshots"]])
+        self.assertIn("syncHistory", payload)
 
 
 if __name__ == "__main__":

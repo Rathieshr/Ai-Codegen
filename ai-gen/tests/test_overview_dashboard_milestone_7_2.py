@@ -146,6 +146,21 @@ class OverviewDashboardTests(unittest.TestCase):
         self.assertEqual(9, client.get("/dashboard/widgets?projectId=p1").json()["count"])
         self.assertEqual(2, client.get("/dashboard/summary?projectId=p1").json()["repositories"])
 
+    def test_overview_ui_is_a_morning_engineering_workspace(self):
+        source = (Path(__file__).resolve().parents[1] / "azure-devops-extension/src/overviewDashboard.tsx").read_text()
+        for section in (
+            "Today's Work", "Pending Approvals", "Execution Packages Ready", "Repository Status",
+            "Sprint Status", "PR Intelligence", "Validation Status", "Recent Agent Activity",
+            "Notifications", "Memory Suggestions", "Recent Work", "Quick Actions",
+        ):
+            self.assertIn(section, source)
+        for action in (
+            "Continue Last Work", "Create Requirement", "Review Planning", "Open Repository",
+            "Open Execution", "Open PR Intelligence",
+        ):
+            self.assertIn(action, source)
+        self.assertNotIn("overview.widgets.map", source)
+
 
 if __name__ == "__main__":
     unittest.main()

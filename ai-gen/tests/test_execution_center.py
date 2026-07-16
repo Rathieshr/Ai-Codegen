@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -48,11 +49,13 @@ class ExecutionCenterTests(unittest.TestCase):
         self.assertEqual("Completed", result["status"])
         self.assertEqual("Completed", result["currentStage"])
         self.assertEqual(
-            ["Planning", "Execution Package", "Execution Plan", "Prompt", "AI Runtime", "Validation", "QA", "Memory", "Completed"],
+            ["Planning", "Planning Pack", "Execution Package", "Prompt Generation", "AI Runtime", "Validation", "QA", "Memory Candidate", "PR Intelligence", "Completed"],
             [stage["stage"] for stage in result["timeline"]],
         )
         self.assertTrue(all(stage["status"] == "Completed" for stage in result["timeline"]))
+        self.assertTrue(all("responsibleAgent" in stage and "correlationId" in stage and "diagnostics" in stage and "logs" in stage for stage in result["timeline"]))
         self.assertEqual("pr_1", result["prCandidate"]["id"])
+        self.assertEqual("Azure OpenAI", result["executionDetails"]["provider"])
 
     def test_failed_execution_marks_runtime_and_supports_diagnostics(self):
         result = service("Failed").get("pkg_1")
@@ -86,9 +89,19 @@ class ExecutionCenterTests(unittest.TestCase):
         client = TestClient(app)
         self.assertEqual(200, client.get("/execution").status_code)
         self.assertEqual("pkg_1", client.get("/execution/pkg_1").json()["id"])
-        self.assertEqual(9, len(client.get("/execution/pkg_1/timeline").json()["timeline"]))
+        self.assertEqual(10, len(client.get("/execution/pkg_1/timeline").json()["timeline"]))
         self.assertEqual("corr_1", client.get("/execution/pkg_1/diagnostics").json()["correlationId"])
         self.assertEqual(404, client.get("/execution/missing").status_code)
+
+    def test_execution_center_ui_exposes_observable_lifecycle(self):
+        source = (Path(__file__).resolve().parents[1] / "azure-devops-extension/src/executionCenter.tsx").read_text()
+        for label in (
+            "Execution Timeline", "Start Time", "End Time", "Duration", "Responsible Agent",
+            "Correlation ID", "Logs", "Diagnostics", "Prompt Used", "Provider", "Files Changed",
+            "Validation Score", "QA Summary", "Generated PR Summary", "Memory Candidate",
+        ):
+            self.assertIn(label, source)
+        self.assertIn("Retry ${stage.stage}", source)
 
 
 if __name__ == "__main__":

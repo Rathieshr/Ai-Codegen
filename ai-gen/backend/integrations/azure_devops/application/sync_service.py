@@ -89,12 +89,10 @@ class AzureDevOpsSyncService:
         previous = self._previous_success(sync)
         try:
             mode = sync.sync_type
-            if mode == AzureDevOpsSyncType.INITIAL_FULL.value:
+            if mode in {AzureDevOpsSyncType.INITIAL_FULL.value, AzureDevOpsSyncType.MANUAL.value}:
                 self._full(sync)
             elif mode == AzureDevOpsSyncType.SCHEDULED_RECONCILIATION.value:
                 self._reconcile(sync, previous)
-            elif mode == AzureDevOpsSyncType.MANUAL.value and previous is None:
-                self._full(sync)
             else:
                 self._incremental(sync, previous)
             sync.status = AzureDevOpsSyncStatus.PARTIAL.value if sync.warnings else AzureDevOpsSyncStatus.COMPLETED.value

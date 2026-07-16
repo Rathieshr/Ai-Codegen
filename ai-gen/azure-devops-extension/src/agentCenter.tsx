@@ -7,10 +7,13 @@ type AgentJob = {
   retryable: boolean; correlationId: string;
 };
 type RuntimeRun = { runId: string; status: string; startedAt: string; completedAt: string; durationMs?: number; error: string; correlationId: string };
+type AgentActivity = { status: string; title: string; step: string; since: string; id: string; sourceType: string };
+type AgentExecution = { status: string; title: string; at: string; durationMs: number; id: string; sourceType: string };
 type Agent = {
   agentId: string; name: string; responsibility: string; enabled: boolean; status: string; health: string;
   queue: number; jobCount: number; runtimeCount: number; failures: number; successRate?: number;
   averageDurationMs: number; lastRun: LastRun; nextRun: string; triggers: string[]; actions: string[];
+  currentActivity: AgentActivity; lastExecution: AgentExecution;
   checkpoint: string; warnings: string[]; jobs?: AgentJob[]; runtimeRuns?: RuntimeRun[];
   logs?: Array<Record<string, unknown>>; diagnostics?: Record<string, unknown>;
 };
@@ -31,7 +34,7 @@ export function AgentCenter({
   const [response, setResponse] = useState<AgentCenterResponse>();
   const [selectedId, setSelectedId] = useState('');
   const [selected, setSelected] = useState<Agent>();
-  const [view, setView] = useState<'details' | 'jobs' | 'runtime' | 'logs'>('details');
+  const [view, setView] = useState<'overview' | 'history' | 'runtime' | 'logs' | 'diagnostics'>('overview');
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -64,12 +67,12 @@ export function AgentCenter({
     setBusy(true);
     try {
       await request(`${baseUrl}/agents/jobs/${encodeURIComponent(job.jobId)}/retry`, { method: 'POST' });
-      await load(); await loadDetails(selectedId, 'jobs');
+      await load(); await loadDetails(selectedId, 'history');
     } catch (error) { onError?.(message(error)); }
     finally { setBusy(false); }
   }
 
-  function open(agentId: string, targetView: typeof view = 'details') {
+  function open(agentId: string, targetView: typeof view = 'overview') {
     setSelectedId(agentId); setView(targetView);
     if (agentId === selectedId) void loadDetails(agentId, targetView);
   }
@@ -100,32 +103,38 @@ export function AgentCenter({
             <Signal label="Health" value={agent.health} /><Signal label="Queue" value={agent.queue} />
             <Signal label="Jobs" value={agent.jobCount} /><Signal label="Runtime" value={agent.runtimeCount} />
             <Signal label="Failures" value={agent.failures} /><Signal label="Success Rate" value={agent.successRate == null ? 'Not measured' : `${agent.successRate}%`} />
-            <Signal label="Duration" value={duration(agent.averageDurationMs)} /><Signal label="Next Run" value={agent.nextRun ? formatDate(agent.nextRun) : 'Not scheduled'} />
+            <Signal label="Average Duration" value={duration(agent.averageDurationMs)} /><Signal label="Next Scheduled Run" value={agent.nextRun ? formatDate(agent.nextRun) : 'Not scheduled'} />
           </div>
-          <div className="agent-card-actions"><button type="button" onClick={() => open(agent.agentId)}>View Details</button><button type="button" onClick={() => open(agent.agentId, 'logs')}>View Logs</button></div>
+          <div className="agent-current-activity"><span>Current Activity</span><strong>{agent.currentActivity?.title || 'No active work'}</strong><small>{agent.currentActivity?.step || 'Waiting for an engineering event'}</small></div>
+          <div className="agent-last-execution"><span>Last Execution</span><strong>{agent.lastExecution?.title || 'No execution recorded'}</strong><small>{agent.lastExecution?.at ? `${agent.lastExecution.status} · ${formatDate(agent.lastExecution.at)}` : 'Never run'}</small></div>
+          <div className="agent-card-actions"><button type="button" onClick={() => open(agent.agentId)}>Overview</button><button type="button" onClick={() => open(agent.agentId, 'history')}>View History</button><button type="button" onClick={() => open(agent.agentId, 'logs')}>View Logs</button><button type="button" onClick={() => open(agent.agentId, 'diagnostics')}>Diagnostics</button></div>
         </article>)}
         {!agents.length ? <Empty title="No agents found" detail="Registered HEI agents will appear here." /> : null}
       </div>
 
       {selected ? <section className="agent-detail">
         <header><div><span>Agent Details</span><h3>{selected.name}</h3></div><div><AgentStatus value={selected.status} /><button type="button" onClick={() => { setSelectedId(''); setSelected(undefined); }}>Close</button></div></header>
-        <nav>{(['details', 'jobs', 'runtime', 'logs'] as const).map((item) => <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>{title(item)}</button>)}</nav>
-        {view === 'details' ? <AgentDetails agent={selected} /> : null}
-        {view === 'jobs' ? <JobList jobs={selected.jobs || []} canRetry={canRetry} busy={busy} onRetry={retry} /> : null}
+        <nav>{(['overview', 'history', 'runtime', 'logs', 'diagnostics'] as const).map((item) => <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>{title(item)}</button>)}</nav>
+        {view === 'overview' ? <AgentDetails agent={selected} onOpenActivity={onOpenActivity} /> : null}
+        {view === 'history' ? <JobList jobs={selected.jobs || []} canRetry={canRetry} busy={busy} onRetry={retry} /> : null}
         {view === 'runtime' ? <RuntimeList runs={selected.runtimeRuns || []} /> : null}
         {view === 'logs' ? <LogList logs={selected.logs || []} onOpenActivity={onOpenActivity} /> : null}
+        {view === 'diagnostics' ? <Diagnostics agent={selected} /> : null}
       </section> : null}
     </section>
   );
 }
 
-function AgentDetails({ agent }: { agent: Agent }) { return <div className="agent-detail-grid">
-  <section><h4>Runtime</h4><dl><Data label="Status" value={agent.status} /><Data label="Health" value={agent.health} /><Data label="Last Run" value={agent.lastRun.at ? formatDate(agent.lastRun.at) : 'Never run'} /><Data label="Next Run" value={agent.nextRun ? formatDate(agent.nextRun) : 'Not scheduled'} /><Data label="Average Duration" value={duration(agent.averageDurationMs)} /><Data label="Success Rate" value={agent.successRate == null ? 'Not measured' : `${agent.successRate}%`} /></dl></section>
+function AgentDetails({ agent, onOpenActivity }: { agent: Agent; onOpenActivity: () => void }) { return <div className="agent-detail-grid">
+  <section><h4>Runtime</h4><dl><Data label="Status" value={agent.status} /><Data label="Health" value={agent.health} /><Data label="Queue" value={agent.queue} /><Data label="Jobs" value={agent.jobCount} /><Data label="Runtime Runs" value={agent.runtimeCount} /><Data label="Failures" value={agent.failures} /><Data label="Average Duration" value={duration(agent.averageDurationMs)} /><Data label="Success Rate" value={agent.successRate == null ? 'Not measured' : `${agent.successRate}%`} /></dl></section>
+  <section><h4>Current Activity</h4><p><strong>{agent.currentActivity?.title || 'No active work'}</strong></p><p>{agent.currentActivity?.step || 'Waiting for an engineering event'}</p><dl><Data label="Status" value={agent.currentActivity?.status || 'Idle'} /><Data label="Since" value={agent.currentActivity?.since ? formatDate(agent.currentActivity.since) : 'Not active'} /></dl><button type="button" onClick={onOpenActivity}>View Activity</button></section>
+  <section><h4>Last Execution</h4><p><strong>{agent.lastExecution?.title || 'No execution recorded'}</strong></p><dl><Data label="Status" value={agent.lastExecution?.status || 'NeverRun'} /><Data label="Completed" value={agent.lastExecution?.at ? formatDate(agent.lastExecution.at) : 'Never run'} /><Data label="Duration" value={duration(agent.lastExecution?.durationMs || 0)} /><Data label="Next Scheduled Run" value={agent.nextRun ? formatDate(agent.nextRun) : 'Not scheduled'} /></dl></section>
   <section><h4>Approval Boundary</h4><p>{agent.checkpoint || 'Human review required before consequential action.'}</p><h4>Warnings</h4>{agent.warnings.length ? <ul>{agent.warnings.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No active agent warnings.</p>}</section>
   <section><h4>Triggers</h4>{agent.triggers.length ? <ul>{agent.triggers.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No triggers registered.</p>}</section>
   <section><h4>Prepared Actions</h4>{agent.actions.length ? <ul>{agent.actions.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No actions registered.</p>}</section>
-  <details><summary>Diagnostics</summary><pre>{JSON.stringify(agent.diagnostics || {}, null, 2)}</pre></details>
 </div>; }
+
+function Diagnostics({ agent }: { agent: Agent }) { return <div className="agent-diagnostics"><div><Data label="Agent ID" value={agent.agentId} /><Data label="Health" value={agent.health} /><Data label="Feature State" value={agent.enabled ? 'Enabled' : 'Disabled'} /><Data label="Policy" value="Prepare only · Human approval required" /></div>{agent.warnings.length ? <section><strong>Warnings</strong><ul>{agent.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section> : null}<details open><summary>Runtime Diagnostics</summary><pre>{JSON.stringify(agent.diagnostics || {}, null, 2)}</pre></details></div>; }
 
 function JobList({ jobs, canRetry, busy, onRetry }: { jobs: AgentJob[]; canRetry: boolean; busy: boolean; onRetry: (job: AgentJob) => void }) { return <div className="agent-record-list">{jobs.length ? jobs.map((job) => <article key={`${job.sourceType}-${job.jobId}`}><AgentStatus value={job.status} /><div><strong>{job.title}</strong><span>{job.sourceType} · {job.currentStep || 'No current step'} · {job.createdAt ? formatDate(job.createdAt) : 'Time not recorded'}</span>{job.error ? <p>{job.error}</p> : null}</div>{job.retryable ? <button type="button" onClick={() => onRetry(job)} disabled={!canRetry || busy}>Retry Failed Job</button> : null}</article>) : <Empty title="No jobs recorded" detail="Queued and completed work for this agent will appear here." />}</div>; }
 function RuntimeList({ runs }: { runs: RuntimeRun[] }) { return <div className="agent-record-list">{runs.length ? runs.map((run) => <article key={run.runId}><AgentStatus value={run.status} /><div><strong>{run.runId}</strong><span>{run.startedAt ? formatDate(run.startedAt) : 'Start not recorded'} · {duration(run.durationMs || 0)}</span>{run.error ? <p>{run.error}</p> : null}<small>Correlation: {run.correlationId || 'Not recorded'}</small></div></article>) : <Empty title="No runtime runs" detail="Agent runtime sessions will appear here after execution." />}</div>; }

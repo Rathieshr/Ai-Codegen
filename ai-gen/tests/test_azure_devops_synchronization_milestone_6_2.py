@@ -112,6 +112,22 @@ class AzureDevOpsSynchronizationMilestone62Tests(unittest.TestCase):
         self.assertIn("[System.ChangedDate] >", self.client.wiql_calls[-1])
         self.assertEqual(2, len(self.module.sync.cache.collection("p1", "workItems")))
 
+    def test_manual_sync_authoritatively_refreshes_story_points_and_task_estimates(self):
+        self.run_sync()
+        updated = raw_work_item(11, 2, "2026-07-01T10:00:00+00:00", "Device Health")
+        updated["fields"].update({
+            "Microsoft.VSTS.Scheduling.StoryPoints": 5,
+            "Microsoft.VSTS.Scheduling.OriginalEstimate": 8,
+            "Microsoft.VSTS.Scheduling.RemainingWork": 6,
+        })
+        self.client.work_items = [updated]
+        self.run_sync("ManualSync")
+        cached = self.module.sync.cache.collection("p1", "workItems")["11"]
+        self.assertEqual(5, cached["storyPoints"])
+        self.assertEqual(8, cached["originalEstimate"])
+        self.assertEqual(6, cached["remainingWork"])
+        self.assertNotIn("[System.ChangedDate] >", self.client.wiql_calls[-1])
+
     def test_duplicate_webhook_delivery_is_idempotent(self):
         payload = {"id": "evt-1", "connectionId": "ado-1", "projectId": "p1", "eventType": "workitem.updated", "resource": {"id": 11}}
         first = self.module.sync.receive_webhook(payload, correlation_id="corr-webhook")

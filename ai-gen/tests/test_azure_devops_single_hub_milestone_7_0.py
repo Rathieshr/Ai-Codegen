@@ -169,6 +169,22 @@ class AzureDevOpsSingleHubTests(unittest.TestCase):
         self.assertIn("repository.webUrl || repository.remoteUrl", settings)
         self.assertLess(settings.index("ensureRepositoryRegistration(baseUrl, next"), settings.index("/project-intelligence/connectors/azure-devops/mapping`"))
 
+    def test_administration_center_exposes_enterprise_sections_and_live_controls(self):
+        settings = (EXTENSION / "src/settingsWorkspace.tsx").read_text()
+        for section in (
+            "Azure DevOps", "Repositories", "Agents", "Integrations", "Platform",
+            "Diagnostics", "Security", "Audit", "Host", "Feature Flags",
+        ):
+            self.assertIn(f"label: '{section}'", settings)
+        for heading in ("Health", "Configuration", "Validation", "Diagnostics", "Last Updated"):
+            self.assertIn(f">{heading}<", settings)
+        self.assertIn("/project-intelligence/agents/policies", settings)
+        self.assertIn("/project-intelligence/agents/flags", settings)
+        self.assertIn("/command-center/diagnostics?role=admin", settings)
+        self.assertIn("/audit/events?limit=50", settings)
+        self.assertIn("Promise.allSettled", settings)
+        self.assertIn("The credential reference names a secure backend environment variable", settings)
+
     def test_administration_connects_validates_and_synchronizes_azure_devops(self):
         settings = (EXTENSION / "src/settingsWorkspace.tsx").read_text()
         for label in (

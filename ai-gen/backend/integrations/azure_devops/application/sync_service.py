@@ -138,6 +138,18 @@ class AzureDevOpsSyncService:
     def request_reconciliation(self, connection_id: str, project_id: str, *, correlation_id: str = "") -> dict[str, Any]:
         return self.request_sync(connection_id, project_id, AzureDevOpsSyncType.SCHEDULED_RECONCILIATION.value, correlation_id=correlation_id)
 
+    def run_queued_job(self, job_id: str) -> dict[str, Any]:
+        """Run an enqueued ADO job, including its configured transient retries."""
+        runner = getattr(self.platform, "job_runner", None) if self.platform else None
+        if not runner or not job_id:
+            return {"success": False, "status": "NotStarted", "message": "Platform job runner is unavailable."}
+        result: dict[str, Any] = {}
+        for _ in range(3):
+            result = runner.run_job(job_id)
+            if str(result.get("status") or "") != "Queued":
+                break
+        return result
+
     def enqueue_due_reconciliations(self, *, now: datetime | None = None) -> list[dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
         queued: list[dict[str, Any]] = []

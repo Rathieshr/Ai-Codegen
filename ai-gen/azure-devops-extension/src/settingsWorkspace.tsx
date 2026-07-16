@@ -12,6 +12,18 @@ export type RepositoryMapping = {
 
 type AdoProject = { id: string; name: string };
 type AdoRepository = { id: string; name: string; defaultBranch?: string; remoteUrl?: string; webUrl?: string };
+type AzureDevOpsConnection = {
+  connectionId: string;
+  organizationUrl: string;
+  organizationName: string;
+  projectId: string;
+  projectName: string;
+  authenticationMode: string;
+  status: string;
+  credentialConfigured?: boolean;
+  lastValidatedAt?: string;
+  validationMessage?: string;
+};
 
 export function SettingsWorkspace({
   baseUrl, context, mapping, onMappingChanged, onOpenRepository, onError,
@@ -32,6 +44,11 @@ export function SettingsWorkspace({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+  const [connection, setConnection] = useState<AzureDevOpsConnection>();
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const [connectionNotice, setConnectionNotice] = useState('');
+  const [organizationUrl, setOrganizationUrl] = useState(context.organization.uri);
+  const [secretReference, setSecretReference] = useState('ADO_PAT');
 
   const selectedRepository = useMemo(
     () => repositories.find((repository) => repository.id === repositoryId),
@@ -44,7 +61,7 @@ export function SettingsWorkspace({
     setBranch(mapping?.branch || context.repository.branch || 'main');
   }, [mapping?.ado_project, mapping?.repository_id, mapping?.branch, context.project.name]);
 
-  useEffect(() => { void loadProjects(); }, []);
+  useEffect(() => { void loadProjects(); void loadAzureDevOpsConnection(); }, []);
   useEffect(() => { if (adoProject) void loadRepositories(adoProject); }, [adoProject]);
   useEffect(() => { if (adoProject && repositoryId) void loadBranches(adoProject, repositoryId); }, [adoProject, repositoryId]);
 
@@ -87,6 +104,67 @@ export function SettingsWorkspace({
     } catch (error) { setBranches([]); onError(errorMessage(error, 'Unable to discover repository branches.')); }
   }
 
+  async function loadAzureDevOpsConnection() {
+    try {
+      const payload = await readJson<{ connections?: AzureDevOpsConnection[] }>(`${baseUrl}/integrations/azure-devops/connections`);
+      const items = payload.connections || [];
+      const current = items.find((item) => item.projectId === context.project.id)
+        || items.find((item) => item.projectName === context.project.name)
+        || (items.length === 1 ? items[0] : undefined);
+      setConnection(current);
+      if (current?.organizationUrl) setOrganizationUrl(current.organizationUrl);
+    } catch (error) {
+      onError(errorMessage(error, 'Unable to load Azure DevOps connections.'));
+    }
+  }
+
+  async function connectAzureDevOps() {
+    if (!organizationUrl.trim()) { setConnectionNotice('Enter the Azure DevOps organization URL.'); return; }
+    setConnectionBusy(true); setConnectionNotice('');
+    try {
+      let current = connection;
+      if (!current) {
+        current = await writeJson<AzureDevOpsConnection>(`${baseUrl}/integrations/azure-devops/connections`, {
+          organizationUrl: organizationUrl.trim(),
+          organizationName: context.organization.name,
+          projectId: context.project.id || context.project.name,
+          projectName: context.project.name,
+          authenticationMode: 'PAT',
+          secretReference: secretReference.trim() || 'ADO_PAT',
+          permissions: ['Project.Read', 'WorkItems.Read', 'Code.Read', 'Build.Read'],
+        });
+      }
+      const validated = await writeJson<AzureDevOpsConnection>(
+        `${baseUrl}/integrations/azure-devops/connections/${encodeURIComponent(current.connectionId)}/validate`,
+        undefined,
+      );
+      setConnection(validated);
+      setConnectionNotice(validated.status === 'Connected'
+        ? 'Azure DevOps connection validated. Synchronize the project to load work items, sprints, pull requests, and builds.'
+        : validated.validationMessage || 'Azure DevOps validation failed. Review the backend credential reference and permissions.');
+    } catch (error) {
+      onError(errorMessage(error, 'Unable to connect Azure DevOps.'));
+    } finally {
+      setConnectionBusy(false);
+    }
+  }
+
+  async function synchronizeAzureDevOps() {
+    if (!connection?.connectionId) { setConnectionNotice('Connect and validate Azure DevOps before synchronizing.'); return; }
+    setConnectionBusy(true); setConnectionNotice('');
+    try {
+      await writeJson(
+        `${baseUrl}/integrations/azure-devops/projects/${encodeURIComponent(context.project.id || context.project.name)}/sync`,
+        { connectionId: connection.connectionId, syncType: 'ManualSync' },
+      );
+      setConnectionNotice('Azure DevOps synchronization queued. Open Azure DevOps Center to review synchronized engineering state.');
+    } catch (error) {
+      onError(errorMessage(error, 'Unable to synchronize Azure DevOps.'));
+    } finally {
+      setConnectionBusy(false);
+    }
+  }
+
   async function saveMapping() {
     if (!selectedRepository) { setNotice('Select a repository before saving the mapping.'); return; }
     setSaving(true); setNotice('');
@@ -113,6 +191,26 @@ export function SettingsWorkspace({
   return (
     <section className="hei-settings-workspace" aria-label="HEI Settings">
       <header><span>Administration</span><h2>Settings</h2><p>Configure the project repository and review the current HEI host context.</p></header>
+
+      <article className="hei-repository-mapping-card">
+        <div className="hei-settings-card-heading">
+          <div><span>System of Record</span><h3>Azure DevOps Connection</h3><p>Connect this project to synchronize work items, iterations, pull requests, and builds.</p></div>
+          <strong>{connection?.status || 'Not Connected'}</strong>
+        </div>
+        <div className="hei-repository-mapping-form">
+          <label><span>Organization URL</span><input value={organizationUrl} onChange={(event) => setOrganizationUrl(event.target.value)} disabled={connectionBusy || Boolean(connection)} placeholder="https://dev.azure.com/organization" /></label>
+          <label><span>Project</span><input value={context.project.name} readOnly /></label>
+          <label><span>Credential Reference</span><input value={secretReference} onChange={(event) => setSecretReference(event.target.value)} disabled={connectionBusy || Boolean(connection)} placeholder="ADO_PAT" /></label>
+        </div>
+        <p className="hei-settings-help">The credential reference names a secure backend environment variable. HEI never stores or returns the PAT value.</p>
+        {connection?.validationMessage ? <p className="hei-settings-validation">{connection.validationMessage}</p> : null}
+        {connectionNotice ? <p className="hei-settings-notice" role="status">{connectionNotice}</p> : null}
+        <div className="hei-settings-actions">
+          <button className="planner-button primary" type="button" onClick={() => void connectAzureDevOps()} disabled={connectionBusy || connection?.status === 'Connected'}>{connectionBusy ? 'Connecting...' : connection ? 'Validate Connection' : 'Connect Azure DevOps'}</button>
+          <button className="planner-button secondary" type="button" onClick={() => void synchronizeAzureDevOps()} disabled={connectionBusy || connection?.status !== 'Connected'}>Synchronize Project</button>
+          <button className="planner-button secondary" type="button" onClick={() => void loadAzureDevOpsConnection()} disabled={connectionBusy}>Refresh Connection</button>
+        </div>
+      </article>
 
       <article className="hei-repository-mapping-card">
         <div className="hei-settings-card-heading">
@@ -173,15 +271,19 @@ async function ensureRepositoryRegistration(baseUrl: string, mapping: Repository
 
 async function readJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
-  const payload = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(payload.error || `HEI returned HTTP ${response.status}.`);
+  const payload = await response.json() as T & { error?: string | { message?: string } };
+  if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : payload.error?.message || `HEI returned HTTP ${response.status}.`);
   return payload;
 }
 
-async function writeJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const payload = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(payload.error || `HEI returned HTTP ${response.status}.`);
+async function writeJson<T>(url: string, body?: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json() as T & { error?: string | { message?: string } };
+  if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : payload.error?.message || `HEI returned HTTP ${response.status}.`);
   return payload;
 }
 

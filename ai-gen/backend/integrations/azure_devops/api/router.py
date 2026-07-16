@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, BackgroundTasks, Header, Query
 from fastapi.responses import JSONResponse
 
 from ..domain import AzureDevOpsIntegrationError
@@ -26,6 +26,14 @@ def build_azure_devops_router(module) -> APIRouter:
         except AzureDevOpsIntegrationError as error:
             status = error.status or {"validation_error": 400, "authentication_failed": 401, "authorization_failed": 403, "not_found": 404, "rate_limited": 429, "timeout": 504, "cancelled": 499}.get(error.code, 503)
             return JSONResponse(status_code=status, content={"error": {"code": error.code, "message": str(error), "retryable": error.retryable, "correlationId": error.correlation_id}})
+
+    def queue_background_job(background_tasks: BackgroundTasks, result):
+        if isinstance(result, JSONResponse) or not isinstance(result, dict):
+            return result
+        job_id = str((result.get("job") or {}).get("jobId") or "")
+        if job_id:
+            background_tasks.add_task(module.sync.run_queued_job, job_id)
+        return result
 
     @router.post("/connections", status_code=201)
     def register_connection(request: RegisterConnectionRequest, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
@@ -108,8 +116,9 @@ def build_azure_devops_router(module) -> APIRouter:
         return call(lambda: module.webhooks.handle(connection_id, request.as_payload(), correlation_id=correlation(x_correlation_id)))
 
     @router.post("/projects/{project_id}/sync", status_code=202)
-    def synchronize_project(project_id: str, request: AzureDevOpsSyncRequest, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
-        return call(lambda: module.sync.request_sync(request.connection_id, project_id, request.sync_type, correlation_id=correlation(x_correlation_id)))
+    def synchronize_project(project_id: str, request: AzureDevOpsSyncRequest, background_tasks: BackgroundTasks, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
+        result = call(lambda: module.sync.request_sync(request.connection_id, project_id, request.sync_type, correlation_id=correlation(x_correlation_id)))
+        return queue_background_job(background_tasks, result)
 
     @router.get("/projects/{project_id}/sync-status")
     def project_sync_status(project_id: str):
@@ -120,11 +129,13 @@ def build_azure_devops_router(module) -> APIRouter:
         return module.sync.history(project_id, limit)
 
     @router.post("/webhooks", status_code=202)
-    def synchronize_webhook(request: WebhookRequest, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
-        return call(lambda: module.sync.receive_webhook(request.as_payload(), correlation_id=correlation(x_correlation_id)))
+    def synchronize_webhook(request: WebhookRequest, background_tasks: BackgroundTasks, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
+        result = call(lambda: module.sync.receive_webhook(request.as_payload(), correlation_id=correlation(x_correlation_id)))
+        return queue_background_job(background_tasks, result)
 
     @router.post("/projects/{project_id}/reconcile", status_code=202)
-    def reconcile_project(project_id: str, request: AzureDevOpsReconcileRequest, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
-        return call(lambda: module.sync.request_reconciliation(request.connection_id, project_id, correlation_id=correlation(x_correlation_id)))
+    def reconcile_project(project_id: str, request: AzureDevOpsReconcileRequest, background_tasks: BackgroundTasks, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
+        result = call(lambda: module.sync.request_reconciliation(request.connection_id, project_id, correlation_id=correlation(x_correlation_id)))
+        return queue_background_job(background_tasks, result)
 
     return router

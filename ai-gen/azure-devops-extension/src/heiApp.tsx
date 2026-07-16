@@ -147,7 +147,8 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
       projectName={context.project.name}
       userName={context.user.name}
       roleLabel={roleLabel(role)}
-      logoSrc="../../static/hei-logo.png"
+      logoSrc="../../static/hei-icon-light.png"
+      logoDarkSrc="../../static/hei-icon-dark.png"
       busy={busy}
       onNavigate={(item) => navigate(normalizeRoute(item.id))}
       onPreferencesChange={(changes) => void updatePreferences(changes)}

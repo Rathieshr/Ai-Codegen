@@ -123,12 +123,41 @@ body {
   min-width: 0;
 }
 
-.hei-command-brand img {
-  width: 56px;
-  height: 36px;
-  object-fit: contain;
-  border-radius: 4px;
-  background: #ffffff;
+.hei-command-brand-icon {
+  display: block;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+}
+
+.hei-command-brand-icon img {
+  display: block;
+  width: 38px;
+  height: 38px;
+  object-fit: cover;
+  border-radius: 7px;
+}
+
+.hei-command-brand-icon .hei-brand-logo-dark {
+  display: none;
+}
+
+:root[data-hei-theme='dark'] .hei-command-brand-icon .hei-brand-logo-light {
+  display: none;
+}
+
+:root[data-hei-theme='dark'] .hei-command-brand-icon .hei-brand-logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-hei-theme='system'] .hei-command-brand-icon .hei-brand-logo-light {
+    display: none;
+  }
+
+  :root[data-hei-theme='system'] .hei-command-brand-icon .hei-brand-logo-dark {
+    display: block;
+  }
 }
 
 .hei-command-brand div {
@@ -2790,6 +2819,8 @@ button.hei-story-list-card {
 .ado-status.status-disconnected, .ado-status.status-blocked, .ado-status.status-failed, .ado-status.status-critical, .ado-status.status-changesrequired { color: #c42b1c; border-color: #c42b1c; }
 .ado-status.status-needsreview, .ado-status.status-warning, .ado-status.status-high, .ado-status.status-partiallysucceeded { color: #8a6500; border-color: #d6a800; }
 .ado-center-warnings { display: grid; gap: 3px; border: 1px solid #d6a800; border-radius: 6px; padding: 9px 12px; background: var(--hei-surface-subtle); color: var(--hei-text); }
+.ado-center-guidance { display: flex; gap: 8px; align-items: baseline; border-left: 3px solid var(--hei-success); padding: 7px 10px; background: var(--hei-surface-subtle); color: var(--hei-text); }
+.ado-center-guidance span { color: var(--hei-text-muted); }
 .ado-center-summary { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 8px; }
 .ado-metric { display: grid; gap: 3px; min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; padding: 11px; background: var(--hei-surface); }
 .ado-metric > span { color: var(--hei-muted); font-size: 11px; text-transform: uppercase; }
@@ -2891,9 +2922,11 @@ button.hei-story-list-card {
 .hei-settings-card-heading > strong { border: 1px solid var(--hei-border); border-radius: 999px; padding: 4px 9px; color: var(--hei-muted); font-size: 11px; white-space: nowrap; }
 .hei-repository-mapping-form { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 9px; }
 .hei-repository-mapping-form label { display: grid; gap: 5px; }
-.hei-repository-mapping-form select { width: 100%; }
+.hei-repository-mapping-form select, .hei-repository-mapping-form input { width: 100%; min-width: 0; }
 .hei-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .hei-settings-notice { margin: 0; border-left: 3px solid var(--hei-yellow); padding: 7px 9px; background: var(--hei-surface-subtle); }
+.hei-settings-help, .hei-settings-validation { margin: 0; color: var(--hei-muted); font-size: 12px; }
+.hei-settings-validation { border-left: 3px solid var(--hei-border); padding-left: 9px; }
 @media (max-width: 720px) {
   .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals, .hei-repository-mapping-form { grid-template-columns: 1fr; }
   .hei-requirement-form .wide, .hei-intake-context, .hei-requirement-form > button { grid-column: auto; }

@@ -67,6 +67,7 @@ export function AzureDevOpsCenter({
       </header>
 
       {dashboard?.warnings?.length ? <div className="ado-center-warnings">{dashboard.warnings.map((item) => <span key={item.code}>{item.message}</span>)}</div> : null}
+      {dashboard?.connected ? <div className="ado-center-guidance"><strong>Read-only synchronization runs automatically.</strong><span>Approval is required only for proposed Azure DevOps write actions, which appear under Approvals.</span></div> : null}
 
       <div className="ado-center-summary">
         <Metric label="Sprint" value={sprintName(sprint)} detail={sprint.health || sprint.status || 'Not available'} />

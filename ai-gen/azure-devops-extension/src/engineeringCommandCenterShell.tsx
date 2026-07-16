@@ -41,6 +41,7 @@ type Props = {
   userName: string;
   roleLabel: string;
   logoSrc?: string;
+  logoDarkSrc?: string;
   busy?: boolean;
   headerActions?: ReactNode;
   children: ReactNode;
@@ -75,7 +76,8 @@ export function EngineeringCommandCenterShell({
   projectName,
   userName,
   roleLabel,
-  logoSrc = 'static/hei-logo.png',
+  logoSrc = 'static/hei-icon-light.png',
+  logoDarkSrc = 'static/hei-icon-dark.png',
   busy,
   headerActions,
   children,
@@ -132,7 +134,10 @@ export function EngineeringCommandCenterShell({
     <div className={`hei-command-shell ${preferences.sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <header className="hei-command-header">
         <div className="hei-command-brand">
-          <img src={logoSrc} alt="Hubbell Engineering Intelligence" />
+          <span className="hei-command-brand-icon">
+            <img className="hei-brand-logo-light" src={logoSrc} alt="Hubbell Engineering Intelligence" />
+            <img className="hei-brand-logo-dark" src={logoDarkSrc} alt="" aria-hidden="true" />
+          </span>
           <div>
             <strong>HEI</strong>
             <span>Engineering Command Center</span>

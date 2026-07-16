@@ -95,8 +95,24 @@ class AzureDevOpsSingleHubTests(unittest.TestCase):
             self.assertIn(f"'{route}'", source)
         self.assertIn("window.history.pushState", adapter)
         self.assertIn("lazy(() => import", source)
-        self.assertIn('logoSrc="../../static/hei-logo.png"', source)
+        self.assertIn('logoSrc="../../static/hei-icon-light.png"', source)
+        self.assertIn('logoDarkSrc="../../static/hei-icon-dark.png"', source)
         self.assertNotIn("window.location.reload", source)
+
+    def test_hei_app_icon_switches_for_light_and_dark_themes(self):
+        app = (EXTENSION / "src/heiApp.tsx").read_text()
+        shell = (EXTENSION / "src/engineeringCommandCenterShell.tsx").read_text()
+        styles = (EXTENSION / "src/storyPlanner.css").read_text()
+        manifest = (EXTENSION / "azure-devops-extension.hei.json").read_text()
+        self.assertTrue((EXTENSION / "static/hei-icon-light.png").is_file())
+        self.assertTrue((EXTENSION / "static/hei-icon-dark.png").is_file())
+        self.assertIn("hei-icon-light.png", app + shell + manifest)
+        self.assertIn("hei-icon-dark.png", app + shell)
+        self.assertIn("data-hei-theme='dark'", styles)
+        self.assertIn("prefers-color-scheme: dark", styles)
+        self.assertIn('"light": "static/hei-icon-light.png"', manifest)
+        self.assertIn('"dark": "static/hei-icon-dark.png"', manifest)
+        self.assertNotIn('"iconName": "EngineeringGroup"', manifest)
 
     def test_azure_devops_sdk_is_isolated_to_host_adapter(self):
         app_source = (EXTENSION / "src/heiApp.tsx").read_text()
@@ -152,6 +168,24 @@ class AzureDevOpsSingleHubTests(unittest.TestCase):
         self.assertIn("`${baseUrl}/repositories`", settings)
         self.assertIn("repository.webUrl || repository.remoteUrl", settings)
         self.assertLess(settings.index("ensureRepositoryRegistration(baseUrl, next"), settings.index("/project-intelligence/connectors/azure-devops/mapping`"))
+
+    def test_administration_connects_validates_and_synchronizes_azure_devops(self):
+        settings = (EXTENSION / "src/settingsWorkspace.tsx").read_text()
+        for label in (
+            "Azure DevOps Connection",
+            "Organization URL",
+            "Credential Reference",
+            "Connect Azure DevOps",
+            "Validate Connection",
+            "Synchronize Project",
+        ):
+            self.assertIn(label, settings)
+        self.assertIn("/integrations/azure-devops/connections`", settings)
+        self.assertIn("/integrations/azure-devops/connections/${encodeURIComponent(current.connectionId)}/validate", settings)
+        self.assertIn("/integrations/azure-devops/projects/${encodeURIComponent(context.project.id || context.project.name)}/sync", settings)
+        self.assertIn("secretReference: secretReference.trim() || 'ADO_PAT'", settings)
+        self.assertIn("syncType: 'ManualSync'", settings)
+        self.assertNotIn("type=\"password\"", settings)
 
     def test_saved_mapping_drives_repository_center_and_overview_uses_host_project(self):
         app = (EXTENSION / "src/heiApp.tsx").read_text()

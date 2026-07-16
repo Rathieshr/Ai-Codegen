@@ -8,7 +8,7 @@ HEI is packaged as a separate Azure DevOps extension so it can be installed and 
 - Extension ID: `hei-engineering-platform`
 - Contribution ID: `hei.project-intelligence-tab`
 - Publisher: `AiIntelliCodegen`
-- Current version: `0.2.6`
+- Current version: `0.2.9`
 
 The legacy manifests remain unchanged. Azure DevOps therefore treats HEI as a new installation with independent enablement and extension data.
 
@@ -18,7 +18,7 @@ The legacy manifests remain unchanged. Azure DevOps therefore treats HEI as a ne
 npm run package:hei
 ```
 
-This creates `AiIntelliCodegen.hei-engineering-platform-0.2.6.vsix` in the extension directory.
+This creates `AiIntelliCodegen.hei-engineering-platform-0.2.9.vsix` in the extension directory.
 
 Upload that VSIX as a private extension and share it only with the test Azure DevOps organization. Azure DevOps project navigation displays one `HEI` entry. The existing work-item page and `Open in HEI` action remain available.
 

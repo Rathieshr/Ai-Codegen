@@ -1,5 +1,5 @@
 import * as SDK from 'azure-devops-extension-sdk';
-import { HEIHostAdapter, HEIHostContext, HEITheme, correlationId, detectTheme, routeParameters } from './HostAdapter';
+import { HEIHostAdapter, HEIHostContext, HEITheme, correlationId, detectTheme, normalizeHostRole, routeParameters } from './HostAdapter';
 
 type WebContext = {
   account?: { id?: string; name?: string; uri?: string };
@@ -11,15 +11,24 @@ type WebContext = {
 
 export class AzureDevOpsHostAdapter implements HEIHostAdapter {
   readonly kind = 'azure-devops' as const;
-  private initialized = false;
+  private initialization?: Promise<void>;
 
   async initialize(): Promise<HEIHostContext> {
     const started = performance.now();
-    if (!this.initialized) {
-      SDK.init({ loaded: false, applyTheme: true });
-      this.initialized = true;
+    if (!this.initialization) {
+      this.initialization = SDK.init({ loaded: false, applyTheme: true });
     }
-    await SDK.ready();
+    try {
+      await withTimeout(this.initialization, 10000, 'Azure DevOps did not complete the HEI extension handshake.');
+    } catch (reason) {
+      this.initialization = undefined;
+      const detail = reason instanceof Error ? reason.message : 'Unable to initialize the Azure DevOps extension host.';
+      void SDK.notifyLoadFailed(detail).catch(() => undefined);
+      throw new Error(detail);
+    }
+
+    // Release the Azure DevOps host loader before resolving optional HEI context.
+    void SDK.notifyLoadSucceeded().catch(() => undefined);
     const web = SDK.getWebContext() as unknown as WebContext;
     const user = SDK.getUser() as unknown as WebContext['user'];
     const extension = SDK.getExtensionContext();
@@ -35,7 +44,9 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
         id: String(user?.id || web.user?.id || ''),
         name: String(user?.displayName || user?.name || web.user?.displayName || web.user?.name || 'HEI User'),
         email: String(user?.email || user?.uniqueName || web.user?.email || web.user?.uniqueName || ''),
-        role: normalizedRole(route.role),
+        // Keep the single HEI hub aligned with Project Intelligence while ADO
+        // group mapping is paused. An explicit routed role still wins.
+        role: normalizeHostRole(route.role, 'admin'),
       },
       repository: { id: route.repositoryId || '', name: route.repository || '', branch: route.branch || '' },
       extension: { id: String(extension.id || ''), publisherId: String(extension.publisherId || ''), version: String(extension.version || '') },
@@ -45,7 +56,6 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
     };
     document.documentElement.dataset.heiHost = this.kind;
     document.documentElement.dataset.heiStartupMs = String(Math.round(performance.now() - started));
-    SDK.notifyLoadSucceeded();
     return context;
   }
 
@@ -68,8 +78,12 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
   }
 }
 
-function normalizedRole(value: string): string {
-  const role = value.toLowerCase();
-  if (role === 'admin' || role === 'contributor' || role === 'viewer') return role;
-  return 'contributor';
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => { window.clearTimeout(timeout); resolve(value); },
+      (reason) => { window.clearTimeout(timeout); reject(reason); },
+    );
+  });
 }

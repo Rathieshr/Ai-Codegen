@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from backend.engineering_memory.engine import EngineeringMemoryEngine
+from backend.ado.client import AdoClient
 
 from .application import RepositoryIntelligenceApplicationService
 from .infrastructure import (
@@ -42,7 +43,15 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
     storage_root.mkdir(parents=True, exist_ok=True)
     repository_service = FileBackedRepositoryService(storage_root / "repositories.json")
     snapshot_service = FileBackedSnapshotService(storage_root / "repository_snapshots.json")
-    scanner = FileSystemRepositoryScanner(storage_root / "repository_scans.json", storage_root / "repository_snapshots.json")
+    scanner = FileSystemRepositoryScanner(
+        storage_root / "repository_scans.json",
+        storage_root / "repository_snapshots.json",
+        remote_item_provider=lambda repository: AdoClient().list_repository_items(
+            str(repository.metadata.get("adoProject") or ""),
+            str(repository.metadata.get("azureDevOpsRepositoryId") or ""),
+            str(repository.metadata.get("branch") or repository.default_branch or "main"),
+        ),
+    )
     graph_service = FileBackedEngineeringGraphService(storage_root / "engineering_graphs.json")
     parser_service = FileBackedRepositoryParserService(storage_root / "repository_symbols.json")
     memory_engine = EngineeringMemoryEngine(storage_root / "engineering_memory.json")

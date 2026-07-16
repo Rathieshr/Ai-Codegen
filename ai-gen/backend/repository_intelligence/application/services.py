@@ -450,7 +450,11 @@ class RepositoryIntelligenceApplicationService:
 
     def _is_valid_repository_url(self, value: str, repository_type: str) -> bool:
         parsed = urlparse(value)
-        host = (parsed.netloc or "").lower()
+        # Azure DevOps clone URLs may include the organization as user-info,
+        # for example https://org@dev.azure.com/org/project/_git/repository.
+        # Validate the hostname rather than the raw netloc so valid clone URLs
+        # are not rejected because of their user-info component or port.
+        host = (parsed.hostname or "").lower()
         if parsed.scheme not in {"http", "https"} or not host:
             return False
         if repository_type == "AzureDevOps":

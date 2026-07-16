@@ -44,3 +44,8 @@ export function correlationId(): string {
     ? `hei_${crypto.randomUUID()}`
     : `hei_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
+
+export function normalizeHostRole(value: unknown, fallback: 'admin' | 'contributor' | 'viewer'): string {
+  const role = String(value || '').trim().toLowerCase();
+  return role === 'admin' || role === 'contributor' || role === 'viewer' ? role : fallback;
+}

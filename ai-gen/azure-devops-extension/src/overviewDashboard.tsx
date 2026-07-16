@@ -36,10 +36,16 @@ export function OperationalOverviewDashboard({
   overview,
   loading,
   onRefresh,
+  repositoryName = '',
+  onOpenRepository,
+  onConfigureRepository,
 }: {
   overview?: DashboardOverview;
   loading: boolean;
   onRefresh: () => void;
+  repositoryName?: string;
+  onOpenRepository?: () => void;
+  onConfigureRepository?: () => void;
 }) {
   if (!overview) {
     return (
@@ -56,6 +62,11 @@ export function OperationalOverviewDashboard({
     || 'No current sprint';
   const latestSync = overview.repositorySync.latestSync;
   const syncStatus = stringValue(latestSync?.status) || overview.repositorySync.status || 'Not connected';
+  const repositoryCount = numberValue(overview.repositoryStatus.repositoryCount);
+  const repositoryHealth = stringValue(overview.repositoryStatus.health) || 'Not configured';
+  const repositoryGuidance = repositoryCount
+    ? `${repositoryName || (repositoryCount === 1 ? 'The selected repository' : `${repositoryCount} repositories`)} is registered. ${repositoryHealth === 'Healthy' ? 'Repository Intelligence is ready.' : 'Open Repository Intelligence to complete or review synchronization.'}`
+    : 'Configure a repository in Administration to load repository intelligence.';
 
   return (
     <section className="hei-operational-overview" aria-label="HEI operational overview">
@@ -63,17 +74,19 @@ export function OperationalOverviewDashboard({
         <div>
           <span>Engineering State</span>
           <h2>{overview.currentProject.name || 'No project selected'}</h2>
-          <p>{overview.currentProject.domain || 'Connect a project to load operational engineering state.'}</p>
+          <p>{overview.currentProject.domain || (overview.currentProject.configured ? repositoryGuidance : 'Select an Azure DevOps project to load operational engineering state.')}</p>
         </div>
         <div className="hei-overview-title-actions">
           <StatusChip status={overview.status} />
+          {repositoryCount && onOpenRepository ? <button className="planner-button primary" type="button" onClick={onOpenRepository}>Open Repository</button> : null}
+          {!repositoryCount && onConfigureRepository ? <button className="planner-button primary" type="button" onClick={onConfigureRepository}>Configure Repository</button> : null}
           <button className="planner-button secondary" type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
         </div>
       </div>
 
       <div className="hei-overview-strip">
-        <OverviewSignal label="Repository" value={`${numberValue(overview.repositoryStatus.repositoryCount)} connected`} status={stringValue(overview.repositoryStatus.health) || 'Not configured'} />
-        <OverviewSignal label="Repository Sync" value={syncStatus} status={numberValue(overview.repositoryStatus.pendingScanCount) ? 'In progress' : 'Current state'} />
+        <OverviewSignal label="Repository Intelligence" value={`${repositoryCount} registered`} status={repositoryHealth} />
+        <OverviewSignal label="Azure DevOps Sync" value={syncStatus} status={latestSync ? 'Work items and delivery data' : 'Synchronization has not run'} />
         <OverviewSignal label="Current Sprint" value={sprintName} status={overview.currentSprint.health || overview.currentSprint.status || 'Not available'} />
         <OverviewSignal label="Build Status" value={overview.buildStatus.status} status={`${overview.buildStatus.count} recent builds`} />
       </div>

@@ -107,6 +107,44 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
                 {"name": "Repo One", "url": "not-a-url", "repositoryType": "GitHub"}
             )
 
+    def test_azure_devops_clone_url_with_organization_user_info_is_valid(self) -> None:
+        created = self.module.application.create_repository(
+            {
+                "name": "LineDefender",
+                "url": "https://rathiesh91@dev.azure.com/rathiesh91/LineDefender/_git/LineDefender",
+                "repositoryType": "AzureDevOps",
+                "authenticationType": "PAT",
+            }
+        )
+
+        self.assertEqual("AzureDevOps", created["repositoryType"])
+        self.assertEqual("PendingScan", created["status"])
+
+    def test_azure_devops_remote_scan_creates_metadata_snapshot_without_local_path(self) -> None:
+        self.module.scanner._remote_item_provider = lambda repository: [
+            {"path": "/src", "isFolder": True, "gitObjectType": "tree", "objectId": "tree-1"},
+            {"path": "/src/deviceHealth.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-1", "contentMetadata": {"fileLength": 128}},
+            {"path": "/README.md", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-2", "contentMetadata": {"fileLength": 64}},
+        ]
+        created = self.module.application.create_repository(
+            {
+                "name": "GridHub",
+                "url": "https://dev.azure.com/hubbell/GridHub/_git/GridHub",
+                "defaultBranch": "main",
+                "repositoryType": "AzureDevOps",
+                "authenticationType": "PAT",
+                "metadata": {"azureDevOpsRepositoryId": "ado-repo-1", "adoProject": "GridHub", "branch": "main"},
+            }
+        )
+
+        result = self.module.application.scan_repository(created["repositoryId"], mode="Full")
+
+        self.assertEqual("Completed", result["scan"]["status"])
+        self.assertEqual(2, result["snapshot"]["totalFiles"])
+        self.assertEqual("main", result["snapshot"]["branch"])
+        self.assertEqual(["README.md", "src"], result["snapshot"]["modules"])
+        self.assertEqual("blob-1", result["snapshot"]["metadata"]["filesByPath"]["src/deviceHealth.ts"]["contentHash"])
+
     def test_update_and_delete_repository(self) -> None:
         created = self.module.application.create_repository(
             {

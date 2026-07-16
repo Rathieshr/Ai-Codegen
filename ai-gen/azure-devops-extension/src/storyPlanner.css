@@ -2853,6 +2853,10 @@ button.hei-story-list-card {
 /* HEI single-hub application */
 .hei-hub-loading, .hei-hub-route-loading { display: grid; min-height: 240px; place-content: center; gap: 6px; color: var(--hei-muted); text-align: center; }
 .hei-hub-loading strong { color: var(--hei-text); font-size: 20px; }
+.hei-hub-startup-error { display: grid; max-width: 560px; margin: 64px auto; gap: 12px; border-left: 4px solid var(--hei-error); padding: 20px; background: var(--hei-surface); color: var(--hei-text); }
+.hei-hub-startup-error strong { font-size: 20px; }
+.hei-hub-startup-error span, .hei-hub-startup-error small { color: var(--hei-muted); }
+.hei-hub-startup-error button { width: fit-content; }
 .hei-hub-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; border-left: 3px solid var(--hei-error); padding: 9px 11px; background: var(--hei-surface); }
 .hei-requirement-workspace, .hei-settings-workspace { display: grid; gap: 14px; }
 .hei-requirement-workspace > header, .hei-settings-workspace > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -2879,8 +2883,19 @@ button.hei-story-list-card {
 .hei-settings-grid article > div { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px; border-top: 1px solid var(--hei-border-soft); padding: 7px 0; }
 .hei-settings-grid span { color: var(--hei-muted); }
 .hei-settings-grid strong { overflow-wrap: anywhere; }
+.hei-repository-mapping-card { display: grid; gap: 13px; border: 1px solid var(--hei-border); border-left: 3px solid var(--hei-yellow); border-radius: 6px; padding: 15px; background: var(--hei-surface); }
+.hei-settings-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.hei-settings-card-heading span, .hei-repository-mapping-form label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-settings-card-heading h3 { margin: 3px 0; font-size: 18px; }
+.hei-settings-card-heading p { margin: 0; color: var(--hei-muted); }
+.hei-settings-card-heading > strong { border: 1px solid var(--hei-border); border-radius: 999px; padding: 4px 9px; color: var(--hei-muted); font-size: 11px; white-space: nowrap; }
+.hei-repository-mapping-form { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 9px; }
+.hei-repository-mapping-form label { display: grid; gap: 5px; }
+.hei-repository-mapping-form select { width: 100%; }
+.hei-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.hei-settings-notice { margin: 0; border-left: 3px solid var(--hei-yellow); padding: 7px 9px; background: var(--hei-surface-subtle); }
 @media (max-width: 720px) {
-  .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals { grid-template-columns: 1fr; }
+  .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals, .hei-repository-mapping-form { grid-template-columns: 1fr; }
   .hei-requirement-form .wide, .hei-intake-context, .hei-requirement-form > button { grid-column: auto; }
   .hei-requirement-workspace > header { flex-direction: column; }
 }

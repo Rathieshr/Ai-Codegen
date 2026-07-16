@@ -1,4 +1,4 @@
-import { HEIHostAdapter, HEIHostContext, HEITheme, correlationId, detectTheme, routeParameters } from './HostAdapter';
+import { HEIHostAdapter, HEIHostContext, HEITheme, correlationId, detectTheme, normalizeHostRole, routeParameters } from './HostAdapter';
 
 export class StandaloneHostAdapter implements HEIHostAdapter {
   readonly kind = 'standalone' as const;
@@ -12,7 +12,7 @@ export class StandaloneHostAdapter implements HEIHostAdapter {
       project: { id: route.projectId || '', name: route.project || '' },
       team: { id: route.teamId || '', name: route.team || '' },
       sprint: { id: route.iterationId || '', name: route.iteration || '', path: route.iterationPath || '' },
-      user: { id: route.userId || 'standalone-user', name: route.userName || 'HEI User', email: '', role: standaloneRole(route.role) },
+      user: { id: route.userId || 'standalone-user', name: route.userName || 'HEI User', email: '', role: normalizeHostRole(route.role, 'viewer') },
       repository: { id: route.repositoryId || '', name: route.repository || '', branch: route.branch || '' },
       extension: { id: 'hei-standalone', publisherId: 'HEI', version: '7.0' },
       route: { view: route.view || 'overview', workItemId: route.workItemId || '', repositoryId: route.repositoryId || '' },
@@ -35,8 +35,4 @@ export class StandaloneHostAdapter implements HEIHostAdapter {
     window.history.pushState(route, '', url.toString());
     window.dispatchEvent(new PopStateEvent('popstate', { state: route }));
   }
-}
-
-function standaloneRole(value: string): string {
-  return ['admin', 'contributor', 'viewer'].includes(value.toLowerCase()) ? value.toLowerCase() : 'viewer';
 }

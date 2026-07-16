@@ -8,6 +8,7 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from backend.platform.shared import JsonListStore, generated_id, now_iso
 
@@ -699,9 +700,15 @@ class FileBackedEngineeringGraphService(IEngineeringGraphService):
 
 
 class FileSystemRepositoryScanner(IRepositoryScanner):
-    def __init__(self, storage_path: Path, snapshot_storage_path: Path) -> None:
+    def __init__(
+        self,
+        storage_path: Path,
+        snapshot_storage_path: Path,
+        remote_item_provider: Callable[[Repository], list[dict[str, object]]] | None = None,
+    ) -> None:
         self._store = JsonListStore(storage_path)
         self._snapshot_store = JsonListStore(snapshot_storage_path)
+        self._remote_item_provider = remote_item_provider
 
     def request_scan(
         self,
@@ -766,18 +773,22 @@ class FileSystemRepositoryScanner(IRepositoryScanner):
     def run_scan(self, repository: Repository, scan: RepositoryScan) -> tuple[RepositoryScan, RepositorySnapshot]:
         root_path = scan.root_path or str(repository.metadata.get("localPath") or "")
         root = Path(root_path).expanduser()
-        git_context = self._detect_git_context(root)
+        remote_scan = not root_path and repository.repository_type.value == "AzureDevOps" and self._remote_item_provider is not None
+        git_context = {
+            "branch": str(repository.metadata.get("branch") or repository.default_branch or "main"),
+            "commitId": str(repository.metadata.get("commitId") or ""),
+        } if remote_scan else self._detect_git_context(root)
         if scan.status == "Cancelled":
             return scan, self._empty_snapshot(repository.repository_id, scan.mode)
-        if not root_path:
+        if not root_path and not remote_scan:
             failed = self._update_scan(
                 scan,
                 status="Failed",
-                message="Repository local path is required in metadata.localPath or scan rootPath.",
+                message="Repository requires either a local path or a configured Azure DevOps remote source.",
                 completed_at=now_iso(),
             )
             return failed, self._empty_snapshot(repository.repository_id, scan.mode)
-        if not root.exists() or not root.is_dir():
+        if not remote_scan and (not root.exists() or not root.is_dir()):
             failed = self._update_scan(
                 scan,
                 status="Failed",
@@ -802,7 +813,20 @@ class FileSystemRepositoryScanner(IRepositoryScanner):
         )
 
         previous_snapshot = self._get_latest_snapshot(repository.repository_id)
-        if scanning.mode == "Incremental":
+        if remote_scan:
+            try:
+                folders, files = self._collect_remote_structure(repository, scanning.mode, scanning.metadata.get("manualPaths") or [])
+            except Exception as error:
+                failed = self._update_scan(
+                    scanning,
+                    status="Failed",
+                    message=f"Azure DevOps repository synchronization failed: {error}",
+                    completed_at=now_iso(),
+                )
+                return failed, self._empty_snapshot(repository.repository_id, scanning.mode)
+            diff = self._build_diff(previous_snapshot, files)
+            diff["changedFileCount"] = len(diff["added"]) + len(diff["changed"]) + len(diff["deleted"])
+        elif scanning.mode == "Incremental":
             folders, files, diff = self._collect_incremental_structure(
                 root,
                 repository,
@@ -837,6 +861,46 @@ class FileSystemRepositoryScanner(IRepositoryScanner):
             },
         )
         return completed, snapshot
+
+    def _collect_remote_structure(
+        self,
+        repository: Repository,
+        mode: str,
+        manual_paths: list[str],
+    ) -> tuple[list[str], list[dict[str, object]]]:
+        items = self._remote_item_provider(repository) if self._remote_item_provider else []
+        selected = [str(value).strip("/") for value in manual_paths if str(value).strip("/")]
+        folders: set[str] = set()
+        files: list[dict[str, object]] = []
+        for item in items:
+            path = str(item.get("path") or "").strip("/")
+            if not path or (mode == "Manual" and selected and not any(path == prefix or path.startswith(f"{prefix}/") for prefix in selected)):
+                continue
+            is_folder = bool(item.get("isFolder")) or str(item.get("gitObjectType") or "").casefold() == "tree"
+            if is_folder:
+                folders.add(path)
+                continue
+            parent = Path(path).parent.as_posix()
+            if parent and parent != ".":
+                folders.add(parent)
+            extension = Path(path).suffix.lower().lstrip(".")
+            metadata = item.get("contentMetadata") if isinstance(item.get("contentMetadata"), dict) else {}
+            content_hash = str(item.get("objectId") or item.get("commitId") or "")
+            files.append(
+                RepositoryFile(
+                    file_id=generated_id("repository_file"),
+                    repository_id=repository.repository_id,
+                    path=path,
+                    language=self._detect_language(extension),
+                    extension=extension,
+                    size=int(item.get("size") or metadata.get("fileLength") or 0),
+                    content_hash=content_hash,
+                    last_modified=str(item.get("lastModifiedDate") or item.get("lastModified") or ""),
+                    metadata={"source": "AzureDevOps", "objectId": content_hash},
+                ).to_dict()
+            )
+        files.sort(key=lambda value: str(value.get("path") or ""))
+        return sorted(folders), files
 
     def _collect_incremental_structure(
         self,

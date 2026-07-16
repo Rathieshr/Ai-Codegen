@@ -213,6 +213,28 @@ class AdoClient:
         payload = self._get(url)
         return str(payload.get("content") or "")
 
+    def list_repository_items(self, project: str, repo_id: str, branch: str = "main") -> list[dict[str, Any]]:
+        """List repository folders and files recursively without downloading content."""
+        self._require_platform_config()
+        if not project or not repo_id:
+            raise AdoClientError("ADO project and repository_id are required to list repository items.")
+        query = urllib.parse.urlencode(
+            {
+                "scopePath": "/",
+                "recursionLevel": "Full",
+                "includeContentMetadata": "true",
+                "versionDescriptor.version": branch or "main",
+                "versionDescriptor.versionType": "branch",
+                "api-version": self._cfg.api_version,
+            }
+        )
+        url = (
+            f"{self._cfg.project_url_for(project)}/_apis/git/repositories/"
+            f"{urllib.parse.quote(repo_id, safe='')}/items?{query}"
+        )
+        payload = self._get(url)
+        return [item for item in payload.get("value", []) if isinstance(item, dict) and item.get("path")]
+
     # ── Work Items ────────────────────────────────────────────────────────────
 
     def get_work_item(self, work_item_id: int | str) -> dict[str, Any]:

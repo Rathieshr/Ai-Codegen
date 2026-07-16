@@ -106,11 +106,66 @@ class AzureDevOpsSingleHubTests(unittest.TestCase):
         for value in ("organization", "project", "team", "sprint", "user", "theme", "extension", "route"):
             self.assertIn(value, host_source)
 
+    def test_hub_releases_azure_loader_before_context_resolution(self):
+        host_source = (EXTENSION / "src/host/AzureDevOpsHostAdapter.ts").read_text()
+        self.assertIn("withTimeout(this.initialization, 10000", host_source)
+        self.assertIn("SDK.notifyLoadFailed", host_source)
+        self.assertLess(host_source.index("SDK.notifyLoadSucceeded"), host_source.index("SDK.getWebContext"))
+
+    def test_hub_renders_fallback_before_backend_hydration_and_can_retry(self):
+        source = (EXTENSION / "src/heiApp.tsx").read_text()
+        self.assertLess(source.index("setWorkspace(fallback)"), source.index("requestWorkspace(hostContext)"))
+        self.assertIn("Retry HEI startup", source)
+        self.assertIn("fetchWithTimeout", source)
+        self.assertIn("WorkspaceFallback", source)
+
     def test_standalone_host_implements_the_same_contract(self):
         source = (EXTENSION / "src/host/StandaloneHostAdapter.ts").read_text()
         self.assertIn("implements HEIHostAdapter", source)
         self.assertIn("hostType: this.kind", source)
         self.assertIn("window.history.pushState", source)
+
+    def test_missing_host_role_uses_safe_defaults(self):
+        contract = (EXTENSION / "src/host/HostAdapter.ts").read_text()
+        azure = (EXTENSION / "src/host/AzureDevOpsHostAdapter.ts").read_text()
+        standalone = (EXTENSION / "src/host/StandaloneHostAdapter.ts").read_text()
+        self.assertIn("String(value || '')", contract)
+        self.assertIn("normalizeHostRole(route.role, 'admin')", azure)
+        self.assertIn("normalizeHostRole(route.role, 'viewer')", standalone)
+        self.assertNotIn("route.role.toLowerCase", azure + standalone)
+
+    def test_azure_host_admin_fallback_exposes_administration(self):
+        app = (EXTENSION / "src/heiApp.tsx").read_text()
+        host = (EXTENSION / "src/host/AzureDevOpsHostAdapter.ts").read_text()
+        self.assertIn("normalizeHostRole(route.role, 'admin')", host)
+        self.assertIn("item('settings', 'Administration', 'settings')", app)
+
+    def test_settings_restores_user_configurable_repository_mapping(self):
+        settings = (EXTENSION / "src/settingsWorkspace.tsx").read_text()
+        for label in ("Azure DevOps Project", "Repository", "Branch", "Save Repository Mapping"):
+            self.assertIn(label, settings)
+        self.assertIn("/project-intelligence/connectors/azure-devops/projects", settings)
+        self.assertIn("/project-intelligence/connectors/azure-devops/repositories", settings)
+        self.assertIn("/project-intelligence/connectors/azure-devops/branches", settings)
+        self.assertIn("/project-intelligence/connectors/azure-devops/mapping", settings)
+        self.assertIn("ensureRepositoryRegistration", settings)
+        self.assertIn("`${baseUrl}/repositories`", settings)
+        self.assertIn("repository.webUrl || repository.remoteUrl", settings)
+        self.assertLess(settings.index("ensureRepositoryRegistration(baseUrl, next"), settings.index("/project-intelligence/connectors/azure-devops/mapping`"))
+
+    def test_saved_mapping_drives_repository_center_and_overview_uses_host_project(self):
+        app = (EXTENSION / "src/heiApp.tsx").read_text()
+        overview = (EXTENSION / "src/overviewDashboard.tsx").read_text()
+        self.assertIn("loadRepositoryConfiguration(hostContext)", app)
+        self.assertIn("repositoryMapping?.intelligenceRepositoryId || context.repository.id", app)
+        self.assertIn("onMappingChanged", app)
+        self.assertIn("name: hostContext.project.name || value.currentProject.name", app)
+        self.assertNotIn("Connect a project to load operational engineering state.", overview)
+        self.assertIn("Configure a repository in Administration", overview)
+        self.assertIn("Repository Intelligence", overview)
+        self.assertIn("Azure DevOps Sync", overview)
+        self.assertIn("Open Repository", overview)
+        self.assertIn("repositoryName={repositoryMapping?.repository_name", app)
 
     def test_work_item_action_deep_links_to_the_single_hub(self):
         source = (EXTENSION / "src/openHeiAction.ts").read_text()

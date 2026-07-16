@@ -123,9 +123,18 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
     def test_azure_devops_remote_scan_creates_metadata_snapshot_without_local_path(self) -> None:
         self.module.scanner._remote_item_provider = lambda repository: [
             {"path": "/src", "isFolder": True, "gitObjectType": "tree", "objectId": "tree-1"},
-            {"path": "/src/deviceHealth.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-1", "contentMetadata": {"fileLength": 128}},
+            {"path": "/src/DeviceHealthService.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-1", "contentMetadata": {"fileLength": 128}},
+            {"path": "/src/DeviceHealthController.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-3", "contentMetadata": {"fileLength": 196}},
+            {"path": "/src/DeviceHealthController.test.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-4", "contentMetadata": {"fileLength": 96}},
             {"path": "/README.md", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-2", "contentMetadata": {"fileLength": 64}},
         ]
+        remote_content = {
+            "src/DeviceHealthService.ts": "export class DeviceHealthService { getHealth() { return []; } }",
+            "src/DeviceHealthController.ts": 'router.get("/device-health", () => []); export class DeviceHealthController { constructor(private service: DeviceHealthService) {} }',
+            "src/DeviceHealthController.test.ts": "describe('DeviceHealthController', () => { it('returns health', () => {}); });",
+            "README.md": "# GridHub",
+        }
+        self.module.parser_service._remote_content_provider = lambda repository, path: remote_content[path]
         created = self.module.application.create_repository(
             {
                 "name": "GridHub",
@@ -140,10 +149,24 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
         result = self.module.application.scan_repository(created["repositoryId"], mode="Full")
 
         self.assertEqual("Completed", result["scan"]["status"])
-        self.assertEqual(2, result["snapshot"]["totalFiles"])
+        self.assertEqual(4, result["snapshot"]["totalFiles"])
         self.assertEqual("main", result["snapshot"]["branch"])
-        self.assertEqual(["README.md", "src"], result["snapshot"]["modules"])
-        self.assertEqual("blob-1", result["snapshot"]["metadata"]["filesByPath"]["src/deviceHealth.ts"]["contentHash"])
+        self.assertEqual(["src"], result["snapshot"]["modules"])
+        self.assertEqual(["src"], result["snapshot"]["metadata"]["sourceRoots"])
+        self.assertEqual(["README.md"], result["snapshot"]["metadata"]["rootFiles"])
+        self.assertEqual("blob-1", result["snapshot"]["metadata"]["filesByPath"]["src/DeviceHealthService.ts"]["contentHash"])
+        self.assertGreater(result["parsedSymbolCount"], 0)
+
+        health = self.module.application.get_repository_health(created["repositoryId"])
+        self.assertEqual(["src"], health["sourceRoots"])
+        self.assertIn("src/DeviceHealthController.ts", health["files"])
+        self.assertGreater(health["symbolsIndexed"], 0)
+        self.assertTrue(any(item["name"] == "DeviceHealthService" for item in health["services"]))
+        self.assertTrue(any(item["name"] == "/device-health" for item in health["apis"]))
+
+        self.module.parser_service._store.write([])
+        refreshed = self.module.application.scan_repository(created["repositoryId"], mode="Incremental")
+        self.assertGreater(refreshed["parsedSymbolCount"], 0)
 
     def test_update_and_delete_repository(self) -> None:
         created = self.module.application.create_repository(

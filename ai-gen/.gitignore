@@ -66,8 +66,18 @@ Thumbs.db
 htmlcov/
 
 # Runtime session/cache output
+.ai_gen_handoffs/
+data/audit.jsonl
+data/platform/
 data/project_intelligence/
 data/story_planner_sessions/storyplan_*.json
+
+# Generated repository intelligence and visualization output
+graphify-out/
+backend/graphify-out/
+
+# Packaged extension archives
+*.vsix.zip
 
 # IDEs
 .classpath

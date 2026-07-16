@@ -376,6 +376,7 @@ class RepositoryIntelligenceApplicationService:
         snapshot = self.snapshot_service.get_latest_snapshot(repository_id)
         graph = self.graph_service.get_graph(repository_id)
         symbols = self.parser_service.list_symbols(repository_id, snapshot_id=snapshot.snapshot_id if snapshot else "")
+        snapshot_metadata = dict(snapshot.metadata or {}) if snapshot else {}
         graph_counts: dict[str, int] = {}
         graph_items: dict[str, list[dict]] = {}
         if graph:
@@ -410,6 +411,14 @@ class RepositoryIntelligenceApplicationService:
                 "counts": graph_counts,
             },
             "modules": [item["name"] for item in graph_items.get("Module", [])[:100]],
+            "sourceRoots": list(snapshot_metadata.get("sourceRoots") or (snapshot.modules if snapshot else []))[:100],
+            "folders": list(snapshot_metadata.get("folders") or [])[:500],
+            "files": sorted(
+                str(item.get("path") or "")
+                for item in list(snapshot_metadata.get("files") or [])
+                if isinstance(item, dict) and str(item.get("path") or "")
+            )[:1000],
+            "rootFiles": list(snapshot_metadata.get("rootFiles") or [])[:200],
             "services": graph_items.get("Service", [])[:100],
             "apis": graph_items.get("API", [])[:100],
             "tests": graph_items.get("Test", [])[:100],

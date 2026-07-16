@@ -41,19 +41,28 @@ class RepositoryIntelligenceModule:
 
 def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligenceModule:
     storage_root.mkdir(parents=True, exist_ok=True)
+    ado_client = AdoClient()
     repository_service = FileBackedRepositoryService(storage_root / "repositories.json")
     snapshot_service = FileBackedSnapshotService(storage_root / "repository_snapshots.json")
     scanner = FileSystemRepositoryScanner(
         storage_root / "repository_scans.json",
         storage_root / "repository_snapshots.json",
-        remote_item_provider=lambda repository: AdoClient().list_repository_items(
+        remote_item_provider=lambda repository: ado_client.list_repository_items(
             str(repository.metadata.get("adoProject") or ""),
             str(repository.metadata.get("azureDevOpsRepositoryId") or ""),
             str(repository.metadata.get("branch") or repository.default_branch or "main"),
         ),
     )
     graph_service = FileBackedEngineeringGraphService(storage_root / "engineering_graphs.json")
-    parser_service = FileBackedRepositoryParserService(storage_root / "repository_symbols.json")
+    parser_service = FileBackedRepositoryParserService(
+        storage_root / "repository_symbols.json",
+        remote_content_provider=lambda repository, path: ado_client.get_file_content(
+            str(repository.metadata.get("adoProject") or ""),
+            str(repository.metadata.get("azureDevOpsRepositoryId") or ""),
+            path,
+            str(repository.metadata.get("branch") or repository.default_branch or "main"),
+        ),
+    )
     memory_engine = EngineeringMemoryEngine(storage_root / "engineering_memory.json")
     file_ranking_service = FileBackedRepositoryFileRankingService(
         graph_service=graph_service,

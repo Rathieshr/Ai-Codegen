@@ -24,6 +24,7 @@ type RepositorySnapshot = {
   modules: string[];
   status: string;
   scanMode: string;
+  metadata?: { sourceRoots?: string[]; folders?: string[]; files?: Array<{ path?: string }>; rootFiles?: string[] };
 };
 
 type RepositoryHealth = {
@@ -45,6 +46,10 @@ type RepositoryHealth = {
   pendingScanCount: number;
   engineeringGraph: { nodeCount: number; relationshipCount: number; counts: Record<string, number> };
   modules: string[];
+  sourceRoots: string[];
+  folders: string[];
+  files: string[];
+  rootFiles: string[];
   services: Array<Record<string, unknown>>;
   apis: Array<Record<string, unknown>>;
   tests: Array<Record<string, unknown>>;
@@ -196,7 +201,7 @@ export function RepositoryCenter({
                     <button className="planner-button secondary" type="button" onClick={() => setDiagnosticsOpen((value) => !value)}>View Diagnostics</button>
                   </div>
                   <div className="hei-repository-content-grid">
-                    <EntityList title="Modules" items={health.modules} empty="No modules indexed." />
+                    <EntityList title="Source Roots" items={health.sourceRoots || health.modules} empty="No source folders indexed." />
                     <EntityList title="Services" items={health.services.map(nameOf)} empty="No services identified." />
                     <EntityList title="APIs" items={health.apis.map(nameOf)} empty="No APIs identified." />
                     <EntityList title="Tests" items={health.tests.map(nameOf)} empty="No tests identified." />
@@ -216,8 +221,8 @@ export function RepositoryCenter({
 function Signal({ label, value, status }: { label: string; value: string; status: string }) { return <div><span>{label}</span><strong>{value}</strong><small>{status}</small></div>; }
 function Metric({ label, value }: { label: string; value: string | number }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 function RepositoryStatus({ value }: { value: string }) { return <span className={`hei-repository-status status-${value.toLowerCase().replace(/[^a-z]+/g, '-')}`}>{value}</span>; }
-function EntityList({ title, items, empty }: { title: string; items: string[]; empty: string }) { return <section><strong>{title}</strong>{items.length ? <ul>{items.slice(0, 12).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{empty}</p>}</section>; }
-function SnapshotPanel({ snapshot }: { snapshot: RepositorySnapshot }) { return <section className="hei-repository-expanded"><div><strong>Snapshot {snapshot.snapshotId}</strong><RepositoryStatus value={snapshot.status} /></div><div className="hei-repository-snapshot-grid"><Signal label="Version" value={`v${snapshot.version}`} status={snapshot.scanMode} /><Signal label="Branch" value={snapshot.branch} status={snapshot.commitId || 'Commit not recorded'} /><Signal label="Files" value={String(snapshot.totalFiles)} status={`${Object.keys(snapshot.languages || {}).length} languages`} /><Signal label="Created" value={snapshot.createdAt || 'Not recorded'} status="Snapshot timestamp" /></div><EntityList title="Languages" items={Object.entries(snapshot.languages || {}).map(([name, count]) => `${name}: ${count}`)} empty="No language summary." /></section>; }
+function EntityList({ title, items, empty, limit = 12 }: { title: string; items: string[]; empty: string; limit?: number }) { const visible = items.slice(0, limit); return <section><strong>{title}{items.length ? ` (${items.length})` : ''}</strong>{items.length ? <><ul>{visible.map((item) => <li key={item}>{item}</li>)}</ul>{items.length > visible.length ? <small>{items.length - visible.length} more available in this snapshot.</small> : null}</> : <p>{empty}</p>}</section>; }
+function SnapshotPanel({ snapshot }: { snapshot: RepositorySnapshot }) { const metadata = snapshot.metadata || {}; const files = (metadata.files || []).map((item) => String(item.path || '')).filter(Boolean); return <section className="hei-repository-expanded"><div><strong>Snapshot {snapshot.snapshotId}</strong><RepositoryStatus value={snapshot.status} /></div><div className="hei-repository-snapshot-grid"><Signal label="Version" value={`v${snapshot.version}`} status={snapshot.scanMode} /><Signal label="Branch" value={snapshot.branch} status={snapshot.commitId || 'Commit not recorded'} /><Signal label="Files" value={String(snapshot.totalFiles)} status={`${Object.keys(snapshot.languages || {}).length} languages`} /><Signal label="Created" value={snapshot.createdAt || 'Not recorded'} status="Snapshot timestamp" /></div><div className="hei-repository-diagnostic-lists"><EntityList title="Languages" items={Object.entries(snapshot.languages || {}).map(([name, count]) => `${name}: ${count}`)} empty="No language summary." /><EntityList title="Source Folders" items={metadata.sourceRoots || snapshot.modules || []} empty="No source folders indexed." /><EntityList title="Indexed Files" items={files} empty="No files indexed." limit={40} /></div></section>; }
 function DiagnosticsPanel({ health }: { health: RepositoryHealth }) { return <section className="hei-repository-expanded"><div><strong>Repository Diagnostics</strong><RepositoryStatus value={health.availability} /></div><div className="hei-repository-snapshot-grid"><Signal label="Scan Duration" value={`${health.scanDurationMs || 0} ms`} status="Latest synchronization" /><Signal label="Graph Relationships" value={String(health.engineeringGraph.relationshipCount || 0)} status="Indexed relationships" /><Signal label="Pending Jobs" value={String(health.backgroundJobSummary.pending || 0)} status={`${health.backgroundJobSummary.failed || 0} failed`} /><Signal label="Agent" value={String(health.agentStatus?.status || 'Idle')} status="Repository agent" /></div><div className="hei-repository-diagnostic-lists"><EntityList title="Symbol Types" items={Object.entries(health.symbolCounts || {}).map(([name, count]) => `${name}: ${count}`)} empty="No symbols indexed." /><EntityList title="Background Jobs" items={(health.backgroundJobs || []).map((job) => `${String(job.jobType || job.type || job.jobId || 'Repository job')}: ${String(job.status || 'Pending')}`)} empty="No repository jobs recorded." /></div></section>; }
 function nameOf(item: Record<string, unknown>): string { return String(item.name || item.path || item.nodeId || 'Unnamed repository item'); }
 function message(error: unknown, fallback: string): string { return error instanceof Error ? error.message : fallback; }

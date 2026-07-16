@@ -389,7 +389,7 @@ class FileBackedEngineeringGraphService(IEngineeringGraphService):
             path = str(file_record.get("path") or "")
             if not path:
                 continue
-            module_name = path.split("/", 1)[0] if "/" in path else path
+            module_name = _module_name(path)
             module_node = module_by_name.get(module_name)
             file_node = node_by_id.get(self._file_node_id(repository_id, path))
             if module_node and file_node:
@@ -1033,9 +1033,11 @@ class FileSystemRepositoryScanner(IRepositoryScanner):
             languages[language] = languages.get(language, 0) + 1
             total_size += int(item.get("size") or 0)
             files_by_path[path] = item
-            module = path.split("/", 1)[0] if "/" in path else path
+            module = _module_name(path)
             if module:
                 modules.add(module)
+        source_roots = sorted(modules)
+        root_files = sorted(path for path in files_by_path if "/" not in path)
         return RepositorySnapshot(
             snapshot_id=generated_id("snapshot"),
             repository_id=repository_id,
@@ -1068,6 +1070,8 @@ class FileSystemRepositoryScanner(IRepositoryScanner):
                 "totalFolders": len(folders),
                 "totalSize": total_size,
                 "filesByPath": files_by_path,
+                "sourceRoots": source_roots,
+                "rootFiles": root_files,
                 "diff": diff,
                 "changedFileCount": int(diff.get("changedFileCount") or 0),
             },
@@ -1277,3 +1281,9 @@ class FileSystemRepositoryScanner(IRepositoryScanner):
             "md": RepositoryLanguage.MARKDOWN,
         }
         return mapping.get(extension.lower(), RepositoryLanguage.UNKNOWN)
+
+
+
+def _module_name(path: str) -> str:
+    normalized = str(path or "").strip("/")
+    return normalized.split("/", 1)[0] if "/" in normalized else ""

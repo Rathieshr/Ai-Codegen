@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Callable
 
 from backend.platform.shared import JsonListStore, generated_id
 
@@ -19,19 +20,71 @@ from ..domain import (
 
 
 class FileBackedRepositoryParserService(IRepositoryParserService):
-    def __init__(self, storage_path: Path) -> None:
+    def __init__(
+        self,
+        storage_path: Path,
+        remote_content_provider: Callable[[Repository, str], str] | None = None,
+        *,
+        max_remote_files: int = 500,
+        max_remote_file_size: int = 1_000_000,
+    ) -> None:
         self._store = JsonListStore(storage_path)
+        self._remote_content_provider = remote_content_provider
+        self._max_remote_files = max_remote_files
+        self._max_remote_file_size = max_remote_file_size
 
     def parse_snapshot(self, repository: Repository, snapshot: RepositorySnapshot) -> list[RepositoryParsedSymbol]:
         root_path = str(repository.metadata.get("localPath") or "").strip()
         root = Path(root_path).expanduser().resolve() if root_path else None
+        files = list((snapshot.metadata or {}).get("files") or [])
+        if (not root or not root.exists()) and self._remote_content_provider:
+            return self._parse_remote(repository, snapshot, files)
         if not root or not root.exists():
             return []
-
-        files = list((snapshot.metadata or {}).get("files") or [])
         if snapshot.scan_mode == "Incremental":
             return self._parse_incremental(repository, snapshot, root, files)
         return self._parse_full(repository, snapshot, root, files)
+
+    def _parse_remote(
+        self,
+        repository: Repository,
+        snapshot: RepositorySnapshot,
+        files: list[dict[str, object]],
+    ) -> list[RepositoryParsedSymbol]:
+        candidates = files
+        carry_forward: list[RepositoryParsedSymbol] = []
+        if snapshot.scan_mode == "Incremental":
+            previous_symbols = self.list_symbols(repository.repository_id)
+            diff = dict((snapshot.metadata or {}).get("diff") or {})
+            changed_paths = set(diff.get("added") or []) | set(diff.get("changed") or [])
+            changed_paths |= {pair[1] for pair in list(diff.get("renamed") or []) if len(pair) == 2}
+            removed_paths = set(diff.get("deleted") or [])
+            removed_paths |= {pair[0] for pair in list(diff.get("renamed") or []) if len(pair) == 2}
+            if previous_symbols:
+                carry_forward = [
+                    RepositoryParsedSymbol.from_dict({**item.to_dict(), "snapshotId": snapshot.snapshot_id})
+                    for item in previous_symbols
+                    if item.path not in changed_paths and item.path not in removed_paths
+                ]
+                candidates = [item for item in files if str(item.get("path") or "") in changed_paths]
+
+        parsed: list[RepositoryParsedSymbol] = []
+        fetched = 0
+        for file_record in candidates:
+            if fetched >= self._max_remote_files:
+                break
+            relative_path = str(file_record.get("path") or "")
+            language = _language_for_record(file_record)
+            size = int(file_record.get("size") or 0)
+            if not relative_path or language == RepositoryLanguage.UNKNOWN or size > self._max_remote_file_size:
+                continue
+            try:
+                content = self._remote_content_provider(repository, relative_path) if self._remote_content_provider else ""
+            except Exception:
+                continue
+            fetched += 1
+            parsed.extend(self._symbols_from_content(repository, snapshot, relative_path, content, language))
+        return _dedupe_symbols([*carry_forward, *parsed])
 
     def save_symbols(
         self,
@@ -143,6 +196,16 @@ class FileBackedRepositoryParserService(IRepositoryParserService):
             return []
         content = full_path.read_text(encoding="utf-8", errors="ignore")
         language = _language_for_record(file_record)
+        return self._symbols_from_content(repository, snapshot, relative_path, content, language)
+
+    def _symbols_from_content(
+        self,
+        repository: Repository,
+        snapshot: RepositorySnapshot,
+        relative_path: str,
+        content: str,
+        language: RepositoryLanguage,
+    ) -> list[RepositoryParsedSymbol]:
         parsed = _extract_symbols_for_content(relative_path, content, language)
         output: list[RepositoryParsedSymbol] = []
         for item in parsed:

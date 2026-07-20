@@ -53,6 +53,8 @@ def map_work_item(value: dict[str, Any]) -> ExternalWorkItem:
         int(value.get("escapedDefects") or fields.get("Custom.EscapedDefects") or 0),
         _number(value.get("actualCycleTimeDays") or fields.get("Custom.ActualCycleTimeDays")),
         _number(value.get("actualActiveTimeDays") or fields.get("Custom.ActualActiveTimeDays")),
+        [_comment(item) for item in value.get("comments") or [] if isinstance(item, dict)],
+        [_attachment(item) for item in value.get("relations") or [] if isinstance(item, dict) and str(item.get("rel") or "").lower() == "attachedfile"],
     )
 
 
@@ -69,6 +71,27 @@ def _tags(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [item.strip() for item in str(value or "").split(";") if item.strip()]
+
+
+def _comment(value: dict[str, Any]) -> dict[str, Any]:
+    author = value.get("createdBy") if isinstance(value.get("createdBy"), dict) else {}
+    return {
+        "commentId": str(value.get("id") or ""),
+        "text": str(value.get("text") or ""),
+        "createdBy": str(author.get("displayName") or author.get("uniqueName") or ""),
+        "createdAt": str(value.get("createdDate") or ""),
+        "modifiedAt": str(value.get("modifiedDate") or ""),
+    }
+
+
+def _attachment(value: dict[str, Any]) -> dict[str, Any]:
+    attributes = value.get("attributes") if isinstance(value.get("attributes"), dict) else {}
+    return {
+        "name": str(attributes.get("name") or "Attachment"),
+        "url": str(value.get("url") or ""),
+        "comment": str(attributes.get("comment") or ""),
+        "authorizedDate": str(attributes.get("authorizedDate") or ""),
+    }
 
 
 def map_repository(value: dict[str, Any]) -> ExternalRepository:

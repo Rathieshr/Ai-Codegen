@@ -131,6 +131,34 @@ class UnhealthyPhiProvider(HealthyPhiProvider):
 
 
 class ProjectIntelligenceTests(unittest.TestCase):
+    def test_planning_node_regeneration_uses_intelligence_pipeline_and_versions_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {
+            "AI_GEN_DATA_DIR": temp_dir, "AI_GEN_REFINER_ENABLED": "0",
+        }, clear=False):
+            service = ProjectIntelligenceService()
+            service.save_profile({
+                "project_description": "Device health operations",
+                "applications": ["Operations Dashboard"],
+                "modules": ["Device Health"],
+                "flows": ["Device Health Review Flow"],
+            })
+            parent = service.save_artifact({
+                "artifact_type": "Feature", "title": "Device Health Overview", "state": "draft",
+                "source_item": {"id": "epic-1", "type": "Epic", "title": "Device Health"},
+                "payload": {"description": "Provide device health visibility.", "selectedCapabilities": ["Device Health"]},
+            })
+            story = service.save_artifact({
+                "artifact_type": "Story", "title": "View Device Health", "state": "draft",
+                "source_item": {"id": parent["artifact_id"], "type": "Feature", "title": parent["title"]},
+                "payload": {"parentId": parent["artifact_id"], "description": "Review device health status.", "acceptanceCriteria": ["Health status is visible."]},
+            })
+            regenerated = service.regenerate_planning_artifact(story["artifact_id"], "Planner")
+
+        self.assertEqual(2, regenerated["version"])
+        self.assertEqual("review", regenerated["state"])
+        self.assertTrue(regenerated["payload"]["regeneratedAt"])
+        self.assertEqual("deterministic_fallback", regenerated["payload"]["regenerationDiagnostics"]["providerUsed"])
+
     def test_save_and_load_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
             service = ProjectIntelligenceService()
@@ -2627,6 +2655,40 @@ Architecture Notes: Backend telemetry APIs publish events to the operations port
 
             self.assertEqual(first["version"], 1)
             self.assertEqual(second["version"], 2)
+
+    def test_planning_artifact_draft_update_versions_and_preserves_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):
+            service = ProjectIntelligenceService()
+            saved = service.save_artifact({
+                "artifact_type": "Epic",
+                "title": "Device health planning pack",
+                "payload": {"description": "Initial scope", "dependencies": ["Telemetry"]},
+                "source_item": {"id": "requirement-1", "type": "Requirement", "title": "Device health"},
+            })
+
+            updated = service.update_artifact_draft(saved["artifact_id"], {
+                "title": "Modernize device health",
+                "description": "Reviewed scope",
+                "status": "Review",
+                "expectedVersion": 1,
+            }, "Planning Manager")
+
+            self.assertEqual("review", updated["state"])
+            self.assertEqual(2, updated["version"])
+            self.assertEqual("Reviewed scope", updated["payload"]["description"])
+            self.assertEqual(["Telemetry"], updated["payload"]["dependencies"])
+            self.assertEqual("Device health planning pack", updated["history"][0]["title"])
+            self.assertEqual("Planning Manager", updated["history"][0]["changed_by"])
+
+            cleared = service.update_artifact_draft(saved["artifact_id"], {
+                "description": "",
+                "expectedVersion": 2,
+            }, "Planning Manager")
+            self.assertEqual("", cleared["payload"]["description"])
+
+            service.approve_artifact(saved["artifact_id"], "Approver")
+            with self.assertRaisesRegex(ValueError, "Only Draft or Review"):
+                service.update_artifact_draft(saved["artifact_id"], {"title": "Illegal edit"})
 
     def test_knowledge_graph_persists_epic_feature_story_task_and_test_relationships(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AI_GEN_DATA_DIR": temp_dir}, clear=False):

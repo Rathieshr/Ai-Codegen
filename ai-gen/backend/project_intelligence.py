@@ -8,6 +8,7 @@ import os
 import hashlib
 import re
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -565,6 +566,311 @@ class ProjectIntelligenceService:
                     logger.warning("project graph artifact approval ingest failed: %s", error)
                 return artifact
         raise ValueError(f"Artifact {artifact_id} was not found.")
+
+    def update_artifact_draft(self, artifact_id: str, changes: dict[str, Any], changed_by: str = "") -> dict[str, Any]:
+        """Update a draft/review artifact while retaining its complete version history."""
+        artifacts = self._read_artifacts()
+        now = _now_iso()
+        for artifact in artifacts:
+            if artifact.get("artifact_id") != artifact_id:
+                continue
+            state = _normalize_artifact_state(artifact.get("state"))
+            if state not in {"draft", "review"}:
+                raise ValueError("Only Draft or Review planning artifacts can be edited.")
+            expected_version = changes.get("expectedVersion")
+            if expected_version is not None and int(expected_version) != int(artifact.get("version") or 1):
+                raise ValueError("Planning artifact version changed. Reload the workspace before saving.")
+            artifact.setdefault("history", []).append({
+                "state": state,
+                "title": artifact.get("title"),
+                "payload": artifact.get("payload"),
+                "version": int(artifact.get("version") or 1),
+                "changed_by": _clean_text(changed_by) or "HEI User",
+                "changed_on": now,
+            })
+            title = _clean_text(changes.get("title"))
+            description = _clean_text(changes.get("description"))
+            payload_changes = changes.get("details") if isinstance(changes.get("details"), dict) else {}
+            payload = artifact.get("payload") if isinstance(artifact.get("payload"), dict) else {}
+            artifact["title"] = title or artifact.get("title")
+            description_change = {"description": description} if "description" in changes else {}
+            artifact["payload"] = {**payload, **payload_changes, **description_change}
+            requested_status = _clean_text(changes.get("status")).lower()
+            if requested_status:
+                if requested_status not in {"draft", "review"}:
+                    raise ValueError("Draft updates may only use Draft or Review status.")
+                artifact["state"] = requested_status
+            artifact["version"] = int(artifact.get("version") or 1) + 1
+            artifact["updated_on"] = now
+            artifact["fingerprint"] = _artifact_fingerprint(
+                _clean_text(artifact.get("artifact_type")) or "Artifact",
+                artifact.get("source_item") if isinstance(artifact.get("source_item"), dict) else {},
+                artifact.get("payload"),
+            )
+            self._write_artifacts(artifacts)
+            return artifact
+        raise ValueError(f"Artifact {artifact_id} was not found.")
+
+    def transition_artifact(
+        self,
+        artifact_id: str,
+        action: str,
+        actor: str = "",
+        comments: str = "",
+        expected_version: int | None = None,
+        target_version: int | None = None,
+    ) -> dict[str, Any]:
+        """Apply an audited planning lifecycle transition without rewriting prior versions."""
+        normalized_action = _clean_text(action).lower().replace("-", "_").replace(" ", "_")
+        transitions = {
+            "approve": ({"draft", "review"}, "approved"),
+            "reject": ({"draft", "review"}, "rejected"),
+            "request_changes": ({"review", "approved", "rejected"}, "draft"),
+            "publish": ({"approved"}, "published"),
+        }
+        if normalized_action not in {*transitions, "rollback"}:
+            raise ValueError(f"Unsupported planning lifecycle action: {action}.")
+        if normalized_action in {"reject", "request_changes"} and not _clean_text(comments):
+            raise ValueError("Comments are required when rejecting planning or requesting changes.")
+
+        artifacts = self._read_artifacts()
+        now = _now_iso()
+        changed_by = _clean_text(actor) or "HEI User"
+        for artifact in artifacts:
+            if artifact.get("artifact_id") != artifact_id:
+                continue
+            state = _normalize_artifact_state(artifact.get("state"))
+            version = int(artifact.get("version") or 1)
+            if expected_version is not None and int(expected_version) != version:
+                raise ValueError("Planning artifact version changed. Reload the workspace before continuing.")
+            previous = {
+                "state": state,
+                "title": artifact.get("title"),
+                "payload": deepcopy(artifact.get("payload")),
+                "version": version,
+                "changed_by": changed_by,
+                "changed_on": now,
+                "action": normalized_action,
+                "comments": _clean_text(comments),
+            }
+            history = artifact.setdefault("history", [])
+            if normalized_action == "rollback":
+                if target_version is None:
+                    raise ValueError("targetVersion is required for rollback.")
+                snapshot = next(
+                    (entry for entry in history if int(entry.get("version") or 0) == int(target_version)
+                     and "payload" in entry and "title" in entry),
+                    None,
+                )
+                if not snapshot:
+                    raise ValueError(f"Planning artifact version {target_version} is not available for rollback.")
+                history.append(previous)
+                artifact["title"] = snapshot.get("title") or artifact.get("title")
+                artifact["payload"] = deepcopy(snapshot.get("payload"))
+                artifact["state"] = "draft"
+                artifact["rollback_from_version"] = version
+                artifact["rollback_to_version"] = int(target_version)
+            else:
+                allowed, next_state = transitions[normalized_action]
+                if state not in allowed:
+                    raise ValueError(f"Planning artifact cannot {normalized_action.replace('_', ' ')} from {state.title()} state.")
+                history.append(previous)
+                artifact["state"] = next_state
+
+            artifact["version"] = version + 1
+            artifact["updated_on"] = now
+            artifact["last_action"] = normalized_action
+            artifact["last_comments"] = _clean_text(comments)
+            artifact["last_changed_by"] = changed_by
+            if normalized_action == "approve":
+                artifact["approved_by"] = changed_by
+                artifact["approved_on"] = now
+            elif normalized_action == "publish":
+                artifact["published_by"] = changed_by
+                artifact["published_on"] = now
+            elif normalized_action == "reject":
+                artifact["rejected_by"] = changed_by
+                artifact["rejected_on"] = now
+            artifact["fingerprint"] = _artifact_fingerprint(
+                _clean_text(artifact.get("artifact_type")) or "Artifact",
+                artifact.get("source_item") if isinstance(artifact.get("source_item"), dict) else {},
+                artifact.get("payload"),
+            )
+            self._write_artifacts(artifacts)
+            try:
+                from backend.project_graph import project_knowledge_graph_service
+
+                project_knowledge_graph_service.ingest_artifact(artifact)
+            except Exception as error:  # pragma: no cover - graph updates should not block transitions
+                logger.warning("project graph artifact transition ingest failed: %s", error)
+            return artifact
+        raise LookupError(f"Artifact {artifact_id} was not found.")
+
+    def regenerate_planning_artifact(self, artifact_id: str, changed_by: str = "") -> dict[str, Any]:
+        """Regenerate one draft node through the established Intelligence Pipeline."""
+        artifacts = self._read_artifacts()
+        current = next((item for item in artifacts if item.get("artifact_id") == artifact_id), None)
+        if not current:
+            raise ValueError(f"Artifact {artifact_id} was not found.")
+        state = _normalize_artifact_state(current.get("state"))
+        if state not in {"draft", "review"}:
+            raise ValueError("Only Draft or Review planning artifacts can be regenerated.")
+        payload = current.get("payload") if isinstance(current.get("payload"), dict) else {}
+        parent_id = _lineage_parent_id(payload)
+        parent = next((item for item in artifacts if item.get("artifact_id") == parent_id), None)
+        parent_payload = parent.get("payload") if isinstance((parent or {}).get("payload"), dict) else {}
+        work_item = {
+            "id": artifact_id,
+            "type": _clean_text(current.get("artifact_type")) or "Artifact",
+            "title": _clean_text(current.get("title")),
+            "description": _clean_text(payload.get("description") or payload.get("businessGoal") or payload.get("summary")),
+            "acceptanceCriteria": payload.get("acceptanceCriteria") or payload.get("acceptance_criteria") or [],
+        }
+        parent_work_item = {
+            "id": _clean_text((parent or {}).get("artifact_id") or current.get("source_item", {}).get("id")),
+            "type": _clean_text((parent or {}).get("artifact_type") or current.get("source_item", {}).get("type")),
+            "title": _clean_text((parent or {}).get("title") or current.get("source_item", {}).get("title")),
+            "description": _clean_text(parent_payload.get("description") or parent_payload.get("businessGoal") or parent_payload.get("summary")),
+        }
+        siblings = [
+            {"id": item.get("artifact_id"), "title": item.get("title"), "description": _clean_text((item.get("payload") or {}).get("description"))}
+            for item in artifacts
+            if item.get("artifact_id") != artifact_id
+            and _lineage_parent_id(item.get("payload") if isinstance(item.get("payload"), dict) else {}) == parent_id
+        ]
+        pipeline = _run_intelligence_pipeline(
+            work_item, parent_work_item, self.get_profile(), work_item["type"], siblings,
+            {"operation": f"planning_node_{work_item['type'].lower()}_regeneration", "allow_fallback": True},
+        )
+        generated = next((item for item in pipeline.get("artifacts", []) if isinstance(item, dict)), None)
+        if not generated:
+            raise ValueError("Planning Intelligence did not return a regenerated artifact.")
+        regeneration_diagnostics = dict(pipeline.get("reasoning", {}).get("diagnostics") or {})
+        provider_metadata = pipeline.get("providerMetadata") if isinstance(pipeline.get("providerMetadata"), dict) else {}
+        if provider_metadata.get("phi_status") != "success":
+            regeneration_diagnostics["providerUsed"] = "deterministic_fallback"
+        regeneration_diagnostics["providerStatus"] = provider_metadata.get("phi_status") or "not_requested"
+        regeneration_diagnostics["fallbackUsed"] = bool(provider_metadata.get("fallback_used") or provider_metadata.get("phi_status") != "success")
+        return self.update_artifact_draft(artifact_id, {
+            "expectedVersion": current.get("version") or 1,
+            "title": generated.get("title") or current.get("title"),
+            "description": generated.get("description") or payload.get("description") or "",
+            "status": "Review",
+            "details": {
+                "businessValue": generated.get("businessValue") or payload.get("businessValue"),
+                "acceptanceCriteria": generated.get("acceptanceCriteria") or payload.get("acceptanceCriteria") or [],
+                "dependencies": generated.get("dependencies") or payload.get("dependencies") or [],
+                "risks": generated.get("risks") or payload.get("risks") or [],
+                "generatedUsing": generated.get("generatedUsing") or {},
+                "confidence": generated.get("confidence") or payload.get("confidence"),
+                "validationReport": generated.get("validationReport") or {},
+                "validationStatus": generated.get("validationStatus") or "Pending",
+                "regenerationDiagnostics": regeneration_diagnostics,
+                "regeneratedAt": _now_iso(),
+            },
+        }, changed_by)
+
+    def regenerate_story_tasks(self, story_artifact_id: str, changed_by: str = "") -> dict[str, Any]:
+        """Replace draft task recommendations from one Story without touching approved Tasks."""
+        artifacts = self._read_artifacts()
+        story = next((item for item in artifacts if item.get("artifact_id") == story_artifact_id), None)
+        if not story or "story" not in _clean_text(story.get("artifact_type")).lower():
+            raise ValueError(f"Story artifact {story_artifact_id} was not found.")
+        payload = story.get("payload") if isinstance(story.get("payload"), dict) else {}
+        story_input = {
+            "id": story_artifact_id, "type": "Story", "title": story.get("title"),
+            "description": payload.get("description"),
+            "acceptance_criteria": payload.get("acceptanceCriteria") or payload.get("acceptance_criteria") or [],
+            "work_item_dna": payload.get("work_item_dna") or payload.get("dna"),
+        }
+        existing = [
+            item for item in artifacts
+            if "task" in _clean_text(item.get("artifact_type")).lower()
+            and _lineage_parent_id(item.get("payload") if isinstance(item.get("payload"), dict) else {}) == story_artifact_id
+            and _normalize_artifact_state(item.get("state")) != "archived"
+        ]
+        preserved_titles = {
+            _clean_text(item.get("title")).casefold() for item in existing
+            if _normalize_artifact_state(item.get("state")) in {"approved", "locked"}
+            or _clean_text((item.get("payload") or {}).get("source")).casefold() == "manual"
+        }
+        refined = self.refine_story(story_input, self.get_profile(), options={
+            "existing_children": [{"id": item.get("artifact_id"), "title": item.get("title")} for item in existing],
+        })
+        proposed = [item for item in refined.get("proposed_tasks", []) if isinstance(item, dict)]
+        for item in existing:
+            item_payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            if (
+                _normalize_artifact_state(item.get("state")) in {"draft", "review"}
+                and _clean_text(item_payload.get("source")).casefold() != "manual"
+            ):
+                self.archive_artifact(_clean_text(item.get("artifact_id")))
+        created = []
+        for task in proposed:
+            title = _clean_text(task.get("title"))
+            if not title or title.casefold() in preserved_titles:
+                continue
+            created.append(self.save_artifact({
+                "artifact_type": "Task", "state": "draft", "title": title,
+                "source_item": {"id": story_artifact_id, "type": "Story", "title": story.get("title")},
+                "created_by": changed_by or "HEI User",
+                "payload": {
+                    "parentId": story_artifact_id, "description": task.get("description") or task.get("purpose") or "",
+                    "acceptanceCriteria": task.get("acceptanceCriteria") or task.get("acceptance_criteria") or [],
+                    "dependencies": task.get("dependencies") or [], "risks": task.get("risks") or [],
+                    "work_area": task.get("work_area") or task.get("workArea") or "",
+                    "category": _planning_task_category(task),
+                    "estimate": task.get("estimate") or {"engineeringHours": 0, "engineeringDays": 0, "confidence": 0},
+                    "owner": task.get("owner") or "Unassigned", "priority": task.get("priority") or "Medium",
+                    "taskStatus": task.get("taskStatus") or "To Do", "source": "ai",
+                    "confidence": task.get("confidence") or 0, "generatedUsing": task.get("generatedUsing") or {},
+                    "work_item_dna": task.get("work_item_dna") or task.get("dna") or {},
+                },
+            }))
+        return {
+            "storyId": story_artifact_id, "generatedTasks": created, "generatedTaskCount": len(created),
+            "preservedTaskCount": len(preserved_titles),
+            "preservedApprovedTaskCount": sum(
+                1 for item in existing if _normalize_artifact_state(item.get("state")) in {"approved", "locked"}
+            ),
+            "preservedManualTaskCount": sum(
+                1 for item in existing if _clean_text((item.get("payload") or {}).get("source")).casefold() == "manual"
+            ),
+            "providerMetadata": refined.get("provider_metadata") or refined.get("providerMetadata") or {},
+        }
+
+    def generate_story_tests(self, story_artifact_id: str, changed_by: str = "") -> dict[str, Any]:
+        """Generate and persist a QA Test Suite derived from one Story."""
+        artifacts = self._read_artifacts()
+        story = next((item for item in artifacts if item.get("artifact_id") == story_artifact_id), None)
+        if not story or "story" not in _clean_text(story.get("artifact_type")).lower():
+            raise ValueError(f"Story artifact {story_artifact_id} was not found.")
+        payload = story.get("payload") if isinstance(story.get("payload"), dict) else {}
+        story_input = {
+            "id": story_artifact_id, "type": "Story", "title": story.get("title"),
+            "description": payload.get("description"),
+            "acceptance_criteria": payload.get("acceptanceCriteria") or payload.get("acceptance_criteria") or [],
+            "modules": payload.get("repositoryModules") or payload.get("affected_modules") or payload.get("selectedModules") or [],
+            "flows": payload.get("affected_flows") or payload.get("selectedFlows") or [],
+            "dependencies": payload.get("dependencies") or [],
+        }
+        suite = self.generate_qa_test_cases(
+            story_input,
+            self.get_profile(),
+            options={"force_provider": "deterministic_fallback"},
+        )
+        if suite.get("error"):
+            raise ValueError(_clean_text(suite.get("message") or suite.get("error")) or "QA Intelligence could not generate tests.")
+        artifact = self.save_artifact({
+            "artifact_type": "Test Suite", "state": "draft", "title": f"{_clean_text(story.get('title'))} Tests",
+            "source_item": {"id": story_artifact_id, "type": "Story", "title": story.get("title")},
+            "created_by": changed_by or "HEI User", "payload": {**suite, "parentId": story_artifact_id},
+        })
+        return {
+            "storyId": story_artifact_id, "testSuiteArtifact": artifact,
+            "generatedTestCount": int(suite.get("generated_test_count") or len((suite.get("test_suite") or {}).get("test_cases") or [])),
+            "providerMetadata": suite.get("provider_metadata") or suite.get("providerMetadata") or {},
+        }
 
     def archive_artifact(self, artifact_id: str) -> dict[str, Any]:
         artifacts = self._read_artifacts()
@@ -4687,7 +4993,7 @@ def _knowledge_status_payload(
 
 def _normalize_artifact_state(value: Any) -> str:
     state = _clean_text(value).lower()
-    if state in {"draft", "approved", "locked", "archived"}:
+    if state in {"draft", "review", "approved", "locked", "published", "rejected", "archived"}:
         return state
     return "draft"
 
@@ -4709,8 +5015,18 @@ def _normalize_artifact_record(value: dict[str, Any]) -> dict[str, Any]:
         "version": int(value.get("version") or 1),
         "created_by": _clean_text(value.get("created_by")),
         "created_on": _clean_text(value.get("created_on")),
+        "updated_on": _clean_text(value.get("updated_on")),
         "approved_by": _clean_text(value.get("approved_by")),
         "approved_on": _clean_text(value.get("approved_on")),
+        "published_by": _clean_text(value.get("published_by")),
+        "published_on": _clean_text(value.get("published_on")),
+        "rejected_by": _clean_text(value.get("rejected_by")),
+        "rejected_on": _clean_text(value.get("rejected_on")),
+        "last_action": _clean_text(value.get("last_action")),
+        "last_comments": _clean_text(value.get("last_comments")),
+        "last_changed_by": _clean_text(value.get("last_changed_by")),
+        "rollback_from_version": int(value.get("rollback_from_version") or 0),
+        "rollback_to_version": int(value.get("rollback_to_version") or 0),
         "locked_on": _clean_text(value.get("locked_on")),
         "archived_on": _clean_text(value.get("archived_on")),
         "history": value.get("history") if isinstance(value.get("history"), list) else [],
@@ -10314,6 +10630,17 @@ TASK_WORK_AREAS = ["UI Work", "Frontend Work", "Backend Work", "Data Work", "Ana
 REJECTED_TASK_PATTERNS = ("implement", "design", "test")
 
 
+def _planning_task_category(task: dict[str, Any]) -> str:
+    work_area = _clean_text(task.get("work_area") or task.get("workArea")).casefold()
+    title = _clean_text(task.get("title")).casefold()
+    if "api" in title or "controller" in title or "endpoint" in title:
+        return "API"
+    return {
+        "ui work": "Frontend", "frontend work": "Frontend", "backend work": "Backend",
+        "data work": "Database", "analytics work": "Backend", "qa work": "Testing",
+    }.get(work_area, "Backend")
+
+
 def _task_intelligence(
     title: str,
     description: str,
@@ -10794,6 +11121,15 @@ def _registry_names(value: Any) -> list[str]:
                 names.append(_clean_registry_name(item))
         return _unique([name for name in names if name])
     return _string_list(value)
+
+
+def _lineage_parent_id(payload: dict[str, Any]) -> str:
+    lineage = payload.get("lineage") if isinstance(payload.get("lineage"), dict) else {}
+    for key in ("parentId", "parent_id", "storyId", "featureId", "epicId"):
+        value = payload.get(key) or lineage.get(key)
+        if value:
+            return _clean_text(value)
+    return ""
 
 
 def _clean_text(value: Any) -> str:

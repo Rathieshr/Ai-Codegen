@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
 from .contracts import (
@@ -22,6 +22,21 @@ def build_repository_router(module: object) -> APIRouter:
     @router.get("/dashboard/monitoring")
     def get_repository_monitoring_dashboard() -> dict:
         return module.application.get_repository_monitoring_dashboard()
+
+    @router.post("/detect")
+    def detect_repository(request: dict = Body(default_factory=dict)) -> dict:
+        return module.detection_service.detect(request)
+
+    @router.get("/suggestions")
+    def get_repository_suggestions(requirementId: str = "", projectId: str = "") -> dict:
+        return module.detection_service.suggestions(requirement_id=requirementId, project_id=projectId)
+
+    @router.post("/suggestions/{requirement_id}/override")
+    def override_repository_suggestion(requirement_id: str, request: dict = Body(default_factory=dict)) -> dict:
+        try:
+            return module.detection_service.override(requirement_id, request)
+        except ValueError as error:
+            return JSONResponse(status_code=400, content={"error": str(error)})
 
     @router.post("")
     def create_repository(request: CreateRepositoryRequest) -> dict:

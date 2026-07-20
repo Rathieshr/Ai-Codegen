@@ -92,10 +92,22 @@ from backend.platform import PlatformFoundation
 from backend.platform_hardening.api import build_platform_hardening_router
 from backend.platform_hardening.harness import HEIEndToEndHarness
 from backend.platform.shared import JsonMapStore
-from backend.platform_sdk import HEIPhase6Sdk
+from backend.platform_sdk import HEIAzureDevOpsSdk, HEIPhase6Sdk
 from backend.workspace import WorkspaceSearchService, WorkspaceService, build_workspace_router
 from backend.dashboard import DashboardService, build_dashboard_router
-from backend.planning_center import PlanningCenterService, build_planning_center_router
+from backend.document_ingestion import DocumentIngestionService, build_document_ingestion_router
+from backend.ado_work_item_import import AzureDevOpsWorkItemImportService, build_ado_work_item_import_router
+from backend.transcript_intelligence import TranscriptIntelligenceService, build_transcript_intelligence_router
+from backend.planning_center import (
+    PlanningCenterService,
+    PlanningDependencyService,
+    StoryDetailService,
+    TaskGenerationService,
+    build_planning_center_router,
+    build_planning_dependency_router,
+    build_story_detail_router,
+    build_task_generation_router,
+)
 from backend.execution_center import ExecutionCenterService, build_execution_center_router
 from backend.approval_center import ApprovalCenterService, build_approval_center_router
 from backend.ado_center import AzureDevOpsCenterService, build_ado_center_router
@@ -103,7 +115,9 @@ from backend.agent_center import AgentCenterService, build_agent_center_router
 from backend.activity_center import ActivityCenterService, build_activity_center_router
 from backend.command_center_hardening import CommandCenterHardeningService, build_command_center_hardening_router
 from backend.engineering_estimation import EngineeringEstimationEngine, EngineeringEstimationRepository, build_engineering_estimation_router
-from backend.requirement_intake import RequirementIntakeService, build_requirement_intake_router
+from backend.requirement_intake import RequirementIngestionService, RequirementIntakeService, build_requirement_intake_router
+from backend.requirement_analysis import RequirementAnalysisService, build_requirement_analysis_router
+from backend.planning_integration import RequirementPlanningService, build_requirement_planning_router
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
 from backend.prompt_budget import default_json_sections, probe_json_with_budget
@@ -222,13 +236,62 @@ context_orchestrator = ContextOrchestrator(
 )
 platform_foundation.context_orchestrator = context_orchestrator
 app.include_router(build_context_orchestration_router(context_orchestrator))
+azure_devops_sdk = HEIAzureDevOpsSdk(azure_devops_integration)
+document_ingestion_service = DocumentIngestionService(
+    platform_foundation.storage_root / "requirement_documents",
+    platform=platform_foundation,
+)
+app.include_router(build_document_ingestion_router(document_ingestion_service))
+requirement_ingestion_service = RequirementIngestionService(
+    JsonMapStore(platform_foundation.storage_root / "requirement_contexts.json"),
+    work_item_provider=lambda project_id, work_item_id: (
+        (found := azure_devops_sdk.find_cached("workItems", work_item_id, project_id)) and dict(found[1])
+    ),
+    document_provider=document_ingestion_service.requirement_document,
+    platform=platform_foundation,
+)
+repository_intelligence_module.detection_service.requirement_ingestion = requirement_ingestion_service
+requirement_analysis_service = RequirementAnalysisService(
+    JsonMapStore(platform_foundation.storage_root / "requirement_analyses.json"),
+    requirement_ingestion=requirement_ingestion_service,
+    repository_detector=repository_intelligence_module.detection_service,
+    platform=platform_foundation,
+)
+app.include_router(build_requirement_analysis_router(requirement_analysis_service))
+ado_work_item_import_service = AzureDevOpsWorkItemImportService(
+    JsonMapStore(platform_foundation.storage_root / "ado_work_item_imports.json"),
+    azure_devops=azure_devops_sdk,
+    requirement_ingestion=requirement_ingestion_service,
+    platform=platform_foundation,
+)
+app.include_router(build_ado_work_item_import_router(ado_work_item_import_service))
+transcript_intelligence_service = TranscriptIntelligenceService(
+    platform_foundation.storage_root / "meeting_transcripts",
+    document_service=document_ingestion_service,
+    requirement_ingestion=requirement_ingestion_service,
+    platform=platform_foundation,
+)
+app.include_router(build_transcript_intelligence_router(transcript_intelligence_service))
 requirement_intake_service = RequirementIntakeService(
     JsonMapStore(platform_foundation.storage_root / "requirements.json"),
     context_orchestrator=context_orchestrator,
     artifact_writer=project_intelligence_service.save_artifact,
+    ingestion_service=requirement_ingestion_service,
+    analysis_service=requirement_analysis_service,
     platform=platform_foundation,
 )
-app.include_router(build_requirement_intake_router(requirement_intake_service))
+app.include_router(build_requirement_intake_router(requirement_intake_service, requirement_ingestion_service))
+requirement_planning_service = RequirementPlanningService(
+    JsonMapStore(platform_foundation.storage_root / "requirement_planning.json"),
+    requirement_ingestion=requirement_ingestion_service,
+    requirement_analysis=requirement_analysis_service,
+    requirement_intake=requirement_intake_service,
+    estimation_engine=engineering_estimation_engine,
+    artifact_provider=project_intelligence_service.list_artifacts,
+    repository_intelligence=repository_intelligence_module.application,
+    platform=platform_foundation,
+)
+app.include_router(build_requirement_planning_router(requirement_planning_service))
 ado_work_item_intelligence = register_ado_work_item_intelligence(
     platform_foundation.storage_root / "ado_work_item_intelligence",
     azure_devops=azure_devops_integration,
@@ -434,13 +497,39 @@ planning_center_service = PlanningCenterService(
     artifact_provider=project_intelligence_service.list_artifacts,
     artifact_approver=project_intelligence_service.approve_artifact,
     artifact_rejecter=project_intelligence_service.archive_artifact,
+    artifact_updater=project_intelligence_service.update_artifact_draft,
+    artifact_creator=project_intelligence_service.save_artifact,
+    artifact_regenerator=project_intelligence_service.regenerate_planning_artifact,
+    artifact_transitioner=project_intelligence_service.transition_artifact,
     work_item_provider=lambda project_id: list(ado_work_item_intelligence.ado_sdk.cached_collection(project_id, "workItems").values()) if project_id else [],
     recommendation_provider=lambda: [item.to_dict() for item in ado_work_item_intelligence.repository.list_all()],
     recommendation_approver=ado_work_item_intelligence.approve,
     recommendation_rejecter=ado_work_item_intelligence.reject,
-    estimate_provider=lambda project_id: [item.to_dict() for item in ado_work_item_intelligence.estimation.estimates.list_project(project_id)] if project_id else [],
+    estimate_provider=lambda project_id: [
+        *engineering_estimation_engine.repository.list_project(project_id),
+        *([item.to_dict() for item in ado_work_item_intelligence.estimation.estimates.list_project(project_id)] if project_id else []),
+    ],
 )
+engineering_estimation_engine.planning_provider = planning_center_service.hierarchy
 app.include_router(build_planning_center_router(planning_center_service))
+planning_dependency_service = PlanningDependencyService(
+    planning_service=planning_center_service,
+    artifact_provider=project_intelligence_service.list_artifacts,
+)
+app.include_router(build_planning_dependency_router(planning_dependency_service))
+story_detail_service = StoryDetailService(
+    planning_service=planning_center_service,
+    artifact_provider=project_intelligence_service.list_artifacts,
+    task_regenerator=project_intelligence_service.regenerate_story_tasks,
+    test_generator=project_intelligence_service.generate_story_tests,
+)
+app.include_router(build_story_detail_router(story_detail_service))
+task_generation_service = TaskGenerationService(
+    planning_service=planning_center_service,
+    artifact_provider=project_intelligence_service.list_artifacts,
+    ai_task_generator=project_intelligence_service.regenerate_story_tasks,
+)
+app.include_router(build_task_generation_router(task_generation_service))
 approval_center_service = ApprovalCenterService(
     planning_provider=lambda: planning_center_service.list(limit=250),
     planning_approve=planning_center_service.approve,

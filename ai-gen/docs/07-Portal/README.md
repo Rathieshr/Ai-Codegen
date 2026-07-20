@@ -17,3 +17,4 @@ The Portal does not create parallel intelligence logic. It renders backend lifec
 - [UI Guide](Command%20Center%20UI%20Guide.md)
 - [Navigation](Command%20Center%20Navigation.md)
 - [User Guide](Command%20Center%20User%20Guide.md)
+- [Planning Workspace](Planning%20Workspace.md)

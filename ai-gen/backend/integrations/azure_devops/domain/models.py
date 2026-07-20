@@ -191,6 +191,8 @@ class ExternalWorkItem:
     escaped_defects: int = 0
     actual_cycle_time_days: float | None = None
     actual_active_time_days: float | None = None
+    comments: list[dict[str, Any]] = field(default_factory=list)
+    attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

@@ -72,7 +72,7 @@ Azure DevOps hosts one HEI project hub at `dist/hei/index.html`. The hub starts 
 
 Host-specific concerns are isolated behind `HEIHostAdapter`. `AzureDevOpsHostAdapter` owns Extension SDK initialization, identity, project/team context, theme, route parameters, and access-token retrieval. `StandaloneHostAdapter` implements the same contract for the portal. Shared views, state, SDK clients, and validation logic remain host-independent.
 
-New Requirement uses the existing Context Orchestrator to select Planning, Repository, Knowledge Registry, and Engineering Memory evidence, then stores a draft Planning Pack. Human approval is mandatory before the Azure DevOps automation layer can prepare or apply writes.
+New Requirement uses Requirement Intelligence to ingest, parse, analyze, detect the repository, and produce an approved Requirement Summary. The Planning Agent consumes only that summary, then uses the existing Context Orchestrator to select Planning, Repository, Knowledge Registry, and Engineering Memory evidence before generating an estimated, reviewable draft Planning Pack. Human approval is mandatory before the Azure DevOps automation layer can prepare or apply writes. See [Requirement Planning Integration](./Requirement%20Planning%20Integration.md).
 ```
 
 The projection never executes jobs or changes engineering artifacts. Viewer health responses contain only safe summaries. Detailed warnings are restricted to admins. Storage responses expose aggregate counts and size, never filesystem paths.

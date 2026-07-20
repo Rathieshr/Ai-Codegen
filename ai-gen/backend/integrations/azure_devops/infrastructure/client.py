@@ -60,6 +60,11 @@ class AzureDevOpsReadClient:
     def get_work_item_revisions(self, project: str, work_item_id: int, *, cancellation=None) -> list[dict[str, Any]]:
         return self._paged(f"/{quote(project, safe='')}/_apis/wit/workitems/{work_item_id}/revisions", cancellation=cancellation)
 
+    def get_work_item_comments(self, project: str, work_item_id: int, *, cancellation=None) -> list[dict[str, Any]]:
+        payload = self._value(f"/{quote(project, safe='')}/_apis/wit/workitems/{work_item_id}/comments", cancellation=cancellation)
+        values = payload.get("comments") or payload.get("value") or []
+        return [item for item in values if isinstance(item, dict)]
+
     def list_repositories(self, project: str, *, cancellation=None) -> list[dict[str, Any]]:
         return self._paged(f"/{quote(project, safe='')}/_apis/git/repositories", cancellation=cancellation)
 

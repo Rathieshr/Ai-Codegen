@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,11 +35,19 @@ class RecalculateRequest(EstimationRequest):
 
 class OverrideRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    engineeringHours: float
-    storyPoints: float
+    engineeringHours: float | None = None
+    engineeringDays: float | None = None
+    storyPoints: float | None = None
     estimatedSprintCount: float | None = None
+    developersNeeded: int | None = None
+    suggestedTeamSize: int | None = None
+    confidence: float | None = None
+    risk: str | None = None
+    complexity: str | None = None
     overrideReason: str
     actor: str = ""
+    expectedEstimateId: str = ""
+    expectedOverrideRevision: int | None = None
 
 
 class OutcomeRequest(BaseModel):
@@ -90,5 +98,13 @@ def build_engineering_estimation_router(engine) -> APIRouter:
 
     @router.post("/estimate/{estimate_id}/outcome")
     def outcome(estimate_id: str, request: OutcomeRequest): return call(lambda: engine.learn(estimate_id, request.model_dump()))
+
+    @router.get("/{planning_id}/estimate")
+    def planning_pack_estimate(planning_id: str, project_id: str = Query(default="", alias="projectId")):
+        return call(lambda: engine.planning_pack(planning_id, project_id))
+
+    @router.put("/{planning_id}/estimate")
+    def override_planning_pack(planning_id: str, request: OverrideRequest, project_id: str = Query(default="", alias="projectId")):
+        return call(lambda: engine.override_planning_pack(planning_id, request.model_dump(), actor=request.actor, project_id=project_id))
 
     return router

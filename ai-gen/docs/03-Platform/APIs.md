@@ -17,6 +17,34 @@ HEI APIs are grouped by authority:
 
 Compatibility Project Intelligence endpoints remain during migration. New integrations should use Context Capsule and Execution Package contracts.
 
+## Planning Workspace
+
+| Method | Route | Contract |
+| --- | --- | --- |
+| `GET` | `/planning/{id}` | Load a Planning Pack with hierarchy, readiness, confidence, repository lineage, version, and update time. |
+| `GET` | `/planning/{id}/overview` | Load the deterministic executive projection, metrics, readiness, recent changes, and chart distributions. |
+| `GET` | `/planning/{id}/hierarchy` | Load the selected Planning Pack subtree and its editable node metadata. |
+| `GET` | `/planning/{id}/dependencies` | Load canonical dependency links, Tree/Graph/Table projections, warnings, and the deterministic critical path. |
+| `GET` | `/planning/{id}/estimate` | Build or reuse the transparent estimate for the complete persisted Planning Pack scope. |
+| `PUT` | `/planning/{id}` | Update an editable Draft or Review artifact using an optional expected version. |
+| `POST` | `/planning/{id}/save` | Save the current workspace as a new Draft version while retaining history. |
+| `POST` | `/planning/{id}/approve` | Approve the current Planning Pack version with actor, comments, and optimistic version protection. |
+| `POST` | `/planning/{id}/reject` | Reject the current Planning Pack version with required decision comments. |
+| `POST` | `/planning/{id}/request-changes` | Return reviewed, approved, or rejected planning to a new editable Draft version. |
+| `POST` | `/planning/{id}/publish` | Publish an Approved Planning Pack for downstream synchronization. |
+| `POST` | `/planning/{id}/rollback` | Restore a historical snapshot as a new Draft version without deleting later history. |
+| `GET` | `/planning/{id}/history` | Return the versioned approval and decision timeline. |
+| `PUT` | `/planning/node` | Edit, move, reorder, duplicate, split, or merge versioned Draft/Review nodes. |
+| `POST` | `/planning/node/regenerate` | Regenerate one node through Planning Intelligence and persist the validated result as a new Review version. |
+| `DELETE` | `/planning/node` | Archive a leaf node or an explicitly confirmed subtree. |
+| `PUT` | `/dependency` | Create or update a versioned `Depends On` or `Blocked By` link on a Draft/Review planning artifact. |
+| `DELETE` | `/dependency` | Remove a canonical dependency link by `dependencyId`. |
+| `PUT` | `/planning/{id}/estimate` | Save a reasoned user override while retaining the original AI estimate and override history. |
+
+Approved and published artifacts are immutable. Rejected planning remains auditable, while Archived is reserved for removed or obsolete planning. Azure DevOps-backed items continue to use approved automation commands rather than workspace updates.
+Hierarchy moves enforce the canonical Requirement, Epic, Feature, Story, and Task parent sequence. Split and merge are leaf-only operations, while stale expected versions return a conflict instead of overwriting newer planning work.
+Dependency reads remain compatible with legacy dependency names. Unresolved names are reported as missing rather than fabricated, archived targets are reported as broken, and circular links are excluded from critical-path calculation.
+
 ## Execution Manifest
 
 | Method | Route | Contract |
@@ -182,8 +210,11 @@ The trigger evaluates Engineering Diff, Execution Result, Execution Manifest, ma
 
 | Method | Route | Access | Purpose |
 |---|---|---|---|
-| `POST` | `/requirements/intake` | Contributor+ | Build a draft Planning Pack from a requirement through the shared context pipeline. Does not write to Azure DevOps. |
+| `POST` | `/requirements/intake` | Contributor+ | Compatibility endpoint for older clients. New clients use `/planning/from-requirement`. |
 | `GET` | `/requirements` | Viewer+ | List submitted requirements and Planning Pack references. |
+| `POST` | `/planning/from-requirement` | Contributor+ | Enter Planning from an approved Requirement Summary; raw requirement text is rejected. |
+| `POST` | `/planning/generate` | Contributor+ | Generate or reuse the Planning Pack and Engineering Estimation for an approved Requirement Summary. |
+| `POST` | `/planning/preview` | Viewer+ | Return the current Planning Preview and reject stale Requirement Summary lineage. |
 | `GET` | `/requirements/{requirementId}` | Viewer+ | Read one requirement intake result. |
 | `POST` | `/workspace/diagnostics` | Host application | Record bounded hub startup, navigation, theme, and error diagnostics with a correlation ID. |
 | `GET` | `/command-center/performance` | Viewer+ | Snapshot latency, probe latency, refresh mode, and cache state. |
@@ -194,3 +225,25 @@ The trigger evaluates Engineering Diff, Execution Result, Execution Manifest, ma
 | `POST` | `/activity/{id}/replay` | Viewer+ | Reconstruct the historical view only. It has no side effects. |
 
 `force=true` bypasses the short operational snapshot cache. Clients should use it only for explicit user refresh.
+
+## Story Detail Drawer
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/story/{id}` | Load one Story with acceptance criteria, business rules, estimates, repository modules, related Stories, generated Tasks and Tests, and engineering notes. |
+| `PUT` | `/story/{id}` | Save an editable Story and editable generated children using optimistic versions. |
+| `POST` | `/story/{id}/regenerate` | Regenerate the selected Story through Planning Intelligence. |
+| `POST` | `/story/{id}/regenerate-tasks` | Regenerate draft Tasks through Story Intelligence while preserving approved Tasks. |
+| `POST` | `/story/{id}/generate-tests` | Generate and persist a draft Test Suite through QA Intelligence. |
+| `DELETE` | `/story/{id}` | Archive the editable Story and its generated child artifacts. |
+
+These routes compose existing Planning and QA services. They do not create a parallel Story engine, and approved artifacts remain immutable.
+# Story Task Generation
+
+Planning creates implementation-ready Task artifacts beneath a Story through the shared artifact lifecycle.
+
+- `POST /story/{id}/tasks` creates a manual Task (`mode: manual`) or generates AI Tasks (`mode: ai`).
+- `PUT /task/{id}` edits a Task. Set `action` to `regenerate`, `split`, or `merge` for lifecycle operations.
+- `DELETE /task/{id}` archives a Draft or Review Task.
+
+Task payloads include category, description, estimate, owner, priority, delivery status, dependencies, source, and artifact version. Supported categories are Frontend, Backend, Database, API, Testing, Documentation, Deployment, and Infrastructure. Approved or locked Tasks are immutable.

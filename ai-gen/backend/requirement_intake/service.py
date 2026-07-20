@@ -2,24 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.context_orchestration.models import ContextRequest
 from backend.platform.shared import JsonMapStore
+from backend.requirement_analysis.summary import build_requirement_summary
 
-
-SUPPORTED_INPUT_TYPES = {
-    "Business Requirement",
-    "PRD",
-    "BRD",
-    "Meeting Notes",
-    "Bug Report",
-    "Azure DevOps Work Item",
-    "Customer Request",
-}
+from .ingestion import RequirementIngestionService
 
 
 class RequirementIntakeService:
@@ -29,45 +20,69 @@ class RequirementIntakeService:
         *,
         context_orchestrator: Any,
         artifact_writer: Callable[[dict[str, Any]], dict[str, Any]],
+        ingestion_service: RequirementIngestionService | None = None,
+        analysis_service: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
         self.context_orchestrator = context_orchestrator
         self.artifact_writer = artifact_writer
+        self.ingestion_service = ingestion_service or RequirementIngestionService(
+            JsonMapStore(store.path.with_name("requirement_contexts.json")),
+            platform=platform,
+        )
+        self.analysis_service = analysis_service
         self.platform = platform
 
     def submit(self, request: dict[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
-        input_type = str(request.get("inputType") or "Business Requirement").strip()
-        title = str(request.get("title") or "").strip()
-        content = str(request.get("content") or "").strip()
-        project_id = str(request.get("projectId") or "").strip()
-        if input_type not in SUPPORTED_INPUT_TYPES:
-            raise ValueError(f"Unsupported requirement input type '{input_type}'.")
-        if not title:
-            raise ValueError("Requirement title is required.")
-        if not content:
-            raise ValueError("Requirement content is required.")
-        if not project_id:
-            raise ValueError("Azure DevOps project context is required.")
+        requirement_context_id = str(request.get("requirementContextId") or "").strip()
+        requirement = self.ingestion_service.get(requirement_context_id) if requirement_context_id else None
+        if requirement_context_id and not requirement:
+            raise ValueError("Requirement context was not found. Ingest the source before starting Planning.")
+        if not requirement:
+            # Compatibility path: legacy callers still pass through Requirement Intelligence first.
+            ingestion_request = dict(request)
+            ingestion_request["sourceType"] = ingestion_request.get("sourceType") or _legacy_source(request.get("inputType"))
+            requirement = self.ingestion_service.ingest(ingestion_request)
+        if not requirement.get("planningReady") or requirement.get("status") != "Ready":
+            raise ValueError("Requirement context is not ready for Planning.")
 
+        analysis = self.analysis_service.assert_approved(str(requirement.get("requirementId") or "")) if self.analysis_service else None
+        readiness = analysis.get("planningReadiness", {}) if isinstance(analysis, dict) else {}
+        if readiness.get("status") == "Blocked":
+            reason = (readiness.get("blockers") or ["Requirement analysis blocked Planning."])[0]
+            raise ValueError(str(reason))
+
+        metadata = requirement.get("metadata") if isinstance(requirement.get("metadata"), dict) else {}
+        input_type = str(requirement.get("sourceType") or "PasteRequirement")
+        title = str(requirement.get("title") or "").strip()
+        content = str((analysis or {}).get("planningRequirement") or requirement.get("normalizedRequirement") or "").strip()
+        project_id = str(metadata.get("projectId") or "").strip()
         now = _now()
-        digest = hashlib.sha256(f"{project_id}|{input_type}|{title}|{content}|{now}".encode()).hexdigest()[:14]
-        requirement_id = f"requirement_{digest}"
-        correlation_id = str(request.get("correlationId") or f"corr_{digest}")
+        requirement_id = str(requirement.get("requirementId") or "")
+        correlation_id = str(requirement.get("correlationId") or request.get("correlationId") or "")
+        requirement_summary = build_requirement_summary(requirement, analysis or {})
         context = self.context_orchestrator.orchestrate(ContextRequest(
-            request_id=f"context_{digest}",
+            request_id=f"context_{requirement_id}",
             correlation_id=correlation_id,
             purpose="Planning",
             project_id=project_id,
-            repository_id=str(request.get("repositoryId") or ""),
-            branch=str(request.get("branch") or ""),
+            repository_id=str(metadata.get("repositoryId") or ""),
+            branch=str(metadata.get("branch") or ""),
             artifact={
                 "artifactId": requirement_id,
                 "artifactType": "Requirement",
                 "title": title,
                 "description": content,
+                "requirementSummary": requirement_summary,
+                "planningSource": "RequirementSummary",
                 "inputType": input_type,
+                "requirementContextId": requirement_id,
+                "requirementContextVersion": requirement.get("contextVersion"),
+                "contentHash": requirement.get("contentHash"),
+                "requirementAnalysisId": (analysis or {}).get("analysisId"),
+                "requirementAnalysisStatus": readiness.get("status"),
             },
             options={
                 "includePlanningLineage": True,
@@ -90,20 +105,27 @@ class RequirementIntakeService:
             for item in context.get("sourceSummary", [])
         ]
         pack_payload = {
+            "planningSource": "RequirementSummary",
+            "requirementSummary": requirement_summary,
             "requirement": {
                 "requirementId": requirement_id,
                 "inputType": input_type,
                 "title": title,
                 "content": content,
-                "sourceWorkItemId": str(request.get("workItemId") or ""),
+                "sourceWorkItemId": str(metadata.get("sourceReference") or ""),
+                "requirementContextId": requirement_id,
+                "requirementContextVersion": requirement.get("contextVersion"),
+                "contentHash": requirement.get("contentHash"),
+                "analysisId": (analysis or {}).get("analysisId"),
+                "analysisStatus": readiness.get("status"),
             },
             "projectContext": {
-                "organization": str(request.get("organization") or ""),
+                "organization": str(metadata.get("organization") or ""),
                 "projectId": project_id,
-                "projectName": str(request.get("projectName") or ""),
-                "teamId": str(request.get("teamId") or ""),
-                "repositoryId": str(request.get("repositoryId") or ""),
-                "branch": str(request.get("branch") or ""),
+                "projectName": str(metadata.get("projectName") or ""),
+                "teamId": str(metadata.get("teamId") or ""),
+                "repositoryId": str(metadata.get("repositoryId") or ""),
+                "branch": str(metadata.get("branch") or ""),
             },
             "contextCapsule": {
                 "capsuleId": context.get("capsuleId"),
@@ -125,6 +147,17 @@ class RequirementIntakeService:
                 "status": "Pending",
                 "message": "Review and approve the Planning Pack before any Azure DevOps changes are prepared.",
             },
+            "requirementAnalysis": {
+                "analysisId": (analysis or {}).get("analysisId"),
+                "summary": (analysis or {}).get("requirementSummary"),
+                "planningReadiness": readiness,
+                "qualityScore": (analysis or {}).get("requirementQualityScore"),
+                "confidence": (analysis or {}).get("confidence"),
+                "missingAcceptanceCriteria": (analysis or {}).get("missingAcceptanceCriteria", []),
+                "ambiguousRequirements": (analysis or {}).get("ambiguousRequirements", []),
+                "conflictingRequirements": (analysis or {}).get("conflictingRequirements", []),
+                "duplicateRequirements": (analysis or {}).get("duplicateRequirements", []),
+            },
         }
         artifact = self.artifact_writer({
             "artifact_type": "PlanningPack",
@@ -132,17 +165,20 @@ class RequirementIntakeService:
             "title": title,
             "payload": pack_payload,
             "source_item": {"id": requirement_id, "type": "Requirement", "title": title},
-            "created_by": str(request.get("actor") or "HEI User"),
+            "created_by": str(request.get("actor") or metadata.get("createdBy") or "HEI User"),
         })
         result = {
             "requirementId": requirement_id,
             "planningPackId": artifact.get("artifact_id"),
             "title": title,
             "inputType": input_type,
+            "sourceType": input_type,
+            "requirementContextVersion": requirement.get("contextVersion"),
             "projectId": project_id,
             "status": "NeedsReview",
             "approvalRequired": True,
             "context": pack_payload["contextCapsule"],
+            "requirementAnalysis": pack_payload["requirementAnalysis"],
             "createdAt": now,
             "correlationId": correlation_id,
             "durationMs": round((time.perf_counter() - started) * 1000, 2),
@@ -185,3 +221,14 @@ class RequirementIntakeService:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _legacy_source(value: Any) -> str:
+    normalized = str(value or "Business Requirement").strip()
+    if normalized in {"PRD", "BRD"}:
+        return "UploadDocument"
+    if normalized == "Meeting Notes":
+        return "MeetingTranscript"
+    if normalized == "Azure DevOps Work Item":
+        return "AzureDevOpsWorkItem"
+    return "PasteRequirement"

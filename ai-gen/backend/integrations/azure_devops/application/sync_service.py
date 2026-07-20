@@ -327,7 +327,13 @@ class AzureDevOpsSyncService:
         revisions: dict[str, dict[str, Any]] = {}
         for item in items:
             key = _id(item, "workItemId")
-            hierarchy[key] = {"workItemId": item.get("workItemId"), "links": item.get("links") or [], "revision": item.get("revision")}
+            enriched = item
+            try:
+                enriched = self.work_items.get_details(sync.connection_id, sync.project_id, int(key), correlation_id=sync.correlation_id)
+                self.cache.upsert(sync.project_id, "workItems", key, enriched, revision_field="revision")
+            except Exception as error:
+                sync.warnings.append(f"workItemDetails:{key}: {error}")
+            hierarchy[key] = {"workItemId": enriched.get("workItemId"), "links": enriched.get("links") or [], "revision": enriched.get("revision")}
             self.save_mapping("artifact", key, key, sync.connection_id, sync.project_id, {"workItemType": item.get("workItemType")})
             self._publish("AzureDevOpsWorkItemSynchronized", sync, {"workItemId": item.get("workItemId")})
             try:

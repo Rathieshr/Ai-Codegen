@@ -167,6 +167,13 @@ class AzureDevOpsWorkItemService(_ReadService):
     def get_revisions(self, connection_id: str, project: str, work_item_id: int, *, correlation_id: str = "", cancellation=None) -> list[dict[str, Any]]:
         return [public_model(map_work_item(item)) for item in self._read(connection_id, correlation_id, lambda client: client.get_work_item_revisions(project, work_item_id, cancellation=cancellation))]
 
+    def get_details(self, connection_id: str, project: str, work_item_id: int, *, correlation_id: str = "", cancellation=None) -> dict[str, Any]:
+        def load(client):
+            item = client.get_work_item(project, work_item_id, cancellation=cancellation)
+            comments = _optional_pr_read(client, "get_work_item_comments", project, work_item_id, cancellation=cancellation)
+            return {**item, "comments": comments}
+        return public_model(map_work_item(self._read(connection_id, correlation_id, load)))
+
 
 class AzureDevOpsRepositoryService(_ReadService):
     def list_repositories(self, connection_id: str, project: str, *, correlation_id: str = "", cancellation=None) -> list[dict[str, Any]]:

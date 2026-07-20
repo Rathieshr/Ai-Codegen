@@ -20,6 +20,9 @@ class HEIAzureDevOpsSdk:
     def cached_collection(self, project_id: str, collection: str) -> dict[str, dict[str, Any]]:
         return self._integration.sync.cache.collection(project_id, collection)
 
+    def work_item_details(self, connection_id: str, project_id: str, work_item_id: int, *, correlation_id: str = "") -> dict[str, Any]:
+        return self._integration.work_items.get_details(connection_id, project_id, work_item_id, correlation_id=correlation_id)
+
     def cache_upsert(self, project_id: str, collection: str, entity_id: str, value: dict[str, Any]) -> str:
         return self._integration.sync.cache.upsert(project_id, collection, str(entity_id), value)
 

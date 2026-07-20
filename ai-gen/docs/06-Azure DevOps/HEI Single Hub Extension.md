@@ -48,9 +48,9 @@ They pass `view=planning` and `workItemId=<id>`. The Planning Center selects the
 
 ## Requirement Intake
 
-New Requirement supports Business Requirement, PRD, BRD, Meeting Notes, Bug Report, Azure DevOps Work Item, and Customer Request inputs.
+New Requirement supports pasted requirements, uploaded PRD/BRD documents, meeting transcripts, and synchronized Azure DevOps work items.
 
-`POST /requirements/intake` sends the requirement through the shared Context Orchestrator with Planning, Repository Intelligence, Knowledge Registry, and Engineering Memory enabled. The result is a draft Planning Pack with approval required. Intake never writes to Azure DevOps.
+`POST /planning/from-requirement` accepts only the approved Requirement Summary, then sends that bounded context through the shared Context Orchestrator with Planning, Repository Intelligence, Knowledge Registry, and Engineering Memory enabled. It returns a draft Planning Pack, Engineering Estimation, and Planning Preview with approval required. Planning never writes to Azure DevOps.
 
 ## Permissions
 

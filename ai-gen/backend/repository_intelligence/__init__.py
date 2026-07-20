@@ -1,6 +1,6 @@
 """Repository Intelligence foundation module."""
 
-from .application import RepositoryIntelligenceApplicationService
+from .application import RepositoryDetectionService, RepositoryIntelligenceApplicationService
 from .bootstrap import RepositoryIntelligenceModule, register_repository_intelligence
 from .domain import (
     EngineeringGraph,
@@ -48,6 +48,7 @@ __all__ = [
     "RepositoryFile",
     "RepositoryFileRanking",
     "RepositoryIntelligenceApplicationService",
+    "RepositoryDetectionService",
     "RepositoryIntelligenceModule",
     "RepositoryLanguage",
     "RepositoryModule",

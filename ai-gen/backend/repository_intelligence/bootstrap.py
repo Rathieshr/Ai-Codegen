@@ -8,7 +8,8 @@ from pathlib import Path
 from backend.engineering_memory.engine import EngineeringMemoryEngine
 from backend.ado.client import AdoClient
 
-from .application import RepositoryIntelligenceApplicationService
+from .application import RepositoryDetectionService, RepositoryIntelligenceApplicationService
+from backend.platform.shared import JsonMapStore
 from .infrastructure import (
     FileBackedEngineeringGraphService,
     FileBackedRepositoryFileRankingService,
@@ -36,6 +37,7 @@ class RepositoryIntelligenceModule:
     agent: RepositoryIntelligenceAgent
     monitoring_service: RepositoryMonitoringService
     memory_engine: EngineeringMemoryEngine
+    detection_service: RepositoryDetectionService
     application: RepositoryIntelligenceApplicationService
 
 
@@ -64,6 +66,13 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
         ),
     )
     memory_engine = EngineeringMemoryEngine(storage_root / "engineering_memory.json")
+    detection_service = RepositoryDetectionService(
+        repository_service=repository_service,
+        snapshot_service=snapshot_service,
+        memory_engine=memory_engine,
+        suggestion_store=JsonMapStore(storage_root / "repository_suggestions.json"),
+        override_store=JsonMapStore(storage_root / "repository_detection_overrides.json"),
+    )
     file_ranking_service = FileBackedRepositoryFileRankingService(
         graph_service=graph_service,
         snapshot_service=snapshot_service,
@@ -110,5 +119,6 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
         agent=agent,
         monitoring_service=monitoring_service,
         memory_engine=memory_engine,
+        detection_service=detection_service,
         application=application,
     )

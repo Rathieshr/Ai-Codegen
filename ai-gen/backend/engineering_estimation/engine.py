@@ -7,7 +7,7 @@ import re
 import hashlib
 import json
 from copy import deepcopy
-from typing import Any
+from typing import Any, Callable
 
 from .models import estimation_record, now_iso
 from .repository import EngineeringEstimationRepository
@@ -20,11 +20,20 @@ COMPLEXITY_ORDER = ("Very Low", "Low", "Medium", "High", "Very High")
 class EngineeringEstimationEngine:
     """Deterministic estimator. Repository and memory are evidence, never invented facts."""
 
-    def __init__(self, repository: EngineeringEstimationRepository, *, platform: Any | None = None, memory: Any | None = None, repository_intelligence: Any | None = None) -> None:
+    def __init__(
+        self,
+        repository: EngineeringEstimationRepository,
+        *,
+        platform: Any | None = None,
+        memory: Any | None = None,
+        repository_intelligence: Any | None = None,
+        planning_provider: Callable[[str, str], dict[str, Any]] | None = None,
+    ) -> None:
         self.repository = repository
         self.platform = platform
         self.memory = memory
         self.repository_intelligence = repository_intelligence
+        self.planning_provider = planning_provider
 
     def estimate(self, request: dict[str, Any], *, correlation_id: str = "") -> dict[str, Any]:
         artifact = _artifact(request)
@@ -82,22 +91,114 @@ class EngineeringEstimationEngine:
         reason = str(request.get("overrideReason") or "").strip()
         if not reason:
             raise ValueError("overrideReason is required so the original estimate remains explainable.")
+        expected_revision = request.get("expectedOverrideRevision")
+        current_revision = int(value.get("overrideRevision") or 0)
+        if expected_revision is not None and int(expected_revision) != current_revision:
+            raise ValueError("Engineering estimate override changed. Reload before saving.")
+        supplied = {
+            key: request.get(key) for key in (
+                "engineeringHours", "engineeringDays", "storyPoints", "estimatedSprintCount",
+                "developersNeeded", "suggestedTeamSize", "confidence", "risk", "complexity",
+            ) if request.get(key) not in (None, "")
+        }
+        if not supplied:
+            raise ValueError("At least one estimate value is required for an override.")
+        current = deepcopy(value.get("effectiveEstimate") or value.get("originalEstimate") or {})
+        hours = _optional_positive(supplied.get("engineeringHours"), "engineeringHours")
+        days = _optional_positive(supplied.get("engineeringDays"), "engineeringDays")
+        if hours is not None and days is not None and abs(hours / 8 - days) > 0.02:
+            raise ValueError("engineeringHours and engineeringDays must describe the same effort.")
+        if hours is None and days is not None:
+            hours = round(days * 8, 2)
+        if days is None and hours is not None:
+            days = round(hours / 8, 2)
+        hours = float(hours if hours is not None else current.get("engineeringHours") or 0)
+        days = float(days if days is not None else current.get("engineeringDays") or round(hours / 8, 2))
+        points = int(_optional_positive(supplied.get("storyPoints"), "storyPoints") or current.get("storyPoints") or 0)
+        sprints = float(_optional_positive(supplied.get("estimatedSprintCount"), "estimatedSprintCount") or current.get("estimatedSprintCount") or 1)
+        developers = int(_optional_positive(supplied.get("developersNeeded") or supplied.get("suggestedTeamSize"), "developersNeeded") or current.get("suggestedTeamSize") or 1)
+        confidence = _bounded_percent(supplied.get("confidence"), current.get("confidence"))
+        risk = _choice(supplied.get("risk"), current.get("risk"), ("Low", "Medium", "High", "Critical"), "risk")
+        complexity = _choice(supplied.get("complexity"), current.get("complexity"), COMPLEXITY_ORDER, "complexity")
+        changed_at = now_iso()
         user = {
-            "engineeringHours": _positive(request.get("engineeringHours"), "engineeringHours"),
-            "engineeringDays": round(_positive(request.get("engineeringHours"), "engineeringHours") / 8, 2),
-            "storyPoints": int(_positive(request.get("storyPoints"), "storyPoints")),
-            "estimatedSprintCount": float(request.get("estimatedSprintCount") or (value.get("effectiveEstimate") or {}).get("estimatedSprintCount") or 1),
-            "overriddenBy": actor or str(request.get("actor") or "current-user"), "overriddenAt": now_iso(),
+            "engineeringHours": hours, "engineeringDays": days, "storyPoints": points,
+            "estimatedSprintCount": sprints, "suggestedTeamSize": developers, "developersNeeded": developers,
+            "confidence": confidence, "risk": risk, "complexity": complexity,
+            "overriddenBy": actor or str(request.get("actor") or "current-user"), "overriddenAt": changed_at,
         }
         effective = deepcopy(value.get("originalEstimate") or {})
         effective.update(user)
         report = dict(effective.get("report") or {})
-        report.update({"engineeringDays": user["engineeringDays"], "storyPoints": user["storyPoints"], "estimatedSprintCount": user["estimatedSprintCount"]})
+        report.update({
+            "engineeringDays": days, "engineeringHours": hours, "storyPoints": points,
+            "estimatedSprintCount": sprints, "suggestedTeamSize": developers,
+            "developersNeeded": developers, "confidence": confidence, "risk": risk, "complexity": complexity,
+        })
         effective["report"] = report
-        value.update({"status": "Overridden", "userEstimate": user, "effectiveEstimate": effective, "overrideReason": reason, "updatedAt": now_iso()})
+        history = list(value.get("overrideHistory") or [])
+        history.append({"revision": current_revision + 1, "reason": reason, "userEstimate": deepcopy(user), "actor": user["overriddenBy"], "createdAt": changed_at})
+        value.update({
+            "status": "Overridden", "userEstimate": user, "effectiveEstimate": effective,
+            "overrideReason": reason, "overrideRevision": current_revision + 1,
+            "overrideHistory": history, "updatedAt": changed_at,
+        })
         self.repository.save(value)
         self._event("EngineeringEstimateOverridden", value)
         return value
+
+    def planning_pack(self, planning_id: str, project_id: str = "") -> dict[str, Any]:
+        """Build or reuse one estimate from the complete persisted Planning Pack scope."""
+        if not self.planning_provider:
+            raise ValueError("Planning Pack estimation is not configured.")
+        hierarchy = self.planning_provider(planning_id, project_id)
+        root = dict(hierarchy.get("root") or {})
+        nodes = [dict(item) for item in hierarchy.get("nodes") or [] if isinstance(item, dict)]
+        if not root:
+            raise LookupError(f"Planning Pack {planning_id} was not found.")
+        children = [item for item in nodes if str(item.get("id") or "") != str(root.get("id") or "")]
+        details = _mapping(root.get("details"))
+        request = {
+            "artifact": root,
+            "children": children,
+            "repositoryContext": _first_mapping(
+                details.get("repositoryContext"), details.get("repository"), details.get("repositoryIntelligence"),
+                _mapping(details.get("requirementSummary")).get("repository"),
+            ),
+            "engineeringMemory": _first_mapping(details.get("memoryContext"), details.get("engineeringMemory")),
+            "acceptanceCriteria": _scope_values(nodes, "acceptanceCriteria", "acceptance_criteria"),
+            "dependencyAnalysis": _scope_values(nodes, "dependencies"),
+            "riskAnalysis": _scope_values(nodes, "risks"),
+        }
+        return self._planning_projection(planning_id, self.estimate(request))
+
+    def override_planning_pack(self, planning_id: str, request: dict[str, Any], *, actor: str = "", project_id: str = "") -> dict[str, Any]:
+        current = self.planning_pack(planning_id, project_id)
+        expected_estimate = str(request.get("expectedEstimateId") or "")
+        if expected_estimate and expected_estimate != str(current.get("estimateId") or ""):
+            raise ValueError("Engineering estimate changed. Reload before saving the override.")
+        updated = self.override(str(current["estimateId"]), request, actor=actor)
+        return self._planning_projection(planning_id, updated)
+
+    @staticmethod
+    def _planning_projection(planning_id: str, value: dict[str, Any]) -> dict[str, Any]:
+        original = deepcopy(value.get("originalEstimate") or {})
+        user = deepcopy(value.get("userEstimate")) if isinstance(value.get("userEstimate"), dict) else None
+        effective = deepcopy(value.get("effectiveEstimate") or original)
+        return {
+            **deepcopy(value),
+            "schemaVersion": "hei-planning-pack-estimate-v1",
+            "planningId": planning_id,
+            "aiEstimate": original,
+            "userEstimate": user,
+            "effectiveEstimate": effective,
+            "isOverridden": bool(user),
+            "override": {
+                "reason": str(value.get("overrideReason") or ""),
+                "revision": int(value.get("overrideRevision") or 0),
+                "history": deepcopy(value.get("overrideHistory") or []),
+            },
+        }
 
     def approve(self, estimate_id: str, actor: str = "") -> dict[str, Any]:
         value = self.get(estimate_id)
@@ -169,13 +270,14 @@ class EngineeringEstimationEngine:
             "estimatedSprintCount": sprints, "averageStorySize": round(points / max(1, sum(1 for item in children if _kind(item) == "Story") or (1 if kind == "Story" else 0)), 1),
             "confidence": confidence, "risk": risk, "repositoryReuse": reuse,
             "estimatedTestCases": tests, "estimatedPullRequests": prs, "highRiskStories": high_risk_stories,
-            "suggestedTeamSize": suggested_team,
+            "suggestedTeamSize": suggested_team, "developersNeeded": suggested_team,
         }
         return {
             "artifactType": kind, "engineeringHours": hours, "engineeringDays": days, "storyPoints": points,
             "complexity": _aggregate_complexity(task_estimates), "confidence": confidence, "risk": risk,
             "taskCount": len(task_estimates), "dependencyCount": len(dependencies), "estimatedTestCases": tests,
-            "estimatedPullRequests": prs, "estimatedSprintCount": sprints, "suggestedTeamSize": suggested_team,
+            "estimatedPullRequests": prs, "estimatedSprintCount": sprints,
+            "suggestedTeamSize": suggested_team, "developersNeeded": suggested_team,
             "repositoryImpact": _repository_impact(repository), "repositoryReuse": reuse,
             "repositorySnapshot": str(repository.get("snapshotId") or repository.get("repositorySnapshotVersion") or ""),
             "taskEstimates": task_estimates, "childEstimates": child_estimates,
@@ -306,6 +408,21 @@ def _artifact(request: dict[str, Any]) -> dict[str, Any]:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _first_mapping(*values: Any) -> dict[str, Any]:
+    return next((_mapping(value) for value in values if _mapping(value)), {})
+
+
+def _scope_values(nodes: list[dict[str, Any]], *keys: str) -> list[Any]:
+    output: list[Any] = []
+    for node in nodes:
+        details = _mapping(node.get("details"))
+        for key in keys:
+            for value in _items(details.get(key) if key in details else node.get(key)):
+                if value not in output:
+                    output.append(value)
+    return output
 
 
 def _items(value: Any) -> list[Any]:
@@ -458,6 +575,32 @@ def _positive(value: Any, name: str) -> float:
     except (TypeError, ValueError): raise ValueError(f"{name} must be a positive number.") from None
     if number <= 0: raise ValueError(f"{name} must be a positive number.")
     return number
+
+
+def _optional_positive(value: Any, name: str) -> float | None:
+    if value in (None, ""):
+        return None
+    return _positive(value, name)
+
+
+def _bounded_percent(value: Any, fallback: Any) -> int:
+    if value in (None, ""):
+        value = fallback or 0
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError) as error:
+        raise ValueError("confidence must be a number between 0 and 100.") from error
+    if not 0 <= number <= 100:
+        raise ValueError("confidence must be between 0 and 100.")
+    return number
+
+
+def _choice(value: Any, fallback: Any, allowed: tuple[str, ...], name: str) -> str:
+    selected = str(value or fallback or allowed[0]).strip()
+    match = next((item for item in allowed if item.casefold() == selected.casefold()), None)
+    if not match:
+        raise ValueError(f"{name} must be one of: {', '.join(allowed)}.")
+    return match
 
 
 def _source_hash(request: dict[str, Any]) -> str:

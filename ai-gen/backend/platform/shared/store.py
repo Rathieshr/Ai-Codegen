@@ -30,6 +30,10 @@ class JsonMapStore:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     def read(self) -> dict[str, Any]:
         if not self._path.exists():
             return {}

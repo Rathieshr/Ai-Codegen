@@ -13,7 +13,8 @@ from .models import RequirementAnalysis, RequirementFinding
 
 _HEADINGS = {
     "business goal": "business_goals", "business goals": "business_goals", "goal": "business_goals",
-    "goals": "business_goals", "objective": "business_goals", "objectives": "business_goals",
+    "goals": "business_goals", "business value": "business_goals", "objective": "business_goals",
+    "objectives": "business_goals",
     "functional requirement": "functional_requirements", "functional requirements": "functional_requirements",
     "requirements": "functional_requirements", "requirement": "functional_requirements",
     "non functional requirement": "non_functional_requirements", "non functional requirements": "non_functional_requirements",
@@ -24,6 +25,11 @@ _HEADINGS = {
     "constraints": "constraints", "dependencies": "dependencies", "risks": "risks",
     "open questions": "open_questions", "questions": "open_questions", "assumptions": "assumptions",
 }
+_INLINE_HEADING = re.compile(
+    r"(?i)(?<![\w-])(" + "|".join(
+        re.escape(value) for value in sorted(_HEADINGS, key=len, reverse=True)
+    ) + r")\s*:\s*"
+)
 _NFR_TERMS = re.compile(r"\b(performance|latency|response time|availability|reliability|scalability|security|privacy|audit|accessibility|throughput|sla|milliseconds?|seconds?|concurrent|encryption)\b", re.I)
 _AMBIGUOUS = re.compile(r"\b(appropriate|as needed|etc\.?|fast|easy|some|tbd|user[- ]friendly|various|quickly|robust|seamless|normal|sufficient|adequate)\b", re.I)
 _FUNCTIONAL = re.compile(r"\b(must|shall|should|can|needs? to|allow|enable|display|show|create|update|view|search|filter|notify|calculate|validate|support|provide)\b", re.I)
@@ -262,20 +268,44 @@ def _parse(content: str) -> tuple[list[tuple[str, str]], list[str]]:
         line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", raw).strip()
         if not line:
             continue
-        inline = re.match(r"^([^:]{2,40}):\s+(.+)$", line)
-        if inline and _heading(inline.group(1)):
-            current = _heading(inline.group(1))
-            line = inline.group(2).strip()
+        inline_sections = _inline_sections(line)
+        if inline_sections:
+            for section, text in inline_sections:
+                current = section
+                if text:
+                    _append_sentences(items, sentences, current, text)
+            continue
         heading = _heading(line)
         if heading:
             current = heading
             continue
-        for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", line):
-            sentence = sentence.strip()
-            if sentence:
-                items.append((current, sentence))
-                sentences.append(sentence)
+        _append_sentences(items, sentences, current, line)
     return items, sentences
+
+
+def _inline_sections(line: str) -> list[tuple[str, str]]:
+    """Split one line containing one or more recognized ``Heading: value`` pairs."""
+    matches = list(_INLINE_HEADING.finditer(line))
+    if not matches:
+        return []
+    prefix = line[:matches[0].start()].strip()
+    if prefix:
+        return []
+    sections: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
+        sections.append((_heading(match.group(1)), line[match.end():end].strip(" -\t")))
+    return sections
+
+
+def _append_sentences(
+    items: list[tuple[str, str]], sentences: list[str], section: str, text: str,
+) -> None:
+    for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", text):
+        sentence = sentence.strip()
+        if sentence:
+            items.append((section, sentence))
+            sentences.append(sentence)
 
 
 def _heading(value: str) -> str:

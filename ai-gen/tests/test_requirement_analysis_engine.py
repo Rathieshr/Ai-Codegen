@@ -76,6 +76,24 @@ Assumptions:
         self.assertTrue(result["missingAcceptanceCriteria"])
         self.assertTrue(result["ambiguousRequirements"])
 
+    def test_repeated_inline_headings_do_not_leak_labels_into_business_goal(self):
+        context = self.ingest(
+            "Business Goal: Business Value: Give Operations Users a centralized view of device health. "
+            "Functional Requirements: The dashboard should show current equipment status. "
+            "Acceptance Criteria: Each device displays its current health state.",
+            "Launch LineDefender in GridHubb",
+        )
+
+        result = self.service.analyze(context["requirementId"])
+
+        self.assertEqual(
+            ["Give Operations Users a centralized view of device health."],
+            result["businessGoals"],
+        )
+        self.assertNotIn("Business Value", result["requirementSummary"])
+        self.assertEqual(1, len(result["functionalRequirements"]))
+        self.assertEqual(1, len(result["acceptanceCriteria"]))
+
     def test_conflicting_requirements_block_planning(self):
         analysis = RequirementAnalysisEngine().analyze({
             "requirementId": "r1", "contextVersion": "1", "contentHash": "h", "title": "Restricted device access",
@@ -180,7 +198,32 @@ Assumptions:
         self.assertIn("Requirement Analysis", source)
         for action in ("Continue to Planning", "Edit", "Cancel", "Re-analyze"):
             self.assertIn(action, source)
+        self.assertIn("Approve & Continue to Planning", source)
         self.assertIn("No Planning Pack has been created", source)
+
+    def test_requirement_review_exposes_enterprise_ux_landmarks(self):
+        source = (ROOT / "azure-devops-extension/src/newRequirementWorkspace.tsx").read_text()
+        styles = (ROOT / "azure-devops-extension/src/storyPlanner.css").read_text()
+
+        for label in (
+            "Requirement Source", "Requirement Analysis", "Repository Detection", "Engineering Memory",
+            "Quality Review", "Planning", "Approval", "Azure DevOps",
+        ):
+            self.assertIn(label, source)
+        for section in (
+            "Requirement Health", "Repository Recommendation", "Quality Findings", "Engineering Context", "HEI Insights",
+        ):
+            self.assertIn(section, source)
+        for action in ("Accept Recommendation", "Override Repository", "Edit Requirement"):
+            self.assertIn(action, source)
+        self.assertIn("hei-requirement-sticky-actions", source)
+        self.assertIn("Estimated planning complexity", source)
+        self.assertIn("Recommended Next Action", source)
+        self.assertIn("hei-requirement-review-layout", styles)
+        self.assertIn(".hei-insights", styles)
+        self.assertIn("position: sticky", styles)
+        self.assertIn("@media (max-width: 1100px)", styles)
+        self.assertIn("@media (max-width: 720px)", styles)
 
 
 if __name__ == "__main__":

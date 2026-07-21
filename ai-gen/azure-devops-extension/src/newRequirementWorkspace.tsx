@@ -466,6 +466,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
         <div><span>Requirement Intelligence</span><h2>New Requirement</h2><p>Choose a source. HEI will create a normalized Requirement Context before Planning begins.</p></div>
         {result ? <Status value={result.status} /> : requirementAnalysis ? <Status value={`${requirementAnalysis.reviewStatus} Review`} /> : ingestion ? <Status value={ingestion.status} /> : null}
       </header>
+      <RequirementProgressTimeline hasSource={Boolean(ingestion || result)} hasAnalysis={Boolean(requirementAnalysis)} hasRepository={Boolean(requirementAnalysis?.repositorySuggestion?.suggestedRepository)} planningCreated={Boolean(result)} />
       {result ? (
         <div className="hei-requirement-result" aria-live="polite">
           <div><span>Planning Pack</span><h3>{result.title}</h3><p>HEI ingested the source and prepared a context-grounded Planning Pack. No Azure DevOps work item has been changed.</p></div>
@@ -500,6 +501,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
           onCancel={cancelReview}
           onReanalyze={reanalyze}
           onOverrideRepository={overrideRepository}
+          projectName={context.project.name}
         />
       ) : (
         <form className="hei-requirement-form" onSubmit={submit}>
@@ -546,7 +548,42 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
 }
 
 function Signal({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
-function Status({ value }: { value: string }) { return <span className="hei-operation-chip warning">{value}</span>; }
+function statusTone(value: string) {
+  const normalized = value.toLowerCase();
+  if (/blocked|failed|error|unavailable|critical|high severity/.test(normalized)) return 'error';
+  if (/ready|approved|complete|active|selected|good/.test(normalized)) return 'success';
+  if (/review|pending|confidence|warning|medium severity/.test(normalized)) return 'warning';
+  return '';
+}
+function Status({ value }: { value: string }) { return <span className={`hei-operation-chip ${statusTone(value)}`.trim()}>{value}</span>; }
+
+function RequirementProgressTimeline({ hasSource, hasAnalysis, hasRepository, planningCreated }: {
+  hasSource: boolean;
+  hasAnalysis: boolean;
+  hasRepository: boolean;
+  planningCreated: boolean;
+}) {
+  const stages = [
+    { label: 'Requirement Source', done: hasSource, active: !hasSource },
+    { label: 'Requirement Analysis', done: hasAnalysis, active: hasSource && !hasAnalysis },
+    { label: 'Repository Detection', done: hasRepository, active: hasAnalysis && !hasRepository },
+    { label: 'Engineering Memory', done: hasAnalysis, active: false },
+    { label: 'Quality Review', done: planningCreated, active: hasAnalysis && !planningCreated },
+    { label: 'Planning', done: false, active: planningCreated },
+    { label: 'Approval', done: false, active: false },
+    { label: 'Azure DevOps', done: false, active: false },
+  ];
+  return <nav className="hei-requirement-progress" aria-label="Requirement progress">
+    {stages.map((stage, index) => {
+      const state = stage.done ? 'complete' : stage.active ? 'active' : 'locked';
+      return <div key={stage.label} className={state} aria-current={stage.active ? 'step' : undefined}>
+        <span className="hei-requirement-progress-marker" aria-hidden="true">{stage.done ? '✓' : stage.active ? '●' : '○'}</span>
+        <span>{stage.label}</span>
+        {index < stages.length - 1 ? <i aria-hidden="true" /> : null}
+      </div>;
+    })}
+  </nav>;
+}
 
 function TranscriptSummary({ result }: { result: TranscriptResult }) {
   const analysis = result.analysis;
@@ -575,7 +612,7 @@ function AdoWorkItemSummary({ result }: { result: AdoWorkItemImportResult }) {
   </section>;
 }
 
-function RequirementReviewScreen({ analysis, ingestion, editing, title, content, busy, onTitleChange, onContentChange, onEdit, onDiscardEdit, onSaveEdit, onContinue, onCancel, onReanalyze, onOverrideRepository }: {
+function RequirementReviewScreen({ analysis, ingestion, editing, title, content, busy, onTitleChange, onContentChange, onEdit, onDiscardEdit, onSaveEdit, onContinue, onCancel, onReanalyze, onOverrideRepository, projectName }: {
   analysis: RequirementAnalysisResult;
   ingestion: IngestionResult;
   editing: boolean;
@@ -591,13 +628,17 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
   onCancel: () => void;
   onReanalyze: () => void;
   onOverrideRepository: (repositoryId: string) => void;
+  projectName: string;
 }) {
   const review = analysis.reviewContext;
   const blocked = analysis.planningReadiness.status === 'Blocked';
+  const needsReview = analysis.planningReadiness.status === 'NeedsReview';
   const suggestion = analysis.repositorySuggestion;
   const recommendedRepository = suggestion?.suggestedRepository;
   const repositoryOptions = suggestion?.availableRepositories || [];
   const [overrideRepositoryId, setOverrideRepositoryId] = useState(recommendedRepository?.repositoryId || '');
+  const [repositorySearch, setRepositorySearch] = useState('');
+  const visibleRepositories = repositoryOptions.filter((repository) => repository.name.toLowerCase().includes(repositorySearch.trim().toLowerCase()));
   return <section className="hei-requirement-review" aria-label="Requirement Summary" aria-live="polite">
     <header><div><span>Mandatory Review</span><h2>Requirement Summary</h2><p>Validate HEI's understanding before Planning begins. No Planning Pack has been created.</p></div><Status value={analysis.planningReadiness.status === 'NeedsReview' ? 'Needs Review' : analysis.planningReadiness.status} /></header>
     {editing ? <div className="hei-requirement-review-editor">
@@ -605,60 +646,142 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
       <label><span>Analyzed requirement</span><textarea value={content} onChange={(event) => onContentChange(event.target.value)} rows={18} /></label>
       <div className="hei-requirement-actions"><button className="planner-button primary" type="button" disabled={busy || !title.trim() || !content.trim()} onClick={onSaveEdit}>Save & Re-analyze</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onDiscardEdit}>Discard Edit</button></div>
     </div> : <>
+      <div className="hei-requirement-review-layout">
+      <div className="hei-requirement-review-main">
       <div className="hei-requirement-review-meta">
         <Signal label="Source" value={review.source || ingestion.sourceType} />
-        <Signal label="Repository" value={review.repository.name || review.repository.id || review.repository.status} />
+        <Signal label="Requirement Context" value={analysis.contextVersion} />
         <Signal label="Document Type" value={review.documentType || 'Not Applicable'} />
-        <Signal label="Confidence" value={`${Math.round(analysis.confidence * 100)}%`} />
+        <Signal label="Review Status" value={analysis.reviewStatus} />
       </div>
+      <RequirementHealth analysis={analysis} ingestion={ingestion} />
       <section className="hei-repository-recommendation" aria-label="Suggested Repository">
         <header>
-          <div><span>Suggested Repository</span><h3>{recommendedRepository?.name || 'No repository detected'}</h3><p>{suggestion?.reason || 'Register a repository to enable engineering workspace detection.'}</p></div>
+          <div><span>Repository Recommendation</span><h3>{recommendedRepository?.name || 'No repository detected'}</h3><p>{suggestion?.reason || 'Register a repository to enable engineering workspace detection.'}</p></div>
           <Status value={recommendedRepository ? `${Math.round((suggestion?.confidence || 0) * 100)}% confidence` : 'Not Available'} />
         </header>
         {recommendedRepository ? <>
-          <div className="hei-repository-recommendation-evidence">
-            <Signal label="Repository" value={recommendedRepository.name} />
-            <Signal label="Branch" value={recommendedRepository.defaultBranch || 'Not configured'} />
-            <Signal label="Snapshot" value={recommendedRepository.snapshotVersion || 'Unavailable'} />
-            <Signal label="Selection" value={suggestion?.source === 'ManualOverride' ? 'Manual Override' : 'HEI Recommendation'} />
+          <div className="hei-repository-recommendation-layout">
+            <div className="hei-repository-recommendation-evidence">
+              <Signal label="Azure DevOps Project" value={projectName || 'Current project'} />
+              <Signal label="Branch" value={recommendedRepository.defaultBranch || 'Not configured'} />
+              <Signal label="Snapshot" value={recommendedRepository.snapshotVersion || 'Unavailable'} />
+              <Signal label="Engineering Memory" value={review.engineeringMemory.status || 'Not available'} />
+            </div>
+            <div className="hei-repository-reason">
+              <span>Why HEI selected it</span>
+              <p>{suggestion?.reason}</p>
+              <strong>Matching repository metadata</strong>
+              {recommendedRepository.evidence.length ? <ul>{recommendedRepository.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No matching repository metadata was available.</p>}
+            </div>
           </div>
-          <details><summary>Engineering reason</summary><ul>{recommendedRepository.evidence.map((item) => <li key={item}>{item}</li>)}</ul></details>
-          {repositoryOptions.length > 1 ? <div className="hei-repository-override">
-            <label><span>Override repository</span><select value={overrideRepositoryId} disabled={busy} onChange={(event) => setOverrideRepositoryId(event.target.value)}>{repositoryOptions.map((repository) => <option key={repository.repositoryId} value={repository.repositoryId}>{repository.name} · {Math.round(repository.confidence * 100)}%</option>)}</select></label>
-            <button className="planner-button secondary" type="button" disabled={busy || !overrideRepositoryId || overrideRepositoryId === recommendedRepository.repositoryId} onClick={() => onOverrideRepository(overrideRepositoryId)}>Apply Override</button>
-          </div> : null}
+          <div className="hei-repository-recommendation-actions">
+            <button className="planner-button secondary" type="button" disabled={busy || suggestion?.source === 'ManualOverride'} onClick={() => onOverrideRepository(recommendedRepository.repositoryId)}>{suggestion?.source === 'ManualOverride' ? 'Recommendation Accepted' : 'Accept Recommendation'}</button>
+            {repositoryOptions.length > 1 ? <details className="hei-repository-override"><summary>Override Repository</summary><div>
+              <label><span>Search Repository</span><input value={repositorySearch} onChange={(event) => setRepositorySearch(event.target.value)} placeholder="Search registered repositories" /></label>
+              <label><span>Repository</span><select value={overrideRepositoryId} disabled={busy} onChange={(event) => setOverrideRepositoryId(event.target.value)}>{visibleRepositories.map((repository) => <option key={repository.repositoryId} value={repository.repositoryId}>{repository.name} · {Math.round(repository.confidence * 100)}%</option>)}</select></label>
+              <button className="planner-button secondary" type="button" disabled={busy || !overrideRepositoryId || overrideRepositoryId === recommendedRepository.repositoryId} onClick={() => onOverrideRepository(overrideRepositoryId)}>Apply Override</button>
+            </div></details> : null}
+          </div>
           {suggestion?.alternativeRepositories.length ? <small>Alternatives: {suggestion.alternativeRepositories.map((repository) => `${repository.name} (${Math.round(repository.confidence * 100)}%)`).join(', ')}</small> : null}
         </> : null}
       </section>
       <div className="hei-requirement-review-grid">
-        <RequirementList title="Business Goals" items={analysis.businessGoals} empty="No explicit business goals identified." />
-        <RequirementList title="Functional Requirements" items={analysis.functionalRequirements} empty="No functional requirements identified." />
-        <RequirementList title="Non Functional Requirements" items={analysis.nonFunctionalRequirements} empty="No non-functional requirements identified." />
-        <RequirementList title="Acceptance Criteria" items={analysis.acceptanceCriteria} empty="Acceptance criteria require definition." />
-        <RequirementList title="Dependencies" items={analysis.dependencies} empty="No dependencies identified." />
-        <RequirementList title="Risks" items={analysis.risks} empty="No explicit risks identified." />
+        <RequirementList icon="BG" title="Business Goals" items={analysis.businessGoals} empty="No Business Goals detected" action="Add Business Goal" onAction={onEdit} />
+        <RequirementList icon="FR" title="Functional Requirements" items={analysis.functionalRequirements} empty="No Functional Requirements detected" action="Add Functional Requirement" onAction={onEdit} />
+        <RequirementList icon="NF" title="Non Functional Requirements" items={analysis.nonFunctionalRequirements} empty="No Non Functional Requirements detected" action="Add Quality Requirement" onAction={onEdit} />
+        <RequirementList icon="AC" title="Acceptance Criteria" items={analysis.acceptanceCriteria} empty="No Acceptance Criteria detected" action="Add Acceptance Criteria" onAction={onEdit} warning />
+        <RequirementList icon="DP" title="Dependencies" items={analysis.dependencies} empty="No Dependencies detected" action="Add Dependency" onAction={onEdit} />
+        <RequirementList icon="RK" title="Risks" items={analysis.risks} empty="No Risks detected" action="Add Risk" onAction={onEdit} />
       </div>
-      <div className="hei-requirement-review-context">
-        <div><span>Engineering Memory</span><strong>{review.engineeringMemory.status}</strong><p>{review.engineeringMemory.message}</p></div>
-        <div><span>Repository Reuse</span><strong>{review.repositoryReuse.status}</strong><p>{review.repositoryReuse.message}</p></div>
-        <div><span>Planning Readiness</span><strong>{analysis.planningReadiness.status} · {analysis.requirementQualityScore}% quality</strong><p>{[...analysis.planningReadiness.blockers, ...analysis.planningReadiness.warnings].join(' ') || 'Requirement is ready for Planning approval.'}</p></div>
-      </div>
+      <QualityFindings result={analysis} onEdit={onEdit} onReanalyze={onReanalyze} />
+      <EngineeringContext result={analysis} />
       <RequirementAnalysisSummary result={analysis} />
-      <div className="hei-requirement-actions">
-        <button className="planner-button primary" type="button" disabled={busy || blocked} onClick={onContinue}>{busy ? 'Preparing Planning...' : 'Continue to Planning'}</button>
-        <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit</button>
-        <button className="planner-button secondary" type="button" disabled={busy} onClick={onReanalyze}>Re-analyze</button>
-        <button className="planner-button secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
       </div>
-      {blocked ? <p className="hei-requirement-review-blocker">Resolve blocking findings with Edit before continuing to Planning.</p> : null}
+      <HEIInsights analysis={analysis} memoryStatus={review.engineeringMemory.status} busy={busy} blocked={blocked} onEdit={onEdit} onContinue={onContinue} />
+      </div>
+      <div className="hei-requirement-sticky-actions">
+        <div className="hei-requirement-sticky-status"><Signal label="Requirement Status" value={analysis.planningReadiness.status} /><Signal label="Confidence" value={`${Math.round(analysis.confidence * 100)}%`} /><Signal label="Repository" value={recommendedRepository?.name || 'Not selected'} /></div>
+        <div className="hei-requirement-actions">
+          <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Requirement</button>
+          <button className="planner-button secondary" type="button" disabled={busy} onClick={onReanalyze}>Re-analyze</button>
+          <button className="planner-button secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
+          <button className="planner-button primary" type="button" disabled={busy || blocked} onClick={onContinue}>{busy ? 'Preparing Planning...' : needsReview ? 'Approve & Continue to Planning' : 'Continue to Planning'}</button>
+        </div>
+      </div>
+      {blocked ? <p className="hei-requirement-review-blocker">Resolve blocking findings with Edit before continuing to Planning.</p> : needsReview ? <p className="hei-requirement-review-guidance">Review the findings or edit the requirement. Continuing approves the current interpretation.</p> : null}
       <small>Requirement Context {analysis.contextVersion} · Review {analysis.reviewStatus}</small>
     </>}
   </section>;
 }
 
-function RequirementList({ title, items, empty }: { title: string; items: string[]; empty: string }) {
-  return <section><h3>{title}</h3>{items.length ? <ul>{items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul> : <p>{empty}</p>}</section>;
+function RequirementList({ icon, title, items, empty, action, onAction, warning = false }: { icon: string; title: string; items: string[]; empty: string; action: string; onAction: () => void; warning?: boolean }) {
+  return <section className={items.length ? '' : warning ? 'empty warning' : 'empty'}><header><span aria-hidden="true">{icon}</span><h3>{title}</h3><small>{items.length}</small></header>{items.length ? <ul>{items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul> : <div className="hei-requirement-empty"><strong>{warning ? '⚠ ' : ''}{empty}</strong><p>Add information to improve planning quality.</p><button className="planner-button secondary" type="button" onClick={onAction}>{action}</button></div>}</section>;
+}
+
+function RequirementHealth({ analysis, ingestion }: { analysis: RequirementAnalysisResult; ingestion: IngestionResult }) {
+  const repositoryConfidence = Math.round(Number(analysis.repositorySuggestion?.confidence || 0) * 100);
+  const documentQuality = ingestion.sourceType === 'PasteRequirement' ? 'Direct Input' : analysis.reviewContext.documentType && analysis.reviewContext.documentType !== 'Unknown' ? 'Good' : 'Needs Review';
+  const metrics = [
+    { label: 'Overall Confidence', value: `${Math.round(analysis.confidence * 100)}%`, description: 'Confidence in extracted requirement intent.' },
+    { label: 'Planning Quality', value: `${analysis.requirementQualityScore}%`, description: 'Completeness and clarity for planning.' },
+    { label: 'Repository Confidence', value: repositoryConfidence ? `${repositoryConfidence}%` : 'Not detected', description: 'Strength of repository alignment.' },
+    { label: 'Readiness', value: analysis.planningReadiness.status === 'NeedsReview' ? 'Needs Review' : analysis.planningReadiness.status, description: 'Current planning transition state.' },
+    { label: 'Document Quality', value: documentQuality, description: ingestion.sourceType === 'PasteRequirement' ? 'Reviewed from direct requirement input.' : 'Source extraction quality.' },
+  ];
+  return <section className="hei-requirement-health" aria-label="Requirement Health"><header><div><span>Requirement Health</span><h3>Planning readiness at a glance</h3></div><Status value={analysis.planningReadiness.status === 'NeedsReview' ? 'Needs Review' : analysis.planningReadiness.status} /></header><div>{metrics.map((metric) => <article key={metric.label} className={statusTone(metric.value)}><span>{metric.label}</span><strong>{metric.value}</strong><p>{metric.description}</p></article>)}</div></section>;
+}
+
+function QualityFindings({ result, onEdit, onReanalyze }: { result: RequirementAnalysisResult; onEdit: () => void; onReanalyze: () => void }) {
+  const issues = [
+    ...result.missingAcceptanceCriteria.map((finding) => ({ ...finding, title: 'Missing Acceptance Criteria', severity: 'High', impact: 'Planning cannot generate measurable work items without testable completion conditions.' })),
+    ...result.ambiguousRequirements.map((finding) => ({ ...finding, title: 'Ambiguous Requirement', severity: 'Medium', impact: 'Multiple interpretations may produce inconsistent planning artifacts.' })),
+    ...result.conflictingRequirements.map((finding) => ({ ...finding, title: 'Conflicting Requirement', severity: 'Critical', impact: 'Planning is blocked until the conflicting intent is resolved.' })),
+    ...result.duplicateRequirements.map((finding) => ({ ...finding, title: 'Duplicate Requirement', severity: 'Low', impact: 'Duplicate scope can create repeated stories and estimates.' })),
+  ];
+  return <section className="hei-quality-findings" aria-label="Quality Findings"><header><div><span>Quality Review</span><h3>Quality Findings</h3><p>{issues.length ? `${issues.length} issue${issues.length === 1 ? '' : 's'} require attention before approval.` : 'No requirement quality issues detected.'}</p></div><Status value={issues.length ? 'Needs Review' : 'Clear'} /></header>{issues.length ? <div>{issues.map((issue, index) => <article key={`${issue.title}-${index}`}><header><div><span>Issue</span><h4>{issue.title}</h4></div><Status value={`${issue.severity} Severity`} /></header><dl><div><dt>Finding</dt><dd>{issue.text}</dd></div><div><dt>Impact</dt><dd>{issue.impact}</dd></div><div><dt>Recommendation</dt><dd>{issue.reason}</dd></div></dl><footer><button className="planner-button secondary" type="button" onClick={onEdit}>Edit Requirement</button><button className="planner-button secondary" type="button" onClick={onReanalyze}>Re-analyze</button></footer></article>)}</div> : null}</section>;
+}
+
+function EngineeringContext({ result }: { result: RequirementAnalysisResult }) {
+  const metrics = [
+    ['Business Goals', result.businessGoals.length], ['Actors', result.actors.length], ['Business Rules', result.businessRules.length],
+    ['Dependencies', result.dependencies.length], ['Constraints', result.constraints.length], ['Risks', result.risks.length], ['Open Questions', result.openQuestions.length],
+  ] as Array<[string, number]>;
+  return <section className="hei-engineering-context" aria-label="Engineering Context"><header><span>Engineering Context</span><h3>Extracted planning signals</h3></header><div>{metrics.map(([label, value]) => <article key={label} className={value ? '' : 'empty'}><span>{label}</span><strong>{value}</strong></article>)}</div></section>;
+}
+
+function HEIInsights({ analysis, memoryStatus, busy, blocked, onEdit, onContinue }: {
+  analysis: RequirementAnalysisResult;
+  memoryStatus: string;
+  busy: boolean;
+  blocked: boolean;
+  onEdit: () => void;
+  onContinue: () => void;
+}) {
+  const repositoryConfidence = Math.round(Number(analysis.repositorySuggestion?.confidence || 0) * 100);
+  const contextCount = analysis.functionalRequirements.length + analysis.nonFunctionalRequirements.length + analysis.acceptanceCriteria.length + analysis.dependencies.length + analysis.risks.length + analysis.openQuestions.length;
+  const complexity = contextCount >= 12 ? 'High' : contextCount >= 5 ? 'Medium' : 'Low';
+  const normalizedMemory = memoryStatus.toLowerCase();
+  const memoryInsight = normalizedMemory.includes('no relevant') || normalizedMemory.includes('not available')
+    ? 'No approved Engineering Memory match was found.'
+    : normalizedMemory.includes('pending')
+      ? 'Engineering Memory will be resolved after approval.'
+      : 'Relevant implementation context is available in Engineering Memory.';
+  const insights = [
+    analysis.requirementQualityScore < 70 ? `Requirement quality is below target (${analysis.requirementQualityScore}%).` : `Requirement quality meets the planning target (${analysis.requirementQualityScore}%).`,
+    analysis.acceptanceCriteria.length ? `${analysis.acceptanceCriteria.length} acceptance criteria were identified.` : 'Acceptance criteria are missing.',
+    repositoryConfidence >= 75 ? `Repository confidence is high (${repositoryConfidence}%).` : repositoryConfidence ? `Repository confidence needs review (${repositoryConfidence}%).` : 'Repository confidence is not available.',
+    memoryInsight,
+    `Estimated planning complexity: ${complexity}.`,
+  ];
+  return <aside className="hei-insights" aria-label="HEI Insights"><details open><summary><span aria-hidden="true">💡</span><strong>HEI Insights</strong><small>{insights.length}</small></summary><div>
+    <ul>{insights.map((insight) => <li key={insight}>{insight}</li>)}</ul>
+    <section><span>Recommended Next Action</span><strong>{analysis.acceptanceCriteria.length ? 'Continue to Planning' : 'Define measurable acceptance criteria'}</strong></section>
+    <div className="hei-insights-actions">
+      {!analysis.acceptanceCriteria.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Acceptance Criteria</button> : null}
+      <button className="planner-button secondary" type="button" disabled={busy || blocked} onClick={onContinue}>Continue to Planning</button>
+    </div>
+  </div></details></aside>;
 }
 
 function RequirementAnalysisSummary({ result }: { result: RequirementAnalysisResult }) {
@@ -669,8 +792,9 @@ function RequirementAnalysisSummary({ result }: { result: RequirementAnalysisRes
     ...result.conflictingRequirements,
     ...result.duplicateRequirements,
   ];
-  return <section className="hei-transcript-summary hei-requirement-analysis" aria-label="Requirement analysis">
-    <header><div><span>Requirement Analysis</span><h3>{result.requirementSummary}</h3><p>Planning will receive the analyzed engineering requirement, not the raw source.</p></div><Status value={readiness.status === 'NeedsReview' ? 'Needs Review' : readiness.status} /></header>
+  return <details className="hei-requirement-analysis" aria-label="Requirement analysis">
+    <summary><span>Analysis details</span><Status value={readiness.status === 'NeedsReview' ? 'Needs Review' : readiness.status} /></summary>
+    <div className="hei-requirement-analysis-body"><header><div><span>Requirement Analysis</span><h3>{result.requirementSummary}</h3><p>Planning will receive the analyzed engineering requirement, not the raw source.</p></div></header>
     <div className="hei-requirement-signals"><Signal label="Quality" value={`${result.requirementQualityScore}%`} /><Signal label="Confidence" value={`${Math.round(result.confidence * 100)}%`} /><Signal label="Functional" value={String(result.functionalRequirements.length)} /><Signal label="Acceptance" value={String(result.acceptanceCriteria.length)} /></div>
     <details open={issues.length > 0}><summary>Planning Readiness</summary>
       {readiness.blockers.length || readiness.warnings.length ? <ul>{[...readiness.blockers, ...readiness.warnings].map((value) => <li key={value}>{value}</li>)}</ul> : <p>Requirement is ready for Planning.</p>}
@@ -678,8 +802,9 @@ function RequirementAnalysisSummary({ result }: { result: RequirementAnalysisRes
     <details open={issues.length > 0}><summary>Quality Findings ({issues.length})</summary>
       {issues.length ? <ul>{issues.map((finding, index) => <li key={`${index}-${finding.text}`}><strong>{finding.text}</strong><small> {finding.reason}</small></li>)}</ul> : <p>No ambiguity, conflict, duplicate, or acceptance gaps detected.</p>}
     </details>
-    <details><summary>Extracted Engineering Context</summary><div className="hei-requirement-analysis-grid"><Signal label="Business Goals" value={String(result.businessGoals.length)} /><Signal label="Actors" value={String(result.actors.length)} /><Signal label="Dependencies" value={String(result.dependencies.length)} /><Signal label="Risks" value={String(result.risks.length)} /></div></details>
-  </section>;
+    <details><summary>Analysis Evidence</summary><div className="hei-requirement-analysis-grid"><Signal label="Missing Criteria" value={String(result.missingAcceptanceCriteria.length)} /><Signal label="Ambiguities" value={String(result.ambiguousRequirements.length)} /><Signal label="Conflicts" value={String(result.conflictingRequirements.length)} /><Signal label="Duplicates" value={String(result.duplicateRequirements.length)} /></div></details>
+    </div>
+  </details>;
 }
 
 function fileToBase64(file: File): Promise<string> {

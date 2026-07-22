@@ -1,6 +1,6 @@
 import React, { ReactNode } from 'react';
 
-export const PLANNING_TABS = ['Overview', 'Hierarchy', 'Traceability', 'Dependencies', 'Estimate', 'Review', 'Approval'] as const;
+export const PLANNING_TABS = ['Overview', 'Hierarchy', 'Traceability', 'Dependencies', 'Estimate', 'Review', 'Diff', 'Approval'] as const;
 export type PlanningTab = typeof PLANNING_TABS[number];
 
 export function PlanningWorkspace({ header, tabs, children, actionPanel, footer }: {

@@ -178,6 +178,16 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertEqual(first["estimateId"], second["estimateId"])
         self.assertEqual(1, len(self.artifacts))
 
+    def test_synchronized_backlog_revision_invalidates_cached_proposal(self):
+        work_items = [{"workItemId": 88, "workItemType": "Epic", "title": "Device Health", "revision": 1}]
+        self.service.intelligence_engine.work_item_provider = lambda _project: work_items
+        requirement = self.prepare("PasteRequirement")
+        first = self.service.generate({"requirementId": requirement["requirementId"]})
+        work_items[0] = {**work_items[0], "revision": 2}
+        second = self.service.generate({"requirementId": requirement["requirementId"]})
+        self.assertNotEqual(first["planningPackId"], second["planningPackId"])
+        self.assertNotEqual(first["planningContext"]["contextVersion"], second["planningContext"]["contextVersion"])
+
     def test_raw_planning_input_and_unapproved_summary_are_blocked(self):
         with self.assertRaisesRegex(ValueError, "Raw planning input cannot bypass"):
             self.service.generate({"title": "Bypass", "content": "Do planning directly"})
@@ -207,6 +217,19 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         preview = client.post("/planning/preview", json={"planningPackId": generated.json()["planningPackId"]})
         self.assertEqual(200, preview.status_code)
         self.assertEqual("RequirementSummary", preview.json()["planningPreview"]["source"])
+        context = client.post("/planning/context", json={"requirementId": requirement["requirementId"]})
+        self.assertEqual(200, context.status_code)
+        self.assertEqual("hei-planning-context-v1", context.json()["schemaVersion"])
+        recommendation = client.post("/planning/recommend", json={"requirementId": requirement["requirementId"]})
+        self.assertEqual(200, recommendation.status_code)
+        planning_diff = client.get(f"/planning/{generated.json()['planningPackId']}/diff")
+        self.assertEqual(200, planning_diff.status_code)
+        self.assertEqual("hei-planning-diff-v1", planning_diff.json()["diff"]["schemaVersion"])
+        approved_diff = client.post(
+            f"/planning/{generated.json()['planningPackId']}/diff/approve",
+            json={"actor": "Product Owner", "comments": "Reviewed against current ADO work."},
+        )
+        self.assertEqual("Approved", approved_diff.json()["diff"]["status"])
         direct = client.post("/planning/generate", json={"title": "Bypass"})
         self.assertEqual(400, direct.status_code)
         self.assertEqual("invalid_requirement_planning", direct.json()["error"]["code"])

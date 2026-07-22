@@ -117,7 +117,7 @@ from backend.command_center_hardening import CommandCenterHardeningService, buil
 from backend.engineering_estimation import EngineeringEstimationEngine, EngineeringEstimationRepository, build_engineering_estimation_router
 from backend.requirement_intake import RequirementIngestionService, RequirementIntakeService, build_requirement_intake_router
 from backend.requirement_analysis import RequirementAnalysisService, build_requirement_analysis_router
-from backend.planning_integration import RequirementPlanningService, build_requirement_planning_router
+from backend.planning_integration import IntelligentPlanningEngine, RequirementPlanningService, build_requirement_planning_router
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
 from backend.prompt_budget import default_json_sections, probe_json_with_budget
@@ -288,7 +288,13 @@ requirement_planning_service = RequirementPlanningService(
     requirement_intake=requirement_intake_service,
     estimation_engine=engineering_estimation_engine,
     artifact_provider=project_intelligence_service.list_artifacts,
+    artifact_updater=project_intelligence_service.update_artifact_draft,
     repository_intelligence=repository_intelligence_module.application,
+    intelligence_engine=IntelligentPlanningEngine(
+        work_item_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "workItems").values()) if project_id else [],
+        iteration_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "iterations").values()) if project_id else [],
+        memory_provider=engineering_memory_engine.find_relevant_memory,
+    ),
     platform=platform_foundation,
 )
 app.include_router(build_requirement_planning_router(requirement_planning_service))
@@ -322,6 +328,7 @@ ado_automation_service = register_ado_automation(
     planning_pack_provider=_find_approved_planning_pack,
     platform=platform_foundation,
 )
+requirement_planning_service.automation_service = ado_automation_service
 app.include_router(build_ado_automation_router(ado_automation_service))
 ado_agent_service = register_ado_agent(
     platform_foundation.storage_root / "ado_agent",

@@ -8,6 +8,8 @@ from typing import Any
 from backend.platform.shared import JsonMapStore
 from backend.requirement_analysis.summary import build_requirement_summary
 
+from .intelligence import IntelligentPlanningEngine
+
 
 class RequirementPlanningService:
     """Generates Planning Packs exclusively from approved Requirement Summaries."""
@@ -21,7 +23,9 @@ class RequirementPlanningService:
         requirement_intake: Any,
         estimation_engine: Any,
         artifact_provider: Any,
+        artifact_updater: Any | None = None,
         repository_intelligence: Any | None = None,
+        intelligence_engine: IntelligentPlanningEngine | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
@@ -30,7 +34,10 @@ class RequirementPlanningService:
         self.requirement_intake = requirement_intake
         self.estimation_engine = estimation_engine
         self.artifact_provider = artifact_provider
+        self.artifact_updater = artifact_updater
         self.repository_intelligence = repository_intelligence
+        self.intelligence_engine = intelligence_engine or IntelligentPlanningEngine()
+        self.automation_service: Any | None = None
         self.platform = platform
 
     def from_requirement(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -40,12 +47,15 @@ class RequirementPlanningService:
     def generate(self, request: dict[str, Any]) -> dict[str, Any]:
         requirement_id = _required_requirement_id(request)
         summary = self._approved_summary(requirement_id)
+        repository_context = self._repository_context(summary)
+        planning_context = self.intelligence_engine.build_context(summary, repository_context)
         existing = self.store.read().get(requirement_id)
         if (
             isinstance(existing, dict)
             and request.get("force") is not True
             and existing.get("requirementContextVersion") == summary["contextVersion"]
             and existing.get("analysisId") == summary["analysisId"]
+            and (existing.get("planningContext") or {}).get("contextVersion") == planning_context["contextVersion"]
         ):
             return _public(existing)
 
@@ -56,7 +66,12 @@ class RequirementPlanningService:
             "correlationId": summary["correlationId"],
         })
         artifact = self._artifact(generated["planningPackId"])
-        repository_context = self._repository_context(summary)
+        planning_analysis = self.intelligence_engine.analyze(planning_context)
+        planning_recommendation = self.intelligence_engine.recommend(planning_context, planning_analysis)
+        hierarchy = dict((artifact.get("payload") or {}).get("recommendedHierarchy") or {})
+        planning_proposal = self.intelligence_engine.build_proposal(planning_context, planning_recommendation, hierarchy)
+        planning_diff = self.intelligence_engine.build_diff(planning_proposal)
+        artifact = self._persist_proposal(artifact, planning_context, planning_recommendation, planning_proposal, planning_diff, actor)
         estimate = self.estimation_engine.estimate({
             "planningPackage": {
                 "id": generated["planningPackId"],
@@ -86,6 +101,11 @@ class RequirementPlanningService:
             "requirementSummary": summary,
             "engineeringEstimation": estimate,
             "planningPreview": preview,
+            "planningContext": planning_context,
+            "planningAnalysis": planning_analysis,
+            "planningRecommendation": planning_recommendation,
+            "planningProposal": planning_proposal,
+            "planningDiff": planning_diff,
             "context": generated.get("context") or {},
             "correlationId": summary["correlationId"],
             "generatedAt": _now(),
@@ -96,6 +116,51 @@ class RequirementPlanningService:
         self.store.write(values)
         self._publish(record)
         return _public(record)
+
+    def context(self, request: dict[str, Any]) -> dict[str, Any]:
+        summary = self._approved_summary(_required_requirement_id(request))
+        return self.intelligence_engine.build_context(summary, self._repository_context(summary))
+
+    def analyze(self, request: dict[str, Any]) -> dict[str, Any]:
+        context = self.context(request)
+        return self.intelligence_engine.analyze(context)
+
+    def recommend(self, request: dict[str, Any]) -> dict[str, Any]:
+        context = self.context(request)
+        return self.intelligence_engine.recommend(context, self.intelligence_engine.analyze(context))
+
+    def diff(self, planning_pack_id: str) -> dict[str, Any]:
+        record = self._record(planning_pack_id)
+        return {
+            "planningPackId": planning_pack_id, "requirementId": record["requirementId"],
+            "recommendation": record["planningRecommendation"], "proposal": record["planningProposal"],
+            "diff": record["planningDiff"], "correlationId": record["correlationId"],
+        }
+
+    def approve_diff(self, planning_pack_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        actor = _text(request.get("actor"))
+        if not actor:
+            raise ValueError("actor is required to approve the Planning Diff.")
+        records = self.store.read(); record = self._record(planning_pack_id, records)
+        approval = {"status": "Approved", "approvedBy": actor, "approvedAt": _now(), "comments": _text(request.get("comments"))}
+        record["planningDiff"]["status"] = "Approved"; record["planningDiff"]["approval"] = approval
+        record["planningProposal"]["approval"] = approval
+        records[record["requirementId"]] = record; self.store.write(records)
+        return self.diff(planning_pack_id)
+
+    def sync(self, planning_pack_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        record = self._record(planning_pack_id)
+        if record.get("planningDiff", {}).get("status") != "Approved":
+            raise ValueError("Approve the current Planning Diff before Azure DevOps synchronization.")
+        artifact = self._artifact(planning_pack_id)
+        if str(artifact.get("state") or "").lower() not in {"approved", "locked"} or not artifact.get("approved_by"):
+            raise ValueError("Approve the Planning Pack before Azure DevOps synchronization.")
+        if not self.automation_service:
+            return {"status": "Ready", "dryRun": True, "planningPackId": planning_pack_id, "diff": record["planningDiff"], "message": "Approved Planning Diff is ready for the Azure DevOps automation service."}
+        correlation_id = _text(request.get("correlationId")) or record.get("correlationId") or ""
+        if request.get("apply") is True:
+            return self.automation_service.apply_planning_pack(planning_pack_id, request, correlation_id=correlation_id)
+        return self.automation_service.preview_planning_pack(planning_pack_id, request, correlation_id=correlation_id)
 
     def preview(self, request: dict[str, Any]) -> dict[str, Any]:
         requirement_id = _text(request.get("requirementId"))
@@ -159,6 +224,23 @@ class RequirementPlanningService:
         if not artifact:
             raise LookupError("Generated Planning Pack artifact could not be loaded.")
         return dict(artifact)
+
+    def _record(self, planning_pack_id: str, records: dict[str, Any] | None = None) -> dict[str, Any]:
+        record = next((item for item in (records or self.store.read()).values() if isinstance(item, dict) and item.get("planningPackId") == planning_pack_id), None)
+        if not record:
+            raise LookupError("Planning Intelligence record was not found for this Planning Pack.")
+        return record
+
+    def _persist_proposal(self, artifact: dict[str, Any], context: dict[str, Any], recommendation: dict[str, Any], proposal: dict[str, Any], planning_diff: dict[str, Any], actor: str) -> dict[str, Any]:
+        if not self.artifact_updater:
+            return artifact
+        return self.artifact_updater(artifact["artifact_id"], {
+            "expectedVersion": artifact.get("version"),
+            "details": {
+                "planningContext": context, "planningRecommendation": recommendation,
+                "planningProposal": proposal, "planningDiff": planning_diff, "items": proposal.get("items", []),
+            },
+        }, actor)
 
     @staticmethod
     def _preview(summary: dict[str, Any], generated: dict[str, Any], artifact: dict[str, Any], estimate: dict[str, Any], repository: dict[str, Any]) -> dict[str, Any]:

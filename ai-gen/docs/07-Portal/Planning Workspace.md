@@ -11,6 +11,7 @@ The Planning Workspace is the single review and refinement surface for a Plannin
 - **Dependencies:** Tree, Graph, and Table views for `Depends On` and `Blocked By` links, critical path, and actionable integrity warnings.
 - **Estimate:** pack-level engineering days, hours, story points, sprint count, developers, confidence, risk, complexity, and estimation drivers.
 - **Review:** editable title and description for Draft or Review artifacts.
+- **Diff:** Git-style create, modify, keep, and ignore decisions against synchronized Azure DevOps work. The current diff must be approved before synchronization.
 - **Approval:** approval readiness, comments, approver, decision actions, and version history.
 - **Action panel and footer:** Generate, Save Draft, the current lifecycle action, and Export use the same action contract.
 

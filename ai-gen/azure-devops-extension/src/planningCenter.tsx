@@ -6,6 +6,7 @@ import {
 import { PlanningOverview, PlanningOverviewData } from './planningOverview';
 import { PlanningHierarchy } from './planningHierarchy';
 import { DependencyView, PlanningDependencies, PlanningDependenciesData } from './planningDependencies';
+import { PlanningDiff, PlanningDiffData } from './planningDiff';
 
 export type PlanningCenterItem = {
   id: string;
@@ -142,6 +143,10 @@ export function PlanningCenter({
   const [approvalComments, setApprovalComments] = useState('');
   const [approvalHistory, setApprovalHistory] = useState<PlanningApprovalHistory>();
   const [approvalHistoryLoading, setApprovalHistoryLoading] = useState(false);
+  const [planningDiff, setPlanningDiff] = useState<PlanningDiffData>();
+  const [planningDiffLoading, setPlanningDiffLoading] = useState(false);
+  const [planningDiffError, setPlanningDiffError] = useState('');
+  const [planningDiffBusy, setPlanningDiffBusy] = useState(false);
   const overviewRequest = useRef(0);
   const hierarchyRequest = useRef(0);
   const dependencyRequest = useRef(0);
@@ -191,6 +196,10 @@ export function PlanningCenter({
     setApprovalComments('');
     void loadApprovalHistory(selected.id);
   }, [activeTab, selected?.id, selected?.version]);
+  useEffect(() => {
+    if (activeTab !== 'Diff' || !hierarchyRoot || hierarchyRoot.source !== 'planning_artifact') return;
+    void loadPlanningDiff(hierarchyRoot.id);
+  }, [activeTab, hierarchyRoot?.id, hierarchyRoot?.version]);
 
   useEffect(() => {
     if (!hierarchyItems.length) return;
@@ -325,6 +334,34 @@ export function PlanningCenter({
       setApprovalHistory(undefined);
       onError(error instanceof Error ? error.message : 'Unable to load Planning approval history.');
     } finally { setApprovalHistoryLoading(false); }
+  }
+
+  async function loadPlanningDiff(planningId: string) {
+    setPlanningDiffLoading(true); setPlanningDiffError('');
+    try {
+      const response = await fetch(`${baseUrl}/planning/${encodeURIComponent(planningId)}/diff`);
+      const payload = await response.json() as PlanningDiffData & { error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message || 'Unable to load the Planning Diff.');
+      setPlanningDiff(payload);
+    } catch (error) {
+      setPlanningDiff(undefined);
+      setPlanningDiffError(error instanceof Error ? error.message : 'Unable to load the Planning Diff.');
+    } finally { setPlanningDiffLoading(false); }
+  }
+
+  async function approvePlanningDiff() {
+    if (!hierarchyRoot) return;
+    setPlanningDiffBusy(true);
+    try {
+      const response = await fetch(`${baseUrl}/planning/${encodeURIComponent(hierarchyRoot.id)}/diff/approve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor, comments: approvalComments }),
+      });
+      const payload = await response.json() as PlanningDiffData & { error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message || 'Unable to approve the Planning Diff.');
+      setPlanningDiff(payload);
+    } catch (error) { onError(error instanceof Error ? error.message : 'Unable to approve the Planning Diff.'); }
+    finally { setPlanningDiffBusy(false); }
   }
 
   async function saveDependency(request: Record<string, unknown>) {
@@ -607,6 +644,7 @@ export function PlanningCenter({
     Dependencies: <PlanningContent title="Dependency Management" description="Define execution order, resolve blockers, and review the critical path."><PlanningDependencies data={dependencyData} loading={dependencyLoading} error={dependencyError} view={dependencyView} selectedId={selected.id} canEdit={canContribute} busy={dependencyBusy} onView={setDependencyView} onSave={saveDependency} onDelete={deleteDependency} onSelect={setSelectedId} onRetry={() => hierarchyRoot && void loadDependencies(hierarchyRoot.id)} /></PlanningContent>,
     Estimate: <PlanningContent title="Engineering Estimate" description="Transparent effort and delivery estimates for the complete Planning Pack."><EstimationReport estimate={packEstimate} loading={estimationBusy === hierarchyRoot?.id} onRecalculate={() => hierarchyRoot && void estimate(hierarchyRoot, true)} onEdit={canContribute && hierarchyRoot?.source === 'planning_artifact' && ['Draft', 'Review'].includes(hierarchyRoot.status) ? () => setOverrideOpen((value) => !value) : undefined} />{overrideOpen && packEstimate && hierarchyRoot ? <div className="hei-estimation-override"><label><span>Engineering Days</span><input type="number" min="0.25" step="0.25" value={overrideDays} onChange={(event) => { setOverrideDays(event.target.value); const value = Number(event.target.value); if (value > 0) setOverrideHours(String(value * 8)); }} /></label><label><span>Hours</span><input type="number" min="1" step="0.5" value={overrideHours} onChange={(event) => { setOverrideHours(event.target.value); const value = Number(event.target.value); if (value > 0) setOverrideDays(String(value / 8)); }} /></label><label><span>Story Points</span><input type="number" min="1" value={overridePoints} onChange={(event) => setOverridePoints(event.target.value)} /></label><label><span>Sprint Count</span><input type="number" min="0.5" step="0.5" value={overrideSprints} onChange={(event) => setOverrideSprints(event.target.value)} /></label><label><span>Developers Needed</span><input type="number" min="1" value={overrideDevelopers} onChange={(event) => setOverrideDevelopers(event.target.value)} /></label><label><span>Confidence</span><input type="number" min="0" max="100" value={overrideConfidence} onChange={(event) => setOverrideConfidence(event.target.value)} /></label><label><span>Risk</span><select value={overrideRisk} onChange={(event) => setOverrideRisk(event.target.value)}>{['Low', 'Medium', 'High', 'Critical'].map((value) => <option key={value}>{value}</option>)}</select></label><label><span>Complexity</span><select value={overrideComplexity} onChange={(event) => setOverrideComplexity(event.target.value)}>{['Very Low', 'Low', 'Medium', 'High', 'Very High'].map((value) => <option key={value}>{value}</option>)}</select></label><label className="wide"><span>Override Reason</span><textarea value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} placeholder="Explain the engineering evidence behind this override." /></label><div className="wide hei-estimation-override-actions"><button className="planner-button secondary" type="button" onClick={() => setOverrideOpen(false)}>Cancel</button><button className="planner-button primary" type="button" onClick={() => void overrideEstimate(hierarchyRoot)} disabled={!overrideReason.trim() || estimationBusy === hierarchyRoot.id}>Save User Estimate</button></div></div> : null}</PlanningContent>,
     Review: <PlanningContent title="Planning Review" description="Refine the draft before requesting approval."><div className="hei-planning-review-form"><label><span>Planning Pack Name</span><input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} disabled={!canSaveDraft} /></label><label><span>Description</span><textarea value={draftDescription} onChange={(event) => setDraftDescription(event.target.value)} disabled={!canSaveDraft} /></label></div><DetailList title="Dependencies" values={selected.dependencies} empty="No dependencies identified." /><DetailList title="Risks" values={selected.risks} empty="No planning risks identified." /></PlanningContent>,
+    Diff: <PlanningContent title="Planning Diff" description="Review the exact create, modify, keep, and ignore decisions before Azure DevOps synchronization."><PlanningDiff data={planningDiff} loading={planningDiffLoading} error={planningDiffError} busy={planningDiffBusy} canApprove={canContribute} onApprove={() => void approvePlanningDiff()} onRetry={() => hierarchyRoot && void loadPlanningDiff(hierarchyRoot.id)} /></PlanningContent>,
     Approval: <PlanningContent title="Planning Approval" description="Review the decision record, capture comments, and advance the approved engineering artifact."><EstimationReport estimate={selectedEstimate} loading={estimationBusy === selected.id} onRecalculate={() => void estimate(selected, true)} onEdit={() => setActiveTab('Estimate')} /><div className="hei-planning-actions"><Detail label="Status" value={selected.status} /><Detail label="Readiness" value={selected.readiness} /><Detail label="Confidence" value={`${selected.confidence}%`} /><Detail label="Approver" value={selected.approver || 'Approval Pending'} /><Detail label="Approved On" value={selected.approvedAt || 'Not approved'} /><Detail label="Version" value={`v${selected.version}`} /></div><section className="hei-planning-approval-controls"><label><span>Approval Comments</span><textarea value={approvalComments} onChange={(event) => setApprovalComments(event.target.value)} placeholder="Record the decision context, requested changes, or publication note." /></label><div>{selected.canApprove ? <button className="planner-button primary" type="button" disabled={!canContribute || !selectedEstimate || Boolean(actionId)} onClick={() => void decide(selected, 'approve')}>Approve</button> : null}{selected.canReject ? <button className="planner-button danger" type="button" disabled={!canContribute || !approvalComments.trim() || Boolean(actionId)} onClick={() => void decide(selected, 'reject')}>Reject</button> : null}{selected.canRequestChanges ? <button className="planner-button secondary" type="button" disabled={!canContribute || !approvalComments.trim() || Boolean(actionId)} onClick={() => void transitionPlanning('request-changes')}>Request Changes</button> : null}{selected.canPublish ? <button className="planner-button primary" type="button" disabled={!canContribute || Boolean(actionId)} onClick={() => void transitionPlanning('publish')}>Publish</button> : null}</div></section><ApprovalHistory value={approvalHistory} loading={approvalHistoryLoading} onRollback={(version) => void transitionPlanning('rollback', version)} canRollback={canContribute && selected.canRollback && !Boolean(actionId)} /></PlanningContent>,
   };
 

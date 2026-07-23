@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 from datetime import datetime, timezone
-import re
 from uuid import uuid4
 
 from backend.platform.shared import JsonMapStore
 from backend.engineering_intelligence import EngineeringIntelligenceService
 from backend.requirement_intake.ingestion import RequirementIngestionService
 
+from .acceptance_criteria import IntelligentAcceptanceCriteriaEngine
 from .engine import RequirementAnalysisEngine
 from .models import RequirementFinding
 
@@ -22,6 +22,7 @@ class RequirementAnalysisService:
         *,
         requirement_ingestion: RequirementIngestionService,
         engine: RequirementAnalysisEngine | None = None,
+        acceptance_engine: IntelligentAcceptanceCriteriaEngine | None = None,
         repository_detector: Any | None = None,
         engineering_intelligence: Any | None = None,
         platform: Any | None = None,
@@ -29,6 +30,7 @@ class RequirementAnalysisService:
         self.store = store
         self.requirement_ingestion = requirement_ingestion
         self.engine = engine or RequirementAnalysisEngine()
+        self.acceptance_engine = acceptance_engine or IntelligentAcceptanceCriteriaEngine()
         self.repository_detector = repository_detector
         self.engineering_intelligence = engineering_intelligence or EngineeringIntelligenceService(
             repository_detector=repository_detector,
@@ -40,9 +42,14 @@ class RequirementAnalysisService:
         if not requirement:
             raise ValueError("Requirement context was not found. Ingest the source before analysis.")
         existing = self.get(requirement_id)
-        if existing and not force and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion"):
+        acceptance_version_current = (
+            (existing or {}).get("acceptanceDiagnostics", {}).get("engine")
+            == "IntelligentAcceptanceCriteriaV1"
+        )
+        if existing and not force and acceptance_version_current and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion"):
             return existing
         result = self.engine.analyze(requirement).to_dict()
+        result.update(self.acceptance_engine.understand(result, requirement))
         if self.engineering_intelligence:
             suggestion = self.engineering_intelligence.recommend_repository(requirement, result)
             result["repositorySuggestion"] = suggestion
@@ -93,6 +100,7 @@ class RequirementAnalysisService:
         if selected_repository_id and selected_repository_id != current_repository_id:
             reviewed_acceptance = {
                 "acceptanceCriteria": list(analysis.get("acceptanceCriteria") or []),
+                "acceptanceCriteriaRecords": list(analysis.get("acceptanceCriteriaRecords") or []),
                 "acceptanceCriteriaSuggestions": list(analysis.get("acceptanceCriteriaSuggestions") or []),
                 "acceptanceCriteriaState": dict(analysis.get("acceptanceCriteriaState") or {}),
                 "acceptanceCriteriaOrigin": (analysis.get("fieldOrigins") or {}).get("acceptanceCriteria"),
@@ -159,7 +167,12 @@ class RequirementAnalysisService:
             raise ValueError(
                 "Source-provided Acceptance Criteria are already authoritative. Edit the source requirement to change them."
             )
-        suggestions = self._build_acceptance_suggestions(analysis, requirement)
+        suggestions = self.acceptance_engine.generate(analysis, requirement)
+        if not suggestions:
+            raise ValueError(
+                "No evidence-backed Acceptance Criteria could be generated. "
+                "Add a specific functional requirement, actor, action, or observable outcome."
+            )
         analysis["acceptanceCriteriaSuggestions"] = suggestions
         analysis["acceptanceCriteriaState"] = {
             "state": "AISuggested",
@@ -189,11 +202,12 @@ class RequirementAnalysisService:
             if not text:
                 continue
             normalized.append({
+                **self.acceptance_engine.normalize_edited(
+                    value,
+                    text=text,
+                    order=index + 1,
+                ),
                 "criterionId": str(value.get("criterionId") or f"ac_{uuid4().hex}"),
-                "text": text,
-                "origin": "User Edited",
-                "status": "PendingReview",
-                "order": index + 1,
             })
         if not normalized:
             raise ValueError("At least one suggested Acceptance Criterion is required.")
@@ -220,6 +234,7 @@ class RequirementAnalysisService:
         for item in suggestions:
             item["status"] = "Approved"
         analysis["acceptanceCriteriaSuggestions"] = suggestions
+        analysis["acceptanceCriteriaRecords"] = suggestions
         analysis["acceptanceCriteriaState"].update({
             "state": "AISuggested",
             "origin": origin,
@@ -242,6 +257,7 @@ class RequirementAnalysisService:
         if analysis.get("acceptanceCriteriaState", {}).get("state") == "SourceProvided":
             raise ValueError("Source-provided Acceptance Criteria cannot be discarded as AI suggestions.")
         analysis["acceptanceCriteria"] = []
+        analysis["acceptanceCriteriaRecords"] = []
         analysis["acceptanceCriteriaSuggestions"] = []
         status = "Skipped" if skipped else "Discarded"
         analysis["acceptanceCriteriaState"] = {
@@ -294,6 +310,7 @@ class RequirementAnalysisService:
         if state.get("state") == "SourceProvided":
             return
         analysis["acceptanceCriteria"] = list(snapshot.get("acceptanceCriteria") or [])
+        analysis["acceptanceCriteriaRecords"] = list(snapshot.get("acceptanceCriteriaRecords") or [])
         analysis["acceptanceCriteriaSuggestions"] = list(snapshot.get("acceptanceCriteriaSuggestions") or [])
         analysis["acceptanceCriteriaState"] = dict(state)
         origin = snapshot.get("acceptanceCriteriaOrigin")
@@ -356,49 +373,7 @@ class RequirementAnalysisService:
                 for item in missing if isinstance(item, dict)
             ],
         )
-
-    @staticmethod
-    def _build_acceptance_suggestions(
-        analysis: dict[str, Any], requirement: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        title = str(requirement.get("title") or "Requirement").strip()
-        actor = str((analysis.get("actors") or ["authorized user"])[0])
-        functional = [
-            re.sub(r"\s+", " ", str(item)).strip().rstrip(".")
-            for item in analysis.get("functionalRequirements") or []
-            if str(item).strip()
-        ]
-        primary = functional[0] if functional else str(analysis.get("requirementSummary") or title).strip().rstrip(".")
-        candidates = [
-            (
-                f"{title} primary outcome",
-                f"the {actor} has access to the required operational context",
-                primary[0].lower() + primary[1:] if primary else "the requirement is performed",
-                "the expected result is completed and is visible with the relevant status and data",
-            ),
-            (
-                f"{title} validation",
-                "required input or supporting data is missing or invalid",
-                f"the {actor} attempts the supported action",
-                "the action is not partially completed and a clear validation message is shown",
-            ),
-            (
-                f"{title} access control",
-                f"a user is not authorized to perform {title.lower()}",
-                "the user attempts the restricted action",
-                "access is denied without exposing restricted data and the attempt is traceable",
-            ),
-        ]
-        return [
-            {
-                "criterionId": f"ac_{uuid4().hex}",
-                "text": f"Scenario: {scenario}\nGiven {given}\nWhen {when}\nThen {then}.",
-                "origin": "AI Suggested",
-                "status": "PendingReview",
-                "order": index + 1,
-            }
-            for index, (scenario, given, when, then) in enumerate(candidates)
-        ]
+        self.acceptance_engine.refresh_projection(analysis)
 
     def _save(self, requirement_id: str, analysis: dict[str, Any]) -> None:
         values = self.store.read()

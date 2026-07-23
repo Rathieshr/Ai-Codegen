@@ -49,13 +49,38 @@ type PlanningProposalResult = {
 };
 
 type AnalysisFinding = { text: string; reason: string; evidence?: string; confidence: number };
-type ArtifactOrigin = 'Source' | 'AI Suggested' | 'User Edited' | 'Imported';
+type ArtifactOrigin = 'Source' | 'Source Derived' | 'AI Suggested' | 'AI Inferred' | 'User Edited' | 'User Added' | 'Imported';
+type AcceptanceEvidence = {
+  requirementSentence: string;
+  matchedPhrase: string;
+  confidence: number;
+  source: string;
+};
 type AcceptanceCriterionSuggestion = {
   criterionId: string;
+  title?: string;
   text: string;
   origin: ArtifactOrigin;
   status: 'PendingReview' | 'Approved';
+  type?: string;
+  confidence?: number;
+  mappedFunctionalRequirement?: string;
+  requirementCoverage?: 'Mapped' | 'Unmapped';
+  evidence?: AcceptanceEvidence[];
+  quality?: { atomic: boolean; independent: boolean; verifiable: boolean; implementationIndependent: boolean; traceable: boolean };
   order: number;
+};
+type MissingInformation = { field: string; status: string; reason: string; blocksGeneration: boolean };
+type AIAssumption = { assumptionId: string; text: string; reason: string; confidence: number; status: string; origin: ArtifactOrigin };
+type AcceptanceCoverage = {
+  functionalRequirementCount: number;
+  coveredFunctionalRequirementCount: number;
+  coveragePercent: number;
+  status: string;
+  mappings: Array<{ functionalRequirementId: string; functionalRequirement: string; criterionIds: string[]; status: string }>;
+  uncoveredFunctionalRequirements: string[];
+  areas?: Array<{ area: string; count: number; coveredCount: number; status: string }>;
+  uncoveredAreas?: string[];
 };
 type RepositoryCandidate = {
   repositoryId: string; name: string; url: string; defaultBranch: string; repositoryType: string;
@@ -103,6 +128,11 @@ type RequirementAnalysisResult = {
     description: string;
   };
   acceptanceCriteriaSuggestions: AcceptanceCriterionSuggestion[];
+  acceptanceCriteriaRecords?: AcceptanceCriterionSuggestion[];
+  missingInformation?: MissingInformation[];
+  aiAssumptions?: AIAssumption[];
+  acceptanceCoverage?: AcceptanceCoverage;
+  acceptanceEvidence?: AcceptanceEvidence[];
   fieldOrigins: Record<string, ArtifactOrigin>;
   missingAcceptanceCriteria: AnalysisFinding[];
   ambiguousRequirements: AnalysisFinding[];
@@ -1583,8 +1613,14 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
 }) {
   const state = analysis.acceptanceCriteriaState || { state: 'Missing', origin: '', status: 'Missing', description: '' };
   const [editing, setEditing] = useState(false);
+  const [activeView, setActiveView] = useState<'criteria' | 'missing' | 'assumptions' | 'coverage' | 'evidence'>('criteria');
   const [drafts, setDrafts] = useState<AcceptanceCriterionSuggestion[]>(analysis.acceptanceCriteriaSuggestions || []);
   const suggestions = analysis.acceptanceCriteriaSuggestions || [];
+  const sourceRecords = analysis.acceptanceCriteriaRecords || [];
+  const missingInformation = analysis.missingInformation || [];
+  const assumptions = analysis.aiAssumptions || [];
+  const coverage = analysis.acceptanceCoverage;
+  const evidence = analysis.acceptanceEvidence || [];
   const sourceProvided = state.state === 'SourceProvided';
   const aiSuggested = state.state === 'AISuggested';
   const approvedSuggestions = aiSuggested && state.status === 'Approved';
@@ -1602,16 +1638,25 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
 
   return <section className={`hei-acceptance-card ${state.state.toLowerCase()}`} aria-label="Acceptance Criteria">
     <header><span aria-hidden="true">AC</span><h3>Acceptance Criteria</h3>{state.origin ? <OriginBadge value={state.origin as ArtifactOrigin} /> : <Status value="Missing" />}</header>
-    {sourceProvided ? <>
+    <nav className="hei-acceptance-tabs" aria-label="Acceptance Criteria intelligence">
+      {([
+        ['criteria', 'Acceptance Criteria'],
+        ['missing', `Missing Information (${missingInformation.length})`],
+        ['assumptions', `AI Assumptions (${assumptions.length})`],
+        ['coverage', `Coverage (${coverage?.coveragePercent || 0}%)`],
+        ['evidence', `Evidence (${evidence.length})`],
+      ] as const).map(([id, label]) => <button key={id} type="button" className={activeView === id ? 'active' : ''} onClick={() => setActiveView(id)}>{label}</button>)}
+    </nav>
+    {activeView === 'criteria' && sourceProvided ? <>
       <p className="hei-acceptance-description">Acceptance Criteria were found in the source requirement.</p>
-      <ul>{analysis.acceptanceCriteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}</ul>
+      <div className="hei-acceptance-records">{sourceRecords.length ? sourceRecords.map((criterion) => <CriterionRecord key={criterion.criterionId} criterion={criterion} />) : analysis.acceptanceCriteria.map((criterion, index) => <article key={`${index}-${criterion}`}><p>{criterion}</p></article>)}</div>
       <footer><button className="planner-button secondary" type="button" disabled={busy} onClick={onEditRequirement}>Edit Requirement</button></footer>
-    </> : aiSuggested ? <>
+    </> : activeView === 'criteria' && aiSuggested ? <>
       <div className="hei-acceptance-callout"><strong>{approvedSuggestions ? 'Approved for Planning' : 'Review before approval'}</strong><p>{state.description}</p></div>
       <div className="hei-acceptance-suggestions">
         {visibleSuggestions.map((criterion, index) => editing
           ? <label key={criterion.criterionId}><span>Criterion {index + 1}</span><textarea rows={5} value={criterion.text} onChange={(event) => setDrafts((current) => current.map((item) => item.criterionId === criterion.criterionId ? { ...item, text: event.target.value, origin: 'User Edited' } : item))} /></label>
-          : <article key={criterion.criterionId}><OriginBadge value={criterion.origin} /><pre>{criterion.text}</pre></article>)}
+          : <CriterionRecord key={criterion.criterionId} criterion={criterion} />)}
       </div>
       <footer>
         {editing ? <>
@@ -1624,7 +1669,7 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onDiscard}>Discard</button>
         </>}
       </footer>
-    </> : <div className="hei-requirement-empty hei-acceptance-missing">
+    </> : activeView === 'criteria' ? <div className="hei-requirement-empty hei-acceptance-missing">
       <strong>No Acceptance Criteria were found in the requirement.</strong>
       <p>This is not an AI error. Planning can continue, but testability and implementation quality may be reduced.</p>
       <div>
@@ -1632,8 +1677,21 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
         <button className="planner-button secondary" type="button" disabled={busy} onClick={onSkip}>Skip</button>
         <button className="planner-button secondary" type="button" disabled={busy} onClick={onEditRequirement}>Edit Requirement</button>
       </div>
-    </div>}
+    </div> : null}
+    {activeView === 'missing' ? <div className="hei-acceptance-intelligence-list">{missingInformation.length ? missingInformation.map((item) => <article key={item.field}><div><strong>{item.field}</strong><Status value={item.blocksGeneration ? 'Blocking' : item.status} /></div><p>{item.reason}</p></article>) : <p>No requirement information gaps were detected.</p>}</div> : null}
+    {activeView === 'assumptions' ? <div className="hei-acceptance-intelligence-list">{assumptions.length ? assumptions.map((item) => <article key={item.assumptionId}><div><strong>{item.text}</strong><Status value={item.status} /></div><p>{item.reason}</p><small>{Math.round(item.confidence * 100)}% confidence · {item.origin}</small></article>) : <p>No AI assumptions were introduced.</p>}</div> : null}
+    {activeView === 'coverage' ? <div className="hei-acceptance-coverage"><header><strong>{coverage?.coveragePercent || 0}% functional coverage</strong><Status value={coverage?.status || 'Incomplete'} /></header>{coverage?.areas?.length ? <div className="hei-acceptance-coverage-areas">{coverage.areas.map((item) => <article key={item.area}><div><strong>{item.area}</strong><Status value={item.status} /></div><small>{item.count} identified</small></article>)}</div> : null}{coverage?.mappings?.length ? coverage.mappings.map((item) => <article key={item.functionalRequirementId}><div><strong>{item.functionalRequirementId.toUpperCase()}</strong><Status value={item.status} /></div><p>{item.functionalRequirement}</p><small>{item.criterionIds.length ? `${item.criterionIds.length} mapped criterion` : 'No mapped criterion'}</small></article>) : <p>No functional requirements are available for coverage validation.</p>}</div> : null}
+    {activeView === 'evidence' ? <div className="hei-acceptance-evidence">{evidence.length ? evidence.map((item, index) => <article key={`${index}-${item.matchedPhrase}`}><strong>{item.matchedPhrase}</strong><blockquote>{item.requirementSentence}</blockquote><small>{item.source} · {Math.round(item.confidence * 100)}% confidence</small></article>) : <p>No approved or suggested criterion evidence is available.</p>}</div> : null}
   </section>;
+}
+
+function CriterionRecord({ criterion }: { criterion: AcceptanceCriterionSuggestion }) {
+  return <article className="hei-criterion-record">
+    <header><div><strong>{criterion.title || `Criterion ${criterion.order}`}</strong><small>{criterion.type || 'Functional'} · {criterion.requirementCoverage || 'Mapped'}</small></div><div><OriginBadge value={criterion.origin} /><Status value={criterion.status} /></div></header>
+    <pre>{criterion.text}</pre>
+    {criterion.mappedFunctionalRequirement ? <p><span>Requirement</span>{criterion.mappedFunctionalRequirement}</p> : null}
+    {criterion.evidence?.length ? <details><summary>Evidence · {Math.round((criterion.confidence || 0) * 100)}% confidence</summary>{criterion.evidence.map((item, index) => <blockquote key={`${index}-${item.matchedPhrase}`}><strong>{item.matchedPhrase}</strong><span>{item.requirementSentence}</span></blockquote>)}</details> : null}
+  </article>;
 }
 
 function RequirementHealth({ analysis, ingestion }: { analysis: RequirementAnalysisResult; ingestion: IngestionResult }) {

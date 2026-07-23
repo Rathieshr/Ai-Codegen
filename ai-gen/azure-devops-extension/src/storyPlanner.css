@@ -3246,6 +3246,21 @@ button.hei-story-list-card {
 .hei-acceptance-suggestions label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .hei-acceptance-suggestions textarea { width: 100%; min-height: 112px; box-sizing: border-box; resize: vertical; }
 .hei-acceptance-card > footer, .hei-acceptance-missing > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.hei-acceptance-tabs { display: flex; flex-wrap: wrap; gap: 5px; border-bottom: 1px solid var(--hei-border-soft); padding-bottom: 7px; }
+.hei-acceptance-tabs button { border: 0; border-bottom: 2px solid transparent; padding: 6px 8px; background: transparent; color: var(--hei-muted); cursor: pointer; font: inherit; font-weight: 600; }
+.hei-acceptance-tabs button.active { border-bottom-color: var(--hei-blue); color: var(--hei-text); }
+.hei-acceptance-records, .hei-acceptance-intelligence-list, .hei-acceptance-coverage, .hei-acceptance-evidence { display: grid; gap: 8px; }
+.hei-acceptance-coverage-areas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.hei-criterion-record, .hei-acceptance-intelligence-list article, .hei-acceptance-coverage article, .hei-acceptance-evidence article { display: grid; gap: 7px; min-width: 0; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 10px; background: var(--hei-surface); }
+.hei-criterion-record > header, .hei-acceptance-intelligence-list article > div, .hei-acceptance-coverage > header, .hei-acceptance-coverage article > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.hei-criterion-record > header > div, .hei-criterion-record details blockquote { display: grid; gap: 3px; }
+.hei-criterion-record > header > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.hei-criterion-record pre { margin: 0; color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hei-criterion-record p { display: grid; gap: 2px; padding: 7px; background: var(--hei-surface-subtle); }
+.hei-criterion-record p span, .hei-criterion-record small, .hei-acceptance-intelligence-list small, .hei-acceptance-coverage small, .hei-acceptance-evidence small { color: var(--hei-muted); font-size: 10px; }
+.hei-criterion-record details summary { cursor: pointer; font-weight: 600; }
+.hei-criterion-record blockquote, .hei-acceptance-evidence blockquote { margin: 5px 0 0; border-left: 2px solid var(--hei-blue); padding-left: 8px; }
+.hei-acceptance-intelligence-list p, .hei-acceptance-coverage p, .hei-acceptance-evidence p { margin: 0; }
 .hei-requirement-empty { display: grid; justify-items: start; align-content: center; gap: 6px; min-height: 88px; color: var(--hei-muted); }
 .hei-requirement-empty p { font-size: 11px; }
 .hei-requirement-review-context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -3465,7 +3480,7 @@ button.hei-story-list-card {
   .hei-requirement-review-layout { grid-template-columns: 1fr; }
   .hei-insights { position: static; }
   .hei-requirement-health > div { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
-  .hei-acceptance-suggestions { grid-template-columns: 1fr; }
+  .hei-acceptance-suggestions, .hei-acceptance-coverage-areas { grid-template-columns: 1fr; }
   .hei-requirement-health article + article { border-left: 0; }
   .hei-repository-recommendation-layout { grid-template-columns: 1fr; }
   .hei-repository-reason { border-top: 1px solid var(--hei-border-soft); border-left: 0; }

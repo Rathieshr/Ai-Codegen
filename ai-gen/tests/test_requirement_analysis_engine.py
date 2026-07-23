@@ -120,9 +120,14 @@ Assumptions:
         self.assertEqual("AISuggested", suggested["acceptanceCriteriaState"]["state"])
         self.assertEqual("PendingReview", suggested["acceptanceCriteriaState"]["status"])
         self.assertEqual([], suggested["acceptanceCriteria"])
-        self.assertEqual(3, len(suggested["acceptanceCriteriaSuggestions"]))
-        self.assertTrue(all(item["origin"] == "AI Suggested" for item in suggested["acceptanceCriteriaSuggestions"]))
+        self.assertEqual(1, len(suggested["acceptanceCriteriaSuggestions"]))
+        self.assertTrue(all(item["origin"] == "AI Inferred" for item in suggested["acceptanceCriteriaSuggestions"]))
         self.assertIn("Given", suggested["acceptanceCriteriaSuggestions"][0]["text"])
+        self.assertEqual(
+            suggested["functionalRequirements"][0],
+            suggested["acceptanceCriteriaSuggestions"][0]["mappedFunctionalRequirement"],
+        )
+        self.assertTrue(suggested["acceptanceCriteriaSuggestions"][0]["evidence"])
         with self.assertRaisesRegex(ValueError, "Review the AI Suggested"):
             self.service.approve(context["requirementId"], "Product Owner")
 
@@ -141,10 +146,90 @@ Assumptions:
         approved = self.service.approve_acceptance_criteria(context["requirementId"], "Product Owner")
         self.assertEqual("Approved", approved["acceptanceCriteriaState"]["status"])
         self.assertEqual("AI Suggested", approved["fieldOrigins"]["acceptanceCriteria"])
-        self.assertEqual(3, len(approved["acceptanceCriteria"]))
+        self.assertEqual(1, len(approved["acceptanceCriteria"]))
         self.assertFalse(approved["missingAcceptanceCriteria"])
         summary = build_requirement_summary(self.ingestion.get(context["requirementId"]), approved)
         self.assertEqual(approved["acceptanceCriteria"], summary["acceptanceCriteria"])
+        self.assertEqual(100, summary["acceptanceCoverage"]["coveragePercent"])
+
+    def test_generated_criteria_are_evidence_driven_without_generic_templates(self):
+        context = self.ingest(
+            "Business Goal:\nReduce outage investigation time.\n"
+            "Functional Requirements:\nOperations Users must view current device health.\n"
+            "Actors:\nOperations User"
+        )
+        analysis = self.service.analyze(context["requirementId"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        text = "\n".join(item["text"] for item in generated["acceptanceCriteriaSuggestions"]).lower()
+        self.assertIn("view current device health", text)
+        for unsupported in ("access is denied", "validation message", "audit", "session", "role management"):
+            self.assertNotIn(unsupported, text)
+        criterion = generated["acceptanceCriteriaSuggestions"][0]
+        self.assertTrue(criterion["quality"]["traceable"])
+        self.assertTrue(criterion["quality"]["independent"])
+        self.assertTrue(criterion["quality"]["implementationIndependent"])
+        self.assertEqual(analysis["functionalRequirements"][0], criterion["evidence"][0]["requirementSentence"])
+
+    def test_each_functional_requirement_receives_criterion_and_coverage_mapping(self):
+        context = self.ingest(
+            "Functional Requirements:\n"
+            "- Operations Users must view current device health.\n"
+            "- Operations Users must filter devices by health status.\n"
+            "Actors:\nOperations User"
+        )
+        self.service.analyze(context["requirementId"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        self.assertEqual(2, len(generated["acceptanceCriteriaSuggestions"]))
+        self.assertEqual(100, generated["acceptanceCoverage"]["coveragePercent"])
+        self.assertFalse(generated["acceptanceCoverage"]["uncoveredFunctionalRequirements"])
+        areas = {item["area"]: item["status"] for item in generated["acceptanceCoverage"]["areas"]}
+        self.assertEqual("Covered", areas["Functional Requirements"])
+        self.assertEqual("Covered", areas["Acceptance Criteria"])
+        self.assertEqual("Not Provided", areas["Dependencies"])
+
+    def test_supported_business_rule_and_measurable_quality_evidence_generate_criteria(self):
+        context = self.ingest(
+            "Functional Requirements:\nOperations Users must view restricted device health.\n"
+            "Actors:\nOperations User\n"
+            "Business Rules:\nOnly authorized Operations Users may view restricted device health.\n"
+            "Non Functional Requirements:\nDevice health must load within 2 seconds."
+        )
+        self.service.analyze(context["requirementId"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        types = {item["type"] for item in generated["acceptanceCriteriaSuggestions"]}
+        self.assertEqual({"Functional", "Business Rule", "Non-Functional"}, types)
+        evidence_text = "\n".join(
+            item["evidence"][0]["requirementSentence"]
+            for item in generated["acceptanceCriteriaSuggestions"]
+        )
+        self.assertIn("Only authorized Operations Users", evidence_text)
+        self.assertIn("within 2 seconds", evidence_text)
+
+    def test_missing_information_and_assumptions_are_not_generated_as_criteria(self):
+        context = self.ingest(
+            "Functional Requirements:\nThe system must display device health.\n"
+            "Assumptions:\nAssume telemetry is available."
+        )
+        analyzed = self.service.analyze(context["requirementId"])
+        fields = {item["field"] for item in analyzed["missingInformation"]}
+        self.assertIn("Actor", fields)
+        self.assertIn("Trigger", fields)
+        self.assertEqual("NeedsReview", analyzed["aiAssumptions"][0]["status"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        text = "\n".join(item["text"] for item in generated["acceptanceCriteriaSuggestions"])
+        self.assertNotIn("Assume telemetry is available", text)
+
+    def test_source_criteria_include_traceable_evidence_records(self):
+        context = self.ingest(
+            "Functional Requirements:\nUsers must search devices by identifier.\n"
+            "Acceptance Criteria:\nSearching a known identifier returns the matching device."
+        )
+        result = self.service.analyze(context["requirementId"])
+        record = result["acceptanceCriteriaRecords"][0]
+        self.assertEqual("Source Derived", record["origin"])
+        self.assertEqual("Approved", record["status"])
+        self.assertEqual(1.0, record["evidence"][0]["confidence"])
+        self.assertEqual(100, result["acceptanceCoverage"]["coveragePercent"])
 
     def test_edit_and_discard_ai_suggestions_preserve_user_control(self):
         context = self.ingest(
@@ -247,6 +332,19 @@ Assumptions:
         refreshed = self.service.analyze(changed["requirementId"])
         self.assertNotEqual(first["analysisId"], refreshed["analysisId"])
         self.assertEqual(changed["contentHash"], refreshed["contentHash"])
+
+    def test_old_cached_analysis_is_rebuilt_for_acceptance_engine_version(self):
+        context = self.ingest("Users must view device health.")
+        first = self.service.analyze(context["requirementId"])
+        values = self.service.store.read()
+        values[context["requirementId"]].pop("acceptanceDiagnostics", None)
+        self.service.store.write(values)
+        refreshed = self.service.analyze(context["requirementId"])
+        self.assertNotEqual(first["analysisId"], refreshed["analysisId"])
+        self.assertEqual(
+            "IntelligentAcceptanceCriteriaV1",
+            refreshed["acceptanceDiagnostics"]["engine"],
+        )
 
     def test_analysis_api_exposes_post_and_persisted_get(self):
         context = self.ingest("Users must view device health.\nAcceptance Criteria:\nDevice health status is displayed.")

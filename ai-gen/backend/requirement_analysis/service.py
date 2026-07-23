@@ -8,6 +8,7 @@ import re
 from uuid import uuid4
 
 from backend.platform.shared import JsonMapStore
+from backend.engineering_intelligence import EngineeringIntelligenceService
 from backend.requirement_intake.ingestion import RequirementIngestionService
 
 from .engine import RequirementAnalysisEngine
@@ -22,12 +23,16 @@ class RequirementAnalysisService:
         requirement_ingestion: RequirementIngestionService,
         engine: RequirementAnalysisEngine | None = None,
         repository_detector: Any | None = None,
+        engineering_intelligence: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
         self.requirement_ingestion = requirement_ingestion
         self.engine = engine or RequirementAnalysisEngine()
         self.repository_detector = repository_detector
+        self.engineering_intelligence = engineering_intelligence or EngineeringIntelligenceService(
+            repository_detector=repository_detector,
+        )
         self.platform = platform
 
     def analyze(self, requirement_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -38,8 +43,8 @@ class RequirementAnalysisService:
         if existing and not force and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion"):
             return existing
         result = self.engine.analyze(requirement).to_dict()
-        if self.repository_detector:
-            suggestion = self.repository_detector.detect_requirement(requirement, result)
+        if self.engineering_intelligence:
+            suggestion = self.engineering_intelligence.recommend_repository(requirement, result)
             result["repositorySuggestion"] = suggestion
             selected = suggestion.get("suggestedRepository") or {}
             if selected:

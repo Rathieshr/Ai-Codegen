@@ -20,6 +20,7 @@ from backend.auth import ApiKeyMiddleware, get_api_key_status, validate_approver
 from backend.guardrails import guard_stage_output, has_blocking_violation
 from backend.ado import AdoAutomation, AdoClient
 from backend.engineering_memory import EngineeringMemoryEngine
+from backend.engineering_intelligence import EngineeringIntelligenceService
 from backend.context_orchestration import (
     ContextOrchestrator,
     EngineeringMemoryContextSource,
@@ -289,6 +290,17 @@ intelligent_planning_engine = IntelligentPlanningEngine(
     iteration_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "iterations").values()) if project_id else [],
     memory_provider=engineering_memory_engine.find_relevant_memory,
 )
+engineering_intelligence_service = EngineeringIntelligenceService(
+    repository_intelligence=repository_intelligence_module.application,
+    repository_detector=repository_intelligence_module.detection_service,
+    azure_devops=azure_devops_sdk,
+    engineering_memory=engineering_memory_engine,
+    planning_engine=intelligent_planning_engine,
+    pull_request_provider=lambda project_id: list(
+        azure_devops_sdk.cached_collection(project_id, "pullRequests").values()
+    ) if project_id else [],
+)
+requirement_analysis_service.engineering_intelligence = engineering_intelligence_service
 planning_context_service = PlanningContextService(
     JsonMapStore(platform_foundation.storage_root / "planning_contexts.json"),
     requirement_ingestion=requirement_ingestion_service,
@@ -296,12 +308,14 @@ planning_context_service = PlanningContextService(
     intelligence_engine=intelligent_planning_engine,
     repository_intelligence=repository_intelligence_module.application,
     pull_request_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "pullRequests").values()) if project_id else [],
+    engineering_intelligence=engineering_intelligence_service,
     platform=platform_foundation,
 )
 app.include_router(build_planning_context_router(planning_context_service))
 planning_recommendation_service = PlanningRecommendationService(
     JsonMapStore(platform_foundation.storage_root / "planning_recommendations.json"),
     planning_context_service=planning_context_service,
+    engineering_intelligence=engineering_intelligence_service,
     platform=platform_foundation,
 )
 app.include_router(build_planning_recommendation_router(planning_recommendation_service))
@@ -317,6 +331,7 @@ requirement_planning_service = RequirementPlanningService(
     planning_context_service=planning_context_service,
     planning_recommendation_service=planning_recommendation_service,
     intelligence_engine=intelligent_planning_engine,
+    engineering_intelligence=engineering_intelligence_service,
     platform=platform_foundation,
 )
 app.include_router(build_requirement_planning_router(requirement_planning_service))
@@ -399,6 +414,7 @@ ado_operational_validator = AzureDevOpsOperationalValidator(
 app.include_router(build_ado_operational_router(ado_operational_validator))
 execution_package_service = ExecutionPackageService(
     JsonMapStore(platform_foundation.storage_root / "execution_packages.json"),
+    engineering_intelligence=engineering_intelligence_service,
     platform=platform_foundation,
 )
 app.include_router(build_execution_package_router(execution_package_service))

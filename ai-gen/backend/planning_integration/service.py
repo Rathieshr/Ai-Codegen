@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.platform.shared import JsonMapStore
+from backend.engineering_intelligence import EngineeringIntelligenceService
 from backend.requirement_analysis.summary import build_requirement_summary
 
 from .intelligence import IntelligentPlanningEngine
@@ -28,6 +29,7 @@ class RequirementPlanningService:
         planning_context_service: Any | None = None,
         planning_recommendation_service: Any | None = None,
         intelligence_engine: IntelligentPlanningEngine | None = None,
+        engineering_intelligence: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
@@ -41,6 +43,10 @@ class RequirementPlanningService:
         self.planning_context_service = planning_context_service
         self.planning_recommendation_service = planning_recommendation_service
         self.intelligence_engine = intelligence_engine or IntelligentPlanningEngine()
+        self.engineering_intelligence = engineering_intelligence or EngineeringIntelligenceService(
+            repository_intelligence=repository_intelligence,
+            planning_engine=self.intelligence_engine,
+        )
         self.automation_service: Any | None = None
         self.platform = platform
 
@@ -62,10 +68,12 @@ class RequirementPlanningService:
                 _text(request.get("recommendationId")),
                 _text((reviewed_context or {}).get("contextId")),
             )
-        repository_context = self._repository_context(summary)
-        planning_context = self.intelligence_engine.build_context(summary, repository_context)
-        if reviewed_context and planning_context.get("contextVersion") != reviewed_context.get("contextVersion"):
-            raise ValueError("Planning Context changed after recommendation approval. Refresh, review, and regenerate the recommendation.")
+        planning_context = (
+            self.engineering_intelligence.planning_engine_context(reviewed_context)
+            if reviewed_context
+            else self.engineering_intelligence.generate_planning_context(summary)["rawContext"]
+        )
+        repository_context = dict(planning_context.get("repository") or {})
         existing = self.store.read().get(requirement_id)
         if (
             isinstance(existing, dict)
@@ -151,7 +159,7 @@ class RequirementPlanningService:
 
     def context(self, request: dict[str, Any]) -> dict[str, Any]:
         summary = self._approved_summary(_required_requirement_id(request))
-        return self.intelligence_engine.build_context(summary, self._repository_context(summary))
+        return self.engineering_intelligence.generate_planning_context(summary)["rawContext"]
 
     def analyze(self, request: dict[str, Any]) -> dict[str, Any]:
         context = self.context(request)
@@ -230,25 +238,6 @@ class RequirementPlanningService:
         if selected and repository_id and repository_id != _text(selected.get("repositoryId")):
             raise ValueError("Approved repository mapping no longer matches Repository Detection. Re-analyze the requirement.")
         return summary
-
-    def _repository_context(self, summary: dict[str, Any]) -> dict[str, Any]:
-        repository = summary["repository"]
-        repository_id = _text(repository.get("repositoryId"))
-        if not repository_id or not self.repository_intelligence:
-            return {"mode": "Unavailable", "repositoryId": repository_id, "warnings": ["Repository context is unavailable."]}
-        snapshot = self.repository_intelligence.get_current_snapshot(repository_id) or {}
-        return {
-            "mode": "CodeIndexed" if snapshot else "Unavailable",
-            "repositoryId": repository_id,
-            "repositoryName": repository.get("name"),
-            "branch": repository.get("branch"),
-            "snapshotId": snapshot.get("snapshotId"),
-            "repositorySnapshotVersion": snapshot.get("version"),
-            "modules": list(snapshot.get("modules") or []),
-            "languages": dict(snapshot.get("languages") or {}),
-            "totalFiles": int(snapshot.get("totalFiles") or 0),
-            "warnings": [] if snapshot else ["The selected repository has no completed snapshot."],
-        }
 
     def _artifact(self, planning_pack_id: str) -> dict[str, Any]:
         artifacts = list((self.artifact_provider() or {}).get("artifacts") or [])

@@ -12,15 +12,36 @@ from .package_models import ExecutionRequest
 
 
 class ExecutionPackageService:
-    def __init__(self, store: JsonMapStore, *, builder: ExecutionPackageBuilder | None = None, platform: Any | None = None) -> None:
-        self.store, self.builder, self.platform = store, builder or ExecutionPackageBuilder(), platform
+    def __init__(
+        self,
+        store: JsonMapStore,
+        *,
+        builder: ExecutionPackageBuilder | None = None,
+        engineering_intelligence: Any | None = None,
+        platform: Any | None = None,
+    ) -> None:
+        self.store = store
+        self.builder = builder or ExecutionPackageBuilder()
+        self.engineering_intelligence = engineering_intelligence
+        self.platform = platform
 
     def build(self, capsule: dict[str, Any], request: ExecutionRequest, correlation_id: str = "") -> dict[str, Any]:
         started = time.perf_counter()
         correlation_id = correlation_id or str(capsule.get("correlationId") or "")
         self._event("ExecutionPackageRequested", correlation_id, {"capsuleId": capsule.get("capsuleId") or capsule.get("requestId")})
         try:
+            capsule = dict(capsule)
+            canonical = capsule.get("engineeringContext")
+            if self.engineering_intelligence and isinstance(canonical, dict):
+                capsule["engineeringExecutionContext"] = self.engineering_intelligence.execution_context(canonical)
             package = self.builder.build(capsule, request)
+            if isinstance(canonical, dict):
+                package["engineeringContext"] = {
+                    "contextId": canonical.get("contextId"),
+                    "contextVersion": canonical.get("contextVersion"),
+                }
+                if "engineeringExecutionContext" in capsule:
+                    package["engineeringExecutionContext"] = capsule["engineeringExecutionContext"]
             package["diagnostics"]["durationMs"] = round((time.perf_counter() - started) * 1000, 2)
             packages = self.store.read(); packages[package["packageId"]] = package; self.store.write(packages)
             payload = {"packageId": package["packageId"], "status": package["metadata"]["status"], "confidence": package["metadata"]["confidence"], "repositorySnapshotVersion": package["metadata"]["repositorySnapshotVersion"], "capsuleVersion": package["metadata"]["capsuleVersion"], "warnings": package["diagnostics"]["warnings"], "durationMs": package["diagnostics"]["durationMs"]}

@@ -1,5 +1,19 @@
 # Module Boundaries
 
+## Engineering Intelligence
+
+`backend/engineering_intelligence` is the reusable orchestration boundary for
+engineering evidence. It composes Repository Intelligence, synchronized Azure
+DevOps data through the HEI Platform SDK, Engineering Memory, and existing
+planning similarity logic into the canonical `EngineeringContext`.
+
+The module does not own repository scanning, ADO transport, memory storage, or
+planning generation. Requirement, Planning, Execution, Validation, Approval,
+and future agents consume its context or bounded projections instead of
+querying those providers independently. The legacy Project Intelligence module
+remains a compatibility service for existing project-profile and artifact
+APIs.
+
 | Module | Owns | Must not own |
 | --- | --- | --- |
 | Planning Intelligence | Intent, capabilities, artifact generation, lineage, approvals | Repository scanning or prompt delivery |

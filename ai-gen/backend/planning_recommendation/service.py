@@ -24,15 +24,24 @@ from .models import (
 class PlanningRecommendationService:
     """Selects and explains a strategy from a completed Planning Context."""
 
-    def __init__(self, store: JsonMapStore, *, planning_context_service: Any, platform: Any | None = None) -> None:
+    def __init__(
+        self,
+        store: JsonMapStore,
+        *,
+        planning_context_service: Any,
+        engineering_intelligence: Any | None = None,
+        platform: Any | None = None,
+    ) -> None:
         self.store = store
         self.planning_context_service = planning_context_service
+        self.engineering_intelligence = engineering_intelligence
         self.platform = platform
 
     def build(self, request: dict[str, Any]) -> dict[str, Any]:
         context_id = _required(request, "contextId")
         context = self.planning_context_service.get(context_id)
         context = self.planning_context_service.require_reviewed(context_id, _text(context.get("requirementId")))
+        context = self._engineering_context(context)
         values = self.store.read()
         existing = _for_context(values, context_id)
         if existing and request.get("force") is not True:
@@ -86,6 +95,7 @@ class PlanningRecommendationService:
         values = self.store.read()
         current = self.get(recommendation_id)
         context = self.planning_context_service.require_reviewed(current["contextId"], current["requirementId"])
+        context = self._engineering_context(context)
         scores = {item.value: 20 for item in RecommendationStrategy}
         scores[strategy] = 100
         record = self._assemble(context, strategy, scores, int(current.get("version") or 1) + 1, current)
@@ -151,6 +161,11 @@ class PlanningRecommendationService:
             "requiresHumanApproval": True,
             "generatedAt": record.get("generatedAt"),
         }
+
+    def _engineering_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        if not self.engineering_intelligence:
+            return context
+        return self.engineering_intelligence.from_planning_context(context)
 
     def _assemble(
         self,

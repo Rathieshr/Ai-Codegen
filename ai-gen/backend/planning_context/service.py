@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.platform.shared import JsonMapStore
+from backend.engineering_intelligence import EngineeringIntelligenceService
 from backend.requirement_analysis.summary import build_requirement_summary
 
 from .models import (
@@ -41,6 +42,7 @@ class PlanningContextService:
         intelligence_engine: Any,
         repository_intelligence: Any | None = None,
         pull_request_provider: Any | None = None,
+        engineering_intelligence: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
@@ -48,17 +50,29 @@ class PlanningContextService:
         self.requirement_analysis = requirement_analysis
         self.intelligence_engine = intelligence_engine
         self.repository_intelligence = repository_intelligence
-        self.pull_request_provider = pull_request_provider or (lambda _project_id: [])
+        pull_requests = pull_request_provider or (lambda _project_id: [])
+        self.engineering_intelligence = engineering_intelligence or EngineeringIntelligenceService(
+            repository_intelligence=repository_intelligence,
+            planning_engine=intelligence_engine,
+            pull_request_provider=pull_requests,
+        )
         self.platform = platform
 
     def build(self, request: dict[str, Any]) -> dict[str, Any]:
         requirement_id = _required(request, "requirementId")
         summary = self._approved_summary(requirement_id)
-        repository = self._repository_context(summary)
-        raw = self.intelligence_engine.build_context(summary, repository)
-        analysis = self.intelligence_engine.analyze(raw)
-        recommended = self.intelligence_engine.recommend(raw, analysis)
+        engineering_result = self.engineering_intelligence.generate_planning_context(
+            summary,
+            correlation_id=_text(summary.get("correlationId") or request.get("correlationId")),
+        )
+        raw = engineering_result["rawContext"]
+        analysis = engineering_result["analysis"]
+        recommended = engineering_result["planningRecommendationInput"]
         record = self._assemble(summary, raw, analysis, recommended, request)
+        record["engineeringContext"] = engineering_result["engineeringContext"]
+        record["architecture"] = engineering_result["engineeringContext"].get("architecture") or {}
+        record["dependencies"] = engineering_result["engineeringContext"].get("dependencies") or {}
+        record["reuse"] = engineering_result["engineeringContext"].get("reuse") or {}
         values = self.store.read()
         existing = values.get(record["contextId"])
         if isinstance(existing, dict) and request.get("force") is not True:
@@ -263,7 +277,7 @@ class PlanningContextService:
             azureDevOps=_azure_devops_summary(
                 raw.get("azureDevOps") or {},
                 _text(summary.get("projectId")),
-                list(self.pull_request_provider(_text(summary.get("projectId"))) or []),
+                list(raw.get("azureDevOps", {}).get("openPullRequests") or []),
             ),
             repository=planning_repository,
             memory=memory,
@@ -287,28 +301,6 @@ class PlanningContextService:
             generatedAt=_now(),
         )
         return context.to_dict()
-
-    def _repository_context(self, summary: dict[str, Any]) -> dict[str, Any]:
-        selected = summary.get("repository") or {}
-        repository_id = _text(selected.get("repositoryId"))
-        if not repository_id or not self.repository_intelligence:
-            return {"mode": "Unavailable", "repositoryId": repository_id, "warnings": ["Continue without Repository was selected."]}
-        repository = self.repository_intelligence.get_repository(repository_id) or {}
-        snapshot = self.repository_intelligence.get_current_snapshot(repository_id) or {}
-        graph = self.repository_intelligence.get_graph(repository_id) or {}
-        return {
-            "mode": "CodeIndexed" if snapshot else "Unavailable",
-            "repositoryId": repository_id,
-            "repositoryName": _text(repository.get("name") or selected.get("name")),
-            "branch": _text(repository.get("defaultBranch") or selected.get("branch")),
-            "snapshotId": snapshot.get("snapshotId"),
-            "repositorySnapshotVersion": snapshot.get("version"),
-            "modules": list(snapshot.get("modules") or []),
-            "languages": dict(snapshot.get("languages") or {}),
-            "totalFiles": int(snapshot.get("totalFiles") or 0),
-            "graph": graph,
-            "warnings": [] if snapshot else ["The selected repository has no completed snapshot."],
-        }
 
     def _approved_summary(self, requirement_id: str) -> dict[str, Any]:
         requirement = self.requirement_ingestion.get(requirement_id)

@@ -81,6 +81,26 @@ class RequirementAnalysisEngine:
         attributes = metadata.get("attributes") if isinstance(metadata.get("attributes"), dict) else {}
         documents = [item for item in context.get("documents") or [] if isinstance(item, dict)]
         repository_id = _text(metadata.get("repositoryId"))
+        source_origin = "Imported" if _text(context.get("sourceType")) == "AzureDevOpsWorkItem" else "Source"
+        field_origins = {
+            key: source_origin
+            for key in (
+                "businessGoals", "functionalRequirements", "nonFunctionalRequirements",
+                "acceptanceCriteria", "risks", "dependencies", "businessRules",
+                "actors", "openQuestions", "constraints", "assumptions",
+            )
+            if values[_camel_to_snake(key)]
+        }
+        acceptance_state = {
+            "state": "SourceProvided" if values["acceptance_criteria"] else "Missing",
+            "origin": source_origin if values["acceptance_criteria"] else "",
+            "status": "Approved" if values["acceptance_criteria"] else "Missing",
+            "description": (
+                "Acceptance Criteria were found in the source requirement."
+                if values["acceptance_criteria"]
+                else "No Acceptance Criteria were provided in the source requirement."
+            ),
+        }
         return RequirementAnalysis(
             analysis_id=f"requirement_analysis_{uuid4().hex}",
             requirement_id=_text(context.get("requirementId")),
@@ -102,6 +122,8 @@ class RequirementAnalysisEngine:
             risks=values["risks"],
             open_questions=values["open_questions"],
             assumptions=values["assumptions"],
+            acceptance_criteria_state=acceptance_state,
+            field_origins=field_origins,
             missing_acceptance_criteria=missing,
             ambiguous_requirements=ambiguous,
             conflicting_requirements=conflicts,
@@ -152,7 +174,12 @@ class RequirementAnalysisEngine:
     @staticmethod
     def _missing_acceptance(values: dict[str, list[str]]) -> list[RequirementFinding]:
         if not values["acceptance_criteria"]:
-            return [RequirementFinding("Acceptance criteria are missing.", "Planning needs testable completion conditions.", confidence=1.0)]
+            return [RequirementFinding(
+                "No Acceptance Criteria were provided in the source requirement.",
+                "Generate AI Suggested Acceptance Criteria or continue with reduced testability.",
+                evidence="Source requirement contains no Acceptance Criteria section.",
+                confidence=1.0,
+            )]
         findings = []
         for criterion in values["acceptance_criteria"]:
             if len(criterion.split()) < 4 or _AMBIGUOUS.search(criterion):
@@ -202,16 +229,21 @@ class RequirementAnalysisEngine:
 
     @staticmethod
     def _quality_score(title: str, values: dict[str, list[str]], ambiguities: list[Any], conflicts: list[Any], duplicates: list[Any]) -> int:
-        score = 10 if title else 0
-        score += 10 if values["business_goals"] else 0
-        score += 20 if values["functional_requirements"] else 0
-        score += 25 if values["acceptance_criteria"] else 0
-        score += 10 if values["actors"] else 0
-        score += 5 if values["non_functional_requirements"] else 0
-        score += 5 if values["dependencies"] or values["constraints"] else 0
-        score += 5 if not ambiguities else 0
-        score += 5 if not conflicts else 0
-        score += 5 if not duplicates else 0
+        # Completeness is weighted by planning impact. Missing Acceptance Criteria
+        # lowers testability, but is not treated as an intelligence failure.
+        score = 5 if title else 0
+        score += 20 if values["business_goals"] else 0
+        score += 25 if values["functional_requirements"] else 0
+        score += 15 if values["acceptance_criteria"] else 0
+        score += 5 if values["actors"] else 0
+        score += 8 if values["non_functional_requirements"] else 0
+        score += 4 if values["dependencies"] else 0
+        score += 3 if values["risks"] else 0
+        score += 3 if values["business_rules"] else 0
+        score += 2 if values["constraints"] else 0
+        score += 4 if not ambiguities else 0
+        score += 4 if not conflicts else 0
+        score += 2 if not duplicates else 0
         return max(0, min(100, score))
 
     @staticmethod
@@ -223,11 +255,24 @@ class RequirementAnalysisEngine:
         if conflicts:
             blockers.append("Conflicting requirements must be resolved before Planning.")
         if missing:
-            warnings.append("Acceptance criteria need review.")
+            warnings.append("Acceptance Criteria were not provided by the source. HEI can generate suggestions for review.")
         if ambiguities:
             warnings.append("Ambiguous wording needs clarification.")
-        status = "Blocked" if blockers else "Ready" if score >= 70 and not warnings else "NeedsReview"
-        return {"status": status, "readyForPlanning": status == "Ready", "score": score, "blockers": blockers, "warnings": warnings}
+        if blockers:
+            status = "Blocked"
+        elif ambiguities or not values["business_goals"]:
+            status = "NeedsUserInput"
+        elif warnings:
+            status = "ReadyWithRecommendations"
+        else:
+            status = "Ready"
+        return {
+            "status": status,
+            "readyForPlanning": status in {"Ready", "ReadyWithRecommendations"},
+            "score": score,
+            "blockers": blockers,
+            "warnings": warnings,
+        }
 
     @staticmethod
     def _confidence(values: dict[str, list[str]], content: str, ambiguities: list[Any], conflicts: list[Any]) -> float:
@@ -256,8 +301,12 @@ class RequirementAnalysisEngine:
             if items:
                 output.extend([f"\n{heading}:", *(f"- {item}" for item in _unique(items))])
         if missing:
-            output.extend(["\nPlanning Gaps:", *(f"- {item.text}" for item in missing)])
+            output.extend(["\nPlanning Recommendations:", *(f"- {item.text}" for item in missing)])
         return "\n".join(output).strip()
+
+
+def _camel_to_snake(value: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
 
 
 def _parse(content: str) -> tuple[list[tuple[str, str]], list[str]]:

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.platform.shared import JsonMapStore
 from backend.requirement_analysis import RequirementAnalysisEngine, RequirementAnalysisService, build_requirement_analysis_router
+from backend.requirement_analysis.summary import build_requirement_summary
 from backend.requirement_intake import RequirementIngestionService, RequirementIntakeService
 
 
@@ -69,12 +70,131 @@ Assumptions:
         self.assertIn("Functional Requirements:", result["planningRequirement"])
         self.assertGreaterEqual(result["requirementQualityScore"], 70)
 
-    def test_missing_acceptance_and_ambiguity_need_review(self):
+    def test_missing_acceptance_and_ambiguity_need_user_input(self):
         context = self.ingest("The system should quickly show some appropriate device information.")
         result = self.service.analyze(context["requirementId"])
-        self.assertEqual("NeedsReview", result["planningReadiness"]["status"])
+        self.assertEqual("NeedsUserInput", result["planningReadiness"]["status"])
         self.assertTrue(result["missingAcceptanceCriteria"])
         self.assertTrue(result["ambiguousRequirements"])
+        self.assertEqual("Missing", result["acceptanceCriteriaState"]["state"])
+        self.assertIn("provided in the source", result["acceptanceCriteriaState"]["description"])
+        self.assertNotIn("Acceptance criteria require definition", result["planningRequirement"])
+
+    def test_missing_acceptance_is_ready_with_recommendations_not_ai_failure(self):
+        context = self.ingest(
+            "Business Goal:\nReduce device outage investigation time.\n"
+            "Functional Requirements:\nOperations Users must view current device health.\n"
+            "Actors:\nOperations User\n"
+            "Non Functional Requirements:\nResults must load within 2 seconds."
+        )
+        result = self.service.analyze(context["requirementId"])
+        self.assertEqual("ReadyWithRecommendations", result["planningReadiness"]["status"])
+        self.assertTrue(result["planningReadiness"]["readyForPlanning"])
+        self.assertEqual("Missing", result["acceptanceCriteriaState"]["state"])
+        self.assertEqual("Missing", result["acceptanceCriteriaState"]["status"])
+        self.assertLess(result["requirementQualityScore"], 100)
+        self.assertGreaterEqual(result["requirementQualityScore"], 60)
+
+    def test_source_acceptance_criteria_are_approved_and_origin_is_visible(self):
+        context = self.ingest(
+            "Functional Requirements:\nUsers must view device health.\n"
+            "Acceptance Criteria:\nEach device displays its current health state."
+        )
+        result = self.service.analyze(context["requirementId"])
+        self.assertEqual("SourceProvided", result["acceptanceCriteriaState"]["state"])
+        self.assertEqual("Approved", result["acceptanceCriteriaState"]["status"])
+        self.assertEqual("Source", result["fieldOrigins"]["acceptanceCriteria"])
+        with self.assertRaisesRegex(ValueError, "already authoritative"):
+            self.service.suggest_acceptance_criteria(context["requirementId"])
+        with self.assertRaisesRegex(ValueError, "cannot be discarded"):
+            self.service.discard_acceptance_criteria(context["requirementId"], "Product Owner")
+
+    def test_ai_suggestions_require_review_and_do_not_leak_into_summary(self):
+        context = self.ingest(
+            "Business Goal:\nReduce device outage investigation time.\n"
+            "Functional Requirements:\nOperations Users must view current device health.\n"
+            "Actors:\nOperations User"
+        )
+        result = self.service.analyze(context["requirementId"])
+        suggested = self.service.suggest_acceptance_criteria(context["requirementId"], "Product Owner")
+        self.assertEqual("AISuggested", suggested["acceptanceCriteriaState"]["state"])
+        self.assertEqual("PendingReview", suggested["acceptanceCriteriaState"]["status"])
+        self.assertEqual([], suggested["acceptanceCriteria"])
+        self.assertEqual(3, len(suggested["acceptanceCriteriaSuggestions"]))
+        self.assertTrue(all(item["origin"] == "AI Suggested" for item in suggested["acceptanceCriteriaSuggestions"]))
+        self.assertIn("Given", suggested["acceptanceCriteriaSuggestions"][0]["text"])
+        with self.assertRaisesRegex(ValueError, "Review the AI Suggested"):
+            self.service.approve(context["requirementId"], "Product Owner")
+
+        summary = build_requirement_summary(self.ingestion.get(context["requirementId"]), suggested)
+        self.assertEqual([], summary["acceptanceCriteria"])
+        self.assertEqual("PendingReview", summary["acceptanceCriteriaState"]["status"])
+
+    def test_approved_ai_suggestions_become_planning_criteria(self):
+        context = self.ingest(
+            "Business Goal:\nReduce device outage investigation time.\n"
+            "Functional Requirements:\nOperations Users must view current device health.\n"
+            "Actors:\nOperations User"
+        )
+        self.service.analyze(context["requirementId"])
+        self.service.suggest_acceptance_criteria(context["requirementId"], "Product Owner")
+        approved = self.service.approve_acceptance_criteria(context["requirementId"], "Product Owner")
+        self.assertEqual("Approved", approved["acceptanceCriteriaState"]["status"])
+        self.assertEqual("AI Suggested", approved["fieldOrigins"]["acceptanceCriteria"])
+        self.assertEqual(3, len(approved["acceptanceCriteria"]))
+        self.assertFalse(approved["missingAcceptanceCriteria"])
+        summary = build_requirement_summary(self.ingestion.get(context["requirementId"]), approved)
+        self.assertEqual(approved["acceptanceCriteria"], summary["acceptanceCriteria"])
+
+    def test_edit_and_discard_ai_suggestions_preserve_user_control(self):
+        context = self.ingest(
+            "Business Goal:\nReduce device outage investigation time.\n"
+            "Functional Requirements:\nOperations Users must view current device health."
+        )
+        self.service.analyze(context["requirementId"])
+        suggested = self.service.suggest_acceptance_criteria(context["requirementId"])
+        edited = self.service.update_acceptance_criteria_suggestions(
+            context["requirementId"],
+            [{**suggested["acceptanceCriteriaSuggestions"][0], "text": "Given a device, when health loads, then its current state is visible."}],
+            "Product Owner",
+        )
+        self.assertEqual("User Edited", edited["acceptanceCriteriaState"]["origin"])
+        approved = self.service.approve_acceptance_criteria(context["requirementId"], "Product Owner")
+        self.assertEqual("User Edited", approved["fieldOrigins"]["acceptanceCriteria"])
+
+        discarded = self.service.discard_acceptance_criteria(context["requirementId"], "Product Owner")
+        self.assertEqual("Discarded", discarded["acceptanceCriteriaState"]["status"])
+        self.assertEqual([], discarded["acceptanceCriteria"])
+        self.assertEqual("ReadyWithRecommendations", discarded["planningReadiness"]["status"])
+
+    def test_repository_selection_refresh_preserves_approved_ai_criteria(self):
+        class RepositoryDetector:
+            def detect_requirement(self, requirement, analysis):
+                return {
+                    "source": "Detection",
+                    "confidence": 0.9,
+                    "suggestedRepository": {
+                        "repositoryId": "repo-device",
+                        "name": "Device Platform",
+                        "matchedModules": ["Device Health"],
+                    },
+                }
+
+        service = RequirementAnalysisService(
+            JsonMapStore(Path(self.temp.name) / "repository-refresh-analyses.json"),
+            requirement_ingestion=self.ingestion,
+            repository_detector=RepositoryDetector(),
+        )
+        context = self.ingest(
+            "Business Goal:\nReduce device outage investigation time.\n"
+            "Functional Requirements:\nOperations Users must view current device health."
+        )
+        service.analyze(context["requirementId"])
+        service.suggest_acceptance_criteria(context["requirementId"], "Product Owner")
+        approved_criteria = service.approve_acceptance_criteria(context["requirementId"], "Product Owner")["acceptanceCriteria"]
+        approved = service.approve(context["requirementId"], "Product Owner")
+        self.assertEqual(approved_criteria, approved["acceptanceCriteria"])
+        self.assertEqual("Approved", approved["acceptanceCriteriaState"]["status"])
 
     def test_repeated_inline_headings_do_not_leak_labels_into_business_goal(self):
         context = self.ingest(
@@ -224,6 +344,21 @@ Assumptions:
         self.assertIn("position: sticky", styles)
         self.assertIn("@media (max-width: 1100px)", styles)
         self.assertIn("@media (max-width: 720px)", styles)
+
+    def test_requirement_review_exposes_acceptance_origin_and_approval_actions(self):
+        source = (ROOT / "azure-devops-extension/src/newRequirementWorkspace.tsx").read_text()
+        styles = (ROOT / "azure-devops-extension/src/storyPlanner.css").read_text()
+        for label in (
+            "SourceProvided", "AISuggested", "AI Suggested", "User Edited", "Imported",
+            "Generate Suggested Acceptance Criteria", "Approve Suggestions", "Regenerate",
+            "Discard", "This is not an AI error", "Ready with Recommendations",
+        ):
+            self.assertIn(label, source)
+        self.assertIn("acceptance-criteria/${path}", source)
+        api = (ROOT / "backend/requirement_analysis/api.py").read_text()
+        self.assertIn('acceptance-criteria/suggestions', api)
+        self.assertIn("hei-origin-badge", styles)
+        self.assertIn("hei-acceptance-card", styles)
 
 
 if __name__ == "__main__":

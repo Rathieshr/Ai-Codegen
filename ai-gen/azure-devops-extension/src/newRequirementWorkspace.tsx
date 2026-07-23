@@ -24,6 +24,14 @@ type IntakeResult = {
 };
 
 type AnalysisFinding = { text: string; reason: string; evidence?: string; confidence: number };
+type ArtifactOrigin = 'Source' | 'AI Suggested' | 'User Edited' | 'Imported';
+type AcceptanceCriterionSuggestion = {
+  criterionId: string;
+  text: string;
+  origin: ArtifactOrigin;
+  status: 'PendingReview' | 'Approved';
+  order: number;
+};
 type RepositoryCandidate = {
   repositoryId: string; name: string; url: string; defaultBranch: string; repositoryType: string;
   confidence: number; reason: string; evidence: string[]; matchedModules: string[];
@@ -49,7 +57,7 @@ type RequirementAnalysisResult = {
     engineeringMemory: { status: string; message: string };
     repositoryReuse: { status: string; message: string };
   };
-  planningReadiness: { status: 'Ready' | 'NeedsReview' | 'Blocked'; readyForPlanning: boolean; score: number; blockers: string[]; warnings: string[] };
+  planningReadiness: { status: 'Ready' | 'ReadyWithRecommendations' | 'NeedsUserInput' | 'Blocked'; readyForPlanning: boolean; score: number; blockers: string[]; warnings: string[] };
   requirementQualityScore: number;
   confidence: number;
   businessGoals: string[];
@@ -63,6 +71,14 @@ type RequirementAnalysisResult = {
   risks: string[];
   openQuestions: string[];
   assumptions: string[];
+  acceptanceCriteriaState: {
+    state: 'SourceProvided' | 'AISuggested' | 'Missing';
+    origin: ArtifactOrigin | '';
+    status: 'Approved' | 'PendingReview' | 'Missing' | 'Skipped' | 'Discarded';
+    description: string;
+  };
+  acceptanceCriteriaSuggestions: AcceptanceCriterionSuggestion[];
+  fieldOrigins: Record<string, ArtifactOrigin>;
   missingAcceptanceCriteria: AnalysisFinding[];
   ambiguousRequirements: AnalysisFinding[];
   conflictingRequirements: AnalysisFinding[];
@@ -375,6 +391,31 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
     }
   }
 
+  async function acceptanceCriteriaAction(
+    action: 'suggest' | 'approve' | 'discard' | 'skip' | 'update',
+    criteria?: AcceptanceCriterionSuggestion[],
+  ) {
+    if (!ingestion) return;
+    setBusyStage('analyzing');
+    try {
+      const isUpdate = action === 'update';
+      const path = isUpdate ? 'suggestions' : action;
+      const response = await fetch(`${baseUrl}/requirements/${encodeURIComponent(ingestion.requirementId)}/acceptance-criteria/${path}`, {
+        method: isUpdate ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ actor: context.user.name, criteria }),
+      });
+      const analyzed = await response.json() as RequirementAnalysisResult & { error?: { message?: string } };
+      if (!response.ok) throw new Error(analyzed.error?.message || `Acceptance Criteria action returned HTTP ${response.status}.`);
+      setRequirementAnalysis(analyzed);
+      setReviewContent(analyzed.planningRequirement);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to update Acceptance Criteria.');
+    } finally {
+      setBusyStage('');
+    }
+  }
+
   async function overrideRepository(repositoryId: string) {
     if (!ingestion || !repositoryId) return;
     setBusyStage('analyzing');
@@ -500,6 +541,11 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
           onContinue={continueToPlanning}
           onCancel={cancelReview}
           onReanalyze={reanalyze}
+          onSuggestAcceptanceCriteria={() => acceptanceCriteriaAction('suggest')}
+          onApproveAcceptanceCriteria={() => acceptanceCriteriaAction('approve')}
+          onDiscardAcceptanceCriteria={() => acceptanceCriteriaAction('discard')}
+          onSkipAcceptanceCriteria={() => acceptanceCriteriaAction('skip')}
+          onUpdateAcceptanceCriteria={(criteria) => acceptanceCriteriaAction('update', criteria)}
           onOverrideRepository={overrideRepository}
           projectName={context.project.name}
         />
@@ -551,8 +597,8 @@ function Signal({ label, value }: { label: string; value: string }) { return <di
 function statusTone(value: string) {
   const normalized = value.toLowerCase();
   if (/blocked|failed|error|unavailable|critical|high severity/.test(normalized)) return 'error';
+  if (/recommendation|review|pending|confidence|warning|medium severity|needs user input/.test(normalized)) return 'warning';
   if (/ready|approved|complete|active|selected|good/.test(normalized)) return 'success';
-  if (/review|pending|confidence|warning|medium severity/.test(normalized)) return 'warning';
   return '';
 }
 function Status({ value }: { value: string }) { return <span className={`hei-operation-chip ${statusTone(value)}`.trim()}>{value}</span>; }
@@ -612,7 +658,7 @@ function AdoWorkItemSummary({ result }: { result: AdoWorkItemImportResult }) {
   </section>;
 }
 
-function RequirementReviewScreen({ analysis, ingestion, editing, title, content, busy, onTitleChange, onContentChange, onEdit, onDiscardEdit, onSaveEdit, onContinue, onCancel, onReanalyze, onOverrideRepository, projectName }: {
+function RequirementReviewScreen({ analysis, ingestion, editing, title, content, busy, onTitleChange, onContentChange, onEdit, onDiscardEdit, onSaveEdit, onContinue, onCancel, onReanalyze, onSuggestAcceptanceCriteria, onApproveAcceptanceCriteria, onDiscardAcceptanceCriteria, onSkipAcceptanceCriteria, onUpdateAcceptanceCriteria, onOverrideRepository, projectName }: {
   analysis: RequirementAnalysisResult;
   ingestion: IngestionResult;
   editing: boolean;
@@ -627,12 +673,18 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
   onContinue: () => void;
   onCancel: () => void;
   onReanalyze: () => void;
+  onSuggestAcceptanceCriteria: () => void;
+  onApproveAcceptanceCriteria: () => void;
+  onDiscardAcceptanceCriteria: () => void;
+  onSkipAcceptanceCriteria: () => void;
+  onUpdateAcceptanceCriteria: (criteria: AcceptanceCriterionSuggestion[]) => void;
   onOverrideRepository: (repositoryId: string) => void;
   projectName: string;
 }) {
   const review = analysis.reviewContext;
   const blocked = analysis.planningReadiness.status === 'Blocked';
-  const needsReview = analysis.planningReadiness.status === 'NeedsReview';
+  const needsReview = analysis.planningReadiness.status !== 'Ready';
+  const acceptancePending = analysis.acceptanceCriteriaState?.state === 'AISuggested' && analysis.acceptanceCriteriaState?.status === 'PendingReview';
   const suggestion = analysis.repositorySuggestion;
   const recommendedRepository = suggestion?.suggestedRepository;
   const repositoryOptions = suggestion?.availableRepositories || [];
@@ -640,7 +692,7 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
   const [repositorySearch, setRepositorySearch] = useState('');
   const visibleRepositories = repositoryOptions.filter((repository) => repository.name.toLowerCase().includes(repositorySearch.trim().toLowerCase()));
   return <section className="hei-requirement-review" aria-label="Requirement Summary" aria-live="polite">
-    <header><div><span>Mandatory Review</span><h2>Requirement Summary</h2><p>Validate HEI's understanding before Planning begins. No Planning Pack has been created.</p></div><Status value={analysis.planningReadiness.status === 'NeedsReview' ? 'Needs Review' : analysis.planningReadiness.status} /></header>
+    <header><div><span>Mandatory Review</span><h2>Requirement Summary</h2><p>Validate HEI's understanding before Planning begins. No Planning Pack has been created.</p></div><Status value={readinessLabel(analysis.planningReadiness.status)} /></header>
     {editing ? <div className="hei-requirement-review-editor">
       <label><span>Requirement title</span><input value={title} onChange={(event) => onTitleChange(event.target.value)} maxLength={180} /></label>
       <label><span>Analyzed requirement</span><textarea value={content} onChange={(event) => onContentChange(event.target.value)} rows={18} /></label>
@@ -687,36 +739,111 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
         </> : null}
       </section>
       <div className="hei-requirement-review-grid">
-        <RequirementList icon="BG" title="Business Goals" items={analysis.businessGoals} empty="No Business Goals detected" action="Add Business Goal" onAction={onEdit} />
-        <RequirementList icon="FR" title="Functional Requirements" items={analysis.functionalRequirements} empty="No Functional Requirements detected" action="Add Functional Requirement" onAction={onEdit} />
-        <RequirementList icon="NF" title="Non Functional Requirements" items={analysis.nonFunctionalRequirements} empty="No Non Functional Requirements detected" action="Add Quality Requirement" onAction={onEdit} />
-        <RequirementList icon="AC" title="Acceptance Criteria" items={analysis.acceptanceCriteria} empty="No Acceptance Criteria detected" action="Add Acceptance Criteria" onAction={onEdit} warning />
-        <RequirementList icon="DP" title="Dependencies" items={analysis.dependencies} empty="No Dependencies detected" action="Add Dependency" onAction={onEdit} />
-        <RequirementList icon="RK" title="Risks" items={analysis.risks} empty="No Risks detected" action="Add Risk" onAction={onEdit} />
+        <RequirementList icon="BG" title="Business Goals" items={analysis.businessGoals} origin={analysis.fieldOrigins.businessGoals} empty="No Business Goals detected" action="Add Business Goal" onAction={onEdit} />
+        <RequirementList icon="FR" title="Functional Requirements" items={analysis.functionalRequirements} origin={analysis.fieldOrigins.functionalRequirements || analysis.fieldOrigins.businessGoals} empty="No Functional Requirements detected" action="Add Functional Requirement" onAction={onEdit} />
+        <RequirementList icon="NF" title="Non Functional Requirements" items={analysis.nonFunctionalRequirements} origin={analysis.fieldOrigins.nonFunctionalRequirements || analysis.fieldOrigins.businessGoals} empty="No Non Functional Requirements detected" action="Add Quality Requirement" onAction={onEdit} />
+        <AcceptanceCriteriaCard analysis={analysis} busy={busy} onEditRequirement={onEdit} onGenerate={onSuggestAcceptanceCriteria} onApprove={onApproveAcceptanceCriteria} onDiscard={onDiscardAcceptanceCriteria} onSkip={onSkipAcceptanceCriteria} onUpdate={onUpdateAcceptanceCriteria} />
+        <RequirementList icon="DP" title="Dependencies" items={analysis.dependencies} origin={analysis.fieldOrigins.dependencies} empty="No Dependencies detected" action="Add Dependency" onAction={onEdit} />
+        <RequirementList icon="RK" title="Risks" items={analysis.risks} origin={analysis.fieldOrigins.risks} empty="No Risks detected" action="Add Risk" onAction={onEdit} />
       </div>
-      <QualityFindings result={analysis} onEdit={onEdit} onReanalyze={onReanalyze} />
+      <QualityFindings result={analysis} onEdit={onEdit} onReanalyze={onReanalyze} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} />
       <EngineeringContext result={analysis} />
       <RequirementAnalysisSummary result={analysis} />
       </div>
-      <HEIInsights analysis={analysis} memoryStatus={review.engineeringMemory.status} busy={busy} blocked={blocked} onEdit={onEdit} onContinue={onContinue} />
+      <HEIInsights analysis={analysis} memoryStatus={review.engineeringMemory.status} busy={busy} blocked={blocked || acceptancePending} onEdit={onEdit} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} onContinue={onContinue} />
       </div>
       <div className="hei-requirement-sticky-actions">
-        <div className="hei-requirement-sticky-status"><Signal label="Requirement Status" value={analysis.planningReadiness.status} /><Signal label="Confidence" value={`${Math.round(analysis.confidence * 100)}%`} /><Signal label="Repository" value={recommendedRepository?.name || 'Not selected'} /></div>
+        <div className="hei-requirement-sticky-status"><Signal label="Requirement Status" value={readinessLabel(analysis.planningReadiness.status)} /><Signal label="Confidence" value={`${Math.round(analysis.confidence * 100)}%`} /><Signal label="Repository" value={recommendedRepository?.name || 'Not selected'} /></div>
         <div className="hei-requirement-actions">
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Requirement</button>
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onReanalyze}>Re-analyze</button>
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
-          <button className="planner-button primary" type="button" disabled={busy || blocked} onClick={onContinue}>{busy ? 'Preparing Planning...' : needsReview ? 'Approve & Continue to Planning' : 'Continue to Planning'}</button>
+          <button className="planner-button primary" type="button" disabled={busy || blocked || acceptancePending} onClick={onContinue}>{busy ? 'Preparing Planning...' : needsReview ? 'Approve & Continue to Planning' : 'Continue to Planning'}</button>
         </div>
       </div>
-      {blocked ? <p className="hei-requirement-review-blocker">Resolve blocking findings with Edit before continuing to Planning.</p> : needsReview ? <p className="hei-requirement-review-guidance">Review the findings or edit the requirement. Continuing approves the current interpretation.</p> : null}
+      {blocked ? <p className="hei-requirement-review-blocker">Resolve blocking findings with Edit before continuing to Planning.</p> : acceptancePending ? <p className="hei-requirement-review-guidance">Approve, edit, or discard the AI Suggested Acceptance Criteria before Planning approval.</p> : needsReview ? <p className="hei-requirement-review-guidance">Recommendations are visible and Planning may continue with the reviewed interpretation.</p> : null}
       <small>Requirement Context {analysis.contextVersion} · Review {analysis.reviewStatus}</small>
     </>}
   </section>;
 }
 
-function RequirementList({ icon, title, items, empty, action, onAction, warning = false }: { icon: string; title: string; items: string[]; empty: string; action: string; onAction: () => void; warning?: boolean }) {
-  return <section className={items.length ? '' : warning ? 'empty warning' : 'empty'}><header><span aria-hidden="true">{icon}</span><h3>{title}</h3><small>{items.length}</small></header>{items.length ? <ul>{items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul> : <div className="hei-requirement-empty"><strong>{warning ? '⚠ ' : ''}{empty}</strong><p>Add information to improve planning quality.</p><button className="planner-button secondary" type="button" onClick={onAction}>{action}</button></div>}</section>;
+function RequirementList({ icon, title, items, origin, empty, action, onAction }: { icon: string; title: string; items: string[]; origin?: ArtifactOrigin; empty: string; action: string; onAction: () => void }) {
+  return <section className={items.length ? '' : 'empty'}><header><span aria-hidden="true">{icon}</span><h3>{title}</h3>{origin ? <OriginBadge value={origin} /> : <small>{items.length}</small>}</header>{items.length ? <ul>{items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul> : <div className="hei-requirement-empty"><strong>{empty}</strong><p>Add information to improve planning quality.</p><button className="planner-button secondary" type="button" onClick={onAction}>{action}</button></div>}</section>;
+}
+
+function OriginBadge({ value }: { value: ArtifactOrigin }) {
+  return <span className={`hei-origin-badge ${value.toLowerCase().replace(/\s+/g, '-')}`}>{value}</span>;
+}
+
+function readinessLabel(value: RequirementAnalysisResult['planningReadiness']['status']) {
+  if (value === 'ReadyWithRecommendations') return 'Ready with Recommendations';
+  if (value === 'NeedsUserInput') return 'Needs User Input';
+  return value;
+}
+
+function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate, onApprove, onDiscard, onSkip, onUpdate }: {
+  analysis: RequirementAnalysisResult;
+  busy: boolean;
+  onEditRequirement: () => void;
+  onGenerate: () => void;
+  onApprove: () => void;
+  onDiscard: () => void;
+  onSkip: () => void;
+  onUpdate: (criteria: AcceptanceCriterionSuggestion[]) => void;
+}) {
+  const state = analysis.acceptanceCriteriaState || { state: 'Missing', origin: '', status: 'Missing', description: '' };
+  const [editing, setEditing] = useState(false);
+  const [drafts, setDrafts] = useState<AcceptanceCriterionSuggestion[]>(analysis.acceptanceCriteriaSuggestions || []);
+  const suggestions = analysis.acceptanceCriteriaSuggestions || [];
+  const sourceProvided = state.state === 'SourceProvided';
+  const aiSuggested = state.state === 'AISuggested';
+  const approvedSuggestions = aiSuggested && state.status === 'Approved';
+  const visibleSuggestions = editing ? drafts : suggestions;
+
+  function beginEdit() {
+    setDrafts(suggestions.map((item) => ({ ...item })));
+    setEditing(true);
+  }
+
+  function saveEdits() {
+    onUpdate(drafts);
+    setEditing(false);
+  }
+
+  return <section className={`hei-acceptance-card ${state.state.toLowerCase()}`} aria-label="Acceptance Criteria">
+    <header><span aria-hidden="true">AC</span><h3>Acceptance Criteria</h3>{state.origin ? <OriginBadge value={state.origin as ArtifactOrigin} /> : <Status value="Missing" />}</header>
+    {sourceProvided ? <>
+      <p className="hei-acceptance-description">Acceptance Criteria were found in the source requirement.</p>
+      <ul>{analysis.acceptanceCriteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}</ul>
+      <footer><button className="planner-button secondary" type="button" disabled={busy} onClick={onEditRequirement}>Edit Requirement</button></footer>
+    </> : aiSuggested ? <>
+      <div className="hei-acceptance-callout"><strong>{approvedSuggestions ? 'Approved for Planning' : 'Review before approval'}</strong><p>{state.description}</p></div>
+      <div className="hei-acceptance-suggestions">
+        {visibleSuggestions.map((criterion, index) => editing
+          ? <label key={criterion.criterionId}><span>Criterion {index + 1}</span><textarea rows={5} value={criterion.text} onChange={(event) => setDrafts((current) => current.map((item) => item.criterionId === criterion.criterionId ? { ...item, text: event.target.value, origin: 'User Edited' } : item))} /></label>
+          : <article key={criterion.criterionId}><OriginBadge value={criterion.origin} /><pre>{criterion.text}</pre></article>)}
+      </div>
+      <footer>
+        {editing ? <>
+          <button className="planner-button primary" type="button" disabled={busy || drafts.some((item) => !item.text.trim())} onClick={saveEdits}>Save Suggestions</button>
+          <button className="planner-button secondary" type="button" disabled={busy} onClick={() => setEditing(false)}>Cancel Edit</button>
+        </> : <>
+          {!approvedSuggestions ? <button className="planner-button primary" type="button" disabled={busy} onClick={onApprove}>Approve Suggestions</button> : null}
+          <button className="planner-button secondary" type="button" disabled={busy} onClick={beginEdit}>Edit</button>
+          <button className="planner-button secondary" type="button" disabled={busy} onClick={onGenerate}>Regenerate</button>
+          <button className="planner-button secondary" type="button" disabled={busy} onClick={onDiscard}>Discard</button>
+        </>}
+      </footer>
+    </> : <div className="hei-requirement-empty hei-acceptance-missing">
+      <strong>No Acceptance Criteria were found in the requirement.</strong>
+      <p>This is not an AI error. Planning can continue, but testability and implementation quality may be reduced.</p>
+      <div>
+        <button className="planner-button primary" type="button" disabled={busy} onClick={onGenerate}>Generate Suggested Acceptance Criteria</button>
+        <button className="planner-button secondary" type="button" disabled={busy} onClick={onSkip}>Skip</button>
+        <button className="planner-button secondary" type="button" disabled={busy} onClick={onEditRequirement}>Edit Requirement</button>
+      </div>
+    </div>}
+  </section>;
 }
 
 function RequirementHealth({ analysis, ingestion }: { analysis: RequirementAnalysisResult; ingestion: IngestionResult }) {
@@ -726,36 +853,39 @@ function RequirementHealth({ analysis, ingestion }: { analysis: RequirementAnaly
     { label: 'Overall Confidence', value: `${Math.round(analysis.confidence * 100)}%`, description: 'Confidence in extracted requirement intent.' },
     { label: 'Planning Quality', value: `${analysis.requirementQualityScore}%`, description: 'Completeness and clarity for planning.' },
     { label: 'Repository Confidence', value: repositoryConfidence ? `${repositoryConfidence}%` : 'Not detected', description: 'Strength of repository alignment.' },
-    { label: 'Readiness', value: analysis.planningReadiness.status === 'NeedsReview' ? 'Needs Review' : analysis.planningReadiness.status, description: 'Current planning transition state.' },
+    { label: 'Readiness', value: readinessLabel(analysis.planningReadiness.status), description: 'Current planning transition state.' },
     { label: 'Document Quality', value: documentQuality, description: ingestion.sourceType === 'PasteRequirement' ? 'Reviewed from direct requirement input.' : 'Source extraction quality.' },
   ];
-  return <section className="hei-requirement-health" aria-label="Requirement Health"><header><div><span>Requirement Health</span><h3>Planning readiness at a glance</h3></div><Status value={analysis.planningReadiness.status === 'NeedsReview' ? 'Needs Review' : analysis.planningReadiness.status} /></header><div>{metrics.map((metric) => <article key={metric.label} className={statusTone(metric.value)}><span>{metric.label}</span><strong>{metric.value}</strong><p>{metric.description}</p></article>)}</div></section>;
+  return <section className="hei-requirement-health" aria-label="Requirement Health"><header><div><span>Requirement Health</span><h3>Planning readiness at a glance</h3></div><Status value={readinessLabel(analysis.planningReadiness.status)} /></header><div>{metrics.map((metric) => <article key={metric.label} className={statusTone(metric.value)}><span>{metric.label}</span><strong>{metric.value}</strong><p>{metric.description}</p></article>)}</div></section>;
 }
 
-function QualityFindings({ result, onEdit, onReanalyze }: { result: RequirementAnalysisResult; onEdit: () => void; onReanalyze: () => void }) {
-  const issues = [
-    ...result.missingAcceptanceCriteria.map((finding) => ({ ...finding, title: 'Missing Acceptance Criteria', severity: 'High', impact: 'Planning cannot generate measurable work items without testable completion conditions.' })),
+function QualityFindings({ result, onEdit, onReanalyze, onGenerateAcceptanceCriteria }: { result: RequirementAnalysisResult; onEdit: () => void; onReanalyze: () => void; onGenerateAcceptanceCriteria: () => void }) {
+  const issues: Array<AnalysisFinding & { title: string; severity: string; impact: string; aiAssistance?: string }> = [
+    ...result.missingAcceptanceCriteria.map((finding) => ({ ...finding, title: 'Acceptance Criteria Missing', severity: 'Medium', impact: 'Generated Stories may not contain verifiable completion conditions.', aiAssistance: 'HEI can generate editable Given/When/Then suggestions for review.' })),
     ...result.ambiguousRequirements.map((finding) => ({ ...finding, title: 'Ambiguous Requirement', severity: 'Medium', impact: 'Multiple interpretations may produce inconsistent planning artifacts.' })),
     ...result.conflictingRequirements.map((finding) => ({ ...finding, title: 'Conflicting Requirement', severity: 'Critical', impact: 'Planning is blocked until the conflicting intent is resolved.' })),
     ...result.duplicateRequirements.map((finding) => ({ ...finding, title: 'Duplicate Requirement', severity: 'Low', impact: 'Duplicate scope can create repeated stories and estimates.' })),
   ];
-  return <section className="hei-quality-findings" aria-label="Quality Findings"><header><div><span>Quality Review</span><h3>Quality Findings</h3><p>{issues.length ? `${issues.length} issue${issues.length === 1 ? '' : 's'} require attention before approval.` : 'No requirement quality issues detected.'}</p></div><Status value={issues.length ? 'Needs Review' : 'Clear'} /></header>{issues.length ? <div>{issues.map((issue, index) => <article key={`${issue.title}-${index}`}><header><div><span>Issue</span><h4>{issue.title}</h4></div><Status value={`${issue.severity} Severity`} /></header><dl><div><dt>Finding</dt><dd>{issue.text}</dd></div><div><dt>Impact</dt><dd>{issue.impact}</dd></div><div><dt>Recommendation</dt><dd>{issue.reason}</dd></div></dl><footer><button className="planner-button secondary" type="button" onClick={onEdit}>Edit Requirement</button><button className="planner-button secondary" type="button" onClick={onReanalyze}>Re-analyze</button></footer></article>)}</div> : null}</section>;
+  return <section className="hei-quality-findings" aria-label="Quality Findings"><header><div><span>Quality Review</span><h3>Quality Findings</h3><p>{issues.length ? `${issues.length} issue${issues.length === 1 ? '' : 's'} include transparent recommendations.` : 'No requirement quality issues detected.'}</p></div><Status value={issues.length ? 'Recommendations Available' : 'Clear'} /></header>{issues.length ? <div>{issues.map((issue, index) => <article key={`${issue.title}-${index}`}><header><div><span>Issue</span><h4>{issue.title}</h4></div><Status value={`${issue.severity} Severity`} /></header><dl><div><dt>Description</dt><dd>{issue.text}</dd></div><div><dt>Business Impact</dt><dd>{issue.impact}</dd></div><div><dt>Recommended Action</dt><dd>{issue.reason}</dd></div>{issue.aiAssistance ? <div><dt>AI Assistance</dt><dd>{issue.aiAssistance}</dd></div> : null}</dl><footer>{issue.title === 'Acceptance Criteria Missing' ? <button className="planner-button primary" type="button" onClick={onGenerateAcceptanceCriteria}>Generate</button> : null}<button className="planner-button secondary" type="button" onClick={onEdit}>Edit Requirement</button><button className="planner-button secondary" type="button" onClick={onReanalyze}>Re-analyze</button></footer></article>)}</div> : null}</section>;
 }
 
 function EngineeringContext({ result }: { result: RequirementAnalysisResult }) {
   const metrics = [
-    ['Business Goals', result.businessGoals.length], ['Actors', result.actors.length], ['Business Rules', result.businessRules.length],
-    ['Dependencies', result.dependencies.length], ['Constraints', result.constraints.length], ['Risks', result.risks.length], ['Open Questions', result.openQuestions.length],
-  ] as Array<[string, number]>;
-  return <section className="hei-engineering-context" aria-label="Engineering Context"><header><span>Engineering Context</span><h3>Extracted planning signals</h3></header><div>{metrics.map(([label, value]) => <article key={label} className={value ? '' : 'empty'}><span>{label}</span><strong>{value}</strong></article>)}</div></section>;
+    ['Business Goals', 'businessGoals', result.businessGoals.length], ['Actors', 'actors', result.actors.length],
+    ['Business Rules', 'businessRules', result.businessRules.length], ['Dependencies', 'dependencies', result.dependencies.length],
+    ['Constraints', 'constraints', result.constraints.length], ['Risks', 'risks', result.risks.length],
+    ['Open Questions', 'openQuestions', result.openQuestions.length],
+  ] as Array<[string, string, number]>;
+  return <section className="hei-engineering-context" aria-label="Engineering Context"><header><span>Engineering Context</span><h3>Extracted planning signals</h3></header><div>{metrics.map(([label, key, value]) => <article key={label} className={value ? '' : 'empty'}><span>{label}</span><strong>{value}</strong>{value && result.fieldOrigins[key] ? <OriginBadge value={result.fieldOrigins[key]} /> : <small>Not provided</small>}</article>)}</div></section>;
 }
 
-function HEIInsights({ analysis, memoryStatus, busy, blocked, onEdit, onContinue }: {
+function HEIInsights({ analysis, memoryStatus, busy, blocked, onEdit, onGenerateAcceptanceCriteria, onContinue }: {
   analysis: RequirementAnalysisResult;
   memoryStatus: string;
   busy: boolean;
   blocked: boolean;
   onEdit: () => void;
+  onGenerateAcceptanceCriteria: () => void;
   onContinue: () => void;
 }) {
   const repositoryConfidence = Math.round(Number(analysis.repositorySuggestion?.confidence || 0) * 100);
@@ -769,16 +899,21 @@ function HEIInsights({ analysis, memoryStatus, busy, blocked, onEdit, onContinue
       : 'Relevant implementation context is available in Engineering Memory.';
   const insights = [
     analysis.requirementQualityScore < 70 ? `Requirement quality is below target (${analysis.requirementQualityScore}%).` : `Requirement quality meets the planning target (${analysis.requirementQualityScore}%).`,
-    analysis.acceptanceCriteria.length ? `${analysis.acceptanceCriteria.length} acceptance criteria were identified.` : 'Acceptance criteria are missing.',
+    analysis.acceptanceCriteria.length
+      ? `${analysis.acceptanceCriteria.length} approved Acceptance Criteria are available.`
+      : analysis.acceptanceCriteriaSuggestions.length
+        ? `${analysis.acceptanceCriteriaSuggestions.length} AI Suggested Acceptance Criteria require review.`
+        : 'The source did not provide Acceptance Criteria. This is not an AI error.',
     repositoryConfidence >= 75 ? `Repository confidence is high (${repositoryConfidence}%).` : repositoryConfidence ? `Repository confidence needs review (${repositoryConfidence}%).` : 'Repository confidence is not available.',
     memoryInsight,
     `Estimated planning complexity: ${complexity}.`,
   ];
   return <aside className="hei-insights" aria-label="HEI Insights"><details open><summary><span aria-hidden="true">💡</span><strong>HEI Insights</strong><small>{insights.length}</small></summary><div>
     <ul>{insights.map((insight) => <li key={insight}>{insight}</li>)}</ul>
-    <section><span>Recommended Next Action</span><strong>{analysis.acceptanceCriteria.length ? 'Continue to Planning' : 'Define measurable acceptance criteria'}</strong></section>
+    <section><span>Recommended Next Action</span><strong>{analysis.acceptanceCriteria.length ? 'Continue to Planning' : analysis.acceptanceCriteriaSuggestions.length ? 'Review suggested Acceptance Criteria' : 'Generate Acceptance Criteria suggestions'}</strong></section>
     <div className="hei-insights-actions">
-      {!analysis.acceptanceCriteria.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Acceptance Criteria</button> : null}
+      {!analysis.acceptanceCriteria.length && !analysis.acceptanceCriteriaSuggestions.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onGenerateAcceptanceCriteria}>Generate Acceptance Criteria</button> : null}
+      {!analysis.acceptanceCriteria.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Requirement</button> : null}
       <button className="planner-button secondary" type="button" disabled={busy || blocked} onClick={onContinue}>Continue to Planning</button>
     </div>
   </div></details></aside>;
@@ -793,7 +928,7 @@ function RequirementAnalysisSummary({ result }: { result: RequirementAnalysisRes
     ...result.duplicateRequirements,
   ];
   return <details className="hei-requirement-analysis" aria-label="Requirement analysis">
-    <summary><span>Analysis details</span><Status value={readiness.status === 'NeedsReview' ? 'Needs Review' : readiness.status} /></summary>
+    <summary><span>Analysis details</span><Status value={readinessLabel(readiness.status)} /></summary>
     <div className="hei-requirement-analysis-body"><header><div><span>Requirement Analysis</span><h3>{result.requirementSummary}</h3><p>Planning will receive the analyzed engineering requirement, not the raw source.</p></div></header>
     <div className="hei-requirement-signals"><Signal label="Quality" value={`${result.requirementQualityScore}%`} /><Signal label="Confidence" value={`${Math.round(result.confidence * 100)}%`} /><Signal label="Functional" value={String(result.functionalRequirements.length)} /><Signal label="Acceptance" value={String(result.acceptanceCriteria.length)} /></div>
     <details open={issues.length > 0}><summary>Planning Readiness</summary>

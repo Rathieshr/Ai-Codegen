@@ -58,4 +58,41 @@ def build_requirement_analysis_router(service: RequirementAnalysisService) -> AP
         except ValueError as error:
             return JSONResponse(status_code=404, content={"error": {"code": "requirement_not_found", "message": str(error)}})
 
+    @router.post("/{requirement_id}/acceptance-criteria/suggest")
+    def suggest_acceptance_criteria(requirement_id: str, request: dict[str, Any] = Body(default={})):
+        try:
+            return service.suggest_acceptance_criteria(requirement_id, str(request.get("actor") or "HEI User"))
+        except ValueError as error:
+            return JSONResponse(status_code=409, content={"error": {"code": "acceptance_criteria_suggestion_failed", "message": str(error)}})
+
+    @router.put("/{requirement_id}/acceptance-criteria/suggestions")
+    def update_acceptance_criteria(requirement_id: str, request: dict[str, Any] = Body(...)):
+        try:
+            return service.update_acceptance_criteria_suggestions(
+                requirement_id, list(request.get("criteria") or []), str(request.get("actor") or "HEI User"),
+            )
+        except ValueError as error:
+            return JSONResponse(status_code=409, content={"error": {"code": "acceptance_criteria_update_failed", "message": str(error)}})
+
+    @router.post("/{requirement_id}/acceptance-criteria/approve")
+    def approve_acceptance_criteria(requirement_id: str, request: dict[str, Any] = Body(default={})):
+        try:
+            return service.approve_acceptance_criteria(requirement_id, str(request.get("actor") or "HEI User"))
+        except ValueError as error:
+            return JSONResponse(status_code=409, content={"error": {"code": "acceptance_criteria_approval_failed", "message": str(error)}})
+
+    @router.post("/{requirement_id}/acceptance-criteria/discard")
+    def discard_acceptance_criteria(requirement_id: str, request: dict[str, Any] = Body(default={})):
+        try:
+            return service.discard_acceptance_criteria(requirement_id, str(request.get("actor") or "HEI User"))
+        except ValueError as error:
+            return JSONResponse(status_code=409, content={"error": {"code": "acceptance_criteria_discard_failed", "message": str(error)}})
+
+    @router.post("/{requirement_id}/acceptance-criteria/skip")
+    def skip_acceptance_criteria(requirement_id: str, request: dict[str, Any] = Body(default={})):
+        try:
+            return service.discard_acceptance_criteria(requirement_id, str(request.get("actor") or "HEI User"), skipped=True)
+        except ValueError as error:
+            return JSONResponse(status_code=409, content={"error": {"code": "acceptance_criteria_skip_failed", "message": str(error)}})
+
     return router

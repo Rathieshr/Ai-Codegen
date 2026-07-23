@@ -3231,6 +3231,21 @@ button.hei-story-list-card {
 .hei-requirement-review-grid li { margin: 4px 0; }
 .hei-requirement-review-grid > section.empty { border-style: dashed; background: transparent; }
 .hei-requirement-review-grid > section.empty.warning { border-color: var(--hei-warning); }
+.hei-origin-badge { justify-self: end; border: 1px solid var(--hei-border); border-radius: 999px; padding: 2px 7px; background: var(--hei-surface-subtle); color: var(--hei-muted); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.hei-origin-badge.source, .hei-origin-badge.imported { border-color: var(--hei-success); color: var(--hei-success); }
+.hei-origin-badge.ai-suggested { border-color: var(--hei-blue); color: var(--hei-blue); }
+.hei-origin-badge.user-edited { border-color: var(--hei-warning); color: var(--hei-warning-text, #8a5a00); }
+.hei-acceptance-card { gap: 10px; }
+.hei-acceptance-card.aisuggested { grid-column: 1 / -1; border-left: 3px solid var(--hei-blue); }
+.hei-acceptance-card.missing { border-style: dashed; border-color: var(--hei-warning); }
+.hei-acceptance-description, .hei-acceptance-callout p { margin: 0; color: var(--hei-muted); }
+.hei-acceptance-callout { display: grid; gap: 3px; border-left: 3px solid var(--hei-blue); padding: 8px 10px; background: var(--hei-surface-subtle); }
+.hei-acceptance-suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.hei-acceptance-suggestions article, .hei-acceptance-suggestions label { display: grid; align-content: start; gap: 7px; min-width: 0; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 10px; }
+.hei-acceptance-suggestions pre { margin: 0; color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hei-acceptance-suggestions label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-acceptance-suggestions textarea { width: 100%; min-height: 112px; box-sizing: border-box; resize: vertical; }
+.hei-acceptance-card > footer, .hei-acceptance-missing > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .hei-requirement-empty { display: grid; justify-items: start; align-content: center; gap: 6px; min-height: 88px; color: var(--hei-muted); }
 .hei-requirement-empty p { font-size: 11px; }
 .hei-requirement-review-context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -3279,6 +3294,8 @@ button.hei-story-list-card {
 .hei-engineering-context article + article { border-left: 1px solid var(--hei-border-soft); }
 .hei-engineering-context article strong { font-size: 20px; }
 .hei-engineering-context article.empty { color: var(--hei-muted); background: var(--hei-surface-subtle); }
+.hei-engineering-context article .hei-origin-badge { justify-self: start; }
+.hei-engineering-context article small { color: var(--hei-muted); }
 .hei-requirement-sticky-actions { position: sticky; z-index: 8; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-inline: -4px; border: 1px solid var(--hei-border); border-bottom: 0; border-radius: 6px 6px 0 0; padding: 10px 12px; background: var(--hei-surface); box-shadow: 0 -4px 14px rgba(0, 0, 0, .08); }
 .hei-requirement-sticky-status { display: grid; grid-template-columns: repeat(3, minmax(90px, auto)); gap: 14px; }
 .hei-requirement-sticky-status > div { display: grid; gap: 2px; min-width: 0; }
@@ -3381,6 +3398,7 @@ button.hei-story-list-card {
   .hei-requirement-review-layout { grid-template-columns: 1fr; }
   .hei-insights { position: static; }
   .hei-requirement-health > div { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+  .hei-acceptance-suggestions { grid-template-columns: 1fr; }
   .hei-requirement-health article + article { border-left: 0; }
   .hei-repository-recommendation-layout { grid-template-columns: 1fr; }
   .hei-repository-reason { border-top: 1px solid var(--hei-border-soft); border-left: 0; }

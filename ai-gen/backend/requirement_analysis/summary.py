@@ -28,6 +28,8 @@ def build_requirement_summary(requirement: dict[str, Any], analysis: dict[str, A
         "functionalRequirements": list(analysis.get("functionalRequirements") or []),
         "nonFunctionalRequirements": list(analysis.get("nonFunctionalRequirements") or []),
         "acceptanceCriteria": list(analysis.get("acceptanceCriteria") or []),
+        "acceptanceCriteriaState": dict(analysis.get("acceptanceCriteriaState") or {}),
+        "fieldOrigins": dict(analysis.get("fieldOrigins") or {}),
         "actors": list(analysis.get("actors") or []),
         "businessRules": list(analysis.get("businessRules") or []),
         "constraints": list(analysis.get("constraints") or []),

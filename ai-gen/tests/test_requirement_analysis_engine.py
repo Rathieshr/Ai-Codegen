@@ -313,7 +313,9 @@ Assumptions:
     def test_ui_runs_analysis_between_ingestion_and_planning(self):
         source = (ROOT / "azure-devops-extension/src/newRequirementWorkspace.tsx").read_text()
         self.assertLess(source.index("/requirements/ingest"), source.index("/requirements/analyze"))
-        self.assertLess(source.index("/requirements/analyze"), source.index("/planning/from-requirement"))
+        self.assertLess(source.index("/requirements/analyze"), source.index("/planning/context/build"))
+        self.assertLess(source.index("/planning/context/build"), source.index("/planning/recommendation"))
+        self.assertLess(source.index("/planning/recommendation"), source.index("/planning/proposal"))
         self.assertNotIn("/requirements/intake", source)
         self.assertIn("Requirement Analysis", source)
         for action in ("Continue to Planning", "Edit", "Cancel", "Re-analyze"):

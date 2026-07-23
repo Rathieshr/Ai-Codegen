@@ -13,7 +13,7 @@ PLANNING_MODES = {
     "NEW_INITIATIVE", "NEW_FEATURE", "EXTEND_FEATURE", "MODIFY_EXISTING",
     "BUG_OR_ENHANCEMENT", "AI_RECOMMENDED",
 }
-TYPE_ORDER = {"Epic": 0, "Feature": 1, "Story": 2, "Task": 3}
+TYPE_ORDER = {"Epic": 0, "Feature": 1, "Story": 2, "Task": 3, "Bug": 4}
 
 
 class IntelligentPlanningEngine:
@@ -209,6 +209,8 @@ def _normalize_work_item(item: dict[str, Any]) -> dict[str, Any]:
         "parentId": _text(item.get("parentId") or item.get("parentWorkItemId")),
         "storyPoints": item.get("storyPoints"), "areaPath": _text(item.get("areaPath")),
         "iterationPath": _text(item.get("iterationPath")), "tags": _strings(item.get("tags")),
+        "assignedTo": _text(item.get("assignedTo") or item.get("assignedUser")),
+        "completionState": _text(item.get("completionState") or item.get("completedState")),
         "changedAt": _text(item.get("changedAt") or item.get("updatedAt")),
     }
 
@@ -350,6 +352,7 @@ def _normalize_type(value: Any) -> str:
     if "feature" in text: return "Feature"
     if "story" in text or "product backlog" in text or text == "pbi": return "Story"
     if "task" in text: return "Task"
+    if "bug" in text or "defect" in text: return "Bug"
     return _text(value).title()
 
 

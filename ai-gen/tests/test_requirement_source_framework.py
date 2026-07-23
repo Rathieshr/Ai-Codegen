@@ -174,8 +174,10 @@ class RequirementSourceFrameworkTests(unittest.TestCase):
             self.assertIn(label, source)
         for future in ("Confluence", "SharePoint", "Notion", "Email", "REST API"):
             self.assertIn(future, source)
-        self.assertLess(source.index("/requirements/ingest"), source.index("/planning/from-requirement"))
-        self.assertIn("requirementId: ingestion.requirementId", source)
+        self.assertLess(source.index("/requirements/ingest"), source.index("/planning/context/build"))
+        self.assertLess(source.index("/planning/context/build"), source.index("/planning/recommendation"))
+        self.assertLess(source.index("/planning/recommendation"), source.index("/planning/proposal"))
+        self.assertIn("recommendationId: planningRecommendation.recommendationId", source)
         self.assertNotIn("/requirements/intake", source)
 
     def test_source_type_aliases_preserve_existing_callers(self):

@@ -3156,7 +3156,7 @@ button.hei-story-list-card {
 .hei-requirement-form label > span { color: var(--hei-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .hei-requirement-form .wide, .hei-intake-context, .hei-future-sources, .hei-requirement-form > button { grid-column: 1 / -1; }
 .hei-requirement-form textarea { min-height: 220px; resize: vertical; }
-.hei-requirement-progress { display: grid; grid-template-columns: repeat(8, minmax(86px, 1fr)); gap: 0; overflow-x: auto; border-block: 1px solid var(--hei-border-soft); padding: 10px 2px; }
+.hei-requirement-progress { display: grid; grid-template-columns: repeat(10, minmax(86px, 1fr)); gap: 0; overflow-x: auto; border-block: 1px solid var(--hei-border-soft); padding: 10px 2px; }
 .hei-requirement-progress > div { position: relative; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 6px; min-width: 108px; color: var(--hei-muted); font-size: 11px; font-weight: 600; }
 .hei-requirement-progress > div > i { position: absolute; z-index: 0; top: 50%; left: 20px; right: -2px; height: 1px; background: var(--hei-border); }
 .hei-requirement-progress-marker { position: relative; z-index: 1; display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--hei-border); border-radius: 50%; background: var(--hei-surface); color: var(--hei-muted); font-size: 11px; }
@@ -3314,6 +3314,73 @@ button.hei-story-list-card {
 .hei-insights section span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .hei-insights-actions { display: grid; gap: 7px; }
 .hei-insights-actions .planner-button { width: 100%; }
+.hei-planning-context-workspace { display: grid; gap: 14px; padding-bottom: 68px; }
+.hei-planning-context-workspace > header, .hei-planning-context-summary > header, .hei-planning-context-grid > section > header, .hei-planning-context-similar > header, .hei-planning-context-recommendation > header, .hei-planning-context-readiness > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.hei-planning-context-workspace > header span:first-child, .hei-planning-context-workspace section > header span:first-child { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-planning-context-workspace h2 { margin: 2px 0; font-size: 22px; }
+.hei-planning-context-workspace h3 { margin: 2px 0; font-size: 16px; }
+.hei-planning-context-workspace h4 { margin: 2px 0; font-size: 13px; }
+.hei-planning-context-workspace header p, .hei-planning-context-workspace section > p { margin: 3px 0 0; color: var(--hei-muted); }
+.hei-planning-context-summary, .hei-planning-context-grid > section, .hei-planning-context-similar, .hei-planning-context-recommendation, .hei-planning-context-readiness { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); padding: 13px; }
+.hei-planning-context-summary { border-top: 3px solid var(--hei-yellow); }
+.hei-planning-context-summary > div, .hei-planning-context-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 1px; margin-top: 10px; background: var(--hei-border-soft); }
+.hei-planning-context-summary > div > div, .hei-planning-context-metrics > div { display: grid; gap: 3px; min-width: 0; padding: 9px; background: var(--hei-surface-subtle); }
+.hei-planning-context-summary > div span, .hei-planning-context-metrics span { color: var(--hei-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.hei-planning-context-summary > div strong, .hei-planning-context-metrics strong { overflow-wrap: anywhere; font-size: 12px; }
+.hei-planning-context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hei-planning-context-grid > .wide { grid-column: 1 / -1; }
+.hei-planning-context-grid label { display: grid; gap: 5px; margin-top: 10px; }
+.hei-planning-context-grid label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-planning-context-grid select { min-height: 32px; border: 1px solid var(--hei-border); border-radius: 4px; background: var(--hei-surface); color: var(--hei-text); padding: 5px 8px; }
+.hei-planning-context-tags { display: grid; gap: 6px; margin-top: 10px; }
+.hei-planning-context-tags > strong { color: var(--hei-muted); font-size: 10px; text-transform: uppercase; }
+.hei-planning-context-tags > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.hei-planning-context-tags > div > span { max-width: 100%; border: 1px solid var(--hei-border); border-radius: 4px; background: var(--hei-surface-subtle); padding: 4px 7px; overflow-wrap: anywhere; font-size: 11px; }
+.hei-planning-context-tags > p, .hei-planning-context-empty { margin: 0; color: var(--hei-muted); font-size: 11px; }
+.hei-planning-context-similar > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-top: 10px; }
+.hei-planning-context-similar article { display: grid; gap: 8px; min-width: 0; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 10px; }
+.hei-planning-context-similar article header, .hei-planning-context-similar article footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.hei-planning-context-similar article p { margin: 0; color: var(--hei-muted); font-size: 11px; }
+.hei-planning-context-similar article footer span { color: var(--hei-muted); }
+.hei-planning-context-recommendation > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+.hei-planning-context-readiness { border-left: 3px solid var(--hei-yellow); }
+.hei-planning-context-readiness > header > strong { font-size: 22px; }
+.hei-planning-context-readiness ul { margin: 10px 0 0; padding-left: 20px; color: var(--hei-warning); }
+.hei-planning-context-readiness ul.error { color: var(--hei-error); }
+.hei-planning-context-actions { position: sticky; bottom: 0; z-index: 10; display: flex; align-items: center; justify-content: flex-end; gap: 8px; border: 1px solid var(--hei-border); border-bottom: 0; border-radius: 6px 6px 0 0; background: var(--hei-surface); box-shadow: 0 -4px 16px rgb(0 0 0 / 10%); padding: 10px 12px; }
+.hei-planning-context-actions > div { display: grid; gap: 2px; margin-right: auto; }
+.hei-planning-context-actions > div span { color: var(--hei-muted); font-size: 9px; text-transform: uppercase; }
+
+.hei-planning-recommendation-workspace { display: grid; gap: 14px; padding-bottom: 68px; }
+.hei-planning-recommendation-workspace > header, .hei-planning-recommendation-workspace section > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.hei-planning-recommendation-workspace > header span:first-child, .hei-planning-recommendation-workspace section > header span:first-child { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-planning-recommendation-workspace h2 { margin: 2px 0; font-size: 22px; }
+.hei-planning-recommendation-workspace h3 { margin: 2px 0; font-size: 16px; }
+.hei-planning-recommendation-workspace h4 { margin: 2px 0; font-size: 13px; }
+.hei-planning-recommendation-workspace p { margin: 4px 0; color: var(--hei-muted); }
+.hei-planning-recommendation-hero, .hei-planning-recommendation-grid > section, .hei-planning-recommendation-diff, .hei-planning-recommendation-alternatives, .hei-planning-recommendation-reasoning, .hei-planning-recommendation-override { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); padding: 13px; }
+.hei-planning-recommendation-hero { border-top: 3px solid var(--hei-yellow); }
+.hei-planning-recommendation-hero > header > strong { color: var(--hei-text); font-size: 26px; }
+.hei-planning-recommendation-actions-list { display: grid; gap: 7px; margin-top: 10px; }
+.hei-planning-recommendation-actions-list article { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-left: 3px solid var(--hei-blue); background: var(--hei-surface-subtle); padding: 9px 10px; }
+.hei-planning-recommendation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hei-planning-diff-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 1px; margin-top: 10px; background: var(--hei-border-soft); }
+.hei-planning-diff-summary > div { background: var(--hei-surface-subtle); padding: 8px; }
+.hei-planning-diff-list { display: grid; gap: 1px; margin-top: 10px; background: var(--hei-border-soft); }
+.hei-planning-diff-list article { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: start; gap: 10px; background: var(--hei-surface); padding: 9px 10px; }
+.hei-planning-diff-list article > span:first-child { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 4px; background: var(--hei-surface-subtle); font-weight: 800; }
+.hei-planning-diff-list article.create > span:first-child { color: var(--hei-success); }
+.hei-planning-diff-list article.modify > span:first-child, .hei-planning-diff-list article.split > span:first-child { color: var(--hei-warning); }
+.hei-planning-diff-list article.ignore > span:first-child, .hei-planning-diff-list article.delete > span:first-child { color: var(--hei-error); }
+.hei-planning-recommendation-alternatives > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; margin-top: 10px; }
+.hei-planning-recommendation-existing-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.hei-planning-recommendation-alternatives article { display: grid; align-content: start; gap: 8px; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 10px; }
+.hei-planning-recommendation-alternatives article > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.hei-planning-recommendation-reasoning > summary, .hei-planning-recommendation-override > summary { cursor: pointer; font-weight: 700; }
+.hei-planning-recommendation-override > div { display: grid; grid-template-columns: minmax(180px, .6fr) minmax(260px, 1.4fr) auto; align-items: end; gap: 8px; margin-top: 12px; }
+.hei-planning-recommendation-override label { display: grid; gap: 4px; }
+.hei-planning-recommendation-override label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-planning-recommendation-override input, .hei-planning-recommendation-override select { min-height: 32px; border: 1px solid var(--hei-border); border-radius: 4px; background: var(--hei-surface); color: var(--hei-text); padding: 5px 8px; }
 .hei-transcript-summary { display: grid; gap: 9px; border-top: 1px solid var(--hei-border-soft); padding-top: 12px; }
 .hei-transcript-summary > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .hei-transcript-summary h3 { margin: 2px 0; }
@@ -3406,6 +3473,8 @@ button.hei-story-list-card {
   .hei-engineering-context article + article { border-left: 0; }
   .hei-requirement-sticky-actions { align-items: stretch; flex-direction: column; }
   .hei-requirement-sticky-actions .hei-requirement-actions { justify-content: flex-end; }
+  .hei-planning-context-recommendation > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hei-planning-recommendation-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
@@ -3430,6 +3499,11 @@ button.hei-story-list-card {
   .hei-administration-service-list > div > span:last-child { grid-column: 1 / -1; text-align: left; }
   .hei-administration-audit-list article { grid-template-columns: 1fr; }
   .hei-administration-audit-list article > span { grid-column: auto; grid-row: auto; }
+  .hei-planning-context-grid, .hei-planning-context-recommendation > div { grid-template-columns: 1fr; }
+  .hei-planning-recommendation-alternatives article > div, .hei-planning-recommendation-existing-context, .hei-planning-recommendation-override > div { grid-template-columns: 1fr; }
+  .hei-planning-context-actions { flex-wrap: wrap; }
+  .hei-planning-context-actions > div { width: 100%; }
+  .hei-planning-context-actions .planner-button { flex: 1 1 150px; }
 }
 
 /* Agent Center */
@@ -3640,4 +3714,74 @@ button.hei-story-list-card {
   .command-health-metrics, .command-health-grid dl { grid-template-columns: 1fr; }
   .command-health-header > div:last-child { width: 100%; justify-content: space-between; }
   .command-health-tabs { overflow-x: auto; }
+}
+
+/* Planning Proposal Engine workspace */
+.hei-planning-proposal-workspace { display: grid; gap: 12px; min-width: 0; padding-bottom: 70px; }
+.hei-planning-proposal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.hei-planning-proposal-header > div:last-child { display: flex; align-items: center; gap: 8px; }
+.hei-planning-proposal-header span:first-child, .hei-planning-proposal-workspace section > header span:first-child { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-planning-proposal-header h2 { margin: 2px 0 3px; font-size: 24px; }
+.hei-planning-proposal-header p, .hei-planning-proposal-workspace section > header p { margin: 0; color: var(--hei-muted); }
+.hei-planning-proposal-metrics { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 6px; }
+.hei-planning-proposal-metrics > div, .hei-proposal-card-grid > div { min-width: 0; border: 1px solid var(--hei-border); border-radius: 5px; padding: 8px 10px; background: var(--hei-surface); }
+.hei-planning-proposal-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--hei-border); }
+.hei-planning-proposal-tabs button { flex: 0 0 auto; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--hei-text); padding: 8px 10px; }
+.hei-planning-proposal-tabs button.active { border-bottom-color: var(--hei-yellow); font-weight: 700; }
+.hei-planning-proposal-layout { display: grid; grid-template-columns: minmax(230px, .65fr) minmax(380px, 1.6fr) minmax(220px, .65fr); min-height: 520px; gap: 9px; }
+.hei-planning-proposal-layout > * { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
+.hei-proposal-tree, .hei-proposal-health { padding: 10px; }
+.hei-proposal-tree > header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.hei-proposal-tree > header span { color: var(--hei-muted); font-size: 11px; }
+.hei-proposal-tree > div { display: grid; max-height: 620px; overflow: auto; }
+.hei-proposal-tree button { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 2px 7px; border: 0; border-left: 3px solid transparent; border-radius: 0; background: transparent; color: var(--hei-text); padding: 7px; text-align: left; }
+.hei-proposal-tree button:hover, .hei-proposal-tree button.selected { border-left-color: var(--hei-yellow); background: var(--hei-surface-subtle); }
+.hei-proposal-tree button span { color: var(--hei-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.hei-proposal-tree button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hei-proposal-tree button small { grid-column: 2; color: var(--hei-muted); }
+.hei-proposal-node-editor { display: grid; align-content: start; gap: 10px; padding: 12px; }
+.hei-proposal-node-editor > header, .hei-proposal-review-panel > header, .hei-proposal-estimate-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.hei-proposal-node-editor h3, .hei-proposal-review-panel h3, .hei-proposal-estimate-panel h3 { margin: 2px 0; font-size: 18px; }
+.hei-proposal-node-editor label, .hei-proposal-review-panel label, .hei-proposal-estimate-form label { display: grid; gap: 4px; }
+.hei-proposal-node-editor label > span, .hei-proposal-review-panel label > span, .hei-proposal-estimate-form label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-proposal-node-editor input, .hei-proposal-node-editor textarea, .hei-proposal-node-editor select, .hei-proposal-review-panel textarea, .hei-proposal-estimate-form input { width: 100%; min-height: 32px; box-sizing: border-box; border: 1px solid var(--hei-border); border-radius: 4px; background: var(--hei-surface); color: var(--hei-text); padding: 7px 8px; }
+.hei-proposal-node-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.hei-proposal-node-meta > div { min-width: 0; padding: 7px; background: var(--hei-surface-subtle); }
+.hei-proposal-node-editor details { border-top: 1px solid var(--hei-border); padding-top: 8px; }
+.hei-proposal-node-editor summary { cursor: pointer; font-weight: 700; }
+.hei-proposal-node-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.hei-proposal-node-actions select { width: auto; max-width: 210px; }
+.hei-proposal-health h3, .hei-proposal-health h4 { margin: 2px 0 10px; }
+.hei-proposal-health ol { max-height: 230px; margin: 0; overflow: auto; padding-left: 22px; color: var(--hei-muted); }
+.hei-proposal-meter { display: grid; gap: 4px; margin-bottom: 10px; }
+.hei-proposal-meter > div { display: flex; justify-content: space-between; }
+.hei-proposal-meter progress { width: 100%; height: 6px; accent-color: var(--hei-yellow); }
+.hei-proposal-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+.hei-proposal-card-grid > article { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; padding: 12px; background: var(--hei-surface); }
+.hei-proposal-card-grid h3 { margin: 0 0 8px; font-size: 15px; }
+.hei-proposal-card-grid ul { margin: 0; padding-left: 18px; }
+.hei-proposal-table-wrap { max-height: 580px; overflow: auto; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
+.hei-proposal-table-wrap table { width: 100%; border-collapse: collapse; }
+.hei-proposal-table-wrap th, .hei-proposal-table-wrap td { border-bottom: 1px solid var(--hei-border); padding: 8px; text-align: left; vertical-align: top; }
+.hei-proposal-table-wrap th { position: sticky; top: 0; background: var(--hei-surface-subtle); color: var(--hei-muted); font-size: 10px; text-transform: uppercase; }
+.hei-proposal-table-wrap td small { display: block; color: var(--hei-muted); }
+.hei-proposal-review-panel, .hei-proposal-estimate-panel { display: grid; gap: 10px; border: 1px solid var(--hei-border); border-radius: 6px; padding: 13px; background: var(--hei-surface); }
+.hei-proposal-review-panel article { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 9px; border-top: 1px solid var(--hei-border); padding: 9px 0; }
+.hei-proposal-review-panel article p { margin: 2px 0; }
+.hei-proposal-estimate-form { display: grid; grid-template-columns: 160px 160px minmax(260px, 1fr); gap: 8px; }
+.hei-planning-proposal-footer { position: sticky; z-index: 4; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--hei-border); border-left: 3px solid var(--hei-yellow); border-radius: 5px; padding: 9px 12px; background: var(--hei-surface); box-shadow: 0 -3px 10px rgb(0 0 0 / 8%); }
+.hei-planning-proposal-footer > div { display: flex; align-items: center; gap: 8px; }
+.hei-planning-proposal-footer span { color: var(--hei-muted); }
+@media (max-width: 1180px) {
+  .hei-planning-proposal-metrics { grid-template-columns: repeat(4, minmax(100px, 1fr)); }
+  .hei-planning-proposal-layout { grid-template-columns: minmax(210px, .7fr) minmax(360px, 1.3fr); }
+  .hei-proposal-health { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .hei-planning-proposal-header, .hei-planning-proposal-footer { align-items: stretch; flex-direction: column; }
+  .hei-planning-proposal-metrics, .hei-proposal-node-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hei-planning-proposal-layout { grid-template-columns: 1fr; }
+  .hei-proposal-health { grid-column: auto; }
+  .hei-proposal-estimate-form { grid-template-columns: 1fr; }
+  .hei-planning-proposal-footer > div { flex-wrap: wrap; }
 }

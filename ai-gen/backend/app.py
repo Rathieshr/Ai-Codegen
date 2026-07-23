@@ -118,6 +118,9 @@ from backend.engineering_estimation import EngineeringEstimationEngine, Engineer
 from backend.requirement_intake import RequirementIngestionService, RequirementIntakeService, build_requirement_intake_router
 from backend.requirement_analysis import RequirementAnalysisService, build_requirement_analysis_router
 from backend.planning_integration import IntelligentPlanningEngine, RequirementPlanningService, build_requirement_planning_router
+from backend.planning_context import PlanningContextService, build_planning_context_router
+from backend.planning_recommendation import PlanningRecommendationService, build_planning_recommendation_router
+from backend.planning_proposal import PlanningProposalService, build_planning_proposal_router
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
 from backend.prompt_budget import default_json_sections, probe_json_with_budget
@@ -281,6 +284,27 @@ requirement_intake_service = RequirementIntakeService(
     platform=platform_foundation,
 )
 app.include_router(build_requirement_intake_router(requirement_intake_service, requirement_ingestion_service))
+intelligent_planning_engine = IntelligentPlanningEngine(
+    work_item_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "workItems").values()) if project_id else [],
+    iteration_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "iterations").values()) if project_id else [],
+    memory_provider=engineering_memory_engine.find_relevant_memory,
+)
+planning_context_service = PlanningContextService(
+    JsonMapStore(platform_foundation.storage_root / "planning_contexts.json"),
+    requirement_ingestion=requirement_ingestion_service,
+    requirement_analysis=requirement_analysis_service,
+    intelligence_engine=intelligent_planning_engine,
+    repository_intelligence=repository_intelligence_module.application,
+    pull_request_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "pullRequests").values()) if project_id else [],
+    platform=platform_foundation,
+)
+app.include_router(build_planning_context_router(planning_context_service))
+planning_recommendation_service = PlanningRecommendationService(
+    JsonMapStore(platform_foundation.storage_root / "planning_recommendations.json"),
+    planning_context_service=planning_context_service,
+    platform=platform_foundation,
+)
+app.include_router(build_planning_recommendation_router(planning_recommendation_service))
 requirement_planning_service = RequirementPlanningService(
     JsonMapStore(platform_foundation.storage_root / "requirement_planning.json"),
     requirement_ingestion=requirement_ingestion_service,
@@ -290,14 +314,20 @@ requirement_planning_service = RequirementPlanningService(
     artifact_provider=project_intelligence_service.list_artifacts,
     artifact_updater=project_intelligence_service.update_artifact_draft,
     repository_intelligence=repository_intelligence_module.application,
-    intelligence_engine=IntelligentPlanningEngine(
-        work_item_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "workItems").values()) if project_id else [],
-        iteration_provider=lambda project_id: list(azure_devops_sdk.cached_collection(project_id, "iterations").values()) if project_id else [],
-        memory_provider=engineering_memory_engine.find_relevant_memory,
-    ),
+    planning_context_service=planning_context_service,
+    planning_recommendation_service=planning_recommendation_service,
+    intelligence_engine=intelligent_planning_engine,
     platform=platform_foundation,
 )
 app.include_router(build_requirement_planning_router(requirement_planning_service))
+planning_proposal_service = PlanningProposalService(
+    JsonMapStore(platform_foundation.storage_root / "planning_proposals.json"),
+    recommendation_service=planning_recommendation_service,
+    planning_context_service=planning_context_service,
+    requirement_planning_service=requirement_planning_service,
+    platform=platform_foundation,
+)
+app.include_router(build_planning_proposal_router(planning_proposal_service))
 ado_work_item_intelligence = register_ado_work_item_intelligence(
     platform_foundation.storage_root / "ado_work_item_intelligence",
     azure_devops=azure_devops_integration,

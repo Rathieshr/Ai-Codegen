@@ -25,6 +25,8 @@ class RequirementPlanningService:
         artifact_provider: Any,
         artifact_updater: Any | None = None,
         repository_intelligence: Any | None = None,
+        planning_context_service: Any | None = None,
+        planning_recommendation_service: Any | None = None,
         intelligence_engine: IntelligentPlanningEngine | None = None,
         platform: Any | None = None,
     ) -> None:
@@ -36,6 +38,8 @@ class RequirementPlanningService:
         self.artifact_provider = artifact_provider
         self.artifact_updater = artifact_updater
         self.repository_intelligence = repository_intelligence
+        self.planning_context_service = planning_context_service
+        self.planning_recommendation_service = planning_recommendation_service
         self.intelligence_engine = intelligence_engine or IntelligentPlanningEngine()
         self.automation_service: Any | None = None
         self.platform = platform
@@ -47,8 +51,21 @@ class RequirementPlanningService:
     def generate(self, request: dict[str, Any]) -> dict[str, Any]:
         requirement_id = _required_requirement_id(request)
         summary = self._approved_summary(requirement_id)
+        reviewed_context = None
+        reviewed_recommendation = None
+        if self.planning_context_service:
+            reviewed_context = self.planning_context_service.require_reviewed(
+                _text(request.get("planningContextId")), requirement_id,
+            )
+        if self.planning_recommendation_service:
+            reviewed_recommendation = self.planning_recommendation_service.require_approved(
+                _text(request.get("recommendationId")),
+                _text((reviewed_context or {}).get("contextId")),
+            )
         repository_context = self._repository_context(summary)
         planning_context = self.intelligence_engine.build_context(summary, repository_context)
+        if reviewed_context and planning_context.get("contextVersion") != reviewed_context.get("contextVersion"):
+            raise ValueError("Planning Context changed after recommendation approval. Refresh, review, and regenerate the recommendation.")
         existing = self.store.read().get(requirement_id)
         if (
             isinstance(existing, dict)
@@ -56,6 +73,13 @@ class RequirementPlanningService:
             and existing.get("requirementContextVersion") == summary["contextVersion"]
             and existing.get("analysisId") == summary["analysisId"]
             and (existing.get("planningContext") or {}).get("contextVersion") == planning_context["contextVersion"]
+            and (
+                not reviewed_recommendation
+                or (
+                    existing.get("recommendationId") == reviewed_recommendation.get("recommendationId")
+                    and existing.get("recommendationVersion") == reviewed_recommendation.get("version")
+                )
+            )
         ):
             return _public(existing)
 
@@ -67,7 +91,11 @@ class RequirementPlanningService:
         })
         artifact = self._artifact(generated["planningPackId"])
         planning_analysis = self.intelligence_engine.analyze(planning_context)
-        planning_recommendation = self.intelligence_engine.recommend(planning_context, planning_analysis)
+        planning_recommendation = (
+            self.planning_recommendation_service.to_engine_recommendation(reviewed_recommendation)
+            if reviewed_recommendation and self.planning_recommendation_service
+            else self.intelligence_engine.recommend(planning_context, planning_analysis)
+        )
         hierarchy = dict((artifact.get("payload") or {}).get("recommendedHierarchy") or {})
         planning_proposal = self.intelligence_engine.build_proposal(planning_context, planning_recommendation, hierarchy)
         planning_diff = self.intelligence_engine.build_diff(planning_proposal)
@@ -96,12 +124,16 @@ class RequirementPlanningService:
             "analysisId": summary["analysisId"],
             "planningPackId": generated["planningPackId"],
             "estimateId": estimate["estimateId"],
+            "recommendationId": (reviewed_recommendation or {}).get("recommendationId", ""),
+            "recommendationVersion": (reviewed_recommendation or {}).get("version", 0),
             "status": preview["validation"]["status"],
             "approvalRequired": True,
             "requirementSummary": summary,
             "engineeringEstimation": estimate,
             "planningPreview": preview,
             "planningContext": planning_context,
+            "reviewedPlanningContext": reviewed_context or {},
+            "reviewedPlanningRecommendation": reviewed_recommendation or {},
             "planningAnalysis": planning_analysis,
             "planningRecommendation": planning_recommendation,
             "planningProposal": planning_proposal,

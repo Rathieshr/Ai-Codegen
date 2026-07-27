@@ -85,9 +85,17 @@ class RequirementAnalysisEngine:
         # Goals instead of a Functional Requirements section. Preserve lineage
         # by promoting that exact source sentence rather than inventing a new one.
         if not values["functional_requirements"]:
-            values["functional_requirements"].extend(
+            promoted = [
                 item for item in values["business_goals"] if _FUNCTIONAL.search(item)
-            )
+            ]
+            values["functional_requirements"].extend(promoted)
+            # A behavioral requirement is not also a business outcome. Keep its
+            # source lineage in Functional Requirements and expose the missing
+            # Business Goal rather than displaying identical content twice.
+            values["business_goals"] = [
+                item for item in values["business_goals"]
+                if item not in promoted or _BUSINESS_OUTCOME.search(item)
+            ]
 
         if not values["functional_requirements"]:
             candidates = [
@@ -178,7 +186,7 @@ class RequirementAnalysisEngine:
             ambiguous_requirements=ambiguous,
             conflicting_requirements=conflicts,
             duplicate_requirements=duplicates,
-            diagnostics={"engine": "DeterministicRequirementAnalysisV2", "sourceItemCount": len(sentences), "extractedCounts": counts},
+            diagnostics={"engine": "DeterministicRequirementAnalysisV3", "sourceItemCount": len(sentences), "extractedCounts": counts},
             review_context={
                 "source": _text(context.get("sourceType")) or "Unknown",
                 "repository": {

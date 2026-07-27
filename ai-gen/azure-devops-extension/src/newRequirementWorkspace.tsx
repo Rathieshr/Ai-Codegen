@@ -1819,7 +1819,14 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
         <Signal label="Requirement Context" value={analysis.contextVersion} />
         <Signal label="Document Type" value={review.documentType || 'Not Applicable'} />
         <Signal label="Review Status" value={analysis.reviewStatus} />
-        <Signal label="Analysis Mode" value={analysis.aiAnalysis?.reasoningMode === 'AI' ? `${analysis.aiAnalysis.provider}${analysis.aiAnalysis.model ? ` · ${analysis.aiAnalysis.model}` : ''}` : 'Deterministic baseline'} />
+        <Signal
+          label="Analysis Mode"
+          value={analysis.aiAnalysis?.reasoningMode === 'AI'
+            ? `${analysis.aiAnalysis.provider}${analysis.aiAnalysis.model ? ` · ${analysis.aiAnalysis.model}` : ''}`
+            : analysis.aiAnalysis?.warnings?.length
+              ? 'Deterministic fallback · provider unavailable'
+              : 'Deterministic baseline'}
+        />
       </div>
       <RequirementHealth analysis={analysis} ingestion={ingestion} />
       <section className="hei-repository-recommendation" aria-label="Suggested Repository">
@@ -2008,8 +2015,11 @@ function RequirementHealth({ analysis, ingestion }: { analysis: RequirementAnaly
 }
 
 function QualityFindings({ result, onEdit, onReanalyze, onGenerateAcceptanceCriteria }: { result: RequirementAnalysisResult; onEdit: () => void; onReanalyze: () => void; onGenerateAcceptanceCriteria: () => void }) {
+  const missingAcceptanceFindings = result.acceptanceCriteriaSuggestions.length
+    ? []
+    : result.missingAcceptanceCriteria;
   const issues: Array<AnalysisFinding & { title: string; severity: string; impact: string; aiAssistance?: string }> = [
-    ...result.missingAcceptanceCriteria.map((finding) => ({ ...finding, title: 'Acceptance Criteria Missing', severity: 'Medium', impact: 'Generated Stories may not contain verifiable completion conditions.', aiAssistance: 'HEI can generate editable Given/When/Then suggestions for review.' })),
+    ...missingAcceptanceFindings.map((finding) => ({ ...finding, title: 'Acceptance Criteria Missing', severity: 'Medium', impact: 'Generated Stories may not contain verifiable completion conditions.', aiAssistance: 'HEI can generate editable Given/When/Then suggestions for review.' })),
     ...result.ambiguousRequirements.map((finding) => ({ ...finding, title: 'Ambiguous Requirement', severity: 'Medium', impact: 'Multiple interpretations may produce inconsistent planning artifacts.' })),
     ...result.conflictingRequirements.map((finding) => ({ ...finding, title: 'Conflicting Requirement', severity: 'Critical', impact: 'Planning is blocked until the conflicting intent is resolved.' })),
     ...result.duplicateRequirements.map((finding) => ({ ...finding, title: 'Duplicate Requirement', severity: 'Low', impact: 'Duplicate scope can create repeated stories and estimates.' })),

@@ -77,7 +77,20 @@ class RequirementAnalysisService:
 
     def get(self, requirement_id: str) -> dict[str, Any] | None:
         value = self.store.read().get(requirement_id)
-        return dict(value) if isinstance(value, dict) else None
+        if not isinstance(value, dict):
+            return None
+        analysis = dict(value)
+        state = analysis.get("acceptanceCriteriaState") or {}
+        if (
+            analysis.get("acceptanceCriteriaSuggestions")
+            and analysis.get("missingAcceptanceCriteria")
+            and state.get("state") == "AISuggested"
+        ):
+            requirement = self.requirement_ingestion.get(requirement_id)
+            if requirement:
+                self._refresh_acceptance_projection(analysis, requirement)
+                self._save(requirement_id, analysis)
+        return analysis
 
     def approve(self, requirement_id: str, actor: str) -> dict[str, Any]:
         analysis = self.get(requirement_id)
@@ -503,7 +516,7 @@ class RequirementAnalysisService:
     def _versions_current(analysis: dict[str, Any]) -> bool:
         return (
             analysis.get("diagnostics", {}).get("engine")
-            == "DeterministicRequirementAnalysisV2"
+            == "DeterministicRequirementAnalysisV3"
             and analysis.get("acceptanceDiagnostics", {}).get("engine")
             == "IntelligentAcceptanceCriteriaV1"
         )
@@ -558,10 +571,18 @@ class RequirementAnalysisService:
         conflicts = list(analysis.get("conflictingRequirements") or [])
         duplicates = list(analysis.get("duplicateRequirements") or [])
         missing = list(analysis.get("missingAcceptanceCriteria") or [])
+        state = analysis.get("acceptanceCriteriaState") or {}
+        suggestions_pending = (
+            state.get("state") == "AISuggested"
+            and state.get("status") == "PendingReview"
+        )
+        if suggestions_pending:
+            # Suggestions resolve the absence finding, but remain unofficial until reviewed.
+            missing = []
+            analysis["missingAcceptanceCriteria"] = []
         score = self.engine._quality_score(str(requirement.get("title") or ""), values, ambiguous, conflicts, duplicates)
         readiness = self.engine._readiness(values, score, missing, ambiguous, conflicts)
-        state = analysis.get("acceptanceCriteriaState") or {}
-        if state.get("state") == "AISuggested" and state.get("status") == "PendingReview":
+        if suggestions_pending:
             readiness["status"] = "ReadyWithRecommendations"
             readiness["readyForPlanning"] = True
             readiness["warnings"] = [

@@ -146,16 +146,25 @@ class IntelligentAcceptanceCriteriaEngine:
             for quality in analysis.get("nonFunctionalRequirements") or []
             if re.search(r"\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|seconds?|minutes?|%|percent)\b", str(quality), re.I)
         )
-        for statement, criterion_type, functional in candidates:
-            action = self._action(statement)
+        expanded_candidates = [
+            (statement, criterion_type, functional, behavior)
+            for statement, criterion_type, functional in candidates
+            for behavior in (
+                self._atomic_behaviors(self._behavior_phrase(statement))
+                if criterion_type == "Functional"
+                else [self._behavior_phrase(statement)]
+            )
+        ]
+        for statement, criterion_type, functional, behavior in expanded_candidates:
+            actor = self._matching_actor(statement, facts.actor)
+            action = self._action(behavior)
             if not action:
                 continue
             generic_category = self._unsupported_generic_category(statement, evidence_corpus)
             if generic_category:
                 continue
-            actor = self._matching_actor(statement, facts.actor)
-            matched_phrase = self._matched_phrase(statement, action)
-            outcome = self._observable_outcome(statement, action)
+            matched_phrase = self._matched_phrase(behavior, action)
+            outcome = self._observable_outcome(behavior, action)
             if criterion_type == "Business Rule" and re.search(r"\bonly authorized\b", statement, re.I):
                 target = re.sub(rf"^{re.escape(action)}\s+", "", matched_phrase, flags=re.I)
                 text = (
@@ -178,10 +187,15 @@ class IntelligentAcceptanceCriteriaEngine:
                 )
             else:
                 given = (
-                    f"Given {actor}" if actor
+                    f"Given {self._actor_context(actor)}" if actor
                     else f"Given the stated {criterion_type.lower()} context"
                 )
-                text = f"Scenario: {self._title(statement)}\n{given}\nWhen {matched_phrase}\nThen {outcome}."
+                text = (
+                    f"Scenario: {self._title(behavior)}\n"
+                    f"{given}\n"
+                    f"When the user {self._user_action_phrase(matched_phrase)}\n"
+                    f"Then {outcome}."
+                )
             suggestions.append(self._criterion(
                 text=text,
                 origin="AI Inferred",
@@ -428,6 +442,62 @@ class IntelligentAcceptanceCriteriaEngine:
         return match.group(1).lower() if match else ""
 
     @staticmethod
+    def _behavior_phrase(text: str) -> str:
+        """Remove requirement framing so observable behavior drives the criterion."""
+        cleaned = text.strip().rstrip(".")
+        match = re.match(
+            r"^(?:allow|allows|enable|enables)\s+.+?\s+to\s+(.+)$",
+            cleaned,
+            re.I,
+        )
+        return match.group(1).strip() if match else cleaned
+
+    @staticmethod
+    def _atomic_behaviors(behavior: str) -> list[str]:
+        """Split coordinated product actions while preserving their shared target."""
+        action = (
+            r"(?:view|show|display|search|filter|create|update|delete|submit|review|"
+            r"open|select|identify|detect|monitor|access|manage|configure|compare|list)"
+        )
+        match = re.match(
+            rf"^((?:{action})(?:\s*,\s*{action})*(?:\s*,?\s+and\s+{action}))\s+(.+)$",
+            behavior,
+            re.I,
+        )
+        if not match:
+            return [behavior]
+        actions = re.findall(action, match.group(1), re.I)
+        target = match.group(2).strip()
+        return [f"{verb.lower()} {target}" for verb in actions]
+
+    @staticmethod
+    def _actor_context(actor: str) -> str:
+        normalized = re.sub(r"\bUsers\b", "User", actor.strip(), flags=re.I)
+        article = "an" if normalized[:1].lower() in "aeiou" else "a"
+        return f"{article} {normalized} is using the relevant workflow"
+
+    @staticmethod
+    def _user_action_phrase(phrase: str) -> str:
+        """Conjugate coordinated base actions for a singular user."""
+        actions = {
+            "search": "searches",
+            "monitor": "monitors",
+            "manage": "manages",
+            "filter": "filters",
+            "review": "reviews",
+            "view": "views",
+            "open": "opens",
+            "select": "selects",
+            "identify": "identifies",
+            "detect": "detects",
+            "access": "accesses",
+        }
+        result = phrase
+        for base, singular in actions.items():
+            result = re.sub(rf"\b{base}\b", singular, result, flags=re.I)
+        return result
+
+    @staticmethod
     def _matched_phrase(text: str, action: str) -> str:
         match = re.search(rf"\b{re.escape(action)}\b.+", text, re.I)
         return (match.group(0) if match else text).strip().rstrip(".")
@@ -443,11 +513,22 @@ class IntelligentAcceptanceCriteriaEngine:
             return f"the results contain only {subject} matching the requested filter"
         if action == "search":
             subject = re.sub(r"^search\s+", "", phrase, flags=re.I)
+            if "," in subject or re.search(r"\band\s+(?:monitor|manage|filter|review)\b", subject, re.I):
+                target = re.sub(
+                    r"^.*\b(?:and\s+)?(?:monitor|manage|filter|review)\s+",
+                    "",
+                    subject,
+                    flags=re.I,
+                )
+                return f"{target} are available as the observable result"
             return f"matching {subject} are returned"
         if action in {"identify", "detect", "monitor"}:
             subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
             verb = {"identify": "identified", "detect": "detected", "monitor": "monitored"}[action]
             return f"{subject} can be {verb} from the observable result"
+        if action == "manage":
+            subject = re.sub(r"^manage\s+", "", phrase, flags=re.I)
+            return f"changes to {subject} are observable and complete"
         if action in {"provide", "surface", "list", "present", "deliver", "recommend"}:
             subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
             return f"{subject} is available as the observable business result"

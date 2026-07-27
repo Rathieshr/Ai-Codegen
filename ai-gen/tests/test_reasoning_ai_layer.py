@@ -214,6 +214,26 @@ class ReasoningAILayerTests(unittest.TestCase):
         self.assertEqual(first["promptVersion"], second["promptVersion"])
         self.assertTrue(second["telemetry"]["cacheHit"])
 
+    def test_transient_provider_fallback_is_not_cached(self) -> None:
+        calls = []
+
+        def invoke(prompt, request, operation):
+            calls.append(operation)
+            return "not json" if len(calls) <= 2 else valid_response()
+
+        engine = ReasoningEngine(
+            registry=ReasoningProviderRegistry([
+                CallableReasoningProvider("Phi", "phi-test", invoke)
+            ])
+        )
+        first = engine.reason("Requirement Analysis", engineering_context(), provider="Phi")
+        second = engine.reason("Requirement Analysis", engineering_context(), provider="Phi")
+
+        self.assertEqual("Deterministic", first["reasoningMode"])
+        self.assertEqual("AI", second["reasoningMode"])
+        self.assertEqual(3, len(calls))
+        self.assertFalse(second["telemetry"].get("cacheHit", False))
+
     def test_reasoning_layer_has_no_fact_source_imports(self) -> None:
         root = Path(__file__).resolve().parents[1] / "backend" / "reasoning"
         content = "\n".join(

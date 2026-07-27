@@ -274,7 +274,7 @@ Assumptions:
             "Allow Operations Users to search, monitor, and manage registered field devices "
             "from a centralized inventory."
         )
-        self.assertEqual([evidence], analyzed["businessGoals"])
+        self.assertEqual([], analyzed["businessGoals"])
         self.assertEqual([evidence], analyzed["functionalRequirements"])
         self.assertEqual(["Operations Users"], analyzed["actors"])
         polluted = "\n".join(
@@ -291,7 +291,7 @@ Assumptions:
 
         generated = imported_service.suggest_acceptance_criteria(context["requirementId"])
         self.assertEqual("AISuggested", generated["acceptanceCriteriaState"]["state"])
-        self.assertTrue(generated["acceptanceCriteriaSuggestions"])
+        self.assertEqual(3, len(generated["acceptanceCriteriaSuggestions"]))
         self.assertEqual(
             evidence,
             generated["acceptanceCriteriaSuggestions"][0]["evidence"][0]["requirementSentence"],
@@ -312,7 +312,7 @@ Assumptions:
         generated = self.service.suggest_acceptance_criteria(context["requirementId"])
 
         self.assertEqual(
-            "DeterministicRequirementAnalysisV2",
+            "DeterministicRequirementAnalysisV3",
             generated["diagnostics"]["engine"],
         )
         self.assertNotIn("Planning Recommendations", generated["functionalRequirements"])
@@ -399,6 +399,26 @@ Assumptions:
         self.assertEqual("Covered", areas["Functional Requirements"])
         self.assertEqual("Covered", areas["Acceptance Criteria"])
         self.assertEqual("Not Provided", areas["Dependencies"])
+
+    def test_allow_actor_requirement_generates_grammatical_fallback_criterion(self):
+        context = self.ingest(
+            "Functional Requirements:\n"
+            "Allow Operations Users to search, monitor, and manage registered field devices "
+            "from a centralized inventory.\n"
+            "Actors:\nOperations Users"
+        )
+        self.service.analyze(context["requirementId"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        criteria = generated["acceptanceCriteriaSuggestions"]
+        combined = "\n".join(item["text"] for item in criteria)
+
+        self.assertEqual(3, len(criteria))
+        self.assertIn("Scenario: Search Registered Field Devices", combined)
+        self.assertIn("Scenario: Monitor Registered Field Devices", combined)
+        self.assertIn("Scenario: Manage Registered Field Devices", combined)
+        self.assertIn("Given an Operations User is using the relevant workflow", combined)
+        self.assertNotIn("can Operations Users to", combined)
+        self.assertFalse(generated["missingAcceptanceCriteria"])
 
     def test_supported_business_rule_and_measurable_quality_evidence_generate_criteria(self):
         context = self.ingest(

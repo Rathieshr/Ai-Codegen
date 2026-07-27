@@ -3157,8 +3157,8 @@ button.hei-story-list-card {
 .hei-requirement-form .wide, .hei-intake-context, .hei-future-sources, .hei-requirement-form > button { grid-column: 1 / -1; }
 .hei-requirement-form textarea { min-height: 220px; resize: vertical; }
 .hei-requirement-progress { display: grid; grid-template-columns: repeat(10, minmax(86px, 1fr)); gap: 0; overflow-x: auto; border-block: 1px solid var(--hei-border-soft); padding: 10px 2px; }
-.hei-requirement-progress > div { position: relative; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 6px; min-width: 108px; color: var(--hei-muted); font-size: 11px; font-weight: 600; }
-.hei-requirement-progress > div > i { position: absolute; z-index: 0; top: 50%; left: 20px; right: -2px; height: 1px; background: var(--hei-border); }
+.hei-requirement-progress > div { position: relative; display: grid; grid-template-rows: 20px auto; justify-items: center; align-items: start; gap: 5px; min-width: 108px; color: var(--hei-muted); font-size: 11px; font-weight: 600; text-align: center; }
+.hei-requirement-progress > div > i { position: absolute; z-index: 0; top: 10px; left: 50%; right: -50%; height: 1px; background: var(--hei-border); }
 .hei-requirement-progress-marker { position: relative; z-index: 1; display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--hei-border); border-radius: 50%; background: var(--hei-surface); color: var(--hei-muted); font-size: 11px; }
 .hei-requirement-progress > div.complete { color: var(--hei-text); }
 .hei-requirement-progress > div.complete .hei-requirement-progress-marker { border-color: var(--hei-success); background: var(--hei-success); color: #fff; }
@@ -3223,7 +3223,7 @@ button.hei-story-list-card {
 .hei-requirement-health article p { margin: 0; color: var(--hei-muted); font-size: 11px; }
 .hei-requirement-review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 10px; }
 .hei-requirement-review-grid > section { display: grid; align-content: start; min-width: 0; min-height: 150px; padding: 14px; border: 1px solid var(--hei-border-soft); border-radius: 6px; background: var(--hei-surface); }
-.hei-requirement-review-grid > section > header { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-bottom: 10px; }
+.hei-requirement-review-grid > section > header { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 92px); align-items: center; gap: 8px; margin-bottom: 10px; }
 .hei-requirement-review-grid > section > header > span { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: var(--hei-surface-subtle); color: var(--hei-muted); font-size: 10px; font-weight: 700; }
 .hei-requirement-review-grid > section > header > small { min-width: 22px; padding: 2px 6px; border-radius: 8px; background: var(--hei-surface-subtle); color: var(--hei-muted); text-align: center; }
 .hei-requirement-review-grid h3 { margin: 0; font-size: 14px; }
@@ -3231,7 +3231,7 @@ button.hei-story-list-card {
 .hei-requirement-review-grid li { margin: 4px 0; }
 .hei-requirement-review-grid > section.empty { border-style: dashed; background: transparent; }
 .hei-requirement-review-grid > section.empty.warning { border-color: var(--hei-warning); }
-.hei-origin-badge { justify-self: end; border: 1px solid var(--hei-border); border-radius: 999px; padding: 2px 7px; background: var(--hei-surface-subtle); color: var(--hei-muted); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.hei-origin-badge { justify-self: end; min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid var(--hei-border); border-radius: 999px; padding: 2px 7px; background: var(--hei-surface-subtle); color: var(--hei-muted); font-size: 9px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box; }
 .hei-origin-badge.source, .hei-origin-badge.imported { border-color: var(--hei-success); color: var(--hei-success); }
 .hei-origin-badge.ai-suggested { border-color: var(--hei-blue); color: var(--hei-blue); }
 .hei-origin-badge.user-edited { border-color: var(--hei-warning); color: var(--hei-warning-text, #8a5a00); }

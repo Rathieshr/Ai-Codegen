@@ -98,6 +98,7 @@ class ReasoningEngine:
     def _execute(self, request: ReasoningRequest, operation: str) -> dict[str, Any]:
         started = time.monotonic()
         selected, attempted = self.registry.select(request.providerPreference)
+        provider_was_available = selected is not None
         provider_name = selected.name if selected else "Deterministic"
         model = selected.model if selected else ""
         warnings: list[str] = []
@@ -211,7 +212,10 @@ class ReasoningEngine:
         if prompt_stored:
             telemetry_record["prompt"] = built.prompt
         self.telemetry.record(telemetry_record)
-        self.cache.set(cache_key, result)
+        # A temporary provider, parsing, or budget failure must remain retryable.
+        # Cache successful AI output and intentional provider-free deterministic mode only.
+        if mode == "AI" or not provider_was_available:
+            self.cache.set(cache_key, result)
         return result
 
 

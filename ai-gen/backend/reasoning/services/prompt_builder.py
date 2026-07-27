@@ -221,7 +221,28 @@ def _evidence(kind: str, value: Any, source: str, name: Any = "") -> dict[str, A
 
 
 def _output_schema(workflow_type: str) -> dict[str, Any]:
-    if _key(workflow_type) == "planning_recommendation":
+    workflow_key = _key(workflow_type)
+    if workflow_key == "acceptance_criteria_generation":
+        return {
+            "recommendation": {
+                "acceptanceCriteria": [{
+                    "title": "short scenario title",
+                    "text": "Scenario: ...\\nGiven ...\\nWhen ...\\nThen ...",
+                    "type": "Functional | Business Rule | Non-Functional",
+                    "mappedFunctionalRequirement": "exact supplied functional requirement",
+                    "confidence": 0,
+                }],
+                "summary": "string",
+            },
+            "reasoning": ["string"],
+            "alternatives": [{"title": "string", "reason": "string"}],
+            "evidence": [{"referenceId": "string", "reason": "string"}],
+            "risks": ["string"],
+            "tradeOffs": ["string"],
+            "impact": {},
+            "confidence": 0,
+        }
+    if workflow_key == "planning_recommendation":
         option = {
             "strategy": "one supported recommendation strategy",
             "description": "string",

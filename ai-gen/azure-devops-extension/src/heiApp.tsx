@@ -93,7 +93,7 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
 
   function reportError(value: string) {
     setError(value);
-    if (context) void recordDiagnostic(context, 'HubError', { view: route, message: value.slice(0, 500) });
+    if (context && value) void recordDiagnostic(context, 'HubError', { view: route, message: value.slice(0, 500) });
   }
 
   async function updatePreferences(changes: Partial<WorkspacePreferences>) {

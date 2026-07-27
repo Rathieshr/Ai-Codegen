@@ -31,6 +31,15 @@ TEMPLATES: dict[str, PromptTemplate] = {
         "Assess requirement quality and recommend evidence-backed improvements.",
         _COMMON + ("Distinguish source facts, missing information, and recommendations.",),
     ),
+    "acceptance_criteria_generation": PromptTemplate(
+        "Acceptance Criteria Generation", "Senior Business Analyst and QA Lead",
+        "Generate measurable, implementation-independent Acceptance Criteria from approved requirement facts.",
+        _COMMON + (
+            "Generate criteria only for supplied functional requirements, business rules, and measurable constraints.",
+            "Use Given, When, Then wording and map every criterion to a supplied functional requirement.",
+            "Do not turn missing information or assumptions into official requirements.",
+        ),
+    ),
     "planning_recommendation": PromptTemplate(
         "Planning Recommendation", "Product Manager and Solution Architect",
         "Recommend how approved requirements should fit the existing engineering landscape.",

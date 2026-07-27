@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "hei-engineering-platform",
   "publisher": "AiIntelliCodegen",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "name": "HEI",
   "description": "Hubbell Engineering Intelligence for repository-aware planning, execution, QA, and engineering operations in Azure DevOps.",
   "public": false,

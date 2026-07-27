@@ -180,6 +180,14 @@ type RequirementAnalysisResult = {
   conflictingRequirements: AnalysisFinding[];
   duplicateRequirements: AnalysisFinding[];
   repositorySuggestion?: RepositorySuggestion;
+  aiAnalysis?: {
+    status: string; reasoningMode: string; provider: string; model: string; promptVersion: string;
+    insights: string[]; warnings: string[]; confidence: { overall?: number; level?: string };
+  };
+  acceptanceDiagnostics?: {
+    generationMode?: string; reasoningMode?: string; provider?: string; model?: string;
+    promptVersion?: string; warnings?: string[];
+  };
 };
 
 type IngestionResult = {
@@ -964,6 +972,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
       if (!response.ok) throw new Error(analyzed.error?.message || `Acceptance Criteria action returned HTTP ${response.status}.`);
       setRequirementAnalysis(analyzed);
       setReviewContent(analyzed.planningRequirement);
+      onError('');
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Unable to update Acceptance Criteria.');
     } finally {
@@ -1810,6 +1819,7 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
         <Signal label="Requirement Context" value={analysis.contextVersion} />
         <Signal label="Document Type" value={review.documentType || 'Not Applicable'} />
         <Signal label="Review Status" value={analysis.reviewStatus} />
+        <Signal label="Analysis Mode" value={analysis.aiAnalysis?.reasoningMode === 'AI' ? `${analysis.aiAnalysis.provider}${analysis.aiAnalysis.model ? ` · ${analysis.aiAnalysis.model}` : ''}` : 'Deterministic baseline'} />
       </div>
       <RequirementHealth analysis={analysis} ingestion={ingestion} />
       <section className="hei-repository-recommendation" aria-label="Suggested Repository">
@@ -1956,9 +1966,14 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
       </footer>
     </> : activeView === 'criteria' ? <div className="hei-requirement-empty hei-acceptance-missing">
       <strong>No Acceptance Criteria were found in the requirement.</strong>
-      <p>This is not an AI error. Planning can continue, but testability and implementation quality may be reduced.</p>
+      <p>{state.description || 'This is not an AI error. Planning can continue, but testability and implementation quality may be reduced.'}</p>
+      {analysis.acceptanceDiagnostics?.generationMode ? <small>
+        Last generation: {analysis.acceptanceDiagnostics.generationMode === 'AI'
+          ? `${analysis.acceptanceDiagnostics.provider || 'Reasoning AI'}${analysis.acceptanceDiagnostics.model ? ` · ${analysis.acceptanceDiagnostics.model}` : ''}`
+          : 'Deterministic fallback'}
+      </small> : null}
       <div>
-        <button className="planner-button primary" type="button" disabled={busy} onClick={onGenerate}>Generate Suggested Acceptance Criteria</button>
+        <button className="planner-button primary" type="button" disabled={busy} onClick={onGenerate}>{busy ? 'Generating with Reasoning AI...' : 'Generate Suggested Acceptance Criteria'}</button>
         <button className="planner-button secondary" type="button" disabled={busy} onClick={onSkip}>Skip</button>
         <button className="planner-button secondary" type="button" disabled={busy} onClick={onEditRequirement}>Edit Requirement</button>
       </div>

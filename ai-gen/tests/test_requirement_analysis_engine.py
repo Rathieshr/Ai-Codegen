@@ -25,6 +25,51 @@ class ContextSpy:
         return {"capsuleId": "capsule-analysis", "status": "Ready", "confidence": 0.8, "freshnessStatus": "Fresh", "sourceSummary": [], "warnings": [], "blockers": []}
 
 
+class RequirementReasoningSpy:
+    def __init__(self):
+        self.calls = []
+
+    def analyze(self, workflow_type, engineering_context, **kwargs):
+        self.calls.append((workflow_type, engineering_context, kwargs))
+        if workflow_type == "Acceptance Criteria Generation":
+            functional = engineering_context["requirement"]["functionalRequirements"][0]
+            return {
+                "reasoningMode": "AI",
+                "provider": "Phi",
+                "model": "phi-test",
+                "promptVersion": "requirement-ac-v1",
+                "recommendation": {
+                    "acceptanceCriteria": [{
+                        "title": "View Device Health",
+                        "text": (
+                            "Scenario: View Device Health\n"
+                            "Given an Operations User\n"
+                            "When the user opens device health\n"
+                            "Then current health and communication status are visible."
+                        ),
+                        "type": "Functional",
+                        "mappedFunctionalRequirement": functional,
+                        "confidence": 91,
+                    }],
+                },
+                "reasoning": ["The criterion maps to the supplied functional requirement."],
+                "alternatives": [],
+                "warnings": [],
+                "confidence": {"overall": 88, "level": "High"},
+            }
+        return {
+            "reasoningMode": "AI",
+            "provider": "Phi",
+            "model": "phi-test",
+            "promptVersion": "requirement-analysis-v1",
+            "recommendation": {"title": "Review generated criteria"},
+            "reasoning": ["The requirement has a clear functional outcome."],
+            "alternatives": [],
+            "warnings": [],
+            "confidence": {"overall": 84, "level": "High"},
+        }
+
+
 class RequirementAnalysisTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -272,6 +317,59 @@ Assumptions:
         )
         self.assertNotIn("Planning Recommendations", generated["functionalRequirements"])
         self.assertTrue(generated["acceptanceCriteriaSuggestions"])
+
+    def test_generate_suggestions_rebuilds_missing_analysis_from_requirement_context(self):
+        context = self.ingest(
+            "Business Goals:\n"
+            "Allow Operations Users to identify unhealthy devices before failures occur.\n"
+            "Functional Requirements:\n"
+            "Operations Users must view current device health and communication status."
+        )
+
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+
+        self.assertEqual(context["requirementId"], generated["requirementId"])
+        self.assertEqual("AISuggested", generated["acceptanceCriteriaState"]["state"])
+        self.assertTrue(generated["acceptanceCriteriaSuggestions"])
+        self.assertIsNotNone(self.service.get(context["requirementId"]))
+
+    def test_phi_reasoning_enriches_analysis_and_generates_acceptance_criteria(self):
+        reasoning = RequirementReasoningSpy()
+        service = RequirementAnalysisService(
+            self.service.store,
+            requirement_ingestion=self.ingestion,
+            reasoning_engine=reasoning,
+        )
+        context = self.ingest(
+            "Business Goals:\n"
+            "Allow Operations Users to identify unhealthy devices before failures occur.\n"
+            "Functional Requirements:\n"
+            "Operations Users must view current device health and communication status."
+        )
+
+        analyzed = service.analyze(context["requirementId"])
+        generated = service.suggest_acceptance_criteria(context["requirementId"])
+
+        self.assertEqual("AI", analyzed["aiAnalysis"]["reasoningMode"])
+        self.assertEqual("Phi", analyzed["aiAnalysis"]["provider"])
+        self.assertEqual(
+            ["Requirement Analysis", "Acceptance Criteria Generation"],
+            [call[0] for call in reasoning.calls],
+        )
+        self.assertEqual("AI", generated["acceptanceDiagnostics"]["generationMode"])
+        self.assertEqual("Phi", generated["acceptanceDiagnostics"]["provider"])
+        self.assertEqual(
+            "AI Suggested",
+            generated["acceptanceCriteriaSuggestions"][0]["origin"],
+        )
+        self.assertIn(
+            "current health and communication status are visible",
+            generated["acceptanceCriteriaSuggestions"][0]["text"],
+        )
+
+    def test_missing_requirement_context_is_not_hidden_by_analysis_recovery(self):
+        with self.assertRaisesRegex(ValueError, "Requirement context was not found"):
+            self.service.suggest_acceptance_criteria("requirement_missing")
 
     def test_insufficient_generation_evidence_returns_missing_information_not_error(self):
         context = self.ingest("Improve the operational experience.")

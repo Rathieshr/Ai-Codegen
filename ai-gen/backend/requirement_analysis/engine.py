@@ -25,6 +25,15 @@ _HEADINGS = {
     "constraints": "constraints", "dependencies": "dependencies", "risks": "risks",
     "open questions": "open_questions", "questions": "open_questions", "assumptions": "assumptions",
 }
+_CONTEXT_HEADINGS = {
+    "requirement summary": "__classify__",
+    "description": "__classify__",
+    "expected features": "__ignore__",
+    "planning recommendations": "__ignore__",
+    "missing information": "__ignore__",
+    "area and iteration": "__ignore__",
+    "source metadata": "__ignore__",
+}
 _INLINE_HEADING = re.compile(
     r"(?i)(?<![\w-])(" + "|".join(
         re.escape(value) for value in sorted(_HEADINGS, key=len, reverse=True)
@@ -33,6 +42,16 @@ _INLINE_HEADING = re.compile(
 _NFR_TERMS = re.compile(r"\b(performance|latency|response time|availability|reliability|scalability|security|privacy|audit|accessibility|throughput|sla|milliseconds?|seconds?|concurrent|encryption)\b", re.I)
 _AMBIGUOUS = re.compile(r"\b(appropriate|as needed|etc\.?|fast|easy|some|tbd|user[- ]friendly|various|quickly|robust|seamless|normal|sufficient|adequate)\b", re.I)
 _FUNCTIONAL = re.compile(r"\b(must|shall|should|can|needs? to|allow|enable|display|show|create|update|view|search|filter|notify|calculate|validate|support|provide)\b", re.I)
+_BUSINESS_OUTCOME = re.compile(r"\b(reduce|increase|improve|minimi[sz]e|maximi[sz]e|accelerate|prevent|avoid)\b", re.I)
+_REQUIREMENT_NOISE = {
+    "requirement summary",
+    "planning recommendations",
+    "description",
+    "expected features",
+    "area and iteration",
+    "no acceptance criteria were provided in the source requirement",
+    "acceptance criteria require definition",
+}
 
 
 class RequirementAnalysisEngine:
@@ -44,14 +63,37 @@ class RequirementAnalysisEngine:
         sections, sentences = _parse(content)
         values: dict[str, list[str]] = {name: [] for name in set(_HEADINGS.values())}
         for section, text in sections:
+            if section == "__ignore__" or _is_requirement_noise(text):
+                continue
             target = _HEADINGS.get(section)
             if target:
                 values[target].append(text)
                 continue
             self._classify(text, values)
 
+        if _text(context.get("sourceType")) == "AzureDevOpsWorkItem":
+            values["business_goals"] = [
+                item for item in values["business_goals"]
+                if _is_imported_business_goal(item)
+            ]
+            values["functional_requirements"] = [
+                item for item in values["functional_requirements"]
+                if _is_imported_functional_requirement(item)
+            ]
+
+        # ADO descriptions often express the observable behavior under Business
+        # Goals instead of a Functional Requirements section. Preserve lineage
+        # by promoting that exact source sentence rather than inventing a new one.
         if not values["functional_requirements"]:
-            candidates = [item for item in sentences if item and not _is_heading(item)]
+            values["functional_requirements"].extend(
+                item for item in values["business_goals"] if _FUNCTIONAL.search(item)
+            )
+
+        if not values["functional_requirements"]:
+            candidates = [
+                item for item in sentences
+                if item and not _is_heading(item) and not _is_requirement_noise(item)
+            ]
             if candidates:
                 values["functional_requirements"].append(candidates[0])
 
@@ -64,6 +106,14 @@ class RequirementAnalysisEngine:
             match = re.search(r"\bas (?:an? )?([^,]+),\s*i\b", sentence, re.I)
             if match:
                 actors.append(match.group(1).strip().title())
+            enabled_actor = re.search(
+                r"\b(?:allow|enable)\s+([A-Z][A-Za-z -]+?)\s+to\s+"
+                r"(?:view|show|display|search|filter|create|update|manage|monitor|review|access)\b",
+                sentence,
+                re.I,
+            )
+            if enabled_actor:
+                actors.append(enabled_actor.group(1).strip().title())
         values["actors"] = _unique(actors)
 
         analyzed_items = values["functional_requirements"] + values["non_functional_requirements"] + values["acceptance_criteria"]
@@ -128,7 +178,7 @@ class RequirementAnalysisEngine:
             ambiguous_requirements=ambiguous,
             conflicting_requirements=conflicts,
             duplicate_requirements=duplicates,
-            diagnostics={"engine": "DeterministicRequirementAnalysisV1", "sourceItemCount": len(sentences), "extractedCounts": counts},
+            diagnostics={"engine": "DeterministicRequirementAnalysisV2", "sourceItemCount": len(sentences), "extractedCounts": counts},
             review_context={
                 "source": _text(context.get("sourceType")) or "Unknown",
                 "repository": {
@@ -324,8 +374,8 @@ def _parse(content: str) -> tuple[list[tuple[str, str]], list[str]]:
                 if text:
                     _append_sentences(items, sentences, current, text)
             continue
-        heading = _heading(line)
-        if heading:
+        heading = _section_heading(line)
+        if heading is not None:
             current = heading
             continue
         _append_sentences(items, sentences, current, line)
@@ -362,8 +412,39 @@ def _heading(value: str) -> str:
     return cleaned if cleaned in _HEADINGS else ""
 
 
+def _section_heading(value: str) -> str | None:
+    cleaned = re.sub(r"^#{1,6}\s*", "", value).strip().rstrip(":").strip().lower()
+    if cleaned in _HEADINGS:
+        return cleaned
+    return _CONTEXT_HEADINGS.get(cleaned)
+
+
 def _is_heading(value: str) -> bool:
-    return bool(_heading(value))
+    return _section_heading(value) is not None
+
+
+def _is_requirement_noise(value: str) -> bool:
+    normalized = _normalize(value)
+    if normalized in _REQUIREMENT_NOISE:
+        return True
+    return bool(re.match(
+        r"^(?:area|iteration|state|assigned to|work item type|tags?|revision)\s*:",
+        value.strip(),
+        re.I,
+    ))
+
+
+def _is_imported_business_goal(value: str) -> bool:
+    if _is_requirement_noise(value):
+        return False
+    words = _normalize(value).split()
+    return bool(_FUNCTIONAL.search(value) or _BUSINESS_OUTCOME.search(value) or len(words) >= 6)
+
+
+def _is_imported_functional_requirement(value: str) -> bool:
+    if _is_requirement_noise(value):
+        return False
+    return bool(_FUNCTIONAL.search(value))
 
 
 def _unique(items: list[str]) -> list[str]:

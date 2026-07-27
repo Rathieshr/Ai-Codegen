@@ -14,6 +14,7 @@ Requirement Intelligence
 EngineeringIntelligenceService
         |
         +-- Repository Intelligence
+        +-- Project Intelligence fact adapter
         +-- Azure DevOps through HEI Platform SDK
         +-- Engineering Memory
         +-- Existing planning similarity and strategy engine
@@ -36,11 +37,49 @@ Specialized providers retain their current responsibilities:
 - Azure DevOps Integration and the HEI Platform SDK own synchronized ADO
   records. Engineering Intelligence never calls an ADO client directly.
 - Engineering Memory owns approved historical knowledge and retrieval.
+- Project Intelligence remains the compatibility owner for project profile,
+  Knowledge Registry cache, and versioned planning artifacts created by the
+  workflow-automation implementation.
 - The deterministic planning engine owns work-item similarity and strategy
   scoring.
 
 Engineering Intelligence owns only orchestration, normalization, context
 versioning, and consumer-specific projections.
+
+## Service Architecture
+
+The implementation is split into reusable fact services under
+`backend/engineering_intelligence/services`. These services adapt existing
+providers; they do not rescan, recalculate, or invoke an AI model.
+
+| Service | Responsibility | Existing authority |
+| --- | --- | --- |
+| `RepositoryService` | Repository summary, relevant modules/files, technology stack | Repository Intelligence |
+| `MarkdownService` | Index and search supplied Markdown documents | Repository/document ingestion |
+| `ArchitectureService` | Architecture context from repository graph facts | Repository Intelligence graph |
+| `DependencyService` | Dependency context and affected modules | Engineering Graph |
+| `AzureDevOpsService` | Normalized project, open work, and similar stories | HEI Platform SDK synchronized cache |
+| `SimilarityService` | Similar requirement and reusable implementation projections | Planning context and retrieved evidence |
+| `MemoryService` | Approved memory search, lessons, and candidate storage | Engineering Memory |
+| `ContextBuilder` | Bounded, optimized context projection | Canonical `EngineeringContext` |
+| `IntelligenceOrchestrator` | Requirement, Planning, Execution, and Validation entry points | The services above |
+| `ProjectIntelligenceProvider` | Relevant Knowledge Registry facts and approved historical artifacts | Project Intelligence read APIs |
+
+The `interfaces` package contains structural contracts. `dto` re-exports the
+canonical transport-neutral models. `cache` contains version-keyed context
+cache primitives. `providers` is deliberately free of model-provider code.
+
+```text
+Repository Intelligence ----+
+Markdown/Documents ----------+
+HEI Platform SDK / ADO ------+--> fact services --> EngineeringContext
+Engineering Memory ----------+                          |
+Engineering Graph -----------+                          v
+Project Intelligence --------+
+                                               IntelligenceOrchestrator
+                                                  |   |   |   |
+                                      Requirement Planning Execution Validation
+```
 
 ## Canonical Contract
 
@@ -57,10 +96,16 @@ versioning, and consumer-specific projections.
 - Engineering Readiness;
 - Planning Recommendation input;
 - correlation and source-version metadata.
+- a bounded `projectIntelligence` evidence block containing project
+  background, intent-selected Knowledge Registry facts, approved historical
+  artifacts, and rejected-context diagnostics.
 
 The context ID is derived from source versions, including the requirement,
-repository snapshot, ADO revisions, and memory versions. Repository file
-evidence is returned only when it exists in the Repository Intelligence graph.
+repository snapshot, ADO revisions, memory versions, and Project Intelligence
+knowledge version. Repository file evidence is returned only when it exists in
+the Repository Intelligence graph. Knowledge-cache source-document paths are
+identified separately as documentation evidence and never promoted to ranked
+code files.
 
 ## Consumer Rules
 
@@ -76,9 +121,22 @@ evidence is returned only when it exists in the Repository Intelligence graph.
 - Validation receives only affected tests, components, stories, APIs, and
   impact analysis.
 
-The legacy `ProjectIntelligenceService` remains available during migration for
-existing project-profile and artifact APIs. New cross-module intelligence
-integration must use `EngineeringIntelligenceService`.
+The legacy `ProjectIntelligenceService` remains available during migration.
+`ProjectIntelligenceProvider` calls only `get_profile`,
+`get_knowledge_cache`, and `list_artifacts`. It never invokes legacy
+generation, refinement, context-capsule, repository-analysis, or provider
+methods. New cross-module intelligence integration must use
+`EngineeringIntelligenceService`.
+
+Selection rules:
+
+- Project Profile is background only.
+- Knowledge Registry is fact evidence and is selected by requirement intent.
+- Only approved or locked artifacts may influence similarity and reuse.
+- Draft, review, rejected, archived, unrelated, and project-mismatched context
+  is excluded and recorded in `rejectedContext`.
+- Repository Intelligence remains authoritative for code files, services,
+  APIs, graph relationships, and current repository state.
 
 ## Public Methods
 
@@ -94,6 +152,16 @@ The service exposes both Python-style and contract-style method names:
 - `analyzeArchitecture`, `analyzeDependencies`
 - `recommendRepository`, `recommendPlanningStrategy`
 - `generateImpactAnalysis`, `generatePlanningContext`
+- `analyzeRepository`, `getRepositorySummary`
+- `findRelevantModules`, `findRelevantFiles`, `findTechnologyStack`
+- `indexMarkdown`, `searchDocumentation`, `getArchitectureSummary`
+- `analyzeArchitecture`, `getArchitectureContext`
+- `analyzeDependencies`, `findAffectedModules`
+- `analyzeProject`, `findOpenWork`
+- `findSimilarRequirement`, `findReusableImplementation`
+- `searchMemory`, `saveInsight`, `findLessonsLearned`
+- `buildRequirementContext`, `buildPlanningContext`
+- `buildExecutionContext`, `buildValidationContext`
 
 ## Compatibility
 
@@ -101,3 +169,16 @@ Persisted Planning Context records include the canonical
 `engineeringContext` and retain existing fields used by current APIs and UI.
 The compatibility projection is deterministic and does not retrieve new
 evidence.
+
+`EngineeringIntelligenceService` remains the public compatibility facade.
+Existing snake_case and camelCase methods continue to work. New consumers
+should use `IntelligenceOrchestrator` through the facade's four `build*Context`
+methods. `ProjectIntelligenceService` remains available for legacy profile,
+artifact, and generation APIs while those callers migrate incrementally.
+
+## AI Boundary
+
+Engineering Intelligence returns facts and evidence only. It has no Phi,
+OpenAI, Claude, Gemini, or other model dependency. Reasoning engines receive
+the optimized context after orchestration. Missing evidence remains missing;
+repository files, APIs, dependencies, and memory are never invented.

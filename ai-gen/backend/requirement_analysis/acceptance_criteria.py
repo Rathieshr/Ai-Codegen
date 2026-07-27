@@ -11,7 +11,8 @@ from uuid import uuid4
 _ACTION_PATTERN = re.compile(
     r"\b(view|show|display|search|filter|create|update|delete|submit|review|"
     r"approve|reject|notify|calculate|export|import|open|select|identify|"
-    r"detect|monitor|receive|access|manage|configure|generate|compare|load|respond)\b",
+    r"detect|monitor|receive|access|manage|configure|generate|compare|load|respond|"
+    r"provide|enable|allow|recommend|surface|list|present|deliver|use|add|adding)\b",
     re.I,
 )
 _TRIGGER_PATTERN = re.compile(r"\b(when|after|before|upon|once|if)\b", re.I)
@@ -447,6 +448,15 @@ class IntelligentAcceptanceCriteriaEngine:
             subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
             verb = {"identify": "identified", "detect": "detected", "monitor": "monitored"}[action]
             return f"{subject} can be {verb} from the observable result"
+        if action in {"provide", "surface", "list", "present", "deliver", "recommend"}:
+            subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
+            return f"{subject} is available as the observable business result"
+        if action in {"enable", "allow"}:
+            subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
+            return f"the described user can {subject}"
+        if action in {"add", "adding"}:
+            subject = re.sub(r"^add(?:ing)?\s+", "", phrase, flags=re.I)
+            return f"{subject} is available for the stated business goal"
         return f"the stated outcome for '{phrase}' is observable and complete"
 
     @staticmethod

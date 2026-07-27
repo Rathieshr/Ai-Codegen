@@ -17,22 +17,44 @@ type ProposalNode = {
   acceptanceCriteria: string[]; businessRules: string[]; dependencies: string[]; storyPoints: number;
   repositoryModules: string[]; affectedApis: string[]; affectedScreens: string[]; technicalNotes: string[];
   generatedTests: string[]; risk: string; priority: string; origin: string; confidence: number; reason: string;
-  taskType: string; owner: string; order: number; status: string; planningVersion: number;
-  repositoryMapping: { repositoryId?: string; repositoryName?: string; snapshotVersion?: string; mode?: string };
+  taskType: string; storyType: string; owner: string; order: number; status: string; planningVersion: number;
+  acceptanceCriteriaDetails: Array<{ criterionId: string; text: string; origin: string; status: string; confidence: number }>;
+  affectedServices: string[]; affectedDatabaseObjects: string[]; externalIntegrations: string[];
+  evidence: Array<{ type?: string; value?: string; source?: string }>; definitionOfDone: string[];
+  repositoryMapping: {
+    repositoryId?: string; repositoryName?: string; snapshotVersion?: string; mode?: string;
+    modules?: string[]; services?: string[]; apis?: string[]; screens?: string[];
+    databaseObjects?: string[]; externalIntegrations?: string[]; reason?: string; evidenceStatus?: string;
+  };
   traceability: {
     requirementId: string; businessGoals: string[]; functionalRequirements: string[]; acceptanceCriteria: string[];
     recommendationId: string; repositoryModules: string[]; memoryReferences: string[];
+    acceptanceCriterionIds?: string[]; knowledgeReferences?: string[]; contextVersion?: string;
   };
 };
 type PlanningProposalResult = {
-  proposalId: string; planningPackId: string; requirementId: string; contextId: string; recommendationId: string;
-  projectId: string; correlationId: string; title: string; status: string; version: number; nodes: ProposalNode[];
+  proposalId: string; planningPackId: string; requirementId: string; contextId: string; contextVersion: string;
+  recommendationId: string; recommendationVersion: number;
+  projectId: string; correlationId: string; title: string; executiveSummary: string; businessGoal: string;
+  recommendedStrategy: { type: string; title: string; summary: string; reason: string; confidence: number };
+  status: string; version: number; nodes: ProposalNode[];
   estimate: {
     aiEngineeringDays: number; aiStoryPoints: number; engineeringDays: number; storyPoints: number;
     sprintCount: number; developersRequired: number; complexity: string; risk: string; confidence: number; overrideReason: string;
   };
   implementationOrder: string[];
   dependencies: Array<{ from: string; to: string; type?: string }>;
+  dependencyGraph: { categories: Record<string, Array<Record<string, unknown>>> };
+  acceptanceCriteria: Array<{ criterionId: string; title: string; text: string; origin: string; status: string; confidence: number; mappedNodeIds: string[] }>;
+  engineeringNotes: string[]; risks: Array<{ riskId: string; description: string; level: string; mitigation: string }>;
+  definitionOfDone: string[]; knowledgeVersion: string; knowledgeReferences: string[];
+  azureDevOpsPreview: {
+    previewId: string; projectId: string; areaPath: string; iterationPath: string; tags: string[];
+    workItems: Array<{ proposalNodeId: string; workItemType: string; title: string; parentProposalNodeId: string; storyPoints?: number; operation: string }>;
+    links: Array<{ type: string; parentProposalNodeId: string; childProposalNodeId: string }>;
+    writeStatus: string; writesPerformed: number;
+  };
+  aiReview: { status?: string; summary?: string; recommendations?: string[]; confidence?: number; provider?: string; reasoningMode?: string };
   validation: { status: string; mandatoryPassed: boolean; findings: Array<{ code: string; severity: string; message: string; nodeId?: string }> };
   health: {
     overallHealth: number; coverage: number; estimateCompleteness: number; repositoryCoverage: number;
@@ -40,12 +62,31 @@ type PlanningProposalResult = {
   };
   diff: {
     summary: Record<string, number>;
-    changes: Array<{ action: string; artifactType: string; title: string; reason: string; confidence: number }>;
+    changes: Array<{ action: string; artifactType?: string; type?: string; title: string; reason: string; confidence: number }>;
     estimatedSprintImpact: string;
   };
   review: { status: string; checklist: Array<{ name?: string; label?: string; passed: boolean; mandatory: boolean }>; reviewer: string; comments: string };
   history: Array<{ version: number; author: string; reason: string; timestamp: string; changes: string[] }>;
   createdAt: string; updatedAt: string; approvedBy: string; approvedAt: string;
+};
+type EngineeringReviewResult = {
+  reviewId: string; proposalId: string; proposalVersion: number; contextVersion: string;
+  knowledgeVersion: string; recommendationVersion: number; status: string; owner: string;
+  currentStageId: string; stale: boolean; createdAt: string; updatedAt: string;
+  currentStage: { stageId?: string; name?: string; role?: string; assignedReviewer?: string; status?: string };
+  stages: Array<{ stageId: string; name: string; role: string; status: string; assignedReviewer: string; approvedBy: string; approvedAt: string }>;
+  sections: Array<{ name: string; status: string; commentCount: number; approvedBy: string }>;
+  comments: Array<{ commentId: string; section: string; targetType: string; targetId: string; comment: string; author: string; status: string; createdAt: string }>;
+  changeRequests: Array<{ changeRequestId: string; type: string; description: string; targetId: string; requestedBy: string; status: string; createdAt: string }>;
+  decisions: Array<{ decisionId: string; stage: string; reviewer: string; decision: string; comments: string; timestamp: string; proposalVersion: number }>;
+  readiness: { status: string; approvalAllowed: boolean; blockers: string[]; warnings: string[]; checks: Record<string, boolean> };
+  proposalSummary: {
+    title: string; executiveSummary: string; proposalVersion: number; contextVersion: string;
+    knowledgeVersion: string; recommendationVersion: number; approvalStatus: string; riskScore: string;
+    readiness: number; validationStatus: string; estimatedEffort: number; storyPoints: number;
+    affectedRepositories: string[]; affectedTeams: string[];
+  };
+  synchronization: { authorized: boolean; status: string; reasons: string[] };
 };
 
 type AnalysisFinding = { text: string; reason: string; evidence?: string; confidence: number };
@@ -124,7 +165,7 @@ type RequirementAnalysisResult = {
   acceptanceCriteriaState: {
     state: 'SourceProvided' | 'AISuggested' | 'Missing';
     origin: ArtifactOrigin | '';
-    status: 'Approved' | 'PendingReview' | 'Missing' | 'Skipped' | 'Discarded';
+    status: 'Approved' | 'PendingReview' | 'Missing' | 'NeedsUserInput' | 'Skipped' | 'Discarded';
     description: string;
   };
   acceptanceCriteriaSuggestions: AcceptanceCriterionSuggestion[];
@@ -274,7 +315,10 @@ type PlanningRecommendationResult = {
   confidence: { engineering: number; repository: number; memory: number; planning: number; overall: number };
   reasons: Array<{ title: string; explanation: string; evidence: string[]; confidence: number }>;
   rejectedAlternatives: Array<{ title: string; explanation: string; evidence: string[]; confidence: number }>;
-  alternatives: Array<{ strategy: string; confidence: number; title: string; pros: string[]; cons: string[]; rejectedReason: string }>;
+  alternatives: Array<{
+    strategy: string; confidence: number; title: string; pros: string[]; cons: string[];
+    rejectedReason: string; description?: string; estimatedEffort?: string; risks?: string[]; reuseScore?: number;
+  }>;
   actions: Array<{ action: string; confidence: number; reason: string }>;
   similarWork: PlanningContextResult['similarWork'];
   relatedPullRequests: Array<{ pullRequestId?: string; id?: string; title?: string; status?: string }>;
@@ -308,6 +352,28 @@ type PlanningRecommendationResult = {
   approvedAt: string;
   approvedBy: string;
   overrideReason: string;
+  reasoningVersion?: string;
+  promptVersion?: string;
+  reasoningMode?: string;
+  primaryRecommendation?: {
+    description?: string; estimatedEffort?: string; reuseScore?: number; pros?: string[];
+    cons?: string[]; risks?: string[];
+  };
+  repositoryAnalysis?: Record<string, Array<{
+    name: string; type: string; reason: string; impact: string; confidence: number; source: string; evidence: string[];
+  }>>;
+  reuseSuggestions?: Array<{ type: string; name: string; reason: string; confidence: number; source: string; evidence: string[] }>;
+  dependencyAnalysis?: Record<string, Array<{ name: string; reason: string; confidence: number; source: string }>>;
+  engineeringImpact?: Record<string, string | number>;
+  readiness?: {
+    requirementCompleteness: number; acceptanceCriteriaCoverage: number; dependencyResolution: number;
+    businessClarity: number; architectureConfidence: number; overallReadiness: number; status: string; reasons: string[];
+  };
+  missingInformation?: Record<string, string[]>;
+  explanation?: {
+    whyThisApproach?: string; whyNotAlternatives?: string[]; tradeOffs?: string[];
+    evidenceUsed?: string[]; potentialFutureImpact?: string;
+  };
 };
 
 export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onError }: {
@@ -334,6 +400,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
   const [reviewTitle, setReviewTitle] = useState('');
   const [reviewContent, setReviewContent] = useState('');
   const [result, setResult] = useState<PlanningProposalResult>();
+  const [engineeringReview, setEngineeringReview] = useState<EngineeringReviewResult>();
   const [planningContext, setPlanningContext] = useState<PlanningContextResult>();
   const [planningRecommendation, setPlanningRecommendation] = useState<PlanningRecommendationResult>();
 
@@ -618,6 +685,28 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
     }
   }
 
+  async function exportPlanningRecommendation() {
+    if (!planningRecommendation) return;
+    setBusyStage('planning');
+    try {
+      const response = await fetch(`${baseUrl}/planning/recommendation/${encodeURIComponent(planningRecommendation.recommendationId)}/export`, {
+        headers: { 'X-HEI-User': context.user.id },
+      });
+      const report = await response.json() as Record<string, unknown> & { error?: { message?: string } };
+      if (!response.ok) throw new Error(report.error?.message || `Planning Recommendation Export returned HTTP ${response.status}.`);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hei-planning-recommendation-${planningRecommendation.recommendationId}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to export the Planning Recommendation.');
+    } finally {
+      setBusyStage('');
+    }
+  }
+
   async function continueFromPlanningRecommendation() {
     if (!ingestion || !planningContext || !planningRecommendation || planningRecommendation.status !== 'Approved') return;
     setBusyStage('planning');
@@ -633,6 +722,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
       const planning = await response.json() as PlanningProposalResult & { error?: { message?: string } };
       if (!response.ok) throw new Error(planning.error?.message || `Planning Proposal returned HTTP ${response.status}.`);
       setResult(planning);
+      setEngineeringReview(undefined);
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Unable to generate the Planning Proposal.');
     } finally {
@@ -652,6 +742,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
       const updated = await response.json() as PlanningProposalResult & { error?: { message?: string } };
       if (!response.ok) throw new Error(updated.error?.message || `Planning Proposal Update returned HTTP ${response.status}.`);
       setResult(updated);
+      if (engineeringReview) await refreshEngineeringReview(updated.proposalId);
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Unable to update the Planning Proposal.');
     } finally {
@@ -659,7 +750,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
     }
   }
 
-  async function proposalAction(action: 'regenerate' | 'validate' | 'review' | 'approve', request: Record<string, unknown> = {}) {
+  async function proposalAction(action: 'regenerate' | 'validate' | 'review' | 'approve' | 'ai-review', request: Record<string, unknown> = {}) {
     if (!result) return;
     setBusyStage('planning');
     try {
@@ -673,6 +764,106 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
       setResult(updated);
     } catch (error) {
       onError(error instanceof Error ? error.message : `Unable to ${action} the Planning Proposal.`);
+    } finally {
+      setBusyStage('');
+    }
+  }
+
+  async function exportPlanningProposal() {
+    if (!result) return;
+    setBusyStage('planning');
+    try {
+      const response = await fetch(`${baseUrl}/planning/proposal/${encodeURIComponent(result.proposalId)}/export`, {
+        headers: { 'X-HEI-User': context.user.id },
+      });
+      const report = await response.json() as Record<string, unknown> & { error?: { message?: string } };
+      if (!response.ok) throw new Error(report.error?.message || `Planning Proposal Export returned HTTP ${response.status}.`);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hei-planning-proposal-${result.proposalId}-v${result.version}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to export the Planning Proposal.');
+    } finally {
+      setBusyStage('');
+    }
+  }
+
+  async function refreshEngineeringReview(proposalId = result?.proposalId || '') {
+    if (!proposalId) return;
+    const response = await fetch(`${baseUrl}/engineering-reviews/proposal/${encodeURIComponent(proposalId)}`, {
+      headers: { 'X-HEI-User': context.user.id },
+    });
+    if (response.status === 404) {
+      setEngineeringReview(undefined);
+      return;
+    }
+    const review = await response.json() as EngineeringReviewResult & { error?: { message?: string } };
+    if (!response.ok) throw new Error(review.error?.message || `Engineering Review returned HTTP ${response.status}.`);
+    setEngineeringReview(review);
+  }
+
+  async function startEngineeringReview() {
+    if (!result) return;
+    setBusyStage('planning');
+    try {
+      const response = await fetch(`${baseUrl}/engineering-reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ proposalId: result.proposalId, owner: context.user.name, actor: context.user.name }),
+      });
+      const review = await response.json() as EngineeringReviewResult & { error?: { message?: string } };
+      if (!response.ok) throw new Error(review.error?.message || `Engineering Review creation returned HTTP ${response.status}.`);
+      setEngineeringReview(review);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to start Engineering Review.');
+    } finally {
+      setBusyStage('');
+    }
+  }
+
+  async function engineeringReviewAction(path: string, request: Record<string, unknown>) {
+    if (!engineeringReview || !result) return;
+    setBusyStage('planning');
+    try {
+      const response = await fetch(`${baseUrl}/engineering-reviews/${encodeURIComponent(engineeringReview.reviewId)}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ actor: context.user.name, ...request }),
+      });
+      const review = await response.json() as EngineeringReviewResult & { error?: { message?: string } };
+      if (!response.ok) throw new Error(review.error?.message || `Engineering Review action returned HTTP ${response.status}.`);
+      setEngineeringReview(review);
+      const proposalResponse = await fetch(`${baseUrl}/planning/proposal/${encodeURIComponent(result.proposalId)}`, {
+        headers: { 'X-HEI-User': context.user.id },
+      });
+      if (proposalResponse.ok) setResult(await proposalResponse.json() as PlanningProposalResult);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to update Engineering Review.');
+    } finally {
+      setBusyStage('');
+    }
+  }
+
+  async function exportEngineeringReview(reportType: string) {
+    if (!engineeringReview) return;
+    setBusyStage('planning');
+    try {
+      const response = await fetch(`${baseUrl}/engineering-reviews/${encodeURIComponent(engineeringReview.reviewId)}/report?type=${encodeURIComponent(reportType)}`, {
+        headers: { 'X-HEI-User': context.user.id },
+      });
+      const report = await response.json() as { content?: string; error?: { message?: string } };
+      if (!response.ok) throw new Error(report.error?.message || `Engineering Review report returned HTTP ${response.status}.`);
+      const url = URL.createObjectURL(new Blob([report.content || ''], { type: 'text/markdown' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hei-${reportType.toLowerCase().replace(/\s+/g, '-')}-${engineeringReview.reviewId}.md`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to export Engineering Review.');
     } finally {
       setBusyStage('');
     }
@@ -839,6 +1030,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
 
   function reset() {
     setResult(undefined);
+    setEngineeringReview(undefined);
     setPlanningRecommendation(undefined);
     setPlanningContext(undefined);
     setIngestion(undefined);
@@ -889,8 +1081,12 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
           onUpdate={updateProposal}
           onRegenerate={(scope, nodeId) => proposalAction('regenerate', { scope, nodeId })}
           onValidate={() => proposalAction('validate')}
-          onReview={(comments) => proposalAction('review', { comments })}
-          onApprove={() => proposalAction('approve')}
+          onAIReview={() => proposalAction('ai-review')}
+          onExport={exportPlanningProposal}
+          engineeringReview={engineeringReview}
+          onStartReview={startEngineeringReview}
+          onReviewAction={engineeringReviewAction}
+          onExportReview={exportEngineeringReview}
           onOpenApprovals={onOpenApprovals}
           onStartAnother={reset}
         />
@@ -902,6 +1098,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
           onApprove={approvePlanningRecommendation}
           onRegenerate={regeneratePlanningRecommendation}
           onOverride={overridePlanningRecommendation}
+          onExport={exportPlanningRecommendation}
           onContinue={continueFromPlanningRecommendation}
           onBack={() => setPlanningRecommendation(undefined)}
         />
@@ -984,18 +1181,22 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
 }
 
 function Signal({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
-function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onValidate, onReview, onApprove, onOpenApprovals, onStartAnother }: {
+function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onValidate, onAIReview, onExport, engineeringReview, onStartReview, onReviewAction, onExportReview, onOpenApprovals, onStartAnother }: {
   value: PlanningProposalResult;
   busy: boolean;
   onUpdate: (request: Record<string, unknown>) => void;
   onRegenerate: (scope: string, nodeId?: string) => void;
   onValidate: () => void;
-  onReview: (comments: string) => void;
-  onApprove: () => void;
+  onAIReview: () => void;
+  onExport: () => void;
+  engineeringReview?: EngineeringReviewResult;
+  onStartReview: () => void;
+  onReviewAction: (path: string, request: Record<string, unknown>) => void;
+  onExportReview: (reportType: string) => void;
   onOpenApprovals: () => void;
   onStartAnother: () => void;
 }) {
-  const tabs = ['Overview', 'Hierarchy', 'Traceability', 'Dependencies', 'Engineering Estimate', 'Validation', 'Diff', 'Review & Approval', 'History'];
+  const tabs = ['Overview', 'Hierarchy', 'Traceability', 'Dependencies', 'Engineering Estimate', 'Validation', 'Diff', 'Azure DevOps Preview', 'Review & Approval', 'History'];
   const [tab, setTab] = useState('Hierarchy');
   const [selectedId, setSelectedId] = useState(value.nodes[0]?.nodeId || '');
   const selected = value.nodes.find((node) => node.nodeId === selectedId) || value.nodes[0];
@@ -1016,7 +1217,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
   return <section className="hei-planning-proposal-workspace" aria-live="polite">
     <header className="hei-planning-proposal-header">
       <div><span>Planning Proposal</span><h2>{value.title}</h2><p>Editable HEI working draft. Azure DevOps remains unchanged until a later approved synchronization.</p></div>
-      <div><Status value={value.status} /><strong>v{value.version}</strong></div>
+      <div><Status value={value.status} /><strong>v{value.version}</strong><button className="planner-button secondary" type="button" disabled={busy} onClick={onAIReview}>Request AI Review</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export Proposal</button></div>
     </header>
     <div className="hei-planning-proposal-metrics">
       <Signal label="Health" value={`${value.health.overallHealth}%`} />
@@ -1049,16 +1250,23 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
     </div> : null}
 
     {tab === 'Overview' ? <div className="hei-proposal-card-grid">
+      <ProposalSummaryCard title="Executive Summary" items={[value.executiveSummary || 'Executive summary pending.']} />
+      <ProposalSummaryCard title="Business Goal" items={[value.businessGoal || 'Business goal requires review.']} />
+      <ProposalSummaryCard title="Recommended Strategy" items={[value.recommendedStrategy.title || value.recommendedStrategy.type.replace(/_/g, ' '), value.recommendedStrategy.reason || value.recommendedStrategy.summary, `${value.recommendedStrategy.confidence}% confidence`]} />
       <ProposalSummaryCard title="Planning Scope" items={[`${nodeCounts.Epic || 0} Epic`, `${nodeCounts.Feature || 0} Features`, `${nodeCounts.Story || 0} Stories`, `${nodeCounts.Task || 0} Tasks`]} />
       <ProposalSummaryCard title="Engineering Estimate" items={[`${value.estimate.engineeringDays} engineering days`, `${value.estimate.storyPoints} story points`, `${value.estimate.sprintCount} sprints`, `${value.estimate.developersRequired} developers`]} />
       <ProposalSummaryCard title="Planning Quality" items={[`${value.health.overallHealth}% overall health`, `${value.health.planningConfidence}% planning confidence`, `${value.health.engineeringConfidence}% engineering confidence`, `${value.validation.findings.length} validation findings`]} />
-      <ProposalSummaryCard title="Source Lineage" items={[`Requirement ${value.requirementId}`, `Recommendation ${value.recommendationId}`, `Context ${value.contextId}`, `Correlation ${value.correlationId}`]} />
+      <ProposalSummaryCard title="Definition of Done" items={value.definitionOfDone.length ? value.definitionOfDone : ['Definition of Done pending.']} />
+      <ProposalSummaryCard title="Source Lineage" items={[`Requirement ${value.requirementId}`, `Recommendation ${value.recommendationId}`, `Context ${value.contextId}`, `Knowledge ${value.knowledgeVersion || 'Not versioned'}`, `Correlation ${value.correlationId}`]} />
+      {value.aiReview?.status ? <ProposalSummaryCard title="HEI Proposal Review" items={[value.aiReview.status, value.aiReview.summary || 'Review completed.', `${value.aiReview.confidence || 0}% confidence`, ...(value.aiReview.recommendations || []).slice(0, 3)]} /> : null}
     </div> : null}
 
-    {tab === 'Traceability' ? <div className="hei-proposal-table-wrap"><table><thead><tr><th>Artifact</th><th>Requirement</th><th>Business Goals</th><th>Functional Requirements</th><th>Repository Modules</th></tr></thead><tbody>{value.nodes.map((node) => <tr key={node.nodeId}><td><strong>{node.title}</strong><small>{node.type}</small></td><td>{node.traceability.requirementId}</td><td>{node.traceability.businessGoals.join(', ') || 'Not mapped'}</td><td>{node.traceability.functionalRequirements.join(', ') || 'Not mapped'}</td><td>{node.traceability.repositoryModules.join(', ') || 'Repository mapping pending'}</td></tr>)}</tbody></table></div> : null}
+    {tab === 'Traceability' ? <><div className="hei-proposal-table-wrap"><table><thead><tr><th>Artifact</th><th>Requirement</th><th>Business Goals</th><th>Acceptance Criteria</th><th>Repository Modules</th><th>Knowledge</th></tr></thead><tbody>{value.nodes.map((node) => <tr key={node.nodeId}><td><strong>{node.title}</strong><small>{node.type}</small></td><td>{node.traceability.requirementId}</td><td>{node.traceability.businessGoals.join(', ') || 'Not mapped'}</td><td>{node.traceability.acceptanceCriterionIds?.length || 0} mapped</td><td>{node.traceability.repositoryModules.join(', ') || 'Repository mapping pending'}</td><td>{node.traceability.knowledgeReferences?.join(', ') || 'No knowledge references'}</td></tr>)}</tbody></table></div>
+      <div className="hei-proposal-card-grid">{value.acceptanceCriteria.map((criterion) => <article key={criterion.criterionId}><span>{criterion.origin} · {criterion.status}</span><h3>{criterion.title}</h3><p>{criterion.text}</p><small>{criterion.mappedNodeIds.length} Story mapping(s) · {Math.round((criterion.confidence || 0) * (criterion.confidence <= 1 ? 100 : 1))}% confidence</small></article>)}</div></> : null}
 
     {tab === 'Dependencies' ? <div className="hei-proposal-card-grid">
       {value.dependencies.length ? value.dependencies.map((edge, index) => <article key={`${edge.from}-${edge.to}-${index}`}><span>{edge.type || 'Depends On'}</span><h3>{value.nodes.find((node) => node.nodeId === edge.from)?.title || edge.from}</h3><p>Depends on {value.nodes.find((node) => node.nodeId === edge.to)?.title || edge.to}</p></article>) : <article><h3>No dependencies identified</h3><p>Add dependencies to establish implementation order and critical path.</p></article>}
+      {Object.entries(value.dependencyGraph.categories || {}).map(([category, entries]) => <article key={category}><span>Dependency Category</span><h3>{category.replace(/([A-Z])/g, ' $1')}</h3><p>{entries.length ? `${entries.length} mapped` : 'No dependencies identified'}</p></article>)}
     </div> : null}
 
     {tab === 'Engineering Estimate' ? <ProposalEstimateEditor value={value} editable={editable} busy={busy} onUpdate={onUpdate} onRegenerate={onRegenerate} /> : null}
@@ -1068,10 +1276,15 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
     </section> : null}
 
     {tab === 'Diff' ? <section className="hei-proposal-review-panel"><header><div><span>HEI Planning Diff</span><h3>{value.diff.changes.length} proposed changes</h3><p>{value.diff.estimatedSprintImpact}</p></div></header>
-      {value.diff.changes.map((change, index) => <article key={`${change.title}-${index}`}><Status value={change.action} /><div><strong>{change.artifactType}: {change.title}</strong><p>{change.reason}</p></div><small>{change.confidence}%</small></article>)}
+      {value.diff.changes.map((change, index) => <article key={`${change.title}-${index}`}><Status value={change.action} /><div><strong>{change.artifactType || change.type || 'Artifact'}: {change.title}</strong><p>{change.reason}</p></div><small>{change.confidence}%</small></article>)}
     </section> : null}
 
-    {tab === 'Review & Approval' ? <ProposalReviewPanel value={value} busy={busy} editable={editable} onReview={onReview} onApprove={onApprove} onOpenApprovals={onOpenApprovals} /> : null}
+    {tab === 'Azure DevOps Preview' ? <section className="hei-proposal-review-panel"><header><div><span>Azure DevOps Preview</span><h3>{value.azureDevOpsPreview.workItems.length} proposed work items</h3><p>Preview only. Nothing is created until this proposal is approved and a separate synchronization action is authorized.</p></div><Status value={value.azureDevOpsPreview.writeStatus} /></header>
+      <div className="hei-proposal-card-grid"><Signal label="Writes Performed" value={String(value.azureDevOpsPreview.writesPerformed)} /><Signal label="Area Path" value={value.azureDevOpsPreview.areaPath || 'Not selected'} /><Signal label="Iteration" value={value.azureDevOpsPreview.iterationPath || 'Not selected'} /><Signal label="Links" value={String(value.azureDevOpsPreview.links.length)} /></div>
+      {value.azureDevOpsPreview.workItems.map((item) => <article key={item.proposalNodeId}><Status value={item.operation} /><div><strong>{item.workItemType}: {item.title}</strong><p>{item.parentProposalNodeId ? 'Parent-child link prepared.' : 'Hierarchy root.'}</p></div><small>{item.storyPoints ? `${item.storyPoints} points` : 'No point field'}</small></article>)}
+    </section> : null}
+
+    {tab === 'Review & Approval' ? <EngineeringReviewPanel value={value} review={engineeringReview} busy={busy} onStart={onStartReview} onAction={onReviewAction} onExport={onExportReview} onOpenApprovals={onOpenApprovals} /> : null}
 
     {tab === 'History' ? <section className="hei-proposal-review-panel"><header><div><span>Version History</span><h3>{value.history.length + 1} versions</h3></div></header>
       {value.history.length ? [...value.history].reverse().map((entry) => <article key={`${entry.version}-${entry.timestamp}`}><Status value={`v${entry.version}`} /><div><strong>{entry.reason}</strong><p>{entry.author} · {new Date(entry.timestamp).toLocaleString()}</p><small>{entry.changes.join(' ')}</small></div>{editable ? <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onUpdate({ operation: 'rollback', targetVersion: entry.version, reason: `Rollback to version ${entry.version}` })}>Restore</button> : null}</article>) : <p>This is the first Planning Proposal version.</p>}
@@ -1079,7 +1292,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
 
     <footer className="hei-planning-proposal-footer">
       <div><strong>{value.status}</strong><span>Health {value.health.overallHealth}% · Repository {value.health.repositoryCoverage}% · v{value.version}</span></div>
-      <div>{value.status === 'Approved' ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Open Approved Planning</button> : <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed || value.review.status !== 'Completed'} onClick={onApprove}>Approve Planning Proposal</button>}<button className="planner-button secondary" type="button" onClick={onStartAnother}>Start Another</button></div>
+      <div>{value.status === 'Approved' && engineeringReview?.synchronization.authorized ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Proceed to Azure DevOps Sync</button> : engineeringReview ? <button className="planner-button primary" type="button" onClick={() => setTab('Review & Approval')}>Continue Engineering Review</button> : <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed} onClick={onStartReview}>Start Engineering Review</button>}{value.status === 'Approved' ? <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onUpdate({ createNewVersion: true, reason: 'Created a new draft from the approved Planning Proposal.' })}>Create New Version</button> : null}<button className="planner-button secondary" type="button" onClick={onExport}>Export</button><button className="planner-button secondary" type="button" onClick={onStartAnother}>Start Another</button></div>
     </footer>
   </section>;
 }
@@ -1101,8 +1314,8 @@ function ProposalNodeEditor({ node, nodes, editable, busy, onUpdate, onRegenerat
     <label><span>Description</span><textarea rows={5} value={description} disabled={!editable} onChange={(event) => setDescription(event.target.value)} /></label>
     <label><span>Business Value</span><textarea rows={3} value={businessValue} disabled={!editable} onChange={(event) => setBusinessValue(event.target.value)} /></label>
     <label><span>Acceptance Criteria</span><textarea rows={6} value={acceptance} disabled={!editable} onChange={(event) => setAcceptance(event.target.value)} /></label>
-    <div className="hei-proposal-node-meta"><Signal label="Story Points" value={String(node.storyPoints)} /><Signal label="Risk" value={node.risk} /><Signal label="Priority" value={node.priority} /><Signal label="Repository" value={node.repositoryMapping.repositoryName || 'Mapping pending'} /></div>
-    <details><summary>Engineering context</summary><ContextTags title="Repository Modules" values={node.repositoryModules} empty="Repository mapping pending." /><ContextTags title="Affected APIs and Screens" values={[...node.affectedApis, ...node.affectedScreens]} empty="No API or screen impact identified." /><ContextTags title="Technical Notes" values={node.technicalNotes} empty="No technical notes." /><ContextTags title="Generated Tests" values={node.generatedTests} empty="No generated tests." /></details>
+    <div className="hei-proposal-node-meta"><Signal label="Story Points" value={String(node.storyPoints)} /><Signal label="Risk" value={node.risk} /><Signal label="Priority" value={node.priority} /><Signal label="Repository" value={node.repositoryMapping.repositoryName || 'Mapping pending'} />{node.storyType ? <Signal label="Story Type" value={node.storyType} /> : null}</div>
+    <details><summary>Engineering context</summary><p>{node.repositoryMapping.reason || 'Repository mapping requires review.'}</p><ContextTags title="Repository Modules" values={node.repositoryModules} empty="Repository mapping pending." /><ContextTags title="Services, APIs and Screens" values={[...node.affectedServices, ...node.affectedApis, ...node.affectedScreens]} empty="No service, API, or screen impact identified." /><ContextTags title="Database and Integrations" values={[...node.affectedDatabaseObjects, ...node.externalIntegrations]} empty="No database or external integration impact identified." /><ContextTags title="Technical Notes" values={node.technicalNotes} empty="No technical notes." /><ContextTags title="Generated Tests" values={node.generatedTests} empty="No generated tests." /><ContextTags title="Definition of Done" values={node.definitionOfDone} empty="Definition of Done pending." /></details>
     <div className="hei-proposal-node-actions">
       <button className="planner-button primary" type="button" disabled={!editable || busy || !title.trim()} onClick={() => onUpdate({ nodeId: node.nodeId, changes: { title: title.trim(), description: description.trim(), businessValue: businessValue.trim(), acceptanceCriteria: acceptance.split('\n').map((item) => item.trim()).filter(Boolean) }, reason: `Edited ${node.type} ${node.title}` })}>Save Changes</button>
       <button className="planner-button secondary" type="button" disabled={!editable || busy || node.status === 'Approved'} onClick={() => onUpdate({ operation: 'approve', nodeId: node.nodeId, reason: `Approved ${node.title}` })}>Approve Item</button>
@@ -1132,19 +1345,57 @@ function ProposalEstimateEditor({ value, editable, busy, onUpdate, onRegenerate 
   </section>;
 }
 
-function ProposalReviewPanel({ value, busy, editable, onReview, onApprove, onOpenApprovals }: {
-  value: PlanningProposalResult; busy: boolean; editable: boolean; onReview: (comments: string) => void; onApprove: () => void; onOpenApprovals: () => void;
+function EngineeringReviewPanel({ value, review, busy, onStart, onAction, onExport, onOpenApprovals }: {
+  value: PlanningProposalResult; review?: EngineeringReviewResult; busy: boolean;
+  onStart: () => void; onAction: (path: string, request: Record<string, unknown>) => void;
+  onExport: (reportType: string) => void; onOpenApprovals: () => void;
 }) {
-  const [comments, setComments] = useState(value.review.comments || '');
-  return <section className="hei-proposal-review-panel">
-    <header><div><span>Final Review</span><h3>{value.review.status}</h3><p>Review validation, estimates, repository mapping, hierarchy, risks, dependencies, and traceability.</p></div><Status value={value.validation.status} /></header>
-    {(value.review.checklist.length ? value.review.checklist : [
-      { label: 'Validation completed', passed: value.validation.mandatoryPassed, mandatory: true },
-      { label: 'Repository mapping reviewed', passed: value.health.repositoryCoverage > 0, mandatory: false },
-      { label: 'Estimate reviewed', passed: value.health.estimateCompleteness === 100, mandatory: true },
-    ]).map((item) => <article key={item.name || item.label}><span aria-hidden="true">{item.passed ? '✓' : '○'}</span><div><strong>{item.name || item.label}</strong><p>{item.mandatory ? 'Required for approval' : 'Recommended review'}</p></div><Status value={item.passed ? 'Complete' : 'Pending'} /></article>)}
-    <label><span>Review Comments</span><textarea rows={4} value={comments} disabled={!editable} onChange={(event) => setComments(event.target.value)} /></label>
-    <div>{value.status === 'Approved' ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Open Approved Planning</button> : <><button className="planner-button secondary" type="button" disabled={busy} onClick={() => onReview(comments)}>Complete Review</button> <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed || value.review.status !== 'Completed'} onClick={onApprove}>Approve Planning Proposal</button></>}</div>
+  const [comments, setComments] = useState('');
+  const [section, setSection] = useState('Business Review');
+  const [targetType, setTargetType] = useState('Epic');
+  const [targetId, setTargetId] = useState('');
+  const [changeType, setChangeType] = useState('Business Clarification');
+  const [reviewer, setReviewer] = useState('');
+  if (!review) return <section className="hei-proposal-review-panel">
+    <header><div><span>Engineering Review</span><h3>Review not started</h3><p>Validation must pass before the configurable approval chain begins.</p></div><Status value={value.validation.status} /></header>
+    <div className="hei-proposal-card-grid"><Signal label="Proposal Version" value={`v${value.version}`} /><Signal label="Context Version" value={value.contextVersion} /><Signal label="Knowledge Version" value={value.knowledgeVersion || 'Not versioned'} /><Signal label="Validation" value={value.validation.status} /></div>
+    <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed} onClick={onStart}>Start Engineering Review</button>
+  </section>;
+  const stage = review.currentStage;
+  const canDecide = Boolean(stage.stageId) && !['Approved', 'Rejected', 'Superseded', 'Expired'].includes(review.status);
+  return <section className="hei-proposal-review-panel hei-engineering-review">
+    <header><div><span>Engineering Review</span><h3>{review.status}</h3><p>{stage.name ? `Current stage: ${stage.name} · ${stage.role}` : 'Approval chain complete.'}</p></div><Status value={review.readiness.status} /></header>
+    <div className="hei-planning-proposal-metrics">
+      <Signal label="Proposal" value={`v${review.proposalVersion}`} /><Signal label="Context" value={review.contextVersion} />
+      <Signal label="Knowledge" value={review.knowledgeVersion || 'Not versioned'} /><Signal label="Recommendation" value={`v${review.recommendationVersion}`} />
+      <Signal label="Risk" value={review.proposalSummary.riskScore || 'Not rated'} /><Signal label="Effort" value={`${review.proposalSummary.estimatedEffort || 0} days`} />
+      <Signal label="Validation" value={review.proposalSummary.validationStatus} />
+    </div>
+    {review.stale ? <div className="hei-review-blocker">This review belongs to an older proposal version. Start a new review.</div> : null}
+    {review.readiness.blockers.length ? <div className="hei-review-blocker"><strong>Approval blocked</strong><ul>{review.readiness.blockers.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+    <div className="hei-review-stage-chain">{review.stages.map((item) => <article key={item.stageId} className={item.stageId === review.currentStageId ? 'active' : ''}><span>{item.role}</span><strong>{item.name}</strong><Status value={item.status} /><small>{item.assignedReviewer || item.approvedBy || 'Reviewer not assigned'}</small></article>)}</div>
+    <div className="hei-review-sections">{review.sections.map((item) => <article key={item.name}><div><strong>{item.name}</strong><p>{item.commentCount} comment(s)</p></div><Status value={item.status} /></article>)}</div>
+    {canDecide ? <div className="hei-review-assign"><label><span>Assign Current Reviewer</span><input value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder={stage.assignedReviewer || 'Reviewer name'} /></label><button className="planner-button secondary" type="button" disabled={busy || !reviewer.trim()} onClick={() => onAction('assign', { stageId: stage.stageId, reviewer: reviewer.trim() })}>Assign Reviewer</button></div> : null}
+    <div className="hei-review-compose">
+      <h4>Add Inline Review Comment</h4>
+      <div><label><span>Section</span><select value={section} onChange={(event) => setSection(event.target.value)}>{review.sections.map((item) => <option key={item.name}>{item.name}</option>)}</select></label><label><span>Target</span><select value={targetType} onChange={(event) => setTargetType(event.target.value)}>{['Epic', 'Feature', 'Story', 'Task', 'Acceptance Criterion', 'Engineering Note', 'Estimate', 'Dependency', 'Repository Mapping'].map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Artifact ID</span><input value={targetId} onChange={(event) => setTargetId(event.target.value)} placeholder="Optional artifact ID" /></label></div>
+      <label><span>Comment</span><textarea rows={3} value={comments} onChange={(event) => setComments(event.target.value)} /></label>
+      <button className="planner-button secondary" type="button" disabled={busy || !comments.trim()} onClick={() => { onAction('comments', { section, targetType, targetId, comment: comments.trim() }); setComments(''); }}>Add Comment</button>
+    </div>
+    <details open={review.changeRequests.some((item) => item.status === 'Open')}><summary>Change Requests ({review.changeRequests.length})</summary>
+      <div className="hei-review-compose"><label><span>Change Type</span><select value={changeType} onChange={(event) => setChangeType(event.target.value)}>{['Story Split', 'Story Merge', 'Estimate Change', 'Repository Change', 'Acceptance Criteria Update', 'Dependency Update', 'Architecture Review', 'Business Clarification'].map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Description</span><textarea rows={3} value={comments} onChange={(event) => setComments(event.target.value)} /></label><button className="planner-button secondary" type="button" disabled={busy || !comments.trim()} onClick={() => { onAction('change-requests', { changeType, description: comments.trim(), targetId }); setComments(''); }}>Request Change</button></div>
+      {review.changeRequests.map((item) => <article key={item.changeRequestId}><Status value={item.status} /><div><strong>{item.type}</strong><p>{item.description}</p></div><small>{item.requestedBy}</small></article>)}
+    </details>
+    <details><summary>Comments and Decision History</summary>
+      {review.comments.map((item) => <article key={item.commentId}><Status value={item.status} /><div><strong>{item.section} · {item.targetType}</strong><p>{item.comment}</p></div><small>{item.author}</small></article>)}
+      {review.decisions.map((item) => <article key={item.decisionId}><Status value={item.decision} /><div><strong>{item.stage}</strong><p>{item.comments || 'No additional comments.'}</p></div><small>{item.reviewer}</small></article>)}
+    </details>
+    <div className="hei-review-actions">
+      {canDecide ? <><button className="planner-button primary" type="button" disabled={busy || !review.readiness.approvalAllowed} onClick={() => onAction('decision', { decision: comments.trim() ? 'ApproveWithComments' : 'Approve', role: stage.role, comments: comments.trim() })}>Approve {stage.name}</button><button className="planner-button secondary" type="button" disabled={busy || !comments.trim()} onClick={() => onAction('decision', { decision: 'RequestChanges', role: stage.role, comments: comments.trim(), changeType })}>Request Changes</button><button className="planner-button danger" type="button" disabled={busy || !comments.trim()} onClick={() => onAction('decision', { decision: 'Reject', role: stage.role, comments: comments.trim() })}>Reject</button><button className="planner-button secondary" type="button" disabled={busy} onClick={() => onAction('decision', { decision: 'SaveDraftReview', role: stage.role })}>Save Draft Review</button></> : null}
+      <button className="planner-button secondary" type="button" onClick={() => onExport('Review Report')}>Export Review Report</button>
+      <button className="planner-button secondary" type="button" onClick={() => onExport('Decision Log')}>Export Decision Log</button>
+      <button className="planner-button secondary" type="button" onClick={onOpenApprovals}>Open Approval Center</button>
+    </div>
   </section>;
 }
 
@@ -1313,13 +1564,14 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
   </section>;
 }
 
-function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove, onRegenerate, onOverride, onContinue, onBack }: {
+function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove, onRegenerate, onOverride, onExport, onContinue, onBack }: {
   value: PlanningRecommendationResult;
   contextValue: PlanningContextResult;
   busy: boolean;
   onApprove: () => void;
   onRegenerate: () => void;
   onOverride: (strategy: string, reason: string) => void;
+  onExport: () => void;
   onContinue: () => void;
   onBack: () => void;
 }) {
@@ -1345,6 +1597,8 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
         <Signal label="Planning" value={`${value.confidence.planning}%`} />
         <Signal label="Complexity" value={value.impact.estimatedComplexity} />
         <Signal label="Risk" value={value.impact.riskLevel} />
+        <Signal label="Estimated Effort" value={value.primaryRecommendation?.estimatedEffort || 'Planning Proposal required'} />
+        <Signal label="Reuse" value={`${value.primaryRecommendation?.reuseScore ?? 0}%`} />
       </div>
       <div className="hei-planning-recommendation-actions-list">
         {value.actions.map((action) => <article key={action.action}><div><strong>{action.action}</strong><p>{action.reason}</p></div><Status value={`${action.confidence}% confidence`} /></article>)}
@@ -1369,6 +1623,32 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
         <p><strong>Repository:</strong> {value.impact.repositoryImpact}</p>
         <ContextTags title="Affected Modules" values={value.impact.affectedModules} empty="No evidence-matched modules identified." />
         <ContextTags title="Affected APIs and Services" values={[...value.impact.affectedApis, ...value.impact.affectedServices]} empty="No affected APIs or services identified." />
+      </section>
+    </div>
+
+    <div className="hei-planning-recommendation-grid">
+      <section>
+        <header><div><span>Planning Readiness</span><h3>{value.readiness?.status || 'Needs Clarification'}</h3></div><Status value={`${value.readiness?.overallReadiness ?? value.confidence.planning}%`} /></header>
+        <div className="hei-planning-context-metrics">
+          <Signal label="Requirement" value={`${value.readiness?.requirementCompleteness ?? 0}%`} />
+          <Signal label="Acceptance" value={`${value.readiness?.acceptanceCriteriaCoverage ?? 0}%`} />
+          <Signal label="Dependencies" value={`${value.readiness?.dependencyResolution ?? 0}%`} />
+          <Signal label="Architecture" value={`${value.readiness?.architectureConfidence ?? 0}%`} />
+        </div>
+        <ContextTags title="Clarifications Required" values={Object.values(value.missingInformation || {}).flat()} empty="No unresolved information was identified." />
+      </section>
+      <section>
+        <header><div><span>Reuse Recommendation</span><h3>Evidence-backed reuse</h3></div><Status value={`${value.reuseSuggestions?.length || 0} candidates`} /></header>
+        <ContextTags
+          title="Reusable Engineering Assets"
+          values={(value.reuseSuggestions || []).map((item) => `${item.type}: ${item.name} (${item.confidence}%)`)}
+          empty="No reusable implementation evidence was identified."
+        />
+        <ContextTags
+          title="Dependencies"
+          values={Object.values(value.dependencyAnalysis || {}).flat().map((item) => item.name)}
+          empty="No dependencies were identified in the reviewed context."
+        />
       </section>
     </div>
 
@@ -1401,8 +1681,10 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
     <section className="hei-planning-recommendation-alternatives">
       <header><div><span>Alternative Strategies</span><h3>Other valid approaches</h3></div></header>
       <div>{value.alternatives.map((alternative) => <article key={alternative.strategy}>
-        <header><div><h4>{alternative.title}</h4><p>{alternative.rejectedReason}</p></div><Status value={`${alternative.confidence}%`} /></header>
+        <header><div><h4>{alternative.title}</h4><p>{alternative.description || alternative.rejectedReason}</p></div><Status value={`${alternative.confidence}%`} /></header>
+        <div className="hei-planning-context-metrics"><Signal label="Effort" value={alternative.estimatedEffort || 'Requires estimation'} /><Signal label="Reuse" value={`${alternative.reuseScore || 0}%`} /></div>
         <div><ContextTags title="Advantages" values={alternative.pros} empty="No additional advantage identified." /><ContextTags title="Trade-offs" values={alternative.cons} empty="No trade-off identified." /></div>
+        <ContextTags title="Risks" values={alternative.risks || []} empty="No additional risk identified." />
         <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onOverride(alternative.strategy, `Selected ${alternative.title} after reviewing HEI alternatives.`)}>Choose This Strategy</button>
       </article>)}</div>
     </section>
@@ -1412,13 +1694,15 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
       <ContextTags title="Why this strategy" values={value.engineeringReasoning} empty="No additional reasoning recorded." />
       <ContextTags title="Risks" values={value.risks} empty="No material planning risks identified." />
       <ContextTags title="Rejected alternatives" values={value.rejectedAlternatives.map((item) => `${item.title}: ${item.explanation}`)} empty="No alternatives were rejected." />
+      <ContextTags title="Evidence used" values={value.explanation?.evidenceUsed || []} empty="No evidence references recorded." />
+      <p><strong>Reasoning mode:</strong> {value.reasoningMode || 'Deterministic'} · <strong>Prompt:</strong> {value.promptVersion || 'Not applicable'}</p>
     </details>
 
     <details className="hei-planning-recommendation-override">
       <summary>Override Recommendation</summary>
       <div>
         <label><span>Strategy</span><select value={overrideStrategy} disabled={busy} onChange={(event) => setOverrideStrategy(event.target.value)}>
-          {['NEW_INITIATIVE', 'NEW_FEATURE', 'EXTEND_EXISTING_FEATURE', 'EXTEND_EXISTING_EPIC', 'MODIFY_EXISTING_STORY', 'BUG_FIX', 'ENHANCEMENT', 'TECHNICAL_DEBT', 'REFACTOR', 'SPIKE', 'AI_RECOMMENDED'].map((strategy) => <option key={strategy} value={strategy}>{formatPlanningMode(strategy)}</option>)}
+          {['NEW_EPIC', 'NEW_FEATURE', 'NEW_STORY', 'EXTEND_EXISTING_FEATURE', 'EXTEND_EXISTING_EPIC', 'EXTEND_EXISTING_STORY', 'MODIFY_EXISTING_STORY', 'BUG_FIX', 'ENHANCEMENT', 'TECHNICAL_DEBT', 'REFACTOR_EXISTING_FEATURE', 'SPIKE', 'CONFIGURATION_CHANGE', 'DOCUMENTATION_UPDATE', 'MIXED_RECOMMENDATION', 'AI_RECOMMENDED'].map((strategy) => <option key={strategy} value={strategy}>{formatPlanningMode(strategy)}</option>)}
         </select></label>
         <label><span>Reason</span><input value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} placeholder="Why is this strategy more appropriate?" /></label>
         <button className="planner-button secondary" type="button" disabled={busy || !overrideReason.trim() || overrideStrategy === value.strategy} onClick={() => onOverride(overrideStrategy, overrideReason.trim())}>Apply Override</button>
@@ -1428,7 +1712,8 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
     <footer className="hei-planning-context-actions">
       <div><span>Recommendation v{value.version}</span><strong>{approved ? `Approved by ${value.approvedBy}` : 'Awaiting decision'}</strong></div>
       <button className="planner-button secondary" type="button" disabled={busy} onClick={onBack}>Back to Context</button>
-      <button className="planner-button secondary" type="button" disabled={busy} onClick={onRegenerate}>Regenerate</button>
+      <button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export Report</button>
+      <button className="planner-button secondary" type="button" disabled={busy} onClick={onRegenerate}>Request AI Re-evaluation</button>
       {approved
         ? <button className="planner-button primary" type="button" disabled={busy} onClick={onContinue}>{busy ? 'Generating Planning Proposal...' : 'Continue to Planning Proposal'}</button>
         : <button className="planner-button primary" type="button" disabled={busy} onClick={onApprove}>{busy ? 'Approving...' : 'Accept Recommendation'}</button>}

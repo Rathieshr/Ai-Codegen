@@ -56,6 +56,42 @@ class EmptyMemory:
         return {"results": [], "count": 0}
 
 
+class CapturingReasoningEngine:
+    def __init__(self):
+        self.contexts = []
+
+    def recommend(self, workflow_type, engineering_context, **_kwargs):
+        self.contexts.append(engineering_context)
+        return {
+            "workflowType": workflow_type,
+            "recommendation": {
+                "strategy": "NEW_STORY",
+                "description": "Add one independently valuable Story under the existing Feature.",
+                "confidence": 82,
+            },
+            "reasoning": ["The synchronized Feature is the safest existing ownership boundary."],
+            "alternatives": [{
+                "strategy": "EXTEND_EXISTING_FEATURE",
+                "description": "Extend the existing Feature with a bounded Story.",
+                "estimatedEffort": "3-5 engineering days",
+                "risks": ["Review existing Feature scope."],
+                "confidence": 78,
+            }],
+            "evidence": [{"referenceId": "context:test", "reason": "Reviewed Engineering Context"}],
+            "risks": [],
+            "tradeOffs": ["A new Story adds backlog scope but avoids a duplicate Feature."],
+            "impact": {},
+            "confidence": {"overall": 82},
+            "reasoningMode": "AI",
+            "promptVersion": "reasoning-v1:test",
+            "provider": "Test",
+            "model": "test-model",
+            "telemetry": {"promptTokens": 100},
+            "warnings": [],
+            "structuredResponse": {"recommendation": {"strategy": "NEW_STORY"}},
+        }
+
+
 class RequirementPlanningIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -358,6 +394,73 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertIn("Reuse", recommendation["diff"]["summary"])
         self.assertEqual([], self.artifacts)
 
+    def test_planning_recommendation_uses_canonical_context_and_exposes_complete_decision(self):
+        requirement = self.prepare("PasteRequirement")
+        planning_context = self.planning_context.build({
+            "requirementId": requirement["requirementId"], "actor": "Planner",
+        })
+        self.planning_context.analyze({
+            "contextId": planning_context["contextId"], "decision": "Accept",
+            "actor": "Product Owner",
+        })
+        reasoning = CapturingReasoningEngine()
+        self.planning_recommendation.reasoning_engine = reasoning
+        recommendation = self.planning_recommendation.build({
+            "contextId": planning_context["contextId"], "force": True,
+        })
+
+        self.assertEqual("NEW_STORY", recommendation["strategy"])
+        self.assertEqual("AI", recommendation["reasoningMode"])
+        self.assertEqual(1, len(reasoning.contexts))
+        self.assertEqual(planning_context["engineeringContext"]["contextId"], reasoning.contexts[0]["contextId"])
+        self.assertIn("repository", reasoning.contexts[0])
+        self.assertNotIn("rawContext", reasoning.contexts[0])
+        self.assertEqual(3, len(recommendation["alternatives"]))
+        self.assertEqual(4, len(recommendation["strategyOptions"]))
+        for option in recommendation["strategyOptions"]:
+            self.assertTrue(option["description"])
+            self.assertTrue(option["estimatedEffort"])
+            self.assertIn("reuseScore", option)
+            self.assertIn("confidence", option)
+        self.assertIn("modules", recommendation["repositoryAnalysis"])
+        self.assertIn("possibleDuplicates", recommendation["existingWorkDetection"])
+        self.assertIn("technicalDependencies", recommendation["dependencyAnalysis"])
+        self.assertIn(recommendation["readiness"]["status"], {"Ready", "Needs Clarification", "Blocked"})
+        self.assertIn("whyThisApproach", recommendation["explanation"])
+        self.assertEqual([], self.artifacts)
+
+    def test_planning_recommendation_reusable_api_contracts_do_not_write_work_items(self):
+        requirement = self.prepare("PasteRequirement")
+        context_record = self.planning_context.build({"requirementId": requirement["requirementId"]})
+        self.planning_context.analyze({
+            "contextId": context_record["contextId"], "decision": "Accept", "actor": "Planner",
+        })
+        recommendation = self.planning_recommendation.generateRecommendation({
+            "contextId": context_record["contextId"],
+        })
+        app = FastAPI()
+        app.include_router(build_planning_recommendation_router(self.planning_recommendation))
+        client = TestClient(app)
+        recommendation_id = recommendation["recommendationId"]
+
+        alternatives = client.get(f"/planning/recommendation/{recommendation_id}/alternatives")
+        readiness = client.post("/planning/recommendation/readiness", json={"recommendationId": recommendation_id})
+        impact = client.post("/planning/recommendation/impact", json={"recommendationId": recommendation_id})
+        reuse = client.post("/planning/recommendation/reuse", json={"recommendationId": recommendation_id})
+        report = client.get(f"/planning/recommendation/{recommendation_id}/export")
+
+        self.assertEqual(200, alternatives.status_code)
+        self.assertEqual(3, len(alternatives.json()["alternatives"]))
+        self.assertEqual(200, readiness.status_code)
+        self.assertIn("overallReadiness", readiness.json())
+        self.assertEqual(200, impact.status_code)
+        self.assertIn("regressionRisk", impact.json())
+        self.assertEqual(200, reuse.status_code)
+        self.assertGreaterEqual(reuse.json()["count"], 1)
+        self.assertEqual(200, report.status_code)
+        self.assertIn("No Azure DevOps work item was created", report.json()["notice"])
+        self.assertEqual([], self.artifacts)
+
     def test_planning_proposal_is_blocked_until_recommendation_is_approved(self):
         requirement = self.prepare("PasteRequirement")
         planning_context = self.planning_context.build({"requirementId": requirement["requirementId"], "actor": "Planner"})
@@ -454,6 +557,120 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertTrue(all(node["acceptanceCriteria"] for node in stories))
         self.assertTrue(all(node["parentId"] in {story["nodeId"] for story in stories} for node in tasks))
         self.assertEqual(1, len(self.artifacts))
+
+    def test_planning_proposal_v2_preserves_acceptance_and_knowledge_lineage(self):
+        _, context, recommendation, proposal = self.prepare_proposal()
+        stories = [node for node in proposal["nodes"] if node["type"] == "Story"]
+
+        self.assertTrue(proposal["executiveSummary"])
+        self.assertTrue(proposal["businessGoal"])
+        self.assertEqual(recommendation["strategy"], proposal["recommendedStrategy"]["type"])
+        self.assertTrue(proposal["acceptanceCriteria"])
+        self.assertTrue(proposal["definitionOfDone"])
+        self.assertIn("categories", proposal["dependencyGraph"])
+        self.assertTrue(proposal["engineeringNotes"])
+        self.assertEqual(
+            context["engineeringContext"]["sourceVersions"].get("projectKnowledgeVersion") or "",
+            proposal["knowledgeVersion"],
+        )
+        for criterion in proposal["acceptanceCriteria"]:
+            self.assertTrue(criterion["criterionId"])
+            self.assertTrue(criterion["origin"])
+            self.assertTrue(criterion["status"])
+            self.assertTrue(criterion["mappedNodeIds"])
+        for story in stories:
+            self.assertTrue(story["acceptanceCriteriaDetails"])
+            self.assertTrue(story["storyType"])
+            self.assertTrue(story["repositoryMapping"]["reason"])
+            self.assertIn("services", story["repositoryMapping"])
+            self.assertTrue(story["definitionOfDone"])
+
+    def test_azure_devops_preview_and_export_perform_no_writes(self):
+        _, _, _, proposal = self.prepare_proposal()
+        artifact_count = len(self.artifacts)
+
+        preview = self.proposal.azure_devops_preview(proposal["proposalId"])
+        exported = self.proposal.export(proposal["proposalId"])
+
+        self.assertEqual("PreviewOnly", preview["preview"]["writeStatus"])
+        self.assertEqual(0, preview["preview"]["writesPerformed"])
+        self.assertEqual(artifact_count, len(self.artifacts))
+        self.assertEqual("planning-proposal-v2", exported["schemaVersion"])
+        self.assertEqual(proposal["proposalId"], exported["proposal"]["proposalId"])
+        self.assertIn("synchronization is separate", exported["notice"])
+
+    def test_ai_review_is_advisory_and_versions_without_changing_hierarchy(self):
+        _, _, _, proposal = self.prepare_proposal()
+        node_ids = [node["nodeId"] for node in proposal["nodes"]]
+
+        reviewed = self.proposal.request_ai_review({
+            "proposalId": proposal["proposalId"],
+            "expectedVersion": proposal["version"],
+            "actor": "Engineering Manager",
+        })
+
+        self.assertEqual(proposal["version"] + 1, reviewed["version"])
+        self.assertTrue(reviewed["aiReview"]["status"])
+        self.assertEqual(node_ids, [node["nodeId"] for node in reviewed["nodes"]])
+        self.assertEqual("Draft", reviewed["status"])
+
+    def test_approved_proposal_requires_explicit_new_version_and_invalidates_review(self):
+        _, _, _, proposal = self.prepare_proposal()
+        values = self.proposal.store.read()
+        values[proposal["proposalId"]]["status"] = "Approved"
+        values[proposal["proposalId"]]["approvedBy"] = "Engineering Manager"
+        self.proposal.store.write(values)
+
+        class ReviewTracker:
+            def __init__(self):
+                self.invalidations = []
+
+            def invalidate(self, proposal_id, version, actor):
+                self.invalidations.append((proposal_id, version, actor))
+
+        tracker = ReviewTracker()
+        self.proposal.review_service = tracker
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.proposal.update(proposal["proposalId"], {
+                "expectedVersion": proposal["version"], "actor": "Editor",
+            })
+
+        revised = self.proposal.update(proposal["proposalId"], {
+            "expectedVersion": proposal["version"],
+            "createNewVersion": True,
+            "actor": "Editor",
+            "reason": "Revise approved scope.",
+            "businessGoal": "Updated approved business goal.",
+        })
+        self.assertEqual(proposal["version"] + 1, revised["version"])
+        self.assertEqual("Draft", revised["status"])
+        self.assertEqual("", revised["approvedBy"])
+        self.assertEqual(
+            [(proposal["proposalId"], revised["version"], "Editor")],
+            tracker.invalidations,
+        )
+
+    def test_unapproved_criteria_and_orphan_story_block_validation(self):
+        _, _, _, proposal = self.prepare_proposal()
+        story = next(node for node in proposal["nodes"] if node["type"] == "Story")
+        task_ids = [
+            node["nodeId"] for node in proposal["nodes"]
+            if node["type"] == "Task" and node["parentId"] == story["nodeId"]
+        ]
+        story["acceptanceCriteriaDetails"][0]["status"] = "PendingReview"
+        proposal["nodes"] = [
+            node for node in proposal["nodes"] if node["nodeId"] not in task_ids
+        ]
+        values = self.proposal.store.read()
+        values[proposal["proposalId"]] = proposal
+        self.proposal.store.write(values)
+
+        validated = self.proposal.validate({"proposalId": proposal["proposalId"]})
+        codes = {item["code"] for item in validated["validation"]["findings"]}
+
+        self.assertIn("unapproved_acceptance_criteria", codes)
+        self.assertIn("orphan_story", codes)
+        self.assertFalse(validated["validation"]["mandatoryPassed"])
 
     def test_planning_proposal_edits_are_versioned_and_scoped_regeneration_isolated(self):
         _, _, _, proposal = self.prepare_proposal()
@@ -552,6 +769,17 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertEqual(200, history.status_code)
         self.assertEqual(1, len(history.json()["history"]))
         self.assertEqual(200, client.post("/planning/proposal/validate", json={"proposalId": proposal_id}).status_code)
+        preview = client.get(f"/planning/proposal/{proposal_id}/azure-devops-preview")
+        self.assertEqual(200, preview.status_code)
+        self.assertEqual(0, preview.json()["preview"]["writesPerformed"])
+        exported = client.get(f"/planning/proposal/{proposal_id}/export")
+        self.assertEqual(200, exported.status_code)
+        self.assertEqual("planning-proposal-v2", exported.json()["schemaVersion"])
+        ai_review = client.post("/planning/proposal/ai-review", json={
+            "proposalId": proposal_id, "actor": "Engineering Manager",
+        })
+        self.assertEqual(200, ai_review.status_code)
+        self.assertTrue(ai_review.json()["aiReview"]["status"])
 
 
 if __name__ == "__main__":

@@ -36,20 +36,29 @@ current when the proposal is generated.
 
 A Planning Proposal contains:
 
+- an Executive Summary, Business Goal, and approved Recommended Strategy;
 - Epic, Feature, Story, Task, and Sub Task nodes;
 - rich descriptions, business value, Acceptance Criteria, business rules,
   technical notes, risks, priority, and implementation estimates;
-- repository module, API, screen, and snapshot mappings;
-- requirement, recommendation, repository, and memory traceability;
-- dependency edges and deterministic implementation order;
+- repository module, service, API, screen, database, integration, and snapshot
+  mappings with reasons and evidence;
+- requirement, recommendation, Acceptance Criteria, repository, Knowledge
+  Registry, and Engineering Memory traceability;
+- typed dependency categories, dependency edges, and deterministic
+  implementation order;
+- proposal and artifact Definition of Done;
+- an immutable, zero-write Azure DevOps hierarchy preview;
 - AI estimate and human override with a required reason;
 - proposal health, validation findings, planning diff, review checklist,
   version history, and approval metadata.
 
 Every generated node records its origin, confidence, generation reason, planning
-version, and parent relationship. Tasks are derived from Story scope and
-Acceptance Criteria. Missing repository evidence remains visible as a warning;
-the engine never invents repository paths.
+version, Story or Task type, and parent relationship. Tasks are derived from
+Story scope and approved Acceptance Criteria. Acceptance Criteria retain their
+source, evidence, confidence, review status, user modifications, and Story
+mapping from the Intelligent Acceptance Criteria Engine. Missing repository
+evidence remains visible as a warning; the engine never invents repository
+paths.
 
 ## Editing and Versioning
 
@@ -60,6 +69,9 @@ Before approval, a proposal supports:
 - move, delete, duplicate, merge, and split operations;
 - scoped regeneration for one node, Acceptance Criteria, dependencies, task
   breakdown, or engineering estimate;
+- an advisory AI review over the canonical Engineering Context and a bounded
+  proposal summary;
+- export of the complete versioned proposal contract;
 - full regeneration from the same approved recommendation;
 - estimate override with an explicit reason;
 - rollback to a persisted prior version.
@@ -73,11 +85,17 @@ Approved, Published, and Archived proposals are immutable.
 Mandatory validation detects:
 
 - Stories without Acceptance Criteria;
+- unapproved AI-suggested Acceptance Criteria;
+- orphan Stories without implementation Tasks;
+- Acceptance Criteria that are not mapped to a Story;
 - duplicate siblings;
 - circular dependencies;
 - invalid hierarchy;
 - missing estimates or Story Points;
-- missing requirement or recommendation traceability.
+- missing requirement, recommendation, Knowledge Registry, or repository
+  traceability;
+- missing Definition of Done;
+- any Azure DevOps preview that reports a write.
 
 Missing repository mapping is reported as a warning because repository context
 may legitimately be unavailable. Proposal Health includes coverage, estimate
@@ -101,6 +119,9 @@ Approval requires:
 | `POST` | `/planning/proposal/validate` | Recalculate findings and Proposal Health |
 | `POST` | `/planning/proposal/review` | Complete the final review checklist |
 | `POST` | `/planning/proposal/approve` | Approve a valid, reviewed proposal |
+| `POST` | `/planning/proposal/ai-review` | Request an advisory review without changing hierarchy |
+| `GET` | `/planning/proposal/{id}/azure-devops-preview` | Read the zero-write hierarchy preview |
+| `GET` | `/planning/proposal/{id}/export` | Export the complete V2 proposal artifact |
 | `GET` | `/planning/proposal/history?proposalId={id}` | Read version history |
 
 Mutation requests may include `expectedVersion`. A stale version is rejected so
@@ -118,6 +139,7 @@ workspace after recommendation approval. It provides:
 - Engineering Estimate;
 - Validation;
 - Planning Diff;
+- Azure DevOps Preview;
 - Review and Approval;
 - History.
 

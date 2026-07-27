@@ -170,6 +170,121 @@ Assumptions:
         self.assertTrue(criterion["quality"]["implementationIndependent"])
         self.assertEqual(analysis["functionalRequirements"][0], criterion["evidence"][0]["requirementSentence"])
 
+    def test_product_language_actions_generate_evidence_backed_criteria(self):
+        context = self.ingest(
+            "Business Goal:\nIncrease productivity by adding AI intelligence.\n"
+            "Functional Requirements:\nProvide recommendations and monitor fault proactiveness."
+        )
+        self.service.analyze(context["requirementId"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        self.assertEqual("AISuggested", generated["acceptanceCriteriaState"]["state"])
+        self.assertTrue(generated["acceptanceCriteriaSuggestions"])
+        criterion = generated["acceptanceCriteriaSuggestions"][0]
+        self.assertIn("provide recommendations", criterion["text"].lower())
+        self.assertEqual(
+            "Provide recommendations and monitor fault proactiveness.",
+            criterion["evidence"][0]["requirementSentence"],
+        )
+
+    def test_ado_import_promotes_real_business_goal_and_rejects_import_metadata(self):
+        imported_content = (
+            "Business Goals:\n"
+            "Allow Operations Users to search, monitor, and manage registered field devices "
+            "from a centralized inventory.\n"
+            "Description:\n"
+            "Expected features\n"
+            "Device Registration\n"
+            "Device Search\n"
+            "Device Details\n"
+            "Area and Iteration:\n"
+            "Area: LineDefender\n"
+            "Iteration: LineDefender\n"
+            "Functional Requirements:\n"
+            "Requirement Summary:\n"
+            "Planning Recommendations:\n"
+            "No Acceptance Criteria were provided in the source requirement."
+        )
+        imported_ingestion = RequirementIngestionService(
+            JsonMapStore(Path(self.temp.name) / "ado-contexts.json"),
+            work_item_provider=lambda _project, _item: {
+                "title": "Device inventory",
+                "description": imported_content,
+                "revision": 3,
+            },
+        )
+        imported_service = RequirementAnalysisService(
+            JsonMapStore(Path(self.temp.name) / "ado-analyses.json"),
+            requirement_ingestion=imported_ingestion,
+        )
+        context = imported_ingestion.ingest({
+            "sourceType": "AzureDevOpsWorkItem",
+            "projectId": "linedefender",
+            "workItemId": "245",
+            "requirementSummary": imported_content,
+        })
+
+        analyzed = imported_service.analyze(context["requirementId"])
+
+        evidence = (
+            "Allow Operations Users to search, monitor, and manage registered field devices "
+            "from a centralized inventory."
+        )
+        self.assertEqual([evidence], analyzed["businessGoals"])
+        self.assertEqual([evidence], analyzed["functionalRequirements"])
+        self.assertEqual(["Operations Users"], analyzed["actors"])
+        polluted = "\n".join(
+            analyzed["businessGoals"] + analyzed["functionalRequirements"]
+        )
+        for value in (
+            "Requirement Summary",
+            "Planning Recommendations",
+            "No Acceptance Criteria were provided",
+            "Area: LineDefender",
+            "Device Registration",
+        ):
+            self.assertNotIn(value, polluted)
+
+        generated = imported_service.suggest_acceptance_criteria(context["requirementId"])
+        self.assertEqual("AISuggested", generated["acceptanceCriteriaState"]["state"])
+        self.assertTrue(generated["acceptanceCriteriaSuggestions"])
+        self.assertEqual(
+            evidence,
+            generated["acceptanceCriteriaSuggestions"][0]["evidence"][0]["requirementSentence"],
+        )
+
+    def test_generate_suggestions_refreshes_stale_requirement_analysis(self):
+        context = self.ingest(
+            "Business Goals:\n"
+            "Allow Operations Users to search registered field devices from a centralized inventory."
+        )
+        analyzed = self.service.analyze(context["requirementId"])
+        analyzed["diagnostics"]["engine"] = "DeterministicRequirementAnalysisV1"
+        analyzed["functionalRequirements"] = ["Planning Recommendations"]
+        values = self.service.store.read()
+        values[context["requirementId"]] = analyzed
+        self.service.store.write(values)
+
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+
+        self.assertEqual(
+            "DeterministicRequirementAnalysisV2",
+            generated["diagnostics"]["engine"],
+        )
+        self.assertNotIn("Planning Recommendations", generated["functionalRequirements"])
+        self.assertTrue(generated["acceptanceCriteriaSuggestions"])
+
+    def test_insufficient_generation_evidence_returns_missing_information_not_error(self):
+        context = self.ingest("Improve the operational experience.")
+        self.service.analyze(context["requirementId"])
+        result = self.service.suggest_acceptance_criteria(context["requirementId"])
+        self.assertEqual("Missing", result["acceptanceCriteriaState"]["state"])
+        self.assertEqual("NeedsUserInput", result["acceptanceCriteriaState"]["status"])
+        self.assertEqual("InsufficientEvidence", result["acceptanceDiagnostics"]["generationStatus"])
+        self.assertIn(
+            "Generation Evidence",
+            {item["field"] for item in result["missingInformation"]},
+        )
+
     def test_each_functional_requirement_receives_criterion_and_coverage_mapping(self):
         context = self.ingest(
             "Functional Requirements:\n"

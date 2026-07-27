@@ -8,16 +8,23 @@ from typing import Any
 
 
 class RecommendationStrategy(str, Enum):
+    NEW_EPIC = "NEW_EPIC"
     NEW_INITIATIVE = "NEW_INITIATIVE"
     NEW_FEATURE = "NEW_FEATURE"
+    NEW_STORY = "NEW_STORY"
     EXTEND_EXISTING_FEATURE = "EXTEND_EXISTING_FEATURE"
     EXTEND_EXISTING_EPIC = "EXTEND_EXISTING_EPIC"
+    EXTEND_EXISTING_STORY = "EXTEND_EXISTING_STORY"
     MODIFY_EXISTING_STORY = "MODIFY_EXISTING_STORY"
     BUG_FIX = "BUG_FIX"
     ENHANCEMENT = "ENHANCEMENT"
     TECHNICAL_DEBT = "TECHNICAL_DEBT"
     REFACTOR = "REFACTOR"
+    REFACTOR_EXISTING_FEATURE = "REFACTOR_EXISTING_FEATURE"
     SPIKE = "SPIKE"
+    CONFIGURATION_CHANGE = "CONFIGURATION_CHANGE"
+    DOCUMENTATION_UPDATE = "DOCUMENTATION_UPDATE"
+    MIXED_RECOMMENDATION = "MIXED_RECOMMENDATION"
     AI_RECOMMENDED = "AI_RECOMMENDED"
 
 
@@ -61,6 +68,10 @@ class RecommendationAlternative:
     pros: list[str]
     cons: list[str]
     rejectedReason: str
+    description: str = ""
+    estimatedEffort: str = ""
+    risks: list[str] = field(default_factory=list)
+    reuseScore: int = 0
 
 
 @dataclass
@@ -127,6 +138,22 @@ class PlanningRecommendation:
     approvedBy: str = ""
     overrideReason: str = ""
     history: list[dict[str, Any]] = field(default_factory=list)
+    reasoningVersion: str = ""
+    promptVersion: str = ""
+    reasoningMode: str = "Deterministic"
+    reasoningResult: dict[str, Any] = field(default_factory=dict)
+    primaryRecommendation: dict[str, Any] = field(default_factory=dict)
+    strategyOptions: list[dict[str, Any]] = field(default_factory=list)
+    repositoryAnalysis: dict[str, Any] = field(default_factory=dict)
+    existingWorkDetection: dict[str, Any] = field(default_factory=dict)
+    reuseSuggestions: list[dict[str, Any]] = field(default_factory=list)
+    dependencyAnalysis: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    engineeringImpact: dict[str, Any] = field(default_factory=dict)
+    readiness: dict[str, Any] = field(default_factory=dict)
+    missingInformation: dict[str, list[str]] = field(default_factory=dict)
+    explanation: dict[str, Any] = field(default_factory=dict)
+    userChanges: list[dict[str, Any]] = field(default_factory=list)
+    approvalHistory: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

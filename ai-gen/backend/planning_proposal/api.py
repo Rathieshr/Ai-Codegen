@@ -43,6 +43,18 @@ def build_planning_proposal_router(service: Any) -> APIRouter:
     def approve(request: dict[str, Any] = Body(...)):
         return call(lambda: service.approve(request))
 
+    @router.post("/ai-review")
+    def ai_review(request: dict[str, Any] = Body(...)):
+        return call(lambda: service.request_ai_review(request))
+
+    @router.get("/{proposal_id}/export")
+    def export(proposal_id: str):
+        return call(lambda: service.export(proposal_id))
+
+    @router.get("/{proposal_id}/azure-devops-preview")
+    def azure_devops_preview(proposal_id: str):
+        return call(lambda: service.azure_devops_preview(proposal_id))
+
     @router.get("/{proposal_id}")
     def get(proposal_id: str):
         return call(lambda: service.get(proposal_id))

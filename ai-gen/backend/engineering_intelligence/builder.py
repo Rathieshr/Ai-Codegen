@@ -40,6 +40,8 @@ class EngineeringContextBuilder:
         impact: ImpactSummary,
         reuse: ReuseSummary,
         readiness: dict[str, Any],
+        project_intelligence: dict[str, Any] | None = None,
+        relevant_documentation: list[dict[str, Any]] | None = None,
         correlation_id: str = "",
     ) -> EngineeringContext:
         versions = {
@@ -55,6 +57,9 @@ class EngineeringContextBuilder:
                 {"id": item.get("id"), "version": item.get("version"), "updatedAt": item.get("updatedAt")}
                 for item in memory.matches
             ],
+            "projectKnowledgeVersion": (
+                (project_intelligence or {}).get("knowledge") or {}
+            ).get("version"),
         }
         version = _digest(versions)
         context_id = "engineering-context-" + version
@@ -85,6 +90,8 @@ class EngineeringContextBuilder:
             reuse=reuse,
             readiness=readiness,
             summary=summary,
+            projectIntelligence=dict(project_intelligence or {}),
+            relevantDocumentation=list(relevant_documentation or []),
             correlationId=correlation_id,
             generatedAt=datetime.now(timezone.utc).isoformat(),
             sourceVersions=versions,

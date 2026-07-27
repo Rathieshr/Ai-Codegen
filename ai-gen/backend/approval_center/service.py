@@ -46,6 +46,8 @@ class ApprovalCenterService:
         planning_provider: Callable[[], Any] = lambda: [],
         planning_approve: Callable[[str, str], Any] | None = None,
         planning_reject: Callable[[str, str], Any] | None = None,
+        engineering_review_provider: Callable[[], Any] = lambda: [],
+        engineering_review_decide: Callable[[str, dict[str, Any]], Any] | None = None,
         execution_plan_provider: Callable[[], Any] = lambda: [],
         memory_provider: Callable[[], Any] = lambda: [],
         memory_approve: Callable[[str, str], Any] | None = None,
@@ -66,6 +68,7 @@ class ApprovalCenterService:
         audit_recorder: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self.planning_provider, self.planning_approve, self.planning_reject = planning_provider, planning_approve, planning_reject
+        self.engineering_review_provider, self.engineering_review_decide = engineering_review_provider, engineering_review_decide
         self.execution_plan_provider = execution_plan_provider
         self.memory_provider, self.memory_approve, self.memory_reject = memory_provider, memory_approve, memory_reject
         self.ado_pack_provider, self.ado_pack_approve, self.ado_pack_reject = ado_pack_provider, ado_pack_approve, ado_pack_reject
@@ -122,6 +125,18 @@ class ApprovalCenterService:
         if category == "Planning Packs":
             operation = self.planning_approve if decision == "Approved" else self.planning_reject
             result = self._call(operation, source_id, actor)
+        elif category == "Engineering Reviews":
+            current_stage = item.get("sourceData", {}).get("currentStage") or {}
+            result = self._call(self.engineering_review_decide, source_id, {
+                "decision": "Approve" if decision == "Approved" else "Reject",
+                "actor": actor,
+                "role": current_stage.get("role") or "Engineering Lead",
+                "comments": reason or (
+                    "Approved from Approval Center."
+                    if decision == "Approved"
+                    else "Rejected from Approval Center."
+                ),
+            })
         elif category == "Execution Plans":
             result = self._governance_decision(item, decision, actor, reason)
         elif category == "Memory Candidates":
@@ -168,6 +183,18 @@ class ApprovalCenterService:
             if item.get("source") != "planning_artifact" or item.get("type") == "Recommendation":
                 continue
             records.append(self._record("Planning Packs", _text(item.get("id")), _text(item.get("title")), item, item.get("approvalStatus") or item.get("status"), item.get("updatedAt")))
+        for item in _values(self.engineering_review_provider(), "reviews"):
+            source_id = _text(item.get("reviewId"))
+            summary = item.get("proposalSummary") or {}
+            records.append(self._record(
+                "Engineering Reviews",
+                source_id,
+                _text(summary.get("title")) or "Planning Proposal Engineering Review",
+                item,
+                item.get("status"),
+                item.get("updatedAt") or item.get("createdAt"),
+                expires_at=item.get("expiresAt"),
+            ))
         for item in _values(self.execution_plan_provider()):
             source_id = _text(item.get("manifestId") or item.get("planId") or item.get("id"))
             approval = governance_by_artifact.get(source_id, {})
@@ -213,8 +240,10 @@ class ApprovalCenterService:
         raw = _text(value).replace("_", "").replace(" ", "").casefold()
         return {
             "pendingapproval": "Pending", "pending": "Pending", "draft": "Draft", "needsreview": "NeedsReview",
+            "pendingreview": "NeedsReview", "inreview": "NeedsReview", "changesrequested": "NeedsReview",
             "prepared": "Prepared", "approved": "Approved", "ready": "Approved", "rejected": "Rejected",
-            "archived": "Rejected", "expired": "Expired", "stale": "Expired", "applied": "Approved",
+            "archived": "Rejected", "expired": "Expired", "stale": "Expired", "superseded": "Expired",
+            "applied": "Approved",
         }.get(raw, _text(value) or "Pending")
 
     @staticmethod

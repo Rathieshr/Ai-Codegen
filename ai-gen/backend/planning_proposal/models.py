@@ -15,6 +15,10 @@ class ProposalTraceability:
     recommendationId: str
     repositoryModules: list[str]
     memoryReferences: list[str]
+    acceptanceCriterionIds: list[str] = field(default_factory=list)
+    knowledgeReferences: list[str] = field(default_factory=list)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    contextVersion: str = ""
 
 
 @dataclass
@@ -60,8 +64,15 @@ class ProposalNode:
     planningVersion: int
     status: str = "Draft"
     taskType: str = ""
+    storyType: str = ""
     owner: str = ""
     order: int = 0
+    acceptanceCriteriaDetails: list[dict[str, Any]] = field(default_factory=list)
+    affectedServices: list[str] = field(default_factory=list)
+    affectedDatabaseObjects: list[str] = field(default_factory=list)
+    externalIntegrations: list[str] = field(default_factory=list)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    definitionOfDone: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -124,6 +135,9 @@ class PlanningProposal:
     projectId: str
     correlationId: str
     title: str
+    executiveSummary: str
+    businessGoal: str
+    recommendedStrategy: dict[str, Any]
     status: str
     version: int
     nodes: list[ProposalNode]
@@ -134,6 +148,16 @@ class PlanningProposal:
     health: ProposalHealth
     diff: ProposalDiff
     review: ProposalReview
+    acceptanceCriteria: list[dict[str, Any]]
+    dependencyGraph: dict[str, Any]
+    engineeringNotes: list[str]
+    risks: list[dict[str, Any]]
+    definitionOfDone: list[str]
+    azureDevOpsPreview: dict[str, Any]
+    knowledgeVersion: str
+    knowledgeReferences: list[str]
+    aiReview: dict[str, Any]
+    userEdits: list[dict[str, Any]]
     author: str
     createdAt: str
     updatedAt: str

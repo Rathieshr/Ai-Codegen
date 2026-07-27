@@ -12,6 +12,8 @@ from backend.planning_context import PlanningContextService
 from backend.planning_recommendation import PlanningRecommendationService
 from backend.requirement_analysis import RequirementAnalysisService
 from backend.requirement_intake import RequirementIngestionService
+from backend.reasoning.models import ReasoningRequest
+from backend.reasoning.services.prompt_builder import PromptBuilder
 
 
 class RepositoryProvider:
@@ -134,6 +136,77 @@ class RepositoryDetector:
         }
 
 
+class ProjectIntelligenceProvider:
+    def __init__(self):
+        self.calls = []
+
+    def get_profile(self):
+        self.calls.append("profile")
+        return {
+            "onboarding_completed": True,
+            "project_id": "project-1",
+            "project_name": "GridHub",
+            "domain": "Device Operations",
+            "project_type": "Operations Platform",
+            "project_description": "Background project profile.",
+            "knowledge_registry": {},
+        }
+
+    def get_knowledge_cache(self):
+        self.calls.append("knowledge")
+        return {
+            "exists": True,
+            "status": "fresh",
+            "cache": {
+                "project_id": "project-1",
+                "project_name": "GridHub",
+                "knowledge_version": "knowledge-v7",
+                "schema_version": "knowledge-registry-v3",
+                "last_analyzed_at": "2026-07-24T10:00:00Z",
+                "source_files": [
+                    "docs/device-health.md",
+                    "docs/firmware-rollout.md",
+                ],
+                "knowledge_registry": {
+                    "modules": ["Device Health", "Firmware Management"],
+                    "flows": ["Device Health Review", "Firmware Rollout"],
+                    "applications": ["Operations Dashboard", "Firmware Console"],
+                    "components": ["Device Health Grid", "Firmware Updater"],
+                    "standards": ["Device health authorization", "Firmware rollback policy"],
+                    "architecture_notes": [
+                        "Device health queries use the telemetry read model.",
+                        "Firmware rollout uses a separate update channel.",
+                    ],
+                },
+            },
+        }
+
+    def list_artifacts(self):
+        self.calls.append("artifacts")
+        return {
+            "artifacts": [
+                {
+                    "artifact_id": "artifact-approved",
+                    "artifact_type": "Story",
+                    "state": "locked",
+                    "title": "Filter Device Health",
+                    "payload": {"description": "Filter devices by health status."},
+                    "fingerprint": "approved-fingerprint",
+                    "version": 2,
+                },
+                {
+                    "artifact_id": "artifact-draft",
+                    "artifact_type": "Story",
+                    "state": "draft",
+                    "title": "Device Health Firmware Upgrade",
+                    "payload": {},
+                    "fingerprint": "draft-fingerprint",
+                    "version": 1,
+                },
+            ],
+        }
+
+
 class EngineeringIntelligenceServiceTests(unittest.TestCase):
     def setUp(self):
         self.repository = RepositoryProvider()
@@ -215,6 +288,141 @@ class EngineeringIntelligenceServiceTests(unittest.TestCase):
         })
 
         self.assertEqual([], result.files)
+
+    def test_orchestrator_exposes_all_workflow_contexts(self):
+        planning = self.service.build_planning_context(self.summary)
+        canonical = planning["engineeringContext"]
+
+        requirement = self.service.build_requirement_context(self.summary)
+        execution = self.service.build_execution_context(canonical)
+        validation = self.service.build_validation_context(canonical)
+
+        self.assertEqual(canonical["contextId"], requirement["contextId"])
+        self.assertEqual(canonical["contextId"], execution["engineeringContextId"])
+        self.assertEqual(canonical["contextId"], validation["engineeringContextId"])
+        self.assertNotIn("graph", requirement["repository"])
+        self.assertNotIn("azureDevOps", execution)
+
+    def test_reusable_services_delegate_to_existing_fact_providers(self):
+        repository = self.service.get_repository_summary(self.summary)
+
+        self.assertEqual(["Device Health"], self.service.find_relevant_modules(self.summary))
+        self.assertEqual("src/DeviceHealth.ts", self.service.find_relevant_files(self.summary)[0]["path"])
+        self.assertEqual(["Device Health"], self.service.find_affected_modules(self.summary, repository))
+        self.assertEqual(
+            ["Device Health", "Telemetry"],
+            self.service.get_architecture_context(repository)["modules"],
+        )
+        self.assertEqual(1, len(self.service.find_similar_requirement(
+            self.service.build_planning_context(self.summary)["engineeringContext"],
+        )))
+
+    def test_markdown_index_is_fact_only_and_searchable(self):
+        result = self.service.index_markdown({
+            "README.md": "# Device Health\nThe dashboard uses the Device Health API.",
+            "docs/architecture.md": "# Architecture\nServices depend on repository interfaces.",
+            "src/app.ts": "not markdown",
+        })
+
+        matches = self.service.search_documentation("device health")
+
+        self.assertEqual(2, result["documentsIndexed"])
+        self.assertEqual("README.md", matches[0]["path"])
+        self.assertIn("Services depend", self.service.get_architecture_summary())
+        self.assertNotIn("content", matches[0])
+
+    def test_engineering_intelligence_does_not_require_an_ai_provider(self):
+        service = EngineeringIntelligenceService(repository_intelligence=self.repository)
+
+        context = service.build_requirement_context(self.summary)
+
+        self.assertEqual("Device Operations", context["repository"]["repositoryName"])
+        self.assertFalse(any("phi" in name.casefold() for name in vars(service)))
+
+    def test_project_intelligence_is_relevance_selected_and_versioned(self):
+        project = ProjectIntelligenceProvider()
+        service = EngineeringIntelligenceService(
+            repository_intelligence=self.repository,
+            engineering_memory=self.memory,
+            planning_engine=self.planning,
+            project_intelligence=project,
+        )
+
+        context = service.generate_planning_context(self.summary)["engineeringContext"]
+        knowledge = context["projectIntelligence"]["knowledge"]
+
+        self.assertEqual(["Device Health"], knowledge["modules"])
+        self.assertEqual(["Device Health Review"], knowledge["flows"])
+        self.assertNotIn("Firmware Management", knowledge["modules"])
+        self.assertEqual("knowledge-v7", context["sourceVersions"]["projectKnowledgeVersion"])
+        self.assertEqual("docs/device-health.md", context["relevantDocumentation"][0]["path"])
+        self.assertEqual(["profile", "knowledge", "artifacts"], project.calls)
+
+    def test_only_approved_project_artifacts_influence_similarity(self):
+        service = EngineeringIntelligenceService(
+            repository_intelligence=self.repository,
+            engineering_memory=self.memory,
+            planning_engine=self.planning,
+            project_intelligence=ProjectIntelligenceProvider(),
+        )
+
+        context = service.generate_planning_context(self.summary)["engineeringContext"]
+        matches = context["similarWork"]["matches"]
+        rejected = context["projectIntelligence"]["rejectedContext"]
+
+        self.assertTrue(any(
+            item.get("workItem", {}).get("id") == "artifact-approved"
+            for item in matches
+        ))
+        self.assertFalse(any(
+            item.get("workItem", {}).get("id") == "artifact-draft"
+            for item in matches
+        ))
+        self.assertTrue(any(
+            item["name"] == "Device Health Firmware Upgrade"
+            and "not approved" in item["reason"]
+            for item in rejected
+        ))
+
+    def test_project_scope_mismatch_does_not_leak_context(self):
+        project = ProjectIntelligenceProvider()
+        service = EngineeringIntelligenceService(project_intelligence=project)
+        other_project = {**self.summary, "projectId": "another-project"}
+
+        context = service.generate_planning_context(other_project)["engineeringContext"]
+
+        self.assertFalse(context["projectIntelligence"]["available"])
+        self.assertEqual([], context["projectIntelligence"]["knowledge"]["modules"])
+        self.assertEqual([], context["projectIntelligence"]["approvedArtifacts"])
+
+    def test_reasoning_prompt_consumes_selected_project_knowledge(self):
+        service = EngineeringIntelligenceService(
+            repository_intelligence=self.repository,
+            engineering_memory=self.memory,
+            planning_engine=self.planning,
+            project_intelligence=ProjectIntelligenceProvider(),
+        )
+        context = service.generate_planning_context(self.summary)["engineeringContext"]
+
+        prompt = PromptBuilder().build(
+            ReasoningRequest(
+                workflowType="PlanningRecommendation",
+                engineeringContext=context,
+                userRequirement=self.summary["planningRequirement"],
+            ),
+            provider="deterministic",
+        )
+
+        knowledge = next(
+            section for section in prompt.sections
+            if section["id"] == "knowledge_summary"
+        )["content"]
+        self.assertEqual(["Device Health"], knowledge["knowledgeRegistry"]["modules"])
+        self.assertEqual(
+            "artifact-approved",
+            knowledge["approvedProjectArtifacts"][0]["id"],
+        )
+        self.assertNotIn("Firmware Management", prompt.prompt)
 
 
 class RequirementIntegrationTests(unittest.TestCase):

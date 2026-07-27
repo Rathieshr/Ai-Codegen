@@ -16,11 +16,27 @@ from .models import (
     SimilaritySummary,
 )
 from .service import EngineeringIntelligenceService
+from .providers import ProjectIntelligenceProvider
+from .services import (
+    ArchitectureService,
+    AzureDevOpsService,
+    ContextBuilder,
+    DependencyService,
+    IntelligenceOrchestrator,
+    MarkdownService,
+    MemoryService,
+    RepositoryService,
+    SimilarityService,
+)
 
 __all__ = [
     "ArchitectureSummary",
+    "ArchitectureService",
     "AzureDevOpsSummary",
+    "AzureDevOpsService",
+    "ContextBuilder",
     "DependencySummary",
+    "DependencyService",
     "EngineeringAnalysisResult",
     "EngineeringContext",
     "EngineeringContextBuilder",
@@ -28,8 +44,14 @@ __all__ = [
     "EngineeringMemorySummary",
     "EngineeringSummary",
     "ImpactSummary",
+    "IntelligenceOrchestrator",
+    "MarkdownService",
+    "MemoryService",
     "RepositoryRecommendation",
+    "ProjectIntelligenceProvider",
     "RepositorySummary",
+    "RepositoryService",
     "ReuseSummary",
     "SimilaritySummary",
+    "SimilarityService",
 ]

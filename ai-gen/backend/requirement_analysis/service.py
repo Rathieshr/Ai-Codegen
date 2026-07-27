@@ -42,11 +42,7 @@ class RequirementAnalysisService:
         if not requirement:
             raise ValueError("Requirement context was not found. Ingest the source before analysis.")
         existing = self.get(requirement_id)
-        acceptance_version_current = (
-            (existing or {}).get("acceptanceDiagnostics", {}).get("engine")
-            == "IntelligentAcceptanceCriteriaV1"
-        )
-        if existing and not force and acceptance_version_current and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion"):
+        if existing and not force and self._versions_current(existing) and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion"):
             return existing
         result = self.engine.analyze(requirement).to_dict()
         result.update(self.acceptance_engine.understand(result, requirement))
@@ -163,16 +159,39 @@ class RequirementAnalysisService:
     def suggest_acceptance_criteria(self, requirement_id: str, actor: str = "") -> dict[str, Any]:
         analysis = self._require_analysis(requirement_id)
         requirement = self.requirement_ingestion.get(requirement_id) or {}
+        if not self._versions_current(analysis):
+            analysis = self.analyze(requirement_id, force=True)
         if analysis.get("acceptanceCriteriaState", {}).get("state") == "SourceProvided":
             raise ValueError(
                 "Source-provided Acceptance Criteria are already authoritative. Edit the source requirement to change them."
             )
         suggestions = self.acceptance_engine.generate(analysis, requirement)
         if not suggestions:
-            raise ValueError(
-                "No evidence-backed Acceptance Criteria could be generated. "
-                "Add a specific functional requirement, actor, action, or observable outcome."
-            )
+            analysis["acceptanceCriteriaSuggestions"] = []
+            analysis["acceptanceCriteriaState"] = {
+                "state": "Missing",
+                "origin": "",
+                "status": "NeedsUserInput",
+                "description": (
+                    "HEI could not identify enough business-observable evidence to generate "
+                    "Acceptance Criteria. Add a specific action or expected outcome."
+                ),
+            }
+            missing = list(analysis.get("missingInformation") or [])
+            if not any(item.get("field") == "Generation Evidence" for item in missing):
+                missing.append({
+                    "field": "Generation Evidence",
+                    "status": "Missing",
+                    "reason": "Add a specific business action or observable outcome.",
+                    "blocksGeneration": True,
+                })
+            analysis["missingInformation"] = missing
+            analysis.setdefault("acceptanceDiagnostics", {})["generationStatus"] = "InsufficientEvidence"
+            self._reset_review(analysis)
+            self._refresh_acceptance_projection(analysis, requirement)
+            self._save(requirement_id, analysis)
+            self._publish_review("AcceptanceCriteriaSuggestionUnavailable", analysis, requirement)
+            return analysis
         analysis["acceptanceCriteriaSuggestions"] = suggestions
         analysis["acceptanceCriteriaState"] = {
             "state": "AISuggested",
@@ -299,6 +318,15 @@ class RequirementAnalysisService:
         if not analysis:
             raise ValueError("Requirement analysis was not found. Analyze the requirement first.")
         return analysis
+
+    @staticmethod
+    def _versions_current(analysis: dict[str, Any]) -> bool:
+        return (
+            analysis.get("diagnostics", {}).get("engine")
+            == "DeterministicRequirementAnalysisV2"
+            and analysis.get("acceptanceDiagnostics", {}).get("engine")
+            == "IntelligentAcceptanceCriteriaV1"
+        )
 
     def _restore_reviewed_acceptance(
         self,

@@ -12,6 +12,11 @@
 
 | Producer | Contract | Consumers |
 | --- | --- | --- |
+| Engineering Intelligence | Versioned `EngineeringContext` and bounded workflow projections | Requirement, Planning, Execution, Validation, Approvals, Agents |
+| Project Intelligence compatibility adapter | Project background + intent-selected Knowledge Registry evidence + approved artifacts | Engineering Intelligence only |
+| Planning Recommendation | Reviewed Planning Context + canonical EngineeringContext + Reasoning result | Versioned, explainable recommendation; human review; Planning Proposal |
+| Planning Proposal | Approved Planning Recommendation + canonical EngineeringContext + preserved Acceptance Criteria lineage | Versioned editable hierarchy, validation, planning diff, and zero-write Azure DevOps preview |
+| Engineering Review | Version-pinned Planning Proposal + configurable approval chain | Auditable review decision and Azure DevOps synchronization authorization |
 | Context Intelligence | Context Capsule | Execution Package Builder |
 | Execution Intelligence | Execution Package | Execution Manifest Builder, Validation, QA, Memory, Agents, VS Code |
 | Execution Manifest Builder | Execution Manifest | Prompt Compiler |
@@ -38,3 +43,27 @@
 | Engineering Memory | Memory Context | Planning, Execution, QA as supporting evidence |
 
 API details are indexed in [APIs](../03-Platform/APIs.md).
+
+Project Intelligence is not a workflow input by itself. Its read-only adapter
+feeds the canonical Engineering Context. Project Profile remains background,
+Knowledge Registry facts are relevance-selected, and current repository facts
+always come from Repository Intelligence.
+## Reasoning AI
+
+`ReasoningEngine` is the canonical provider-neutral service for engineering
+judgment. Its input is `EngineeringContext`; its output contains recommendation,
+reasoning, alternatives, evidence references, risks, trade-offs, impact,
+confidence, prompt version, and telemetry.
+
+Public operations:
+
+- `analyze(workflowType, engineeringContext)`
+- `reason(workflowType, engineeringContext)`
+- `recommend(workflowType, engineeringContext)`
+- `refine(workflowType, engineeringContext)`
+- `summarize(workflowType, engineeringContext)`
+- `explain(workflowType, engineeringContext)`
+
+Reasoning providers are replaceable implementations of `IReasoningProvider`.
+Workflows must not invoke provider clients directly. See
+`Reasoning AI Layer.md` for the complete boundary and fallback behavior.

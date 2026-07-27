@@ -160,6 +160,8 @@ class EngineeringContext:
     reuse: ReuseSummary
     readiness: dict[str, Any]
     summary: EngineeringSummary
+    projectIntelligence: dict[str, Any] = field(default_factory=dict)
+    relevantDocumentation: list[dict[str, Any]] = field(default_factory=list)
     correlationId: str = ""
     generatedAt: str = ""
     sourceVersions: dict[str, Any] = field(default_factory=dict)

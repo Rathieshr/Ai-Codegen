@@ -71,7 +71,7 @@ class RequirementPlanningService:
         planning_context = (
             self.engineering_intelligence.planning_engine_context(reviewed_context)
             if reviewed_context
-            else self.engineering_intelligence.generate_planning_context(summary)["rawContext"]
+            else self._build_engineering_context(summary)["rawContext"]
         )
         repository_context = dict(planning_context.get("repository") or {})
         existing = self.store.read().get(requirement_id)
@@ -159,7 +159,13 @@ class RequirementPlanningService:
 
     def context(self, request: dict[str, Any]) -> dict[str, Any]:
         summary = self._approved_summary(_required_requirement_id(request))
-        return self.engineering_intelligence.generate_planning_context(summary)["rawContext"]
+        return self._build_engineering_context(summary)["rawContext"]
+
+    def _build_engineering_context(self, summary: dict[str, Any]) -> dict[str, Any]:
+        builder = getattr(self.engineering_intelligence, "build_planning_context", None)
+        if not callable(builder):
+            builder = self.engineering_intelligence.generate_planning_context
+        return builder(summary)
 
     def analyze(self, request: dict[str, Any]) -> dict[str, Any]:
         context = self.context(request)

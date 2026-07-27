@@ -27,7 +27,9 @@ PARENT_TYPES = {"Epic": "", "Feature": "Epic", "Story": "Feature", "Task": "Stor
 TASK_TYPES = {
     "Frontend", "Backend", "API", "Database", "Repository", "Infrastructure", "Testing",
     "Automation", "Documentation", "Deployment", "DevOps", "Security", "Architecture",
+    "Mobile", "AI",
 }
+STORY_TYPES = {"New", "Enhancement", "Bug", "Refactor", "Spike", "Documentation"}
 STATUSES = {"Draft", "Review", "Approved", "Published", "Archived"}
 
 
@@ -41,12 +43,18 @@ class PlanningProposalService:
         recommendation_service: Any,
         planning_context_service: Any,
         requirement_planning_service: Any,
+        reasoning_engine: Any | None = None,
+        review_service: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
         self.recommendation_service = recommendation_service
         self.planning_context_service = planning_context_service
         self.requirement_planning_service = requirement_planning_service
+        self.reasoning_engine = reasoning_engine or getattr(
+            recommendation_service, "reasoning_engine", None
+        )
+        self.review_service = review_service
         self.platform = platform
 
     def build(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -73,6 +81,8 @@ class PlanningProposalService:
         proposal = self._assemble(generated, context, recommendation, actor, version, existing)
         values[proposal["proposalId"]] = proposal
         self.store.write(values)
+        if existing and self.review_service:
+            self.review_service.invalidate(proposal["proposalId"], proposal["version"], actor)
         self._publish("PlanningProposalGenerated", proposal)
         return proposal
 
@@ -96,6 +106,12 @@ class PlanningProposalService:
             changes.extend(self._node_operation(proposal, action, request))
         else:
             changes.extend(self._apply_edits(proposal, request))
+        proposal.setdefault("userEdits", []).append({
+            "actor": actor,
+            "reason": reason,
+            "changes": list(changes),
+            "timestamp": _now(),
+        })
         proposal = self._version(proposal, previous, actor, reason, changes)
         proposal = self._recalculate(proposal)
         values[proposal_id] = proposal
@@ -161,15 +177,39 @@ class PlanningProposalService:
         return proposal
 
     def approve(self, request: dict[str, Any]) -> dict[str, Any]:
+        if self.review_service:
+            raise ValueError(
+                "Engineering Review is the mandatory approval gate. "
+                "Complete the configured review chain before approving this Planning Proposal."
+            )
+        return self._finalize_approval(
+            _required(request, "proposalId"),
+            _required(request, "actor"),
+            _text(request.get("comments")),
+        )
+
+    def _finalize_approval(
+        self,
+        proposal_id: str,
+        actor: str,
+        comments: str = "",
+    ) -> dict[str, Any]:
+        request = {"proposalId": proposal_id}
         proposal = self.validate(request)
         if not proposal.get("validation", {}).get("mandatoryPassed"):
             raise ValueError("Planning Proposal cannot be approved until mandatory validation findings are resolved.")
-        if proposal.get("review", {}).get("status") != "Completed":
+        if not self.review_service and proposal.get("review", {}).get("status") != "Completed":
             raise ValueError("Complete the Planning Proposal review checklist before approval.")
-        actor = _required(request, "actor")
         proposal["status"] = "Approved"
         proposal["approvedBy"] = actor
         proposal["approvedAt"] = _now()
+        proposal["review"] = {
+            **dict(proposal.get("review") or {}),
+            "status": "Completed",
+            "reviewer": actor,
+            "comments": comments,
+            "reviewedAt": proposal["approvedAt"],
+        }
         proposal["updatedAt"] = proposal["approvedAt"]
         for node in proposal.get("nodes") or []:
             if node.get("status") != "Rejected":
@@ -190,6 +230,82 @@ class PlanningProposalService:
             "count": len(proposal.get("history") or []),
         }
 
+    def azure_devops_preview(self, proposal_id: str) -> dict[str, Any]:
+        proposal = self.get(proposal_id)
+        return {
+            "proposalId": proposal_id,
+            "proposalVersion": proposal["version"],
+            "status": proposal["status"],
+            "preview": deepcopy(proposal.get("azureDevOpsPreview") or {}),
+            "notice": "Preview only. No Azure DevOps work item has been created or updated.",
+        }
+
+    def export(self, proposal_id: str) -> dict[str, Any]:
+        proposal = self.get(proposal_id)
+        return {
+            "schemaVersion": "planning-proposal-v2",
+            "exportedAt": _now(),
+            "proposal": deepcopy(proposal),
+            "notice": "Reviewable HEI artifact only. Azure DevOps synchronization is separate.",
+        }
+
+    def request_ai_review(self, request: dict[str, Any]) -> dict[str, Any]:
+        proposal_id = _required(request, "proposalId")
+        proposal, values = self._editable(proposal_id, request)
+        context = self.planning_context_service.get(proposal["contextId"])
+        engineering_context = context.get("engineeringContext") or {}
+        if not self.reasoning_engine or not engineering_context:
+            review = {
+                "status": "Deterministic",
+                "summary": "Proposal remains available for human review without an AI provider.",
+                "recommendations": _validation_recommendations(
+                    (proposal.get("validation") or {}).get("findings") or []
+                ),
+                "confidence": proposal.get("health", {}).get("overallHealth", 0),
+                "reviewedAt": _now(),
+            }
+        else:
+            result = self.reasoning_engine.analyze(
+                "Planning Proposal Review",
+                engineering_context,
+                user_requirement=proposal.get("executiveSummary") or proposal["title"],
+                provider=_text(request.get("provider")) or "Auto",
+                correlation_id=proposal.get("correlationId") or "",
+                options={
+                    "proposalVersion": proposal["version"],
+                    "proposalSummary": _review_projection(proposal),
+                },
+            )
+            review = {
+                "status": "Completed",
+                "summary": _text(
+                    (result.get("recommendation") or {}).get("action")
+                    or (result.get("recommendation") or {}).get("title")
+                ),
+                "recommendations": _strings(result.get("reasoning")),
+                "alternatives": list(result.get("alternatives") or []),
+                "risks": _strings(result.get("risks")),
+                "confidence": _confidence_value(result.get("confidence")),
+                "reasoningMode": _text(result.get("reasoningMode")),
+                "provider": _text(result.get("provider")),
+                "promptVersion": _text(result.get("promptVersion")),
+                "reviewedAt": _now(),
+            }
+        previous = _snapshot(proposal)
+        proposal["aiReview"] = review
+        proposal = self._version(
+            proposal,
+            previous,
+            _text(request.get("actor")) or "HEI User",
+            "Requested Planning Proposal AI review.",
+            ["Recorded advisory Planning Proposal review."],
+        )
+        proposal = self._recalculate(proposal)
+        values[proposal_id] = proposal
+        self.store.write(values)
+        self._publish("PlanningProposalAIReviewed", proposal)
+        return proposal
+
     def _assemble(
         self,
         generated: dict[str, Any],
@@ -203,6 +319,9 @@ class PlanningProposalService:
         legacy_items = list(legacy.get("items") or [])
         legacy_changes = list(legacy.get("changes") or [])
         requirement = context.get("requirement") or {}
+        engineering_context = context.get("engineeringContext") or {}
+        project_intelligence = engineering_context.get("projectIntelligence") or {}
+        knowledge = project_intelligence.get("knowledge") or {}
         proposal_id = _text((existing or {}).get("proposalId")) or "planning-proposal-" + _digest([
             recommendation["recommendationId"], recommendation["version"], context["contextVersion"],
         ])
@@ -238,6 +357,29 @@ class PlanningProposalService:
         _distribute_estimate(nodes, estimate)
         dependency_edges = _dependency_edges(nodes)
         implementation_order = _implementation_order(nodes, dependency_edges)
+        acceptance_catalog = _acceptance_catalog(requirement, nodes)
+        definition_of_done = _definition_of_done(acceptance_catalog, nodes)
+        dependency_graph = _dependency_graph(
+            nodes, dependency_edges, engineering_context.get("dependencies") or {}
+        )
+        repository = engineering_context.get("repository") or context.get("repository") or {}
+        business_goal = _first(_strings(requirement.get("businessGoals")))
+        strategy = {
+            "type": _text(recommendation.get("strategy")),
+            "title": _text(recommendation.get("strategyTitle")),
+            "summary": _text(recommendation.get("summary", {}).get("recommendation")),
+            "reason": _text(recommendation.get("explanation", {}).get("whyThisApproach"))
+            or _first(_strings(recommendation.get("engineeringReasoning"))),
+            "confidence": int(recommendation.get("confidence", {}).get("overall") or 0),
+        }
+        executive_summary = _executive_summary(
+            requirement, recommendation, nodes, estimate
+        )
+        engineering_notes = _engineering_notes(recommendation, engineering_context)
+        risks = _proposal_risks(recommendation, requirement)
+        azure_preview = _azure_devops_preview(
+            proposal_id, nodes, context, recommendation
+        )
         now = _now()
         proposal = PlanningProposal(
             proposalId=proposal_id,
@@ -250,6 +392,9 @@ class PlanningProposalService:
             projectId=_text(recommendation.get("projectId")),
             correlationId=_text(recommendation.get("correlationId") or generated.get("correlationId")),
             title=_text(requirement.get("title")) or "Planning Proposal",
+            executiveSummary=executive_summary,
+            businessGoal=business_goal,
+            recommendedStrategy=strategy,
             status="Draft",
             version=version,
             nodes=[ProposalNode(**node) for node in nodes],
@@ -264,6 +409,16 @@ class PlanningProposalService:
             ),
             diff=ProposalDiff(**_proposal_diff(proposal_id, recommendation, nodes, estimate)),
             review=ProposalReview(status="Pending", checklist=[]),
+            acceptanceCriteria=acceptance_catalog,
+            dependencyGraph=dependency_graph,
+            engineeringNotes=engineering_notes,
+            risks=risks,
+            definitionOfDone=definition_of_done,
+            azureDevOpsPreview=azure_preview,
+            knowledgeVersion=_text(knowledge.get("version")),
+            knowledgeReferences=_knowledge_references(knowledge),
+            aiReview={},
+            userEdits=[],
             author=actor,
             createdAt=_text((existing or {}).get("createdAt")) or now,
             updatedAt=now,
@@ -290,6 +445,7 @@ class PlanningProposalService:
         order: int,
     ) -> dict[str, Any]:
         requirement = context.get("requirement") or {}
+        engineering_context = context.get("engineeringContext") or {}
         impact = recommendation.get("impact") or {}
         criteria = _strings(item.get("acceptanceCriteria"))
         if kind == "Story" and not criteria:
@@ -297,6 +453,11 @@ class PlanningProposalService:
         business_goals = _strings(requirement.get("businessGoals"))
         functional = _strings(requirement.get("functionalRequirements"))
         modules = _strings(impact.get("affectedModules"))
+        repository = engineering_context.get("repository") or context.get("repository") or {}
+        knowledge = (
+            (engineering_context.get("projectIntelligence") or {}).get("knowledge") or {}
+        )
+        criteria_details = _criteria_details(criteria, requirement)
         memory = [
             _text(entry.get("id") or entry.get("title"))
             for entry in context.get("memory", {}).get("matches") or []
@@ -309,6 +470,13 @@ class PlanningProposalService:
             recommendationId=recommendation["recommendationId"],
             repositoryModules=modules,
             memoryReferences=_unique(memory),
+            acceptanceCriterionIds=[
+                _text(item.get("criterionId")) for item in criteria_details
+                if _text(item.get("criterionId"))
+            ],
+            knowledgeReferences=_knowledge_references(knowledge),
+            evidence=_node_evidence(change, repository, knowledge),
+            contextVersion=_text(context.get("contextVersion")),
         )
         confidence = int(change.get("confidence") or recommendation.get("confidence", {}).get("overall") or 0)
         description = _text(item.get("description")) or _text(change.get("reason"))
@@ -339,17 +507,35 @@ class PlanningProposalService:
             confidence=confidence,
             reason=_text(change.get("reason")) or "Derived from the approved Planning Recommendation.",
             repositoryMapping={
-                "repositoryId": _text(impact.get("repositoryId")),
-                "repositoryName": _text(impact.get("repositoryName")),
+                "repositoryId": _text(impact.get("repositoryId") or repository.get("repositoryId")),
+                "repositoryName": _text(impact.get("repositoryName") or repository.get("repositoryName")),
+                "snapshotVersion": _text(repository.get("repositorySnapshotVersion")),
+                "mode": _text(repository.get("mode")),
                 "modules": modules,
+                "services": _strings(impact.get("affectedServices") or repository.get("services")),
                 "apis": _strings(impact.get("affectedApis")),
                 "screens": _strings(impact.get("affectedScreens")),
-                "evidenceStatus": "Mapped" if modules or impact.get("repositoryId") else "Missing",
+                "databaseObjects": _strings(
+                    impact.get("affectedDatabaseObjects") or repository.get("databaseObjects")
+                ),
+                "externalIntegrations": _strings(impact.get("externalIntegrations")),
+                "reason": _repository_mapping_reason(modules, impact, repository),
+                "evidence": _repository_mapping_evidence(repository, modules),
+                "evidenceStatus": "Mapped" if modules or repository.get("repositoryId") else "Missing",
             },
             traceability=traceability,
             planningVersion=version,
             status="Draft",
+            storyType=_story_type(kind, recommendation),
             order=order,
+            acceptanceCriteriaDetails=criteria_details,
+            affectedServices=_strings(impact.get("affectedServices") or repository.get("services")),
+            affectedDatabaseObjects=_strings(
+                impact.get("affectedDatabaseObjects") or repository.get("databaseObjects")
+            ),
+            externalIntegrations=_strings(impact.get("externalIntegrations")),
+            evidence=_node_evidence(change, repository, knowledge),
+            definitionOfDone=_node_definition_of_done(kind, criteria),
         ).__dict__
 
     def _ensure_story_tasks(
@@ -404,7 +590,12 @@ class PlanningProposalService:
         values = self.store.read()
         proposal = self.get(proposal_id)
         if proposal.get("status") in {"Approved", "Published", "Archived"}:
-            raise ValueError("Approved, Published, or Archived proposals are immutable. Create a new version first.")
+            if request.get("createNewVersion") is not True:
+                raise ValueError("Approved, Published, or Archived proposals are immutable. Create a new version first.")
+            proposal = deepcopy(proposal)
+            proposal["status"] = "Draft"
+            proposal["approvedBy"] = ""
+            proposal["approvedAt"] = ""
         expected = request.get("expectedVersion")
         if expected is not None and int(expected) != int(proposal.get("version") or 0):
             raise ValueError("Planning Proposal changed. Reload before editing.")
@@ -420,11 +611,15 @@ class PlanningProposalService:
             for key in (
                 "title", "description", "businessValue", "acceptanceCriteria", "businessRules", "dependencies",
                 "storyPoints", "repositoryModules", "affectedApis", "affectedScreens", "technicalNotes",
-                "generatedTests", "risk", "priority", "owner", "taskType",
+                "generatedTests", "risk", "priority", "owner", "taskType", "storyType",
+                "affectedServices", "affectedDatabaseObjects", "externalIntegrations",
+                "definitionOfDone",
             ):
                 if key in patch:
                     if key == "taskType" and patch[key] and patch[key] not in TASK_TYPES:
                         raise ValueError(f"taskType must be one of: {', '.join(sorted(TASK_TYPES))}.")
+                    if key == "storyType" and patch[key] and patch[key] not in STORY_TYPES:
+                        raise ValueError(f"storyType must be one of: {', '.join(sorted(STORY_TYPES))}.")
                     node[key] = deepcopy(patch[key])
                     changes.append(f"Updated {node['type']} {node['title']} field {key}.")
             node["origin"] = "User Edited"
@@ -442,6 +637,13 @@ class PlanningProposalService:
         if request.get("status") in STATUSES:
             proposal["status"] = request["status"]
             changes.append(f"Changed proposal status to {request['status']}.")
+        for key in (
+            "title", "executiveSummary", "businessGoal", "engineeringNotes",
+            "risks", "definitionOfDone",
+        ):
+            if key in request:
+                proposal[key] = deepcopy(request[key])
+                changes.append(f"Updated Planning Proposal field {key}.")
         return changes or ["Saved Planning Proposal draft."]
 
     def _node_operation(self, proposal: dict[str, Any], action: str, request: dict[str, Any]) -> list[str]:
@@ -570,11 +772,26 @@ class PlanningProposalService:
         proposal["updatedAt"] = _now()
         for node in proposal.get("nodes") or []:
             node["planningVersion"] = proposal["version"]
+        if self.review_service:
+            self.review_service.invalidate(proposal["proposalId"], proposal["version"], actor)
         return proposal
 
     def _recalculate(self, proposal: dict[str, Any]) -> dict[str, Any]:
         proposal["dependencies"] = _dependency_edges(proposal.get("nodes") or [])
         proposal["implementationOrder"] = _implementation_order(proposal.get("nodes") or [], proposal["dependencies"])
+        proposal["acceptanceCriteria"] = _acceptance_catalog_from_nodes(
+            proposal.get("nodes") or [], proposal.get("acceptanceCriteria") or []
+        )
+        proposal["definitionOfDone"] = _definition_of_done(
+            proposal["acceptanceCriteria"], proposal.get("nodes") or [],
+            existing=proposal.get("definitionOfDone") or [],
+        )
+        proposal["dependencyGraph"] = _dependency_graph(
+            proposal.get("nodes") or [],
+            proposal["dependencies"],
+            (proposal.get("dependencyGraph") or {}).get("sourceDependencies") or {},
+        )
+        proposal["azureDevOpsPreview"] = _azure_devops_preview_from_record(proposal)
         proposal["diff"] = _proposal_diff_from_record(proposal)
         validation, health = _validate(proposal)
         proposal["validation"] = validation
@@ -596,6 +813,438 @@ class PlanningProposalService:
                 "version": proposal.get("version"),
             },
         })
+
+
+def _acceptance_catalog(
+    requirement: dict[str, Any],
+    nodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records = [
+        dict(item) for item in requirement.get("acceptanceCriteriaRecords") or []
+        if isinstance(item, dict) and _text(item.get("text"))
+    ]
+    if not records:
+        origin = _text(
+            (requirement.get("acceptanceCriteriaState") or {}).get("origin")
+            or (requirement.get("fieldOrigins") or {}).get("acceptanceCriteria")
+        ) or "Source"
+        records = [
+            {
+                "criterionId": "ac-" + _digest([text, index]),
+                "title": f"Acceptance Criterion {index + 1}",
+                "text": text,
+                "origin": origin,
+                "status": "Approved",
+                "confidence": 1.0 if origin in {"Source", "Source Derived", "Imported"} else 0.8,
+                "evidence": [],
+                "quality": {"traceable": bool(origin)},
+                "order": index + 1,
+            }
+            for index, text in enumerate(_strings(requirement.get("acceptanceCriteria")))
+        ]
+    return _acceptance_catalog_from_nodes(nodes, records)
+
+
+def _acceptance_catalog_from_nodes(
+    nodes: list[dict[str, Any]],
+    existing: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    catalog: dict[str, dict[str, Any]] = {}
+    for item in existing:
+        if not isinstance(item, dict) or not _text(item.get("text")):
+            continue
+        key = _text(item.get("criterionId")) or _text(item.get("text")).casefold()
+        catalog[key] = {**deepcopy(item), "mappedNodeIds": []}
+    for node in nodes:
+        if node.get("status") == "Rejected":
+            continue
+        if node.get("type") != "Story" or node.get("status") == "Rejected":
+            continue
+        details = list(node.get("acceptanceCriteriaDetails") or [])
+        for index, text in enumerate(_strings(node.get("acceptanceCriteria"))):
+            detail = next((
+                item for item in details
+                if _text(item.get("text")).casefold() == text.casefold()
+            ), {})
+            key = _text(detail.get("criterionId")) or text.casefold()
+            if key not in catalog:
+                catalog[key] = {
+                    "criterionId": _text(detail.get("criterionId")) or "ac-" + _digest([text]),
+                    "title": _text(detail.get("title")) or f"Acceptance Criterion {index + 1}",
+                    "text": text,
+                    "origin": _text(detail.get("origin")) or node.get("origin") or "AI Suggested",
+                    "status": _text(detail.get("status")) or "Approved",
+                    "confidence": detail.get("confidence", node.get("confidence", 0) / 100),
+                    "evidence": list(detail.get("evidence") or []),
+                    "quality": dict(detail.get("quality") or {}),
+                    "order": detail.get("order", index + 1),
+                    "mappedNodeIds": [],
+                }
+            catalog[key].setdefault("mappedNodeIds", []).append(node["nodeId"])
+    output = list(catalog.values())
+    for item in output:
+        item["mappedNodeIds"] = _unique(_strings(item.get("mappedNodeIds")))
+    return sorted(output, key=lambda item: (int(item.get("order") or 0), _text(item.get("text"))))
+
+
+def _criteria_details(
+    criteria: list[str],
+    requirement: dict[str, Any],
+) -> list[dict[str, Any]]:
+    records = [
+        dict(item) for item in requirement.get("acceptanceCriteriaRecords") or []
+        if isinstance(item, dict)
+    ]
+    by_text = {
+        _text(item.get("text")).casefold(): item
+        for item in records if _text(item.get("text"))
+    }
+    origin = _text(
+        (requirement.get("acceptanceCriteriaState") or {}).get("origin")
+        or (requirement.get("fieldOrigins") or {}).get("acceptanceCriteria")
+    ) or "Source"
+    return [
+        deepcopy(by_text.get(text.casefold()) or {
+            "criterionId": "ac-" + _digest([text]),
+            "title": f"Acceptance Criterion {index + 1}",
+            "text": text,
+            "origin": origin,
+            "status": "Approved",
+            "confidence": 1.0 if origin in {"Source", "Source Derived", "Imported"} else 0.8,
+            "evidence": [],
+            "quality": {"traceable": bool(origin)},
+            "order": index + 1,
+        })
+        for index, text in enumerate(criteria)
+    ]
+
+
+def _definition_of_done(
+    acceptance: list[dict[str, Any]],
+    nodes: list[dict[str, Any]],
+    *,
+    existing: list[str] | None = None,
+) -> list[str]:
+    return _unique([
+        *(existing or []),
+        "Every mapped Acceptance Criterion is implemented and verified.",
+        "Required functional, negative, permission, integration, and regression tests pass.",
+        "Repository and architecture mappings are reviewed against current evidence.",
+        "No unresolved mandatory Planning Proposal validation findings remain.",
+        "Dependencies, risks, deployment impact, and rollback expectations are documented.",
+        *(
+            ["All approved Acceptance Criteria retain source and evidence traceability."]
+            if acceptance else []
+        ),
+        *(
+            ["Every Story has at least one implementation Task."]
+            if any(node.get("type") == "Story" for node in nodes) else []
+        ),
+    ])
+
+
+def _node_definition_of_done(kind: str, criteria: list[str]) -> list[str]:
+    if kind == "Story":
+        return _unique([
+            "All Story Acceptance Criteria are verified.",
+            "Mapped implementation tasks and required tests are complete.",
+        ])
+    if kind in {"Task", "Sub Task"}:
+        return [
+            "Implementation is complete within the mapped repository boundary.",
+            "Relevant tests pass and no unrelated modules are changed.",
+        ]
+    return ["All approved child artifacts satisfy their validation and traceability gates."]
+
+
+def _dependency_graph(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    source_dependencies: dict[str, Any],
+) -> dict[str, Any]:
+    by_id = {node["nodeId"]: node for node in nodes}
+    categorized: dict[str, list[dict[str, Any]]] = {
+        "storyDependencies": [],
+        "featureDependencies": [],
+        "repositoryDependencies": list(source_dependencies.get("repositoryDependencies") or []),
+        "crossTeamDependencies": [],
+        "technicalDependencies": [],
+    }
+    for edge in edges:
+        source = by_id.get(edge.get("from")) or {}
+        target = by_id.get(edge.get("to")) or {}
+        value = {
+            **edge,
+            "fromTitle": source.get("title"),
+            "toTitle": target.get("title"),
+        }
+        if source.get("type") == "Story" and target.get("type") == "Story":
+            categorized["storyDependencies"].append(value)
+        elif source.get("type") == "Feature" or target.get("type") == "Feature":
+            categorized["featureDependencies"].append(value)
+        else:
+            categorized["technicalDependencies"].append(value)
+    categorized["technicalDependencies"].extend(
+        list(source_dependencies.get("moduleDependencies") or [])
+        + list(source_dependencies.get("apiDependencies") or [])
+        + list(source_dependencies.get("architectureDependencies") or [])
+    )
+    return {
+        "nodes": [
+            {"id": node["nodeId"], "type": node["type"], "title": node["title"]}
+            for node in nodes if node.get("status") != "Rejected"
+        ],
+        "edges": edges,
+        "implementationOrder": _implementation_order(nodes, edges),
+        "categories": categorized,
+        "sourceDependencies": deepcopy(source_dependencies),
+    }
+
+
+def _executive_summary(
+    requirement: dict[str, Any],
+    recommendation: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    estimate: dict[str, Any],
+) -> str:
+    counts = {
+        kind: sum(1 for node in nodes if node.get("type") == kind)
+        for kind in ("Epic", "Feature", "Story", "Task")
+    }
+    strategy = _text(recommendation.get("strategy")).replace("_", " ").title()
+    goal = _first(_strings(requirement.get("businessGoals"))) or _text(
+        requirement.get("planningRequirement")
+    )
+    return (
+        f"{strategy or 'Approved planning strategy'} for {goal}. "
+        f"The proposal contains {counts['Epic']} Epic, {counts['Feature']} Feature(s), "
+        f"{counts['Story']} Story/Stories, and {counts['Task']} Task(s), estimated at "
+        f"{estimate['engineeringDays']} engineering day(s) and {estimate['storyPoints']} Story Points."
+    )
+
+
+def _engineering_notes(
+    recommendation: dict[str, Any],
+    engineering_context: dict[str, Any],
+) -> list[str]:
+    architecture = engineering_context.get("architecture") or {}
+    repository = engineering_context.get("repository") or {}
+    return _unique([
+        *_strings(recommendation.get("engineeringReasoning")),
+        _text(recommendation.get("expectedRepositoryImpact")),
+        *[
+            f"Architecture layer: {item}"
+            for item in _strings(architecture.get("layers"))
+        ],
+        *[
+            f"Repository warning: {item}"
+            for item in _strings(repository.get("warnings"))
+        ],
+    ])
+
+
+def _proposal_risks(
+    recommendation: dict[str, Any],
+    requirement: dict[str, Any],
+) -> list[dict[str, Any]]:
+    values = _unique([
+        *_strings(requirement.get("risks")),
+        *_strings((recommendation.get("impact") or {}).get("risks")),
+        *_strings((recommendation.get("impact") or {}).get("potentialRisks")),
+        *_strings(recommendation.get("risks")),
+    ])
+    level = _text((recommendation.get("impact") or {}).get("riskLevel")) or "Medium"
+    return [
+        {
+            "riskId": "proposal-risk-" + _digest([value]),
+            "description": value,
+            "level": level,
+            "mitigation": "Review during proposal validation and map to an owning Story or Task.",
+            "source": "Approved Planning Recommendation",
+        }
+        for value in values
+    ]
+
+
+def _knowledge_references(knowledge: dict[str, Any]) -> list[str]:
+    return _unique([
+        *[f"Module:{item}" for item in _strings(knowledge.get("modules"))],
+        *[f"Flow:{item}" for item in _strings(knowledge.get("flows"))],
+        *[f"Standard:{item}" for item in _strings(knowledge.get("standards"))],
+        *[f"Document:{_text(item.get('path'))}" for item in knowledge.get("sourceFiles") or [] if isinstance(item, dict)],
+    ])
+
+
+def _node_evidence(
+    change: dict[str, Any],
+    repository: dict[str, Any],
+    knowledge: dict[str, Any],
+) -> list[dict[str, Any]]:
+    evidence = []
+    for item in change.get("evidence") or []:
+        evidence.append(item if isinstance(item, dict) else {
+            "type": "PlanningRecommendation", "value": _text(item),
+            "source": "Approved Planning Recommendation",
+        })
+    if repository.get("repositorySnapshotVersion"):
+        evidence.append({
+            "type": "RepositorySnapshot",
+            "value": _text(repository.get("repositorySnapshotVersion")),
+            "source": "Repository Intelligence",
+        })
+    if knowledge.get("version"):
+        evidence.append({
+            "type": "KnowledgeVersion",
+            "value": _text(knowledge.get("version")),
+            "source": "Knowledge Registry",
+        })
+    return _unique_dicts(evidence)
+
+
+def _repository_mapping_reason(
+    modules: list[str],
+    impact: dict[str, Any],
+    repository: dict[str, Any],
+) -> str:
+    if modules:
+        return "Affected modules were selected by Engineering Intelligence for the approved requirement intent."
+    if repository.get("repositoryId"):
+        return "Repository is selected, but module-level evidence requires review."
+    return "Repository Intelligence is unavailable; no repository mapping was invented."
+
+
+def _repository_mapping_evidence(
+    repository: dict[str, Any],
+    modules: list[str],
+) -> list[dict[str, Any]]:
+    evidence = []
+    if repository.get("repositorySnapshotVersion"):
+        evidence.append({
+            "type": "RepositorySnapshot",
+            "value": _text(repository.get("repositorySnapshotVersion")),
+            "source": "Repository Intelligence",
+        })
+    evidence.extend({
+        "type": "Module",
+        "value": module,
+        "source": "Engineering Intelligence",
+    } for module in modules)
+    return evidence
+
+
+def _story_type(kind: str, recommendation: dict[str, Any]) -> str:
+    if kind != "Story":
+        return ""
+    strategy = _text(recommendation.get("strategy")).upper()
+    if "BUG" in strategy:
+        return "Bug"
+    if "REFACTOR" in strategy or "TECHNICAL_DEBT" in strategy:
+        return "Refactor"
+    if "SPIKE" in strategy:
+        return "Spike"
+    if "DOCUMENTATION" in strategy:
+        return "Documentation"
+    if "EXTEND" in strategy or "ENHANCEMENT" in strategy or "MODIFY" in strategy:
+        return "Enhancement"
+    return "New"
+
+
+def _azure_devops_preview(
+    proposal_id: str,
+    nodes: list[dict[str, Any]],
+    context: dict[str, Any],
+    recommendation: dict[str, Any],
+) -> dict[str, Any]:
+    ado = context.get("azureDevOps") or {}
+    return _build_ado_preview(
+        proposal_id,
+        nodes,
+        area_path=_text(ado.get("currentAreaPath")),
+        iteration_path=_text(
+            (ado.get("currentIteration") or {}).get("path")
+            or (ado.get("currentIteration") or {}).get("name")
+        ),
+        project_id=_text(context.get("projectId") or recommendation.get("projectId")),
+    )
+
+
+def _azure_devops_preview_from_record(proposal: dict[str, Any]) -> dict[str, Any]:
+    existing = proposal.get("azureDevOpsPreview") or {}
+    return _build_ado_preview(
+        proposal["proposalId"],
+        proposal.get("nodes") or [],
+        area_path=_text(existing.get("areaPath")),
+        iteration_path=_text(existing.get("iterationPath")),
+        project_id=_text(existing.get("projectId") or proposal.get("projectId")),
+    )
+
+
+def _build_ado_preview(
+    proposal_id: str,
+    nodes: list[dict[str, Any]],
+    *,
+    area_path: str,
+    iteration_path: str,
+    project_id: str,
+) -> dict[str, Any]:
+    active = [node for node in nodes if node.get("status") != "Rejected"]
+    return {
+        "previewId": "ado-preview-" + _digest([proposal_id, [(item["nodeId"], item["title"]) for item in active]]),
+        "projectId": project_id,
+        "areaPath": area_path,
+        "iterationPath": iteration_path,
+        "tags": ["HEI", "Planning Proposal"],
+        "workItems": [
+            {
+                "proposalNodeId": node["nodeId"],
+                "workItemType": "User Story" if node["type"] == "Story" else node["type"],
+                "title": node["title"],
+                "description": node["description"],
+                "parentProposalNodeId": node["parentId"],
+                "storyPoints": node["storyPoints"] if node["type"] == "Story" else None,
+                "acceptanceCriteria": node["acceptanceCriteria"],
+                "operation": "Create" if node.get("origin") == "AI Suggested" else "Modify",
+            }
+            for node in active
+        ],
+        "links": [
+            {
+                "type": "ParentChild",
+                "parentProposalNodeId": node["parentId"],
+                "childProposalNodeId": node["nodeId"],
+            }
+            for node in active if node.get("parentId")
+        ],
+        "summary": {
+            kind: sum(1 for node in active if node["type"] == kind)
+            for kind in NODE_TYPES
+        },
+        "writeStatus": "PreviewOnly",
+        "writesPerformed": 0,
+        "requiresApprovedProposal": True,
+    }
+
+
+def _review_projection(proposal: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "proposalId": proposal["proposalId"],
+        "version": proposal["version"],
+        "strategy": proposal.get("recommendedStrategy") or {},
+        "nodeCounts": {
+            kind: sum(1 for node in proposal.get("nodes") or [] if node.get("type") == kind)
+            for kind in NODE_TYPES
+        },
+        "validation": proposal.get("validation") or {},
+        "health": proposal.get("health") or {},
+        "risks": proposal.get("risks") or [],
+    }
+
+
+def _validation_recommendations(findings: list[dict[str, Any]]) -> list[str]:
+    return _unique([
+        _text(item.get("recommendation")) or _finding_recommendation(_text(item.get("code")))
+        for item in findings
+    ]) or ["Complete the human review checklist before approval."]
 
 
 def _proposal_estimate(value: dict[str, Any], recommendation: dict[str, Any]) -> dict[str, Any]:
@@ -775,18 +1424,61 @@ def _validate(proposal: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]
                 _finding(findings, "invalid_hierarchy", "Error", node, f"{node.get('type')} requires a {parent_type} parent.")
         if node.get("type") == "Story" and not _strings(node.get("acceptanceCriteria")):
             _finding(findings, "missing_acceptance_criteria", "Error", node, "Story requires measurable Acceptance Criteria.")
+        if node.get("type") == "Story" and not any(
+            item.get("type") == "Task" and item.get("parentId") == node.get("nodeId")
+            and item.get("status") != "Rejected"
+            for item in nodes
+        ):
+            _finding(findings, "orphan_story", "Error", node, "Story requires at least one implementation Task.")
+        if node.get("type") == "Story" and any(
+            _text(item.get("status")).casefold() not in {"approved", "sourceprovided"}
+            for item in node.get("acceptanceCriteriaDetails") or []
+        ):
+            _finding(
+                findings, "unapproved_acceptance_criteria", "Error", node,
+                "AI-suggested Acceptance Criteria must be approved, edited, or discarded before proposal approval.",
+            )
         if node.get("type") in {"Story", "Task", "Sub Task"} and not node.get("estimate", {}).get("engineeringDays"):
             _finding(findings, "missing_estimate", "Error", node, "Engineering estimate is required.")
         if node.get("type") == "Story" and not node.get("storyPoints"):
             _finding(findings, "missing_story_points", "Error", node, "Story Points are required.")
         if node.get("repositoryMapping", {}).get("evidenceStatus") == "Missing":
             _finding(findings, "missing_repository", "Warning", node, "Repository mapping requires review.")
+        elif not node.get("repositoryMapping", {}).get("reason"):
+            _finding(findings, "weak_repository_mapping", "Warning", node, "Repository mapping requires an evidence-backed reason.")
         trace = node.get("traceability") or {}
         if not trace.get("requirementId") or not trace.get("recommendationId"):
             _finding(findings, "missing_traceability", "Error", node, "Requirement and recommendation traceability are required.")
+        proposal_knowledge = set(_strings(proposal.get("knowledgeReferences")))
+        node_knowledge = set(_strings(trace.get("knowledgeReferences")))
+        if node_knowledge and not node_knowledge.issubset(proposal_knowledge):
+            _finding(findings, "knowledge_inconsistency", "Error", node, "Node references knowledge outside the proposal knowledge version.")
     cycles = _dependency_cycles(proposal.get("dependencies") or [], node_ids)
     for node_id in cycles:
         _finding(findings, "circular_dependency", "Error", _node(proposal, node_id), "Circular dependency detected.")
+    active_story_ids = {
+        node["nodeId"] for node in nodes
+        if node.get("type") == "Story" and node.get("status") != "Rejected"
+    }
+    for criterion in proposal.get("acceptanceCriteria") or []:
+        if not active_story_ids.intersection(_strings(criterion.get("mappedNodeIds"))):
+            _finding(
+                findings, "unmapped_acceptance_criteria", "Error",
+                {"nodeId": "", "title": _text(criterion.get("title") or criterion.get("text"))},
+                "Acceptance Criterion is not mapped to an active Story.",
+            )
+    if not _strings(proposal.get("definitionOfDone")):
+        _finding(
+            findings, "missing_definition_of_done", "Error",
+            {"nodeId": "", "title": proposal.get("title")},
+            "Planning Proposal requires a Definition of Done.",
+        )
+    if int((proposal.get("azureDevOpsPreview") or {}).get("writesPerformed") or 0):
+        _finding(
+            findings, "unsafe_ado_preview", "Error",
+            {"nodeId": "", "title": proposal.get("title")},
+            "Planning Proposal generation must not perform Azure DevOps writes.",
+        )
     mandatory_passed = not any(item["severity"] == "Error" for item in findings)
     total = max(1, len(nodes))
     stories = [node for node in nodes if node.get("type") == "Story"]
@@ -826,13 +1518,15 @@ def _review_checklist(proposal: dict[str, Any]) -> list[dict[str, Any]]:
     checks = [
         ("Requirement Coverage", health.get("requirementCoverage", 0) == 100, True),
         ("Acceptance Criteria", not any(item.get("code") == "missing_acceptance_criteria" for item in validation.get("findings") or []), True),
+        ("Acceptance Traceability", not any(item.get("code") in {"unmapped_acceptance_criteria", "unapproved_acceptance_criteria"} for item in validation.get("findings") or []), True),
         ("Repository Mapping", health.get("repositoryCoverage", 0) > 0, False),
         ("Dependencies", not any(item.get("code") == "circular_dependency" for item in validation.get("findings") or []), True),
         ("Engineering Estimate", health.get("estimateCompleteness", 0) == 100, True),
         ("Story Points", all(node.get("storyPoints") for node in nodes if node.get("type") == "Story"), True),
         ("Implementation Order", len(proposal.get("implementationOrder") or []) == len(nodes), True),
         ("Risk", bool(proposal.get("estimate", {}).get("risk")), True),
-        ("Architecture Review", True, False),
+        ("Definition of Done", bool(proposal.get("definitionOfDone")), True),
+        ("Architecture Review", not any(item.get("code") == "knowledge_inconsistency" for item in validation.get("findings") or []), False),
         ("Quality Score", health.get("overallHealth", 0) >= 70, True),
     ]
     return [{"name": name, "passed": bool(passed), "mandatory": mandatory} for name, passed, mandatory in checks]
@@ -855,10 +1549,17 @@ def _finding_recommendation(code: str) -> str:
         "duplicate_item": "Merge, rename, or delete the duplicate item.",
         "invalid_hierarchy": "Move the item under the required parent type.",
         "missing_acceptance_criteria": "Add measurable Acceptance Criteria before review.",
+        "unapproved_acceptance_criteria": "Approve, edit, or discard AI-suggested Acceptance Criteria.",
+        "unmapped_acceptance_criteria": "Map the Acceptance Criterion to an active Story.",
+        "orphan_story": "Generate or add at least one implementation Task for the Story.",
         "missing_estimate": "Regenerate or manually override the engineering estimate.",
         "missing_story_points": "Add Story Points before review.",
         "missing_repository": "Confirm a repository mapping or record that repository context is unavailable.",
         "missing_traceability": "Regenerate the item from its approved requirement boundary.",
+        "weak_repository_mapping": "Record why the repository mapping applies.",
+        "knowledge_inconsistency": "Refresh the proposal from the approved Knowledge Registry version.",
+        "missing_definition_of_done": "Define completion, validation, and testing expectations.",
+        "unsafe_ado_preview": "Rebuild the preview without executing Azure DevOps writes.",
         "circular_dependency": "Remove or redirect one dependency before review.",
     }.get(code, "Review and resolve this proposal finding.")
 
@@ -971,6 +1672,20 @@ def _strings(value: Any) -> list[str]:
 
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
+
+
+def _first(values: list[str]) -> str:
+    return values[0] if values else ""
+
+
+def _confidence_value(value: Any) -> int:
+    if isinstance(value, dict):
+        value = value.get("overall") or value.get("score") or value.get("confidence")
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, round(number * 100 if number <= 1 else number)))
 
 
 def _unique_dicts(values: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -1,0 +1,19 @@
+"""Provider interface used by the Reasoning Engine."""
+
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from ..models import ReasoningRequest
+
+
+class IReasoningProvider(Protocol):
+    name: str
+    model: str
+
+    def is_available(self) -> bool: ...
+    def analyze(self, prompt: str, request: ReasoningRequest) -> Any: ...
+    def recommend(self, prompt: str, request: ReasoningRequest) -> Any: ...
+    def summarize(self, prompt: str, request: ReasoningRequest) -> Any: ...
+    def refine(self, prompt: str, request: ReasoningRequest) -> Any: ...
+    def reason(self, prompt: str, request: ReasoningRequest) -> Any: ...

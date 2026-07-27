@@ -61,7 +61,10 @@ class PlanningContextService:
     def build(self, request: dict[str, Any]) -> dict[str, Any]:
         requirement_id = _required(request, "requirementId")
         summary = self._approved_summary(requirement_id)
-        engineering_result = self.engineering_intelligence.generate_planning_context(
+        builder = getattr(self.engineering_intelligence, "build_planning_context", None)
+        if not callable(builder):
+            builder = self.engineering_intelligence.generate_planning_context
+        engineering_result = builder(
             summary,
             correlation_id=_text(summary.get("correlationId") or request.get("correlationId")),
         )
@@ -264,6 +267,17 @@ class PlanningContextService:
                 "functionalRequirements": _strings(summary.get("functionalRequirements")),
                 "nonFunctionalRequirements": _strings(summary.get("nonFunctionalRequirements")),
                 "acceptanceCriteria": _strings(summary.get("acceptanceCriteria")),
+                "acceptanceCriteriaRecords": [
+                    dict(item) for item in summary.get("acceptanceCriteriaRecords") or []
+                    if isinstance(item, dict)
+                ],
+                "acceptanceCriteriaState": dict(summary.get("acceptanceCriteriaState") or {}),
+                "acceptanceCoverage": dict(summary.get("acceptanceCoverage") or {}),
+                "acceptanceEvidence": [
+                    dict(item) for item in summary.get("acceptanceEvidence") or []
+                    if isinstance(item, dict)
+                ],
+                "fieldOrigins": dict(summary.get("fieldOrigins") or {}),
                 "businessRules": _strings(summary.get("businessRules")),
                 "dependencies": _strings(summary.get("dependencies")),
                 "risks": _strings(summary.get("risks")),

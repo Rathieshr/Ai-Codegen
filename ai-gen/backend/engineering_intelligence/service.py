@@ -6,6 +6,7 @@ import re
 from typing import Any, Iterable
 
 from .builder import EngineeringContextBuilder
+from .providers import ProjectIntelligenceProvider
 from .models import (
     ArchitectureSummary,
     AzureDevOpsSummary,
@@ -18,6 +19,17 @@ from .models import (
     RepositorySummary,
     ReuseSummary,
     SimilaritySummary,
+)
+from .services import (
+    ArchitectureService,
+    AzureDevOpsService,
+    ContextBuilder,
+    DependencyService,
+    IntelligenceOrchestrator,
+    MarkdownService,
+    MemoryService,
+    RepositoryService,
+    SimilarityService,
 )
 
 
@@ -32,6 +44,7 @@ class EngineeringIntelligenceService:
         azure_devops: Any | None = None,
         engineering_memory: Any | None = None,
         planning_engine: Any | None = None,
+        project_intelligence: Any | None = None,
         pull_request_provider: Any | None = None,
         context_builder: EngineeringContextBuilder | None = None,
     ) -> None:
@@ -40,8 +53,32 @@ class EngineeringIntelligenceService:
         self.azure_devops = azure_devops
         self.engineering_memory = engineering_memory
         self.planning_engine = planning_engine
+        self.project_intelligence = (
+            ProjectIntelligenceProvider(project_intelligence)
+            if project_intelligence is not None
+            else None
+        )
         self.pull_request_provider = pull_request_provider or (lambda _project_id: [])
         self.context_builder = context_builder or EngineeringContextBuilder()
+        self.repository_service = RepositoryService(
+            self._analyze_repository, repository_intelligence,
+        )
+        self.markdown_service = MarkdownService()
+        self.architecture_service = ArchitectureService(self._analyze_architecture)
+        self.dependency_service = DependencyService(self._analyze_dependencies)
+        self.azure_devops_service = AzureDevOpsService(
+            self._analyze_azure_devops, self._find_similar_stories,
+        )
+        self.similarity_service = SimilarityService(
+            self._find_similar_requirement, self._find_existing_implementation,
+        )
+        self.memory_service = MemoryService(
+            self._get_engineering_memory, engineering_memory,
+        )
+        self.optimized_context_builder = ContextBuilder()
+        self.orchestrator = IntelligenceOrchestrator(
+            self, self.optimized_context_builder,
+        )
 
     def analyze_requirement(
         self, requirement: dict[str, Any], analysis: dict[str, Any] | None = None,
@@ -75,7 +112,7 @@ class EngineeringIntelligenceService:
             "analysisId": analysis.get("analysisId"),
         }
 
-    def analyze_repository(self, requirement: dict[str, Any]) -> RepositorySummary:
+    def _analyze_repository(self, requirement: dict[str, Any]) -> RepositorySummary:
         selected = requirement.get("repository") or {}
         repository_id = _text(
             selected.get("repositoryId")
@@ -122,7 +159,7 @@ class EngineeringIntelligenceService:
             graph=graph,
         )
 
-    def analyze_azure_devops(self, requirement: dict[str, Any]) -> AzureDevOpsSummary:
+    def _analyze_azure_devops(self, requirement: dict[str, Any]) -> AzureDevOpsSummary:
         project_id = _text(requirement.get("projectId"))
         if not project_id or not self.azure_devops:
             return AzureDevOpsSummary(projectId=project_id)
@@ -135,7 +172,7 @@ class EngineeringIntelligenceService:
         pull_requests = list(self.azure_devops.cached_collection(project_id, "pullRequests").values())
         return self._azure_devops_summary(project_id, items, iterations, pull_requests)
 
-    def find_similar_stories(self, value: EngineeringContext | dict[str, Any]) -> list[dict[str, Any]]:
+    def _find_similar_stories(self, value: EngineeringContext | dict[str, Any]) -> list[dict[str, Any]]:
         return self._similar_by_type(value, "Story")
 
     def find_similar_features(self, value: EngineeringContext | dict[str, Any]) -> list[dict[str, Any]]:
@@ -144,7 +181,7 @@ class EngineeringIntelligenceService:
     def find_similar_epics(self, value: EngineeringContext | dict[str, Any]) -> list[dict[str, Any]]:
         return self._similar_by_type(value, "Epic")
 
-    def find_existing_implementation(
+    def _find_existing_implementation(
         self, value: EngineeringContext | dict[str, Any],
     ) -> list[dict[str, Any]]:
         context = _context_dict(value)
@@ -161,7 +198,7 @@ class EngineeringIntelligenceService:
             return None
         return self.repository_intelligence.get_repository(repository_id)
 
-    def get_engineering_memory(self, requirement: dict[str, Any]) -> EngineeringMemorySummary:
+    def _get_engineering_memory(self, requirement: dict[str, Any]) -> EngineeringMemorySummary:
         if not self.engineering_memory:
             return EngineeringMemorySummary()
         result = self.engineering_memory.find_relevant_memory({
@@ -184,7 +221,7 @@ class EngineeringIntelligenceService:
     def find_reusable_prs(self, value: EngineeringContext | dict[str, Any]) -> list[dict[str, Any]]:
         return list((_context_dict(value).get("reuse") or {}).get("pullRequests") or [])
 
-    def analyze_architecture(self, repository: RepositorySummary | dict[str, Any]) -> ArchitectureSummary:
+    def _analyze_architecture(self, repository: RepositorySummary | dict[str, Any]) -> ArchitectureSummary:
         value = repository if isinstance(repository, dict) else repository.__dict__
         graph = value.get("graph") or {}
         relationships = list(graph.get("relationships") or [])
@@ -200,7 +237,7 @@ class EngineeringIntelligenceService:
             evidence=relationships[:30],
         )
 
-    def analyze_dependencies(
+    def _analyze_dependencies(
         self,
         requirement: dict[str, Any],
         repository: RepositorySummary | dict[str, Any],
@@ -225,6 +262,101 @@ class EngineeringIntelligenceService:
             moduleDependencies=[item for item in resolved if "module" in _text(item.get("fromType")).casefold()],
             architectureDependencies=resolved,
         )
+
+    def analyze_repository(self, requirement: dict[str, Any]) -> RepositorySummary:
+        return self.repository_service.analyze_repository(requirement)
+
+    def get_repository_summary(self, requirement: dict[str, Any]) -> RepositorySummary:
+        return self.repository_service.get_repository_summary(requirement)
+
+    def find_relevant_modules(self, requirement: dict[str, Any]) -> list[str]:
+        return self.repository_service.find_relevant_modules(requirement)
+
+    def find_relevant_files(self, requirement: dict[str, Any]) -> list[dict[str, Any]]:
+        return self.repository_service.find_relevant_files(requirement)
+
+    def find_technology_stack(self, requirement: dict[str, Any]) -> dict[str, list[str]]:
+        return self.repository_service.find_technology_stack(requirement)
+
+    def index_markdown(self, documents: dict[str, str]) -> dict[str, Any]:
+        return self.markdown_service.index_markdown(documents)
+
+    def search_documentation(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        return self.markdown_service.search_documentation(query, limit)
+
+    def get_architecture_summary(self) -> str:
+        return self.markdown_service.get_architecture_summary()
+
+    def analyze_architecture(
+        self, repository: RepositorySummary | dict[str, Any],
+    ) -> ArchitectureSummary:
+        return self.architecture_service.analyze_architecture(repository)
+
+    def get_architecture_context(
+        self, repository: RepositorySummary | dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.architecture_service.get_architecture_context(repository)
+
+    def analyze_dependencies(
+        self,
+        requirement: dict[str, Any],
+        repository: RepositorySummary | dict[str, Any],
+    ) -> DependencySummary:
+        return self.dependency_service.analyze_dependencies(requirement, repository)
+
+    def find_affected_modules(
+        self,
+        requirement: dict[str, Any],
+        repository: RepositorySummary | dict[str, Any],
+    ) -> list[str]:
+        return self.dependency_service.find_affected_modules(requirement, repository)
+
+    def analyze_azure_devops(self, requirement: dict[str, Any]) -> AzureDevOpsSummary:
+        return self.azure_devops_service.analyze_project(requirement)
+
+    def analyze_project(self, requirement: dict[str, Any]) -> AzureDevOpsSummary:
+        return self.azure_devops_service.analyze_project(requirement)
+
+    def find_similar_stories(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self.azure_devops_service.find_similar_stories(value)
+
+    def find_open_work(self, requirement: dict[str, Any]) -> list[dict[str, Any]]:
+        return self.azure_devops_service.find_open_work(requirement)
+
+    def _find_similar_requirement(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        similar = _context_dict(value).get("similarWork") or {}
+        return list(similar if isinstance(similar, list) else similar.get("matches") or [])
+
+    def find_similar_requirement(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self.similarity_service.find_similar_requirement(value)
+
+    def find_existing_implementation(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self.similarity_service.find_reusable_implementation(value)
+
+    def find_reusable_implementation(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self.similarity_service.find_reusable_implementation(value)
+
+    def get_engineering_memory(self, requirement: dict[str, Any]) -> EngineeringMemorySummary:
+        return self.memory_service.search_memory(requirement)
+
+    def search_memory(self, requirement: dict[str, Any]) -> EngineeringMemorySummary:
+        return self.memory_service.search_memory(requirement)
+
+    def save_insight(self, insight: dict[str, Any]) -> dict[str, Any]:
+        return self.memory_service.save_insight(insight)
+
+    def find_lessons_learned(self, requirement: dict[str, Any]) -> list[dict[str, Any]]:
+        return self.memory_service.find_lessons_learned(requirement)
 
     def recommend_repository(
         self,
@@ -311,6 +443,29 @@ class EngineeringIntelligenceService:
             analysis = {"similarWork": [], "repositoryMatch": {"confidence": repository.confidence}}
             recommendation = self.recommend_planning_strategy(raw, analysis)
             similarity = SimilaritySummary()
+        project_context = (
+            self.project_intelligence.build_context(requirement_summary)
+            if self.project_intelligence
+            else {}
+        )
+        project_matches = [
+            {
+                "workItem": {
+                    "id": item.get("id"),
+                    "type": item.get("artifactType"),
+                    "title": item.get("title"),
+                    "state": item.get("state"),
+                },
+                "confidence": item.get("confidence"),
+                "reason": item.get("reason"),
+                "source": item.get("source"),
+            }
+            for item in project_context.get("approvedArtifacts") or []
+        ]
+        if project_matches:
+            similarity = self._similarity_summary(
+                _unique_dicts([*similarity.matches, *project_matches])
+            )
         architecture = self.analyze_architecture(repository)
         dependencies = self.analyze_dependencies(requirement_summary, repository)
         impact = self.generate_impact_analysis(requirement_summary, repository, similarity)
@@ -323,6 +478,9 @@ class EngineeringIntelligenceService:
         )
         repo_recommendation = _recommendation_from_summary(repository)
         readiness = _readiness(requirement_summary, repository, memory, similarity)
+        project_documents = list(
+            (project_context.get("knowledge") or {}).get("sourceFiles") or []
+        )
         context = self.context_builder.build(
             requirement=_canonical_requirement(requirement_summary),
             repository=repository,
@@ -336,6 +494,11 @@ class EngineeringIntelligenceService:
             impact=impact,
             reuse=reuse,
             readiness=readiness,
+            project_intelligence=project_context,
+            relevant_documentation=_unique_dicts([
+                *self.search_documentation(_requirement_text(requirement_summary), limit=8),
+                *project_documents,
+            ])[:8],
             correlation_id=correlation_id or _text(requirement_summary.get("correlationId")),
         )
         # Preserve the established planning lineage while it remains the
@@ -499,25 +662,69 @@ class EngineeringIntelligenceService:
             "generatedAt": context.get("generatedAt"),
         }
 
+    def build_requirement_context(
+        self, requirement: dict[str, Any], *, correlation_id: str = "",
+    ) -> dict[str, Any]:
+        return self.orchestrator.build_requirement_context(
+            requirement, correlation_id=correlation_id,
+        )
+
+    def build_planning_context(
+        self, requirement: dict[str, Any], *, correlation_id: str = "",
+    ) -> dict[str, Any]:
+        return self.orchestrator.build_planning_context(
+            requirement, correlation_id=correlation_id,
+        )
+
+    def build_execution_context(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.orchestrator.build_execution_context(value)
+
+    def build_validation_context(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.orchestrator.build_validation_context(value)
+
     # Public names from the V1 service contract.
     analyzeRequirement = analyze_requirement
     analyzeRepository = analyze_repository
+    getRepositorySummary = get_repository_summary
+    findRelevantModules = find_relevant_modules
+    findRelevantFiles = find_relevant_files
+    findTechnologyStack = find_technology_stack
+    indexMarkdown = index_markdown
+    searchDocumentation = search_documentation
+    getArchitectureSummary = get_architecture_summary
     analyzeAzureDevOps = analyze_azure_devops
+    analyzeProject = analyze_project
+    findOpenWork = find_open_work
     findSimilarStories = find_similar_stories
     findSimilarFeatures = find_similar_features
     findSimilarEpics = find_similar_epics
+    findSimilarRequirement = find_similar_requirement
     findExistingImplementation = find_existing_implementation
+    findReusableImplementation = find_reusable_implementation
     findRepository = find_repository
     getEngineeringMemory = get_engineering_memory
+    searchMemory = search_memory
+    saveInsight = save_insight
+    findLessonsLearned = find_lessons_learned
     findReusableComponents = find_reusable_components
     findReusableTests = find_reusable_tests
     findReusablePRs = find_reusable_prs
     analyzeArchitecture = analyze_architecture
+    getArchitectureContext = get_architecture_context
     analyzeDependencies = analyze_dependencies
+    findAffectedModules = find_affected_modules
     recommendRepository = recommend_repository
     recommendPlanningStrategy = recommend_planning_strategy
     generateImpactAnalysis = generate_impact_analysis
     generatePlanningContext = generate_planning_context
+    buildRequirementContext = build_requirement_context
+    buildPlanningContext = build_planning_context
+    buildExecutionContext = build_execution_context
+    buildValidationContext = build_validation_context
 
     def _similar_by_type(
         self, value: EngineeringContext | dict[str, Any], artifact_type: str,
@@ -663,6 +870,29 @@ def _canonical_requirement(value: dict[str, Any]) -> dict[str, Any]:
         "functionalRequirements": _strings(value.get("functionalRequirements")),
         "nonFunctionalRequirements": _strings(value.get("nonFunctionalRequirements")),
         "acceptanceCriteria": _strings(value.get("acceptanceCriteria")),
+        "acceptanceCriteriaRecords": [
+            dict(item) for item in value.get("acceptanceCriteriaRecords") or []
+            if isinstance(item, dict)
+        ],
+        "acceptanceCriteriaState": (
+            dict(value.get("acceptanceCriteriaState") or {})
+            if isinstance(value.get("acceptanceCriteriaState"), dict)
+            else {}
+        ),
+        "acceptanceCoverage": (
+            dict(value.get("acceptanceCoverage") or {})
+            if isinstance(value.get("acceptanceCoverage"), dict)
+            else {}
+        ),
+        "acceptanceEvidence": [
+            dict(item) for item in value.get("acceptanceEvidence") or []
+            if isinstance(item, dict)
+        ],
+        "fieldOrigins": (
+            dict(value.get("fieldOrigins") or {})
+            if isinstance(value.get("fieldOrigins"), dict)
+            else {}
+        ),
         "businessRules": _strings(value.get("businessRules")),
         "dependencies": _strings(value.get("dependencies")),
         "risks": _strings(value.get("risks")),

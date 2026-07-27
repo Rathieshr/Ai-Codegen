@@ -122,6 +122,7 @@ from backend.planning_integration import IntelligentPlanningEngine, RequirementP
 from backend.planning_context import PlanningContextService, build_planning_context_router
 from backend.planning_recommendation import PlanningRecommendationService, build_planning_recommendation_router
 from backend.planning_proposal import PlanningProposalService, build_planning_proposal_router
+from backend.engineering_review import EngineeringReviewService, build_engineering_review_router
 from backend.project_intelligence import project_intelligence_service
 from backend.project_graph import project_knowledge_graph_service
 from backend.prompt_budget import default_json_sections, probe_json_with_budget
@@ -296,6 +297,7 @@ engineering_intelligence_service = EngineeringIntelligenceService(
     azure_devops=azure_devops_sdk,
     engineering_memory=engineering_memory_engine,
     planning_engine=intelligent_planning_engine,
+    project_intelligence=project_intelligence_service,
     pull_request_provider=lambda project_id: list(
         azure_devops_sdk.cached_collection(project_id, "pullRequests").values()
     ) if project_id else [],
@@ -343,6 +345,14 @@ planning_proposal_service = PlanningProposalService(
     platform=platform_foundation,
 )
 app.include_router(build_planning_proposal_router(planning_proposal_service))
+engineering_review_service = EngineeringReviewService(
+    JsonMapStore(platform_foundation.storage_root / "engineering_reviews.json"),
+    proposal_provider=planning_proposal_service.get,
+    proposal_approver=planning_proposal_service._finalize_approval,
+    platform=platform_foundation,
+)
+planning_proposal_service.review_service = engineering_review_service
+app.include_router(build_engineering_review_router(engineering_review_service))
 ado_work_item_intelligence = register_ado_work_item_intelligence(
     platform_foundation.storage_root / "ado_work_item_intelligence",
     azure_devops=azure_devops_integration,
@@ -587,6 +597,8 @@ approval_center_service = ApprovalCenterService(
     planning_provider=lambda: planning_center_service.list(limit=250),
     planning_approve=planning_center_service.approve,
     planning_reject=planning_center_service.reject,
+    engineering_review_provider=engineering_review_service.list,
+    engineering_review_decide=engineering_review_service.decide,
     execution_plan_provider=execution_manifest_service.store.read,
     memory_provider=memory_candidate_service.list,
     memory_approve=memory_candidate_service.approve,

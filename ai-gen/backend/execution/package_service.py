@@ -33,7 +33,10 @@ class ExecutionPackageService:
             capsule = dict(capsule)
             canonical = capsule.get("engineeringContext")
             if self.engineering_intelligence and isinstance(canonical, dict):
-                capsule["engineeringExecutionContext"] = self.engineering_intelligence.execution_context(canonical)
+                builder = getattr(self.engineering_intelligence, "build_execution_context", None)
+                if not callable(builder):
+                    builder = self.engineering_intelligence.execution_context
+                capsule["engineeringExecutionContext"] = builder(canonical)
             package = self.builder.build(capsule, request)
             if isinstance(canonical, dict):
                 package["engineeringContext"] = {

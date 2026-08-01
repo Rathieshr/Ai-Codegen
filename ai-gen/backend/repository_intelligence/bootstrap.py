@@ -44,6 +44,12 @@ class RepositoryIntelligenceModule:
 def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligenceModule:
     storage_root.mkdir(parents=True, exist_ok=True)
     ado_client = AdoClient()
+    remote_content_provider = lambda repository, path: ado_client.get_file_content(
+        str(repository.metadata.get("adoProject") or ""),
+        str(repository.metadata.get("azureDevOpsRepositoryId") or ""),
+        path,
+        str(repository.metadata.get("branch") or repository.default_branch or "main"),
+    )
     repository_service = FileBackedRepositoryService(storage_root / "repositories.json")
     snapshot_service = FileBackedSnapshotService(storage_root / "repository_snapshots.json")
     scanner = FileSystemRepositoryScanner(
@@ -58,12 +64,7 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
     graph_service = FileBackedEngineeringGraphService(storage_root / "engineering_graphs.json")
     parser_service = FileBackedRepositoryParserService(
         storage_root / "repository_symbols.json",
-        remote_content_provider=lambda repository, path: ado_client.get_file_content(
-            str(repository.metadata.get("adoProject") or ""),
-            str(repository.metadata.get("azureDevOpsRepositoryId") or ""),
-            path,
-            str(repository.metadata.get("branch") or repository.default_branch or "main"),
-        ),
+        remote_content_provider=remote_content_provider,
     )
     memory_engine = EngineeringMemoryEngine(storage_root / "engineering_memory.json")
     detection_service = RepositoryDetectionService(
@@ -107,6 +108,7 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
         context_capsule_builder=context_capsule_builder,
         agent=agent,
         monitoring_service=monitoring_service,
+        repository_content_provider=remote_content_provider,
     )
     return RepositoryIntelligenceModule(
         repository_service=repository_service,

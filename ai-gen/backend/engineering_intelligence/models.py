@@ -162,6 +162,13 @@ class EngineeringContext:
     summary: EngineeringSummary
     projectIntelligence: dict[str, Any] = field(default_factory=dict)
     relevantDocumentation: list[dict[str, Any]] = field(default_factory=list)
+    requirement_context: dict[str, Any] = field(default_factory=dict)
+    repository_code_context: dict[str, Any] = field(default_factory=dict)
+    repository_markdown_context: dict[str, Any] = field(default_factory=dict)
+    project_intelligence_context: dict[str, Any] = field(default_factory=dict)
+    azure_devops_context: dict[str, Any] = field(default_factory=dict)
+    engineering_memory_context: dict[str, Any] = field(default_factory=dict)
+    knowledge_synthesis: dict[str, Any] = field(default_factory=dict)
     correlationId: str = ""
     generatedAt: str = ""
     sourceVersions: dict[str, Any] = field(default_factory=dict)

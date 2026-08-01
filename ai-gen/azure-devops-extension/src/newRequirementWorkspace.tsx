@@ -184,6 +184,41 @@ type RequirementAnalysisResult = {
     status: string; reasoningMode: string; provider: string; model: string; promptVersion: string;
     insights: string[]; warnings: string[]; confidence: { overall?: number; level?: string };
   };
+  aiUnderstanding?: {
+    status: string; reasoningMode: string; provider: string; model: string; promptVersion: string;
+    insights: string[]; warnings: string[]; confidence: { overall?: number; level?: string };
+  };
+  requirementIntent?: {
+    intentSummary: string; businessGoal: string; functionalIntent: string[];
+    entities: string[]; primaryActor: string; secondaryActors: string[];
+    capabilities: string[]; actions: string[]; concepts: string[];
+    businessTerminology: string[]; explicitConstraints: string[]; possibleAssumptions: string[];
+    ambiguities: string[]; riskIndicators: string[]; technologyConcepts: string[];
+    domainSynonyms: string[]; searchKeywords: string[];
+    possibleModuleNames: string[]; possibleFeatureNames: string[]; possibleApis: string[];
+    possibleRepositoryTerms: string[]; possibleAzureDevOpsSearchTerms: string[];
+    possibleMarkdownSearchTerms: string[]; clarificationCandidates: string[]; confidence: number;
+  };
+  evidenceSynthesis?: {
+    repositoryFindings: string[]; architectureFindings: string[]; reuseOpportunities: string[];
+    affectedEngineeringElements: string[]; missingInformation: string[];
+    engineeringInsights: string[]; evidence: Array<{ referenceId: string; reason?: string }>;
+  };
+  engineeringDiscovery?: {
+    contextId: string; contextVersion: string;
+    repository: { mode?: string; snapshotVersion?: string; modules: string[]; files: unknown[]; services: string[]; apis: string[] };
+    markdown: { selected?: Array<{ evidenceId: string; path: string; heading: string }>; diagnostics?: Record<string, unknown> };
+    azureDevOps: { workItems: unknown[]; currentIteration: Record<string, unknown> };
+    knowledge: Record<string, unknown>; memory: { matches: unknown[] };
+    similarWork: Record<string, unknown>; architecture: Record<string, unknown>;
+    dependencies: Record<string, unknown>; rejectedContext: unknown[];
+  };
+  analysisLineage?: {
+    provider: string; model: string; intentPromptVersion: string; synthesisPromptVersion: string;
+    contextId: string; contextVersion: string; knowledgeVersion?: string;
+    repositoryRevision?: string; analysisVersion: string; timestamp: string;
+  };
+  analysisMode?: 'AI' | 'Deterministic';
   acceptanceDiagnostics?: {
     generationMode?: string; reasoningMode?: string; provider?: string; model?: string;
     promptVersion?: string; warnings?: string[];
@@ -308,6 +343,21 @@ type PlanningContextResult = {
     currentProject: string; repository: string; planningMode: string; recommendedStrategy: string;
     affectedFeatures: number; affectedStories: number; engineeringRisk: string;
     estimatedComplexity: string; planningConfidence: number;
+  };
+  engineeringDiscovery?: {
+    repositoryMarkdown?: {
+      selected?: Array<{
+        evidenceId: string; path: string; heading: string; classification: string;
+        selectionReason: string; authority: string; confidence: number;
+      }>;
+      rejected?: Array<{ evidenceId?: string; path?: string; heading?: string; reason: string }>;
+      conflicts?: Array<{ conflictId: string; path: string; heading: string; reason: string }>;
+      diagnostics?: {
+        filesScanned?: number; sectionsIndexed?: number; sectionsSelected?: number;
+        rejectedContextCount?: number; conflictsDetected?: number; repositoryRevision?: string;
+      };
+    };
+    projectIntelligence?: { knowledge?: { version?: string } };
   };
 };
 
@@ -1468,6 +1518,10 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
   onClassify: (classification: string) => void;
 }) {
   const counts = value.azureDevOps.counts || {};
+  const markdown = value.engineeringDiscovery?.repositoryMarkdown || {};
+  const markdownDiagnostics = markdown.diagnostics || {};
+  const selectedMarkdown = markdown.selected || [];
+  const markdownConflicts = markdown.conflicts || [];
   const blocked = value.readiness.status === 'Blocked';
   const classifications = ['NEW_INITIATIVE', 'NEW_FEATURE', 'EXTEND_FEATURE', 'MODIFY_EXISTING', 'BUG', 'ENHANCEMENT', 'AI_RECOMMENDED'];
   return <section className="hei-planning-context-workspace" aria-label="Planning Context">
@@ -1532,6 +1586,36 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
         <p>{value.impact.sprintImpact}</p>
       </section>
     </div>
+
+    <section className="hei-planning-context-discovery">
+      <header>
+        <div><span>Engineering Discovery</span><h3>Context Used</h3><p>Traceable repository knowledge selected before planning reasoning.</p></div>
+        <Status value={`${selectedMarkdown.length} sections selected`} />
+      </header>
+      <div className="hei-planning-context-metrics">
+        <Signal label="Markdown Files Scanned" value={String(markdownDiagnostics.filesScanned || 0)} />
+        <Signal label="Sections Indexed" value={String(markdownDiagnostics.sectionsIndexed || 0)} />
+        <Signal label="Sections Selected" value={String(markdownDiagnostics.sectionsSelected || selectedMarkdown.length)} />
+        <Signal label="Rejected Context" value={String(markdownDiagnostics.rejectedContextCount || 0)} />
+        <Signal label="Conflicts" value={String(markdownDiagnostics.conflictsDetected || markdownConflicts.length)} />
+        <Signal label="Repository Revision" value={markdownDiagnostics.repositoryRevision || 'Not available'} />
+        <Signal label="Knowledge Version" value={value.engineeringDiscovery?.projectIntelligence?.knowledge?.version || 'Not available'} />
+      </div>
+      {selectedMarkdown.length ? <div className="hei-planning-context-documents">
+        {selectedMarkdown.map((item) => <details key={item.evidenceId}>
+          <summary><strong>{item.path}</strong><span>{item.heading}</span></summary>
+          <div>
+            <Status value={item.classification.replace(/_/g, ' ')} />
+            <p>{item.selectionReason}</p>
+            <small>{item.authority} · {item.confidence}% confidence · {item.evidenceId}</small>
+          </div>
+        </details>)}
+      </div> : <p className="hei-planning-context-empty">No relevant repository Markdown was available for this planning context.</p>}
+      {markdownConflicts.length ? <div className="hei-planning-context-conflicts">
+        <strong>Conflicts require review</strong>
+        {markdownConflicts.map((item) => <p key={item.conflictId}>{item.path} / {item.heading}: {item.reason}</p>)}
+      </div> : null}
+    </section>
 
     <section className="hei-planning-context-similar">
       <header><div><span>Similar Existing Work</span><h3>Reuse before creating</h3></div><Status value={`${value.similarWork.length} matches`} /></header>
@@ -1829,6 +1913,7 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
         />
       </div>
       <RequirementHealth analysis={analysis} ingestion={ingestion} />
+      <RequirementIntelligenceTrace analysis={analysis} />
       <section className="hei-repository-recommendation" aria-label="Suggested Repository">
         <header>
           <div><span>Repository Recommendation</span><h3>{recommendedRepository?.name || 'No repository detected'}</h3><p>{suggestion?.reason || 'Register a repository to enable engineering workspace detection.'}</p></div>
@@ -1999,6 +2084,57 @@ function CriterionRecord({ criterion }: { criterion: AcceptanceCriterionSuggesti
     {criterion.mappedFunctionalRequirement ? <p><span>Requirement</span>{criterion.mappedFunctionalRequirement}</p> : null}
     {criterion.evidence?.length ? <details><summary>Evidence · {Math.round((criterion.confidence || 0) * 100)}% confidence</summary>{criterion.evidence.map((item, index) => <blockquote key={`${index}-${item.matchedPhrase}`}><strong>{item.matchedPhrase}</strong><span>{item.requirementSentence}</span></blockquote>)}</details> : null}
   </article>;
+}
+
+function RequirementIntelligenceTrace({ analysis }: { analysis: RequirementAnalysisResult }) {
+  const intent = analysis.requirementIntent;
+  const discovery = analysis.engineeringDiscovery;
+  const synthesis = analysis.evidenceSynthesis;
+  if (!intent && !discovery && !synthesis) return null;
+  const markdown = discovery?.markdown?.selected || [];
+  const workItems = discovery?.azureDevOps?.workItems || [];
+  const memory = discovery?.memory?.matches || [];
+  const repositoryItems = [
+    ...(discovery?.repository?.modules || []),
+    ...(discovery?.repository?.services || []),
+    ...(discovery?.repository?.apis || []),
+  ];
+  return <section className="hei-requirement-intelligence-trace" aria-label="AI and engineering analysis">
+    <header>
+      <div><span>AI-Driven Analysis</span><h3>Understanding and engineering evidence</h3><p>AI interpretation is separated from verified engineering discovery.</p></div>
+      <Status value={analysis.analysisMode === 'AI' ? `${analysis.analysisLineage?.provider || 'AI'} analysis` : 'Deterministic fallback'} />
+    </header>
+    <div>
+      <article>
+        <span>AI Understanding</span>
+        <h4>{intent?.intentSummary || analysis.requirementSummary}</h4>
+        <p>{intent?.businessGoal || 'No distinct business goal was inferred.'}</p>
+        <ContextTags title="Capabilities and concepts" values={[...(intent?.capabilities || []), ...(intent?.concepts || [])]} empty="No additional intent hints were produced." />
+        <small>{Math.round((intent?.confidence || 0) * 100)}% interpretation confidence · Not repository fact</small>
+      </article>
+      <article>
+        <span>Engineering Discovery</span>
+        <h4>{discovery?.repository?.mode || 'Repository unavailable'}</h4>
+        <div className="hei-requirement-discovery-counts">
+          <Signal label="Repository matches" value={String(repositoryItems.length)} />
+          <Signal label="Markdown findings" value={String(markdown.length)} />
+          <Signal label="ADO work items" value={String(workItems.length)} />
+          <Signal label="Memory matches" value={String(memory.length)} />
+        </div>
+        <ContextTags title="Affected engineering context" values={repositoryItems.slice(0, 10)} empty="No repository elements were verified." />
+      </article>
+    </div>
+    <details>
+      <summary>Evidence, missing information, and lineage</summary>
+      <div className="hei-requirement-trace-details">
+        <ContextTags title="Repository findings" values={synthesis?.repositoryFindings || []} empty="No repository finding was synthesized." />
+        <ContextTags title="Markdown evidence" values={markdown.map((item) => `${item.path} · ${item.heading}`)} empty="No Markdown evidence matched." />
+        <ContextTags title="Open or missing information" values={[...(analysis.openQuestions || []), ...(synthesis?.missingInformation || [])]} empty="No unresolved information identified." />
+        <ContextTags title="Engineering insights" values={synthesis?.engineeringInsights || []} empty="No additional evidence-backed insight." />
+        <p><strong>Context:</strong> {analysis.analysisLineage?.contextVersion || 'Not available'} · <strong>Repository revision:</strong> {analysis.analysisLineage?.repositoryRevision || 'Not available'} · <strong>Knowledge:</strong> {analysis.analysisLineage?.knowledgeVersion || 'Not available'}</p>
+      </div>
+    </details>
+  </section>;
 }
 
 function RequirementHealth({ analysis, ingestion }: { analysis: RequirementAnalysisResult; ingestion: IngestionResult }) {

@@ -42,6 +42,8 @@ class EngineeringContextBuilder:
         readiness: dict[str, Any],
         project_intelligence: dict[str, Any] | None = None,
         relevant_documentation: list[dict[str, Any]] | None = None,
+        repository_markdown_context: dict[str, Any] | None = None,
+        knowledge_synthesis: dict[str, Any] | None = None,
         correlation_id: str = "",
     ) -> EngineeringContext:
         versions = {
@@ -60,6 +62,19 @@ class EngineeringContextBuilder:
             "projectKnowledgeVersion": (
                 (project_intelligence or {}).get("knowledge") or {}
             ).get("version"),
+            "repositoryMarkdown": {
+                "repositoryRevision": (
+                    (repository_markdown_context or {}).get("diagnostics") or {}
+                ).get("repositoryRevision"),
+                "evidence": [
+                    {
+                        "evidenceId": item.get("evidenceId"),
+                        "contentHash": item.get("contentHash"),
+                        "path": item.get("path"),
+                    }
+                    for item in (repository_markdown_context or {}).get("selected") or []
+                ],
+            },
         }
         version = _digest(versions)
         context_id = "engineering-context-" + version
@@ -92,6 +107,13 @@ class EngineeringContextBuilder:
             summary=summary,
             projectIntelligence=dict(project_intelligence or {}),
             relevantDocumentation=list(relevant_documentation or []),
+            requirement_context=dict(requirement),
+            repository_code_context=repository.__dict__.copy(),
+            repository_markdown_context=dict(repository_markdown_context or {}),
+            project_intelligence_context=dict(project_intelligence or {}),
+            azure_devops_context=azure_devops.__dict__.copy(),
+            engineering_memory_context=memory.__dict__.copy(),
+            knowledge_synthesis=dict(knowledge_synthesis or {}),
             correlationId=correlation_id,
             generatedAt=datetime.now(timezone.utc).isoformat(),
             sourceVersions=versions,

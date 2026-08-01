@@ -103,6 +103,11 @@ class EngineeringIntelligenceService:
             "actors": _strings(analysis.get("actors")),
             "assumptions": _strings(analysis.get("assumptions")),
             "openQuestions": _strings(analysis.get("openQuestions")),
+            "requirementIntent": (
+                dict(analysis.get("requirementIntent") or {})
+                if isinstance(analysis.get("requirementIntent"), dict)
+                else {}
+            ),
             "projectId": _text(
                 requirement.get("projectId")
                 or requirement.get("metadata", {}).get("projectId")
@@ -286,6 +291,110 @@ class EngineeringIntelligenceService:
 
     def get_architecture_summary(self) -> str:
         return self.markdown_service.get_architecture_summary()
+
+    def _repository_markdown_context(
+        self,
+        requirement: dict[str, Any],
+        repository: RepositorySummary,
+    ) -> dict[str, Any]:
+        if not repository.repositoryId or not self.repository_intelligence:
+            return {
+                "selected": [],
+                "rejected": [],
+                "conflicts": [],
+                "diagnostics": {
+                    "filesScanned": 0,
+                    "sectionsIndexed": 0,
+                    "sectionsSelected": 0,
+                    "rejectedContextCount": 0,
+                    "repositoryRevision": repository.repositorySnapshotVersion,
+                    "warning": "Repository Markdown is unavailable without a selected repository.",
+                },
+            }
+        repository_record = (
+            self.repository_intelligence.get_repository(repository.repositoryId) or {}
+        )
+        metadata = repository_record.get("metadata") or {}
+        project_id = _text(requirement.get("projectId"))
+        revision = _text(
+            metadata.get("commitId")
+            or metadata.get("revision")
+            or repository.repositorySnapshotVersion
+        )
+        local_path = _text(metadata.get("localPath"))
+        discovery: dict[str, Any]
+        if local_path:
+            discovery = self.markdown_service.discover_repository(
+                local_path,
+                repository_id=repository.repositoryId,
+                repository_name=repository.repositoryName,
+                project_id=project_id,
+                revision=revision,
+                include_patterns=metadata.get("markdownIncludePatterns"),
+                exclude_patterns=metadata.get("markdownExcludePatterns"),
+            )
+        else:
+            documents = self._remote_markdown_documents(
+                repository.repositoryId, repository_record,
+            )
+            discovery = self.markdown_service.index_repository_documents(
+                documents,
+                repository_id=repository.repositoryId,
+                repository_name=repository.repositoryName,
+                project_id=project_id,
+                revision=revision,
+            ) if documents else {
+                "filesScanned": 0,
+                "sectionsIndexed": 0,
+                "repositoryRevision": revision,
+                "warning": "Repository content provider did not expose Markdown content.",
+            }
+        query = " ".join([
+            _requirement_text(requirement),
+            " ".join(_strings(requirement.get("businessGoals"))),
+            " ".join(_strings(requirement.get("functionalRequirements"))),
+            " ".join(_strings(requirement.get("actors"))),
+            " ".join(_intent_search_terms(requirement)),
+        ])
+        result = self.markdown_service.retrieve(
+            query,
+            project_id=project_id,
+            repository_id=repository.repositoryId,
+            token_budget=int(metadata.get("markdownTokenBudget") or 1800),
+            limit=int(metadata.get("markdownSectionLimit") or 12),
+            code_context=repository.__dict__,
+        )
+        result["diagnostics"] = {
+            **discovery,
+            **result.get("diagnostics", {}),
+        }
+        result["diagnostics"].pop("sections", None)
+        return result
+
+    def _remote_markdown_documents(
+        self,
+        repository_id: str,
+        repository_record: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        provider = self.repository_intelligence
+        for method_name in (
+            "list_markdown_documents",
+            "get_repository_documents",
+            "get_markdown_documents",
+        ):
+            method = getattr(provider, method_name, None)
+            if callable(method):
+                try:
+                    result = method(repository_id) or []
+                except Exception:
+                    return []
+                return [
+                    dict(item)
+                    for item in result
+                    if isinstance(item, dict) and item.get("content") is not None
+                ]
+        embedded = (repository_record.get("metadata") or {}).get("markdownDocuments") or []
+        return [dict(item) for item in embedded if isinstance(item, dict)]
 
     def analyze_architecture(
         self, repository: RepositorySummary | dict[str, Any],
@@ -481,6 +590,17 @@ class EngineeringIntelligenceService:
         project_documents = list(
             (project_context.get("knowledge") or {}).get("sourceFiles") or []
         )
+        markdown_context = self._repository_markdown_context(
+            requirement_summary, repository,
+        )
+        synthesis = _knowledge_synthesis(
+            requirement_summary,
+            repository,
+            ado,
+            memory,
+            project_context,
+            markdown_context,
+        )
         context = self.context_builder.build(
             requirement=_canonical_requirement(requirement_summary),
             repository=repository,
@@ -496,9 +616,11 @@ class EngineeringIntelligenceService:
             readiness=readiness,
             project_intelligence=project_context,
             relevant_documentation=_unique_dicts([
-                *self.search_documentation(_requirement_text(requirement_summary), limit=8),
+                *list(markdown_context.get("selected") or []),
                 *project_documents,
-            ])[:8],
+            ])[:16],
+            repository_markdown_context=markdown_context,
+            knowledge_synthesis=synthesis,
             correlation_id=correlation_id or _text(requirement_summary.get("correlationId")),
         )
         # Preserve the established planning lineage while it remains the
@@ -659,6 +781,11 @@ class EngineeringIntelligenceService:
                 "matches": memory.get("matches") or [],
                 "count": len(memory.get("matches") or []),
             },
+            "repositoryMarkdown": context.get("repository_markdown_context") or {},
+            "projectIntelligence": context.get("project_intelligence_context")
+            or context.get("projectIntelligence") or {},
+            "knowledgeSynthesis": context.get("knowledge_synthesis") or {},
+            "sourceVersions": context.get("sourceVersions") or {},
             "generatedAt": context.get("generatedAt"),
         }
 
@@ -900,6 +1027,11 @@ def _canonical_requirement(value: dict[str, Any]) -> dict[str, Any]:
         "actors": _strings(value.get("actors")),
         "assumptions": _strings(value.get("assumptions")),
         "openQuestions": _strings(value.get("openQuestions")),
+        "requirementIntent": (
+            dict(value.get("requirementIntent") or {})
+            if isinstance(value.get("requirementIntent"), dict)
+            else {}
+        ),
         "projectId": _text(value.get("projectId")),
         "projectName": _text(value.get("projectName")),
         "contextVersion": value.get("contextVersion"),
@@ -1062,6 +1194,36 @@ def _requirement_text(value: dict[str, Any]) -> str:
         *_strings(value.get("businessGoals")),
         *_strings(value.get("functionalRequirements")),
         *_strings(value.get("acceptanceCriteria")),
+        *_intent_search_terms(value),
+    ])
+
+
+def _intent_search_terms(value: dict[str, Any]) -> list[str]:
+    intent = value.get("requirementIntent") or {}
+    if not isinstance(intent, dict):
+        return []
+    return _unique([
+        _text(intent.get("intentSummary")),
+        _text(intent.get("businessGoal")),
+        *_strings(intent.get("functionalIntent")),
+        *_strings(intent.get("entities")),
+        _text(intent.get("primaryActor")),
+        *_strings(intent.get("secondaryActors")),
+        *_strings(intent.get("capabilities")),
+        *_strings(intent.get("actions")),
+        *_strings(intent.get("concepts")),
+        *_strings(intent.get("businessTerminology")),
+        *_strings(intent.get("explicitConstraints")),
+        *_strings(intent.get("riskIndicators")),
+        *_strings(intent.get("technologyConcepts")),
+        *_strings(intent.get("domainSynonyms")),
+        *_strings(intent.get("searchKeywords")),
+        *_strings(intent.get("possibleModuleNames")),
+        *_strings(intent.get("possibleFeatureNames")),
+        *_strings(intent.get("possibleApis")),
+        *_strings(intent.get("possibleRepositoryTerms")),
+        *_strings(intent.get("possibleAzureDevOpsSearchTerms")),
+        *_strings(intent.get("possibleMarkdownSearchTerms")),
     ])
 
 
@@ -1080,6 +1242,81 @@ def _tokens(value: Any) -> set[str]:
 
 def _named_items(values: list[str], kind: str) -> list[dict[str, Any]]:
     return [{"name": value, "type": kind, "source": "Repository Intelligence"} for value in values]
+
+
+def _knowledge_synthesis(
+    requirement: dict[str, Any],
+    repository: RepositorySummary,
+    azure_devops: AzureDevOpsSummary,
+    memory: EngineeringMemorySummary,
+    project_intelligence: dict[str, Any],
+    markdown_context: dict[str, Any],
+) -> dict[str, Any]:
+    selected = list(markdown_context.get("selected") or [])
+    statements: dict[str, list[dict[str, Any]]] = {}
+    for section in selected:
+        for claim_type, values in (section.get("statements") or {}).items():
+            statements.setdefault(claim_type, []).extend({
+                "value": value,
+                "evidenceId": section.get("evidenceId"),
+                "path": section.get("path"),
+                "heading": section.get("heading"),
+                "authority": section.get("authority"),
+            } for value in values)
+    supplied = {
+        key: _strings(requirement.get(key))
+        for key in (
+            "businessGoals", "functionalRequirements", "acceptanceCriteria",
+            "businessRules", "constraints", "dependencies", "risks", "openQuestions",
+        )
+    }
+    resolved_by_markdown = {
+        "businessRules": bool(statements.get("businessRules")),
+        "constraints": bool(statements.get("constraints")),
+        "dependencies": bool(
+            statements.get("integrationContracts")
+            or statements.get("architectureDecisions")
+        ),
+        "risks": bool(statements.get("knownRisks")),
+    }
+    unresolved = [
+        key for key, values in supplied.items()
+        if not values and not resolved_by_markdown.get(key, False)
+    ]
+    return {
+        "requirementClaims": supplied,
+        "repositoryMarkdownClaims": statements,
+        "projectIntelligenceEvidence": {
+            "approvedArtifacts": len(project_intelligence.get("approvedArtifacts") or []),
+            "knowledgeVersion": (
+                project_intelligence.get("knowledge") or {}
+            ).get("version"),
+        },
+        "repositoryCodeEvidence": {
+            "modules": repository.modules,
+            "services": repository.services,
+            "apiEndpoints": repository.apiEndpoints,
+            "snapshotVersion": repository.repositorySnapshotVersion,
+        },
+        "azureDevOpsEvidence": {
+            "projectId": azure_devops.projectId,
+            "existingPlanningCount": len(azure_devops.existingPlanning),
+        },
+        "engineeringMemoryEvidence": {
+            "matches": len(memory.matches),
+            "coverage": memory.coverage,
+        },
+        "conflicts": list(markdown_context.get("conflicts") or []),
+        "unresolvedInformation": unresolved,
+        "authorityRules": {
+            "current_user_intent": "requirement",
+            "business_rules": "approved_business_documentation",
+            "architecture_decisions": "approved_adr_or_architecture_documentation",
+            "current_implementation": "repository_code",
+            "historical_decisions": "approved_project_intelligence",
+            "existing_backlog_status": "azure_devops",
+        },
+    }
 
 
 def _count_by(items: list[dict[str, Any]], key: str) -> dict[str, int]:

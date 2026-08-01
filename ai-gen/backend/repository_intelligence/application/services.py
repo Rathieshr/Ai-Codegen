@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 
 from ..domain import (
@@ -29,6 +31,7 @@ class RepositoryIntelligenceApplicationService:
     context_capsule_builder: IContextCapsuleBuilder
     agent: object
     monitoring_service: object
+    repository_content_provider: Callable[[Repository, str], str] | None = None
 
     def create_repository(self, payload: dict) -> dict:
         repository = Repository.from_dict(payload)
@@ -102,6 +105,45 @@ class RepositoryIntelligenceApplicationService:
             return None
         snapshot = self.snapshot_service.get_latest_snapshot(repository_id)
         return snapshot.to_dict() if snapshot else None
+
+    def list_markdown_documents(self, repository_id: str) -> list[dict]:
+        """Read Markdown through the registered repository content boundary."""
+        repository = self.repository_service.get_repository(repository_id)
+        snapshot = self.snapshot_service.get_latest_snapshot(repository_id)
+        if not repository or not snapshot:
+            return []
+        metadata = snapshot.metadata if isinstance(snapshot.metadata, dict) else {}
+        files = [
+            item for item in list(metadata.get("files") or [])
+            if isinstance(item, dict)
+            and str(item.get("path") or "").casefold().endswith((".md", ".markdown"))
+        ]
+        root = Path(str(repository.metadata.get("localPath") or "")).expanduser()
+        documents = []
+        for item in files:
+            path = str(item.get("path") or "").strip().lstrip("/")
+            if not path:
+                continue
+            try:
+                if root.is_dir():
+                    candidate = (root / path).resolve()
+                    if root.resolve() not in candidate.parents and candidate != root.resolve():
+                        continue
+                    content = candidate.read_text(encoding="utf-8", errors="replace")
+                elif self.repository_content_provider:
+                    content = self.repository_content_provider(repository, path)
+                else:
+                    continue
+            except Exception:
+                continue
+            if content:
+                documents.append({
+                    "path": path,
+                    "content": str(content),
+                    "revision": snapshot.commit_id or snapshot.version,
+                    "contentHash": item.get("contentHash"),
+                })
+        return documents
 
     def list_snapshot_history(self, repository_id: str) -> dict | None:
         repository = self.repository_service.get_repository(repository_id)

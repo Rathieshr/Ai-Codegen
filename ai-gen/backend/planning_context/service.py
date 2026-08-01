@@ -76,6 +76,20 @@ class PlanningContextService:
         record["architecture"] = engineering_result["engineeringContext"].get("architecture") or {}
         record["dependencies"] = engineering_result["engineeringContext"].get("dependencies") or {}
         record["reuse"] = engineering_result["engineeringContext"].get("reuse") or {}
+        record["engineeringDiscovery"] = {
+            "repositoryMarkdown": engineering_result["engineeringContext"].get(
+                "repository_markdown_context"
+            ) or {},
+            "projectIntelligence": engineering_result["engineeringContext"].get(
+                "project_intelligence_context"
+            ) or {},
+            "knowledgeSynthesis": engineering_result["engineeringContext"].get(
+                "knowledge_synthesis"
+            ) or {},
+            "sourceVersions": engineering_result["engineeringContext"].get(
+                "sourceVersions"
+            ) or {},
+        }
         values = self.store.read()
         existing = values.get(record["contextId"])
         if isinstance(existing, dict) and request.get("force") is not True:

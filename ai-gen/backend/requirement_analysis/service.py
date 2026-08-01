@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -47,7 +48,11 @@ class RequirementAnalysisService:
         if existing and not force and self._versions_current(existing) and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion"):
             return existing
         result = self.engine.analyze(requirement).to_dict()
-        result.update(self.acceptance_engine.understand(result, requirement))
+        intent_reasoning = self._reason_about_intent(requirement, result)
+        intent = self._requirement_intent(intent_reasoning, result)
+        result["requirementIntent"] = intent
+        result["aiUnderstanding"] = self._reasoning_projection(intent_reasoning)
+        self._apply_intent(result, intent)
         if self.engineering_intelligence:
             suggestion = self.engineering_intelligence.recommend_repository(requirement, result)
             result["repositorySuggestion"] = suggestion
@@ -68,7 +73,25 @@ class RequirementAnalysisService:
                     "status": f"{len(matched_modules)} matching module(s)" if matched_modules else "Repository metadata match",
                     "message": suggestion.get("reason") or "Repository reuse will be validated during Planning.",
                 }
-        result["aiAnalysis"] = self._reason_about_requirement(requirement, result)
+        engineering_context = self._build_engineering_context(requirement, result)
+        synthesis_reasoning = self._reason_about_requirement(
+            requirement, result, engineering_context,
+        )
+        self._apply_evidence_synthesis(result, synthesis_reasoning)
+        result.update(self.acceptance_engine.understand(result, requirement))
+        result["aiAnalysis"] = self._reasoning_projection(synthesis_reasoning)
+        result["engineeringDiscovery"] = self._engineering_discovery(engineering_context)
+        result["analysisLineage"] = self._analysis_lineage(
+            requirement, intent_reasoning, synthesis_reasoning, engineering_context,
+        )
+        result["analysisMode"] = (
+            "AI"
+            if any(
+                item.get("reasoningMode") == "AI"
+                for item in (intent_reasoning, synthesis_reasoning)
+            )
+            else "Deterministic"
+        )
         values = self.store.read()
         values[requirement_id] = result
         self.store.write(values)
@@ -358,19 +381,69 @@ class RequirementAnalysisService:
         self,
         requirement: dict[str, Any],
         analysis: dict[str, Any],
+        engineering_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.reasoning_engine:
             return self._reasoning_not_requested()
         try:
-            context = self._reasoning_context(requirement, analysis)
             result = self.reasoning_engine.analyze(
-                "Requirement Analysis",
-                context,
+                "Requirement Evidence Synthesis",
+                engineering_context or self._reasoning_context(requirement, analysis),
                 user_requirement=str(analysis.get("planningRequirement") or ""),
                 provider="Auto",
                 correlation_id=str(requirement.get("correlationId") or ""),
             )
             return self._reasoning_projection(result)
+        except Exception as error:
+            return self._reasoning_failure(error)
+
+    def _reason_about_intent(
+        self,
+        requirement: dict[str, Any],
+        analysis: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.reasoning_engine:
+            return self._reasoning_not_requested()
+        metadata = requirement.get("metadata") or {}
+        attributes = metadata.get("attributes") or {}
+        bounded_context = {
+            "contextType": "RequirementIntentInput",
+            "contextId": f"requirement-intent-{requirement.get('requirementId')}",
+            "contextVersion": requirement.get("contextVersion") or "1.0",
+            "requirement": {
+                "requirementId": requirement.get("requirementId"),
+                "title": requirement.get("title"),
+                "sourceType": requirement.get("sourceType"),
+                "normalizedRequirement": requirement.get("normalizedRequirement"),
+            },
+            "metadata": {
+                "projectId": metadata.get("projectId") or requirement.get("projectId"),
+                "projectName": metadata.get("projectName"),
+                "repositoryId": metadata.get("repositoryId"),
+                "repositoryName": (metadata.get("attributes") or {}).get("repositoryName"),
+                "sourceType": requirement.get("sourceType"),
+                "projectSummary": {
+                    key: attributes.get(key)
+                    for key in (
+                        "projectDescription", "domain", "product", "technology",
+                        "areaPath", "iterationPath",
+                    )
+                    if attributes.get(key)
+                },
+            },
+        }
+        try:
+            return self.reasoning_engine.analyze(
+                "Requirement Intent Analysis",
+                bounded_context,
+                user_requirement=str(
+                    requirement.get("normalizedRequirement")
+                    or analysis.get("planningRequirement")
+                    or ""
+                ),
+                provider="Auto",
+                correlation_id=str(requirement.get("correlationId") or ""),
+            )
         except Exception as error:
             return self._reasoning_failure(error)
 
@@ -401,10 +474,64 @@ class RequirementAnalysisService:
         canonical_requirement = self.engineering_intelligence.analyze_requirement(
             requirement, analysis,
         )
+        selected = (analysis.get("repositorySuggestion") or {}).get("suggestedRepository")
+        if isinstance(selected, dict) and selected:
+            canonical_requirement["repository"] = dict(selected)
+            canonical_requirement["repositoryId"] = selected.get("repositoryId")
         return self.engineering_intelligence.build_requirement_context(
             canonical_requirement,
             correlation_id=str(requirement.get("correlationId") or ""),
         )
+
+    def _build_engineering_context(
+        self,
+        requirement: dict[str, Any],
+        analysis: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return self._reasoning_context(requirement, analysis)
+        except Exception as error:
+            analyze_requirement = getattr(
+                self.engineering_intelligence, "analyze_requirement", None,
+            )
+            canonical_requirement = (
+                analyze_requirement(requirement, analysis)
+                if callable(analyze_requirement)
+                else {
+                    "requirementId": requirement.get("requirementId"),
+                    "title": requirement.get("title"),
+                    "planningRequirement": analysis.get("planningRequirement"),
+                    "businessGoals": _strings(analysis.get("businessGoals")),
+                    "functionalRequirements": _strings(analysis.get("functionalRequirements")),
+                    "acceptanceCriteria": _strings(analysis.get("acceptanceCriteria")),
+                    "requirementIntent": dict(analysis.get("requirementIntent") or {}),
+                    "projectId": (requirement.get("metadata") or {}).get("projectId"),
+                }
+            )
+            return {
+                "contextId": f"engineering-context-unavailable-{requirement.get('requirementId')}",
+                "contextVersion": str(requirement.get("contextVersion") or "1.0"),
+                "requirement": canonical_requirement,
+                "repository": {
+                    "mode": "Unavailable",
+                    "warnings": [f"Engineering discovery unavailable: {error}"],
+                },
+                "azureDevOps": {},
+                "engineeringMemory": {},
+                "similarWork": {},
+                "architecture": {},
+                "dependencies": {},
+                "impact": {},
+                "reuse": {},
+                "readiness": {
+                    "status": "ReadyWithRecommendations",
+                    "warnings": ["Engineering discovery was unavailable; human review is required."],
+                    "confidence": 35,
+                },
+                "sourceVersions": {
+                    "requirementContextVersion": requirement.get("contextVersion"),
+                },
+            }
 
     @staticmethod
     def _reasoning_projection(result: dict[str, Any]) -> dict[str, Any]:
@@ -420,6 +547,162 @@ class RequirementAnalysisService:
             "alternatives": list(result.get("alternatives") or []),
             "warnings": list(result.get("warnings") or []),
             "confidence": dict(result.get("confidence") or {}),
+            "evidence": list(result.get("evidence") or []),
+            "telemetry": dict(result.get("telemetry") or {}),
+            "diagnostics": dict(result.get("diagnostics") or {}),
+        }
+
+    @staticmethod
+    def _requirement_intent(
+        reasoning: dict[str, Any],
+        analysis: dict[str, Any],
+    ) -> dict[str, Any]:
+        recommendation = reasoning.get("recommendation") or {}
+        candidate = (
+            recommendation.get("requirementIntent")
+            if isinstance(recommendation, dict)
+            else {}
+        )
+        if not isinstance(candidate, dict):
+            candidate = {}
+        if candidate:
+            return _normalize_intent(candidate)
+        functional = _strings(analysis.get("functionalRequirements"))
+        business = _strings(analysis.get("businessGoals"))
+        words = _search_words(" ".join([*business, *functional]))
+        return _normalize_intent({
+            "intentSummary": analysis.get("requirementSummary"),
+            "businessGoal": business[0] if business else "",
+            "functionalIntent": functional,
+            "entities": _strings(analysis.get("actors")),
+            "primaryActor": (_strings(analysis.get("actors")) or [""])[0],
+            "secondaryActors": _strings(analysis.get("actors"))[1:],
+            "capabilities": [],
+            "actions": functional,
+            "concepts": words[:8],
+            "searchKeywords": words[:12],
+            "clarificationCandidates": [
+                str(item.get("text") or "")
+                for item in analysis.get("ambiguousRequirements") or []
+                if isinstance(item, dict)
+            ],
+            "confidence": analysis.get("confidence") or 0,
+        })
+
+    @staticmethod
+    def _apply_intent(analysis: dict[str, Any], intent: dict[str, Any]) -> None:
+        business_goal = str(intent.get("businessGoal") or "").strip()
+        if business_goal and not analysis.get("businessGoals"):
+            analysis["businessGoals"] = [business_goal]
+            analysis.setdefault("fieldOrigins", {})["businessGoals"] = "AI Inferred"
+        functional = _strings(intent.get("functionalIntent"))
+        if functional and not analysis.get("functionalRequirements"):
+            analysis["functionalRequirements"] = functional
+            analysis.setdefault("fieldOrigins", {})["functionalRequirements"] = "AI Inferred"
+
+    @staticmethod
+    def _apply_evidence_synthesis(
+        analysis: dict[str, Any],
+        reasoning: dict[str, Any],
+    ) -> None:
+        if reasoning.get("reasoningMode") != "AI":
+            return
+        recommendation = reasoning.get("recommendation") or {}
+        if not isinstance(recommendation, dict):
+            return
+        mapping = {
+            "functionalRequirements": "functionalRequirements",
+            "nonFunctionalRequirements": "nonFunctionalRequirements",
+            "businessRules": "businessRules",
+            "constraints": "constraints",
+            "dependencies": "dependencies",
+            "risks": "risks",
+            "openQuestions": "openQuestions",
+        }
+        for source, target in mapping.items():
+            additions = _strings(recommendation.get(source))
+            if additions:
+                analysis[target] = _unique([*_strings(analysis.get(target)), *additions])
+                analysis.setdefault("fieldOrigins", {}).setdefault(target, "Evidence Backed")
+        business_goal = str(recommendation.get("businessGoal") or "").strip()
+        if business_goal and not analysis.get("businessGoals"):
+            analysis["businessGoals"] = [business_goal]
+            analysis.setdefault("fieldOrigins", {})["businessGoals"] = "Evidence Backed"
+        if recommendation.get("executiveSummary"):
+            analysis["requirementSummary"] = str(recommendation["executiveSummary"])
+        analysis["evidenceSynthesis"] = {
+            "repositoryFindings": _strings(recommendation.get("repositoryFindings")),
+            "architectureFindings": _strings(recommendation.get("architectureFindings")),
+            "reuseOpportunities": _strings(recommendation.get("reuseOpportunities")),
+            "affectedEngineeringElements": _strings(recommendation.get("affectedEngineeringElements")),
+            "missingInformation": _strings(recommendation.get("missingInformation")),
+            "engineeringInsights": _strings(recommendation.get("engineeringInsights")),
+            "evidence": list(reasoning.get("evidence") or []),
+        }
+
+    @staticmethod
+    def _engineering_discovery(context: dict[str, Any]) -> dict[str, Any]:
+        markdown = context.get("repository_markdown_context") or {}
+        repository = context.get("repository") or {}
+        ado = context.get("azureDevOps") or {}
+        memory = context.get("engineeringMemory") or {}
+        return {
+            "contextId": context.get("contextId"),
+            "contextVersion": context.get("contextVersion"),
+            "repository": {
+                "mode": repository.get("mode"),
+                "snapshotVersion": repository.get("repositorySnapshotVersion"),
+                "modules": repository.get("affectedModules") or [],
+                "files": repository.get("files") or [],
+                "services": repository.get("services") or [],
+                "apis": repository.get("apiEndpoints") or [],
+            },
+            "markdown": markdown,
+            "azureDevOps": {
+                "workItems": ado.get("existingPlanning") or [],
+                "currentIteration": ado.get("currentIteration") or {},
+            },
+            "knowledge": context.get("projectIntelligence") or {},
+            "memory": {"matches": memory.get("matches") or []},
+            "similarWork": context.get("similarWork") or {},
+            "architecture": context.get("architecture") or {},
+            "dependencies": context.get("dependencies") or {},
+            "rejectedContext": context.get("rejectedContext") or [],
+        }
+
+    @staticmethod
+    def _analysis_lineage(
+        requirement: dict[str, Any],
+        intent: dict[str, Any],
+        synthesis: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        source_versions = context.get("sourceVersions") or {}
+        primary = (
+            synthesis
+            if synthesis.get("reasoningMode") == "AI"
+            else intent
+            if intent.get("reasoningMode") == "AI"
+            else synthesis
+        )
+        return {
+            "provider": primary.get("provider") or "Deterministic",
+            "model": primary.get("model") or "",
+            "intentProvider": intent.get("provider") or "Deterministic",
+            "intentModel": intent.get("model") or "",
+            "synthesisProvider": synthesis.get("provider") or "Deterministic",
+            "synthesisModel": synthesis.get("model") or "",
+            "intentPromptVersion": intent.get("promptVersion") or "",
+            "synthesisPromptVersion": synthesis.get("promptVersion") or "",
+            "contextId": context.get("contextId"),
+            "contextVersion": context.get("contextVersion"),
+            "knowledgeVersion": source_versions.get("projectKnowledgeVersion"),
+            "repositoryRevision": (
+                source_versions.get("repositoryMarkdown") or {}
+            ).get("repositoryRevision") or source_versions.get("repositorySnapshotVersion"),
+            "requirementContextVersion": requirement.get("contextVersion"),
+            "analysisVersion": "requirement-analysis-ai-v1",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     @staticmethod
@@ -519,6 +802,8 @@ class RequirementAnalysisService:
             == "DeterministicRequirementAnalysisV3"
             and analysis.get("acceptanceDiagnostics", {}).get("engine")
             == "IntelligentAcceptanceCriteriaV1"
+            and analysis.get("analysisLineage", {}).get("analysisVersion")
+            == "requirement-analysis-ai-v1"
         )
 
     def _restore_reviewed_acceptance(
@@ -635,3 +920,53 @@ class RequirementAnalysisService:
                 "qualityScore": analysis.get("requirementQualityScore"),
             },
         })
+
+
+def _strings(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def _search_words(value: str) -> list[str]:
+    ignored = {
+        "about", "after", "before", "from", "into", "must", "should",
+        "that", "their", "these", "they", "this", "users", "with",
+    }
+    return _unique([
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]+", value)
+        if len(token) > 3 and token.casefold() not in ignored
+    ])
+
+
+def _normalize_intent(value: dict[str, Any]) -> dict[str, Any]:
+    list_fields = (
+        "functionalIntent", "entities", "secondaryActors", "capabilities", "actions",
+        "concepts", "businessTerminology", "explicitConstraints",
+        "possibleAssumptions", "ambiguities", "riskIndicators",
+        "technologyConcepts", "domainSynonyms", "searchKeywords",
+        "possibleModuleNames", "possibleFeatureNames", "possibleApis",
+        "possibleRepositoryTerms", "possibleAzureDevOpsSearchTerms",
+        "possibleMarkdownSearchTerms", "clarificationCandidates",
+    )
+    confidence = value.get("confidence") or 0
+    try:
+        confidence_value = float(confidence)
+    except (TypeError, ValueError):
+        confidence_value = 0.0
+    if confidence_value > 1:
+        confidence_value /= 100
+    result = {
+        "intentSummary": str(value.get("intentSummary") or "").strip(),
+        "businessGoal": str(value.get("businessGoal") or "").strip(),
+        "primaryActor": str(value.get("primaryActor") or "").strip(),
+        "confidence": round(max(0.0, min(1.0, confidence_value)), 2),
+    }
+    for field_name in list_fields:
+        result[field_name] = _unique(_strings(value.get(field_name)))
+    return result

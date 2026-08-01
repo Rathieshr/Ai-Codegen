@@ -8,13 +8,13 @@ from .acceptance_criteria import (
     RequirementFacts,
 )
 from .engine import RequirementAnalysisEngine
-from .models import RequirementAnalysis, RequirementFinding
+from .models import RequirementAnalysis, RequirementFinding, RequirementIntent
 from .service import RequirementAnalysisService
 from .summary import build_requirement_summary
 
 __all__ = [
     "RequirementAnalysis", "RequirementAnalysisEngine", "RequirementAnalysisService",
-    "RequirementEvidence", "RequirementFacts", "RequirementFinding",
+    "RequirementEvidence", "RequirementFacts", "RequirementFinding", "RequirementIntent",
     "ACCEPTANCE_CRITERIA_PROMPT_RULES", "IntelligentAcceptanceCriteriaEngine",
     "build_requirement_analysis_router",
     "build_requirement_summary",

@@ -162,20 +162,61 @@ class ReasoningAILayerTests(unittest.TestCase):
         self.assertTrue(any("parse_error" in item for item in result["warnings"]))
 
     def test_prompt_uses_context_evidence_and_budget_manager(self) -> None:
+        context = engineering_context()
+        context["requirement"]["requirementIntent"] = {
+            "searchKeywords": ["device health"],
+            "possibleModuleNames": ["Device Health"],
+        }
         request = ReasoningRequest(
             workflowType="Architecture Review",
-            engineeringContext=engineering_context(),
+            engineeringContext=context,
         )
         built = PromptBuilder().build(request, provider="Phi", model="phi-test")
 
         self.assertIn("module:Device Health", built.prompt)
         self.assertIn("file:src/deviceHealth.ts", built.prompt)
+        self.assertIn("requirementIntent", built.prompt)
         self.assertNotIn("Firmware", str(built.evidenceCatalog))
         self.assertLessEqual(
             built.diagnostics["finalPromptTokens"],
             built.diagnostics["contextLimit"],
         )
         self.assertIn("compressionApplied", built.diagnostics)
+
+    def test_requirement_intent_prompt_uses_only_bounded_bootstrap_context(self) -> None:
+        context = {
+            "contextType": "RequirementIntentInput",
+            "contextId": "requirement-intent-1",
+            "contextVersion": "1.0",
+            "requirement": {
+                "title": "Device health",
+                "normalizedRequirement": "Help operators identify unhealthy devices.",
+                "sourceType": "PasteRequirement",
+            },
+            "metadata": {
+                "projectId": "project-1",
+                "repositoryId": "repository-1",
+                "repositoryName": "LineDefender",
+            },
+        }
+        built = PromptBuilder().build(
+            ReasoningRequest(
+                workflowType="Requirement Intent Analysis",
+                engineeringContext=context,
+                userRequirement="Help operators identify unhealthy devices.",
+            ),
+            provider="Phi",
+            model="phi-test",
+        )
+
+        self.assertIn("requirementIntent", built.prompt)
+        self.assertIn("source:requirement", built.prompt)
+        self.assertNotIn("repository_evidence", built.prompt)
+        self.assertNotIn("Engineering Memory", built.prompt)
+        self.assertEqual(
+            ["source:requirement"],
+            [item["referenceId"] for item in built.evidenceCatalog],
+        )
 
     def test_raw_sources_are_rejected(self) -> None:
         context = engineering_context()

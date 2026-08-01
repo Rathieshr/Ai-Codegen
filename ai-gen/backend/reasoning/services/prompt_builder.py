@@ -20,9 +20,13 @@ class PromptBuilder:
         provider: str,
         model: str = "",
     ) -> BuiltReasoningPrompt:
-        context = _validate_context(request.engineeringContext)
+        context = _validate_context(request.engineeringContext, request.workflowType)
         template = resolve_template(request.workflowType)
         catalog = _evidence_catalog(context)
+        if _key(request.workflowType) == "requirement_intent_analysis":
+            return _build_requirement_intent_prompt(
+                request, context, template, catalog, provider, model,
+            )
         sections = [
             _section("role", "Role", template.role, True, 100, False, "template"),
             _section("objective", "Objective", template.objective, True, 100, False, "template"),
@@ -71,7 +75,7 @@ class PromptBuilder:
         )
 
 
-def _validate_context(value: Any) -> dict[str, Any]:
+def _validate_context(value: Any, workflow_type: str = "") -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("Reasoning AI requires EngineeringContext as a dictionary.")
     forbidden = {
@@ -84,9 +88,49 @@ def _validate_context(value: Any) -> dict[str, Any]:
             "Reasoning AI accepts EngineeringContext only; remove raw sources: "
             + ", ".join(present)
         )
+    if _key(workflow_type) == "requirement_intent_analysis":
+        if value.get("contextType") != "RequirementIntentInput":
+            raise ValueError("Requirement Intent Analysis requires bounded RequirementIntentInput.")
+        return value
     if not value.get("contextId") and not value.get("contextVersion"):
         raise ValueError("EngineeringContext must include contextId or contextVersion.")
     return value
+
+
+def _build_requirement_intent_prompt(
+    request: ReasoningRequest,
+    context: dict[str, Any],
+    template: Any,
+    catalog: list[dict[str, Any]],
+    provider: str,
+    model: str,
+) -> BuiltReasoningPrompt:
+    sections = [
+        _section("role", "Role", template.role, True, 100, False, "template"),
+        _section("objective", "Objective", template.objective, True, 100, False, "template"),
+        _section(
+            "current_work_item", "Current Requirement",
+            request.userRequirement or context.get("requirement") or {},
+            True, 100, True, "requirement",
+        ),
+        _section(
+            "bounded_metadata", "Bounded Project Metadata",
+            context.get("metadata") or {}, False, 65, True, "project_metadata",
+        ),
+        _section("instructions", "Instructions", list(template.instructions), True, 100, False, "template"),
+        _section("output_schema", "Output Schema", _output_schema(request.workflowType), True, 100, False, "schema"),
+    ]
+    profile = budgetProfileForProvider(
+        provider or "deterministic", model, operation="reason_requirement_intent_analysis",
+    )
+    built = buildPrompt(sections, profile)
+    return BuiltReasoningPrompt(
+        prompt=str(built["prompt"]),
+        promptVersion=_prompt_version(request, provider, model),
+        sections=[item.to_dict() for item in built["sections"]],
+        evidenceCatalog=catalog,
+        diagnostics=dict(built["diagnostics"]),
+    )
 
 
 def _section(
@@ -124,6 +168,8 @@ def _intent(context: dict[str, Any]) -> dict[str, Any]:
         "functionalRequirements": requirement.get("functionalRequirements") or [],
         "acceptanceCriteria": requirement.get("acceptanceCriteria") or [],
         "actors": requirement.get("actors") or [],
+        "requirementIntent": requirement.get("requirementIntent") or {},
+        "intentPolicy": "Interpretation and search hints only; not engineering fact.",
     }
 
 
@@ -143,8 +189,34 @@ def _repository(context: dict[str, Any]) -> dict[str, Any]:
 
 def _knowledge(context: dict[str, Any]) -> dict[str, Any]:
     project_intelligence = context.get("projectIntelligence") or {}
+    markdown = context.get("repository_markdown_context") or {}
+    synthesis = context.get("knowledge_synthesis") or {}
     return {
         "documentation": list(context.get("relevantDocumentation") or [])[:8],
+        "repositoryMarkdown": [
+            {
+                "evidenceId": item.get("evidenceId"),
+                "path": item.get("path"),
+                "heading": item.get("heading"),
+                "classification": item.get("classification"),
+                "authority": item.get("authority"),
+                "factualStatus": item.get("factualStatus") or "usable",
+                "statements": (
+                    (item.get("statements") or {})
+                    if item.get("factualStatus") != "conflicted"
+                    else {}
+                ),
+                "sourceText": (
+                    item.get("sourceText")
+                    if item.get("factualStatus") != "conflicted"
+                    else "Claim withheld because repository sources conflict."
+                ),
+                "repositoryRevision": item.get("repositoryRevision"),
+                "contentHash": item.get("contentHash"),
+                "selectionReason": item.get("selectionReason"),
+            }
+            for item in list(markdown.get("selected") or [])[:12]
+        ],
         "memory": list((context.get("engineeringMemory") or {}).get("matches") or [])[:10],
         "similarWork": list((context.get("similarWork") or {}).get("matches") or [])[:10],
         "architecture": context.get("architecture") or {},
@@ -153,6 +225,9 @@ def _knowledge(context: dict[str, Any]) -> dict[str, Any]:
         "approvedProjectArtifacts": list(
             project_intelligence.get("approvedArtifacts") or []
         )[:10],
+        "sourceAuthority": synthesis.get("authorityRules") or {},
+        "sourceConflicts": list(synthesis.get("conflicts") or [])[:20],
+        "knowledgeLineage": context.get("sourceVersions") or {},
     }
 
 
@@ -170,6 +245,10 @@ def _boundaries(context: dict[str, Any]) -> dict[str, Any]:
         "readiness": context.get("readiness") or {},
         "rejectedContextCount": len(rejected),
         "rejectedContextPolicy": "Excluded before reasoning; details remain in diagnostics.",
+        "sourceConflicts": list(
+            (context.get("knowledge_synthesis") or {}).get("conflicts") or []
+        )[:20],
+        "conflictPolicy": "Do not treat a conflicted claim as fact until it is resolved.",
     }
 
 
@@ -178,10 +257,20 @@ def _validation(context: dict[str, Any]) -> dict[str, Any]:
         "impact": context.get("impact") or {},
         "risks": (context.get("impact") or {}).get("potentialRisks") or [],
         "warnings": (context.get("repository") or {}).get("warnings") or [],
+        "knowledgeConflicts": list(
+            (context.get("repository_markdown_context") or {}).get("conflicts") or []
+        )[:20],
     }
 
 
 def _evidence_catalog(context: dict[str, Any]) -> list[dict[str, Any]]:
+    if context.get("contextType") == "RequirementIntentInput":
+        requirement = context.get("requirement") or {}
+        return [{
+            "referenceId": "source:requirement",
+            "source": "requirement",
+            "name": str(requirement.get("title") or "Current Requirement"),
+        }]
     output: list[dict[str, Any]] = []
     repository = context.get("repository") or {}
     for module in repository.get("modules") or []:
@@ -206,6 +295,18 @@ def _evidence_catalog(context: dict[str, Any]) -> list[dict[str, Any]]:
             output.append(_evidence(
                 "artifact", item.get("id"), "project_intelligence", item.get("title"),
             ))
+    for item in (context.get("repository_markdown_context") or {}).get("selected") or []:
+        if isinstance(item, dict):
+            output.append({
+                "referenceId": str(item.get("evidenceId") or ""),
+                "source": "repository_markdown",
+                "name": f"{item.get('path') or ''}#{item.get('heading') or ''}",
+                "path": item.get("path"),
+                "heading": item.get("heading"),
+                "authority": item.get("authority"),
+                "repositoryRevision": item.get("repositoryRevision"),
+                "contentHash": item.get("contentHash"),
+            })
     output.append(_evidence("context", context.get("contextId") or context.get("contextVersion"), "engineering_context"))
     unique: dict[str, dict[str, Any]] = {}
     for item in output:
@@ -222,6 +323,73 @@ def _evidence(kind: str, value: Any, source: str, name: Any = "") -> dict[str, A
 
 def _output_schema(workflow_type: str) -> dict[str, Any]:
     workflow_key = _key(workflow_type)
+    if workflow_key == "requirement_intent_analysis":
+        return {
+            "recommendation": {
+                "requirementIntent": {
+                    "intentSummary": "string",
+                    "businessGoal": "string",
+                    "functionalIntent": ["string"],
+                    "entities": ["string"],
+                    "primaryActor": "string",
+                    "secondaryActors": ["string"],
+                    "capabilities": ["string"],
+                    "actions": ["string"],
+                    "concepts": ["string"],
+                    "businessTerminology": ["string"],
+                    "explicitConstraints": ["string"],
+                    "possibleAssumptions": ["string"],
+                    "ambiguities": ["string"],
+                    "riskIndicators": ["string"],
+                    "technologyConcepts": ["string"],
+                    "domainSynonyms": ["string"],
+                    "searchKeywords": ["string"],
+                    "possibleModuleNames": ["string"],
+                    "possibleFeatureNames": ["string"],
+                    "possibleApis": ["string"],
+                    "possibleRepositoryTerms": ["string"],
+                    "possibleAzureDevOpsSearchTerms": ["string"],
+                    "possibleMarkdownSearchTerms": ["string"],
+                    "clarificationCandidates": ["string"],
+                    "confidence": 0,
+                },
+            },
+            "reasoning": ["string"],
+            "alternatives": [{"title": "string", "reason": "string"}],
+            "evidence": [{"referenceId": "source:requirement", "reason": "string"}],
+            "risks": ["string"],
+            "tradeOffs": ["string"],
+            "impact": {},
+            "confidence": 0,
+        }
+    if workflow_key == "requirement_evidence_synthesis":
+        return {
+            "recommendation": {
+                "executiveSummary": "string",
+                "businessGoal": "string",
+                "functionalRequirements": ["string"],
+                "nonFunctionalRequirements": ["string"],
+                "businessRules": ["string"],
+                "constraints": ["string"],
+                "dependencies": ["string"],
+                "repositoryFindings": ["string"],
+                "architectureFindings": ["string"],
+                "reuseOpportunities": ["string"],
+                "affectedEngineeringElements": ["string"],
+                "risks": ["string"],
+                "openQuestions": ["string"],
+                "missingInformation": ["string"],
+                "engineeringInsights": ["string"],
+                "planningReadiness": "Ready | ReadyWithRecommendations | NeedsUserInput | Blocked",
+            },
+            "reasoning": ["string"],
+            "alternatives": [{"title": "string", "reason": "string"}],
+            "evidence": [{"referenceId": "string", "reason": "string"}],
+            "risks": ["string"],
+            "tradeOffs": ["string"],
+            "impact": {},
+            "confidence": 0,
+        }
     if workflow_key == "acceptance_criteria_generation":
         return {
             "recommendation": {

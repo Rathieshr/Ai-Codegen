@@ -3336,7 +3336,7 @@ button.hei-story-list-card {
 .hei-planning-context-workspace h3 { margin: 2px 0; font-size: 16px; }
 .hei-planning-context-workspace h4 { margin: 2px 0; font-size: 13px; }
 .hei-planning-context-workspace header p, .hei-planning-context-workspace section > p { margin: 3px 0 0; color: var(--hei-muted); }
-.hei-planning-context-summary, .hei-planning-context-grid > section, .hei-planning-context-similar, .hei-planning-context-recommendation, .hei-planning-context-readiness { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); padding: 13px; }
+.hei-planning-context-summary, .hei-planning-context-grid > section, .hei-planning-context-discovery, .hei-planning-context-similar, .hei-planning-context-recommendation, .hei-planning-context-readiness { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); padding: 13px; }
 .hei-planning-context-summary { border-top: 3px solid var(--hei-yellow); }
 .hei-planning-context-summary > div, .hei-planning-context-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 1px; margin-top: 10px; background: var(--hei-border-soft); }
 .hei-planning-context-summary > div > div, .hei-planning-context-metrics > div { display: grid; gap: 3px; min-width: 0; padding: 9px; background: var(--hei-surface-subtle); }
@@ -3344,6 +3344,15 @@ button.hei-story-list-card {
 .hei-planning-context-summary > div strong, .hei-planning-context-metrics strong { overflow-wrap: anywhere; font-size: 12px; }
 .hei-planning-context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .hei-planning-context-grid > .wide { grid-column: 1 / -1; }
+.hei-planning-context-discovery > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.hei-planning-context-documents { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 7px; margin-top: 10px; }
+.hei-planning-context-documents details { min-width: 0; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 8px 10px; }
+.hei-planning-context-documents summary { display: grid; gap: 2px; cursor: pointer; overflow-wrap: anywhere; }
+.hei-planning-context-documents summary span, .hei-planning-context-documents small { color: var(--hei-muted); }
+.hei-planning-context-documents details > div { display: grid; gap: 6px; margin-top: 8px; }
+.hei-planning-context-documents p { margin: 0; }
+.hei-planning-context-conflicts { margin-top: 10px; border-left: 3px solid var(--hei-warning); background: var(--hei-surface-subtle); padding: 8px 10px; }
+.hei-planning-context-conflicts p { margin: 4px 0 0; }
 .hei-planning-context-grid label { display: grid; gap: 5px; margin-top: 10px; }
 .hei-planning-context-grid label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .hei-planning-context-grid select { min-height: 32px; border: 1px solid var(--hei-border); border-radius: 4px; background: var(--hei-surface); color: var(--hei-text); padding: 5px 8px; }
@@ -3816,4 +3825,90 @@ button.hei-story-list-card {
   .hei-proposal-health { grid-column: auto; }
   .hei-proposal-estimate-form { grid-template-columns: 1fr; }
   .hei-planning-proposal-footer > div { flex-wrap: wrap; }
+}
+.hei-requirement-intelligence-trace {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--hei-border, #d0d7de);
+  border-left: 3px solid #0078d4;
+  border-radius: 6px;
+  background: var(--hei-surface, #fff);
+}
+
+.hei-requirement-intelligence-trace > header,
+.hei-requirement-intelligence-trace > div,
+.hei-requirement-discovery-counts,
+.hei-requirement-trace-details {
+  display: grid;
+  gap: 12px;
+}
+
+.hei-requirement-intelligence-trace > header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.hei-requirement-intelligence-trace > header span,
+.hei-requirement-intelligence-trace article > span {
+  color: var(--hei-muted, #57606a);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.hei-requirement-intelligence-trace > header h3,
+.hei-requirement-intelligence-trace article h4 {
+  margin: 3px 0;
+}
+
+.hei-requirement-intelligence-trace > header p,
+.hei-requirement-intelligence-trace article p {
+  margin: 4px 0 8px;
+}
+
+.hei-requirement-intelligence-trace > div {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hei-requirement-intelligence-trace article {
+  min-width: 0;
+  padding: 14px;
+  background: var(--hei-subtle-surface, #f6f8fa);
+  border-radius: 6px;
+}
+
+.hei-requirement-discovery-counts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 10px 0;
+}
+
+.hei-requirement-intelligence-trace details {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hei-border, #d0d7de);
+}
+
+.hei-requirement-intelligence-trace summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.hei-requirement-trace-details {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.hei-requirement-trace-details > p {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .hei-requirement-intelligence-trace > div,
+  .hei-requirement-trace-details {
+    grid-template-columns: 1fr;
+  }
+
+  .hei-requirement-discovery-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

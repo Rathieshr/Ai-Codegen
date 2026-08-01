@@ -1130,16 +1130,26 @@ def _recommendation_readiness(context: dict[str, Any]) -> dict[str, Any]:
 
 def _missing_information(context: dict[str, Any]) -> dict[str, list[str]]:
     requirement = context.get("requirement") or {}
+    synthesis = context.get("knowledge_synthesis") or {}
+    markdown_claims = synthesis.get("repositoryMarkdownClaims") or {}
     missing_acceptance = [] if requirement.get("acceptanceCriteria") else [
         "Define measurable acceptance criteria before Planning Proposal approval."
     ]
-    missing_rules = [] if requirement.get("businessRules") else [
+    missing_rules = [] if (
+        requirement.get("businessRules") or markdown_claims.get("businessRules")
+    ) else [
         "No explicit business rules were supplied."
     ]
-    missing_constraints = [] if requirement.get("constraints") else [
+    missing_constraints = [] if (
+        requirement.get("constraints") or markdown_claims.get("constraints")
+    ) else [
         "No explicit implementation or operational constraints were supplied."
     ]
-    missing_dependencies = [] if requirement.get("dependencies") else [
+    missing_dependencies = [] if (
+        requirement.get("dependencies")
+        or markdown_claims.get("integrationContracts")
+        or markdown_claims.get("architectureDecisions")
+    ) else [
         "No explicit business dependencies were supplied."
     ]
     clarifications = _strings(requirement.get("openQuestions"))

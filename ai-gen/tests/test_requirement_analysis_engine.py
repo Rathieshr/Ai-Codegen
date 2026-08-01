@@ -31,6 +31,64 @@ class RequirementReasoningSpy:
 
     def analyze(self, workflow_type, engineering_context, **kwargs):
         self.calls.append((workflow_type, engineering_context, kwargs))
+        if workflow_type == "Requirement Intent Analysis":
+            return {
+                "reasoningMode": "AI",
+                "provider": "Phi",
+                "model": "phi-test",
+                "promptVersion": "requirement-intent-v1",
+                "recommendation": {
+                    "requirementIntent": {
+                        "intentSummary": "Give Operations Users timely device health visibility.",
+                        "businessGoal": "Reduce the time required to identify unhealthy devices.",
+                        "functionalIntent": ["View current device health and communication status."],
+                        "entities": ["Operations User", "Device"],
+                        "capabilities": ["Device Health Overview"],
+                        "concepts": ["device health", "communication status"],
+                        "searchKeywords": ["device", "health", "communication", "status"],
+                        "possibleModuleNames": ["Device Health"],
+                        "possibleFeatureNames": ["Device Health Overview"],
+                        "possibleApis": ["Device Health API"],
+                        "possibleRepositoryTerms": ["device health"],
+                        "possibleAzureDevOpsSearchTerms": ["device health"],
+                        "possibleMarkdownSearchTerms": ["device health architecture"],
+                        "clarificationCandidates": [],
+                        "confidence": 0.9,
+                    },
+                },
+                "reasoning": ["The source states a user and observable outcome."],
+                "alternatives": [],
+                "evidence": [{"referenceId": "source:requirement"}],
+                "warnings": [],
+                "confidence": {"overall": 90, "level": "High"},
+            }
+        if workflow_type == "Requirement Evidence Synthesis":
+            return {
+                "reasoningMode": "AI",
+                "provider": "Phi",
+                "model": "phi-test",
+                "promptVersion": "requirement-synthesis-v1",
+                "recommendation": {
+                    "executiveSummary": "Operations Users need current device health visibility.",
+                    "businessGoal": "Reduce the time required to identify unhealthy devices.",
+                    "functionalRequirements": [
+                        "Operations Users must view current device health and communication status.",
+                    ],
+                    "repositoryFindings": [],
+                    "architectureFindings": [],
+                    "reuseOpportunities": [],
+                    "affectedEngineeringElements": [],
+                    "risks": [],
+                    "openQuestions": [],
+                    "missingInformation": ["Acceptance Criteria"],
+                    "engineeringInsights": ["Use verified context before planning."],
+                },
+                "reasoning": ["The final analysis preserves the source behavior."],
+                "alternatives": [],
+                "evidence": [],
+                "warnings": [],
+                "confidence": {"overall": 84, "level": "High"},
+            }
         if workflow_type == "Acceptance Criteria Generation":
             functional = engineering_context["requirement"]["functionalRequirements"][0]
             return {
@@ -352,8 +410,15 @@ Assumptions:
 
         self.assertEqual("AI", analyzed["aiAnalysis"]["reasoningMode"])
         self.assertEqual("Phi", analyzed["aiAnalysis"]["provider"])
+        self.assertEqual("Device Health Overview", analyzed["requirementIntent"]["capabilities"][0])
+        self.assertEqual("requirement-analysis-ai-v1", analyzed["analysisLineage"]["analysisVersion"])
+        self.assertIn("engineeringDiscovery", analyzed)
         self.assertEqual(
-            ["Requirement Analysis", "Acceptance Criteria Generation"],
+            [
+                "Requirement Intent Analysis",
+                "Requirement Evidence Synthesis",
+                "Acceptance Criteria Generation",
+            ],
             [call[0] for call in reasoning.calls],
         )
         self.assertEqual("AI", generated["acceptanceDiagnostics"]["generationMode"])

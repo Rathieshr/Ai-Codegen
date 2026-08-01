@@ -55,7 +55,7 @@ providers; they do not rescan, recalculate, or invoke an AI model.
 | Service | Responsibility | Existing authority |
 | --- | --- | --- |
 | `RepositoryService` | Repository summary, relevant modules/files, technology stack | Repository Intelligence |
-| `MarkdownService` | Index and search supplied Markdown documents | Repository/document ingestion |
+| `MarkdownService` | Recursively discover, section-index, classify, and retrieve repository Markdown | Repository content and revision |
 | `ArchitectureService` | Architecture context from repository graph facts | Repository Intelligence graph |
 | `DependencyService` | Dependency context and affected modules | Engineering Graph |
 | `AzureDevOpsService` | Normalized project, open work, and similar stories | HEI Platform SDK synchronized cache |
@@ -100,6 +100,22 @@ Project Intelligence --------+
   background, intent-selected Knowledge Registry facts, approved historical
   artifacts, and rejected-context diagnostics.
 
+The canonical contract also exposes non-opaque source collections:
+
+- `requirement_context`
+- `repository_code_context`
+- `repository_markdown_context`
+- `project_intelligence_context`
+- `azure_devops_context`
+- `engineering_memory_context`
+
+Repository Markdown is not merged into Project Intelligence. The Markdown
+collection contains selected sections, rejected-result diagnostics, source
+conflicts, paths, headings, evidence IDs, classifications, authority,
+content hashes, and repository revision. `knowledge_synthesis` records the
+claims available from each source and the authority rules used for each claim
+type.
+
 The context ID is derived from source versions, including the requirement,
 repository snapshot, ADO revisions, memory versions, and Project Intelligence
 knowledge version. Repository file evidence is returned only when it exists in
@@ -137,6 +153,15 @@ Selection rules:
   is excluded and recorded in `rejectedContext`.
 - Repository Intelligence remains authoritative for code files, services,
   APIs, graph relationships, and current repository state.
+- Repository Markdown discovery recursively includes Markdown below the
+  selected repository and excludes dependency, generated, vendor, build, and
+  cache directories. Repository metadata may override include/exclude
+  patterns, section limits, and token budget.
+- Retrieval operates on document sections. It enforces project and repository
+  scope, relevance, authority, deduplication, and a prompt token budget.
+  Rejected sections remain diagnostics and never enter reasoning prompts.
+- ADR or architecture claims that conflict with current code are reported and
+  excluded from factual resolution until reviewed.
 
 ## Public Methods
 
@@ -182,3 +207,51 @@ Engineering Intelligence returns facts and evidence only. It has no Phi,
 OpenAI, Claude, Gemini, or other model dependency. Reasoning engines receive
 the optimized context after orchestration. Missing evidence remains missing;
 repository files, APIs, dependencies, and memory are never invented.
+Planning Reasoning receives only selected Markdown sections, with evidence
+lineage and conflict diagnostics. It must cite their evidence IDs when those
+sections influence an output.
+
+## AI-Driven Requirement Analysis
+
+Requirement Analysis uses the shared Reasoning Engine twice without moving
+provider code into Engineering Intelligence:
+
+```text
+User Requirement
+        |
+        v
+Requirement Intent Analysis (Phi by default)
+        |
+        v
+RequirementIntent search hints
+        |
+        v
+Engineering Intelligence discovery
+        |
+        v
+Versioned EngineeringContext
+        |
+        v
+Requirement Evidence Synthesis (Phi by default)
+        |
+        v
+Deterministically validated Requirement Analysis
+```
+
+The first provider pass receives only the original requirement and bounded
+project/repository metadata. `RequirementIntent` values are explicitly
+hypotheses and search hints; they are never stored as repository facts.
+Engineering Intelligence uses the hints to narrow repository, Markdown,
+Project Intelligence, Knowledge Registry, Engineering Memory, Azure DevOps,
+architecture, graph, similarity, and dependency retrieval.
+
+The second provider pass receives the original requirement, the intent
+projection embedded in the canonical requirement, and bounded
+`EngineeringContext` evidence. The response validator rejects unknown
+evidence references. The deterministic Requirement Analysis and Acceptance
+Criteria engines remain the validation and availability fallback.
+
+Persisted analyses record provider, model, both prompt versions, Engineering
+Context ID/version, Knowledge version, repository revision, analysis version,
+and timestamp. A provider outage is represented as deterministic mode rather
+than an analysis failure.

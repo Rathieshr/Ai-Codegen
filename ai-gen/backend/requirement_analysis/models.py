@@ -7,6 +7,44 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class RequirementIntent:
+    """Provider-derived search intent. These values are hypotheses, not facts."""
+
+    intent_summary: str = ""
+    business_goal: str = ""
+    functional_intent: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
+    primary_actor: str = ""
+    secondary_actors: list[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
+    concepts: list[str] = field(default_factory=list)
+    business_terminology: list[str] = field(default_factory=list)
+    explicit_constraints: list[str] = field(default_factory=list)
+    possible_assumptions: list[str] = field(default_factory=list)
+    ambiguities: list[str] = field(default_factory=list)
+    risk_indicators: list[str] = field(default_factory=list)
+    technology_concepts: list[str] = field(default_factory=list)
+    domain_synonyms: list[str] = field(default_factory=list)
+    search_keywords: list[str] = field(default_factory=list)
+    possible_module_names: list[str] = field(default_factory=list)
+    possible_feature_names: list[str] = field(default_factory=list)
+    possible_apis: list[str] = field(default_factory=list)
+    possible_repository_terms: list[str] = field(default_factory=list)
+    possible_azure_devops_search_terms: list[str] = field(default_factory=list)
+    possible_markdown_search_terms: list[str] = field(default_factory=list)
+    clarification_candidates: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        return {
+            key.split("_")[0] + "".join(part.capitalize() for part in key.split("_")[1:]): item
+            for key, item in value.items()
+        }
+
+
+@dataclass(frozen=True)
 class RequirementFinding:
     text: str
     reason: str

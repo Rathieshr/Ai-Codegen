@@ -26,6 +26,26 @@ _COMMON = (
 
 
 TEMPLATES: dict[str, PromptTemplate] = {
+    "requirement_intent_analysis": PromptTemplate(
+        "Requirement Intent Analysis", "Senior Product and Business Analyst",
+        "Interpret the supplied requirement into bounded search intent for Engineering Intelligence.",
+        (
+            "Treat every output as an interpretation or search hint, never as repository fact.",
+            "Do not invent files, modules, APIs, work items, dependencies, or implementation details.",
+            "Use only the requirement and bounded project metadata supplied in this prompt.",
+            "Separate the business outcome from functional intent.",
+            "Return only one JSON object matching the output schema.",
+        ),
+    ),
+    "requirement_evidence_synthesis": PromptTemplate(
+        "Requirement Evidence Synthesis", "Senior Engineering Business Analyst",
+        "Synthesize a final requirement analysis from the original requirement and discovered engineering evidence.",
+        _COMMON + (
+            "Use Requirement Intent only as interpretation; Engineering Context is authoritative for engineering facts.",
+            "State missing information only after checking repository, Markdown, Azure DevOps, knowledge, and memory evidence.",
+            "Keep source-derived, AI-inferred, and evidence-backed findings distinguishable.",
+        ),
+    ),
     "requirement_analysis": PromptTemplate(
         "Requirement Analysis", "Senior Business Analyst",
         "Assess requirement quality and recommend evidence-backed improvements.",

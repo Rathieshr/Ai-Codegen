@@ -12,14 +12,25 @@ class RequirementRefinement:
     requirement_id: str
     original_requirement: str
     refined_requirement: str
+    executive_summary: str
     requirement_summary: str
+    business_goal: str
     business_objective: str
     problem_statement: str
     user_intent: str
     primary_actor: str
     secondary_actors: list[str]
     core_capability: str
+    core_capabilities: list[str]
     expected_outcome: str
+    business_entities: list[str]
+    engineering_concepts: list[str]
+    domain_terminology: list[str]
+    repository_search_hints: list[str]
+    markdown_search_hints: list[str]
+    azure_devops_search_hints: list[str]
+    possible_module_names: list[str]
+    possible_feature_names: list[str]
     potential_domain_terms: list[str]
     potential_search_keywords: list[str]
     potential_repository_terms: list[str]

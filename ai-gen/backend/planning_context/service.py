@@ -299,6 +299,7 @@ class PlanningContextService:
                 "actors": _strings(summary.get("actors")),
                 "assumptions": _strings(summary.get("assumptions")),
                 "openQuestions": _strings(summary.get("openQuestions")),
+                "analysisDocument": dict(summary.get("canonicalRequirementAnalysis") or {}),
             },
             status="Blocked" if readiness["status"] == "Blocked" else "NeedsReview",
             reviewStatus="Pending",

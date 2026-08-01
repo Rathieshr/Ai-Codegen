@@ -59,6 +59,12 @@ class IEngineeringMemoryService(Protocol):
     def find_lessons_learned(self, requirement: dict[str, Any]) -> list[dict[str, Any]]: ...
 
 
+class IEngineeringDiscoveryService(Protocol):
+    def build_report(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+
 class IContextBuilder(Protocol):
     def build_optimized_context(self, context: EngineeringContext | dict[str, Any]) -> dict[str, Any]: ...
 

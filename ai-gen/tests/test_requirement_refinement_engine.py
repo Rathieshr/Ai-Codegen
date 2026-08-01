@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.platform.shared import JsonMapStore
+from backend.reasoning.models import ReasoningRequest
+from backend.reasoning.services import PromptBuilder
 from backend.requirement_analysis import RequirementAnalysisService
 from backend.requirement_intake import RequirementIngestionService
 from backend.requirement_refinement import RequirementRefinementService, build_requirement_refinement_router
@@ -29,16 +31,27 @@ class RefinementReasoningSpy:
             "reasoningMode": "AI",
             "provider": "Phi",
             "model": "phi-test",
-            "promptVersion": "requirement-refinement-v1",
+            "promptVersion": "requirement-refinement-v2:test",
             "recommendation": {"refinement": {
                 "refinedRequirement": refined,
+                "executiveSummary": "Operations Users need a reliable way to locate registered devices.",
                 "requirementSummary": "Search registered devices",
+                "businessGoal": "Reduce the effort required to locate registered devices.",
                 "businessObjective": "Help Operations Users locate registered devices.",
                 "problemStatement": "Registered devices are difficult to locate.",
                 "userIntent": "Search registered field devices.",
                 "primaryActor": "Operations User",
                 "coreCapability": "Device Search",
+                "coreCapabilities": ["Device Search", "Device Inventory Discovery"],
                 "expectedOutcome": "The requested registered device can be located.",
+                "businessEntities": ["Registered Device", "Device Inventory"],
+                "engineeringConcepts": ["Device Search", "Inventory Discovery"],
+                "domainTerminology": ["field device", "registered device"],
+                "repositorySearchHints": ["device search", "device inventory"],
+                "markdownSearchHints": ["device inventory", "registered devices"],
+                "azureDevOpsSearchHints": ["device search", "inventory discovery"],
+                "possibleModuleNames": ["Device Inventory"],
+                "possibleFeatureNames": ["Device Search"],
                 "potentialDomainTerms": ["field device"],
                 "potentialSearchKeywords": ["device", "search", "inventory"],
                 "potentialRepositoryTerms": ["device inventory"],
@@ -96,13 +109,61 @@ class RequirementRefinementTests(unittest.TestCase):
         self.assertEqual("Need device search.", result["originalRequirement"])
         self.assertIn("Operations Users", result["refinedRequirement"])
         self.assertEqual("Phi", result["provider"])
-        self.assertEqual("requirement-refinement-v1", result["promptVersion"])
+        self.assertEqual("requirement-refinement-v2:test", result["promptVersion"])
         self.assertEqual(["device inventory"], result["requirementIntent"]["repositoryHints"])
-        workflow, context, _ = self.reasoning.calls[0]
+        self.assertNotEqual(result["businessGoal"], result["userIntent"])
+        self.assertEqual(["Registered Device", "Device Inventory"], result["businessEntities"])
+        self.assertTrue(result["coreCapabilities"])
+        self.assertTrue(result["repositorySearchHints"])
+        self.assertEqual("Need device search.", result["originalRequirement"])
+        workflow, context, kwargs = self.reasoning.calls[0]
         self.assertEqual("Requirement Refinement", workflow)
+        self.assertEqual("Auto", kwargs["provider"])
         self.assertEqual("RequirementRefinementInput", context["contextType"])
         self.assertNotIn("repository", context)
         self.assertNotIn("azureDevOps", context)
+
+    def test_deterministic_v2_fallback_still_improves_and_extracts_source_terms(self):
+        requirement = self.ingestion.ingest({
+            "sourceType": "PasteRequirement",
+            "projectId": "linedefender",
+            "projectName": "LineDefender",
+            "title": "Device Health Operations",
+            "content": (
+                "Provide Operations Users with a real-time view of device health, communication status, "
+                "and operational alerts so that unhealthy devices can be identified and acted on before failures occur."
+            ),
+        })
+        service = RequirementRefinementService(
+            JsonMapStore(Path(self.temp.name) / "deterministic-v2.json"),
+            requirement_ingestion=self.ingestion,
+        )
+        result = service.refine(requirement["requirementId"])
+        self.assertNotEqual(result["originalRequirement"], result["refinedRequirement"])
+        self.assertIn("Enable Operations Users", result["refinedRequirement"])
+        self.assertIn("device health", [item.casefold() for item in result["businessEntities"]])
+        self.assertTrue(result["coreCapabilities"])
+        self.assertTrue(result["repositorySearchHints"])
+        self.assertNotEqual(result["businessGoal"].casefold(), result["userIntent"].casefold())
+
+    def test_v2_prompt_is_provider_neutral_and_requests_complete_refinement(self):
+        request = ReasoningRequest(
+            workflowType="Requirement Refinement",
+            engineeringContext={
+                "contextType": "RequirementRefinementInput",
+                "contextId": "refinement-test",
+                "contextVersion": "1.0",
+                "requirement": {"title": "Device search", "normalizedRequirement": "Need device search."},
+                "metadata": {"projectName": "LineDefender"},
+            },
+            userRequirement="Need device search.",
+        )
+        built = PromptBuilder().build(request, provider="Phi", model="phi-test")
+        self.assertTrue(built.promptVersion.startswith("requirement-refinement-v2:"))
+        self.assertIn("coreCapabilities", built.prompt)
+        self.assertIn("businessEntities", built.prompt)
+        self.assertIn("repositorySearchHints", built.prompt)
+        self.assertNotIn("repositoryDump", built.prompt)
 
     def test_accept_edit_skip_and_regenerate_are_versioned(self):
         initial = self.service.refine(self.requirement["requirementId"])

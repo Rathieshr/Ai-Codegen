@@ -25,6 +25,7 @@ from .services import (
     AzureDevOpsService,
     ContextBuilder,
     DependencyService,
+    EngineeringDiscoveryService,
     IntelligenceOrchestrator,
     MarkdownService,
     MemoryService,
@@ -66,6 +67,7 @@ class EngineeringIntelligenceService:
         self.markdown_service = MarkdownService()
         self.architecture_service = ArchitectureService(self._analyze_architecture)
         self.dependency_service = DependencyService(self._analyze_dependencies)
+        self.discovery_service = EngineeringDiscoveryService()
         self.azure_devops_service = AzureDevOpsService(
             self._analyze_azure_devops, self._find_similar_stories,
         )
@@ -115,6 +117,11 @@ class EngineeringIntelligenceService:
             ),
             "contextVersion": requirement.get("contextVersion"),
             "analysisId": analysis.get("analysisId"),
+            "analysisDocument": (
+                dict(analysis.get("analysisDocument") or analysis.get("canonicalRequirementAnalysis") or {})
+                if isinstance(analysis.get("analysisDocument") or analysis.get("canonicalRequirementAnalysis"), dict)
+                else {}
+            ),
         }
 
     def _analyze_repository(self, requirement: dict[str, Any]) -> RepositorySummary:
@@ -796,6 +803,11 @@ class EngineeringIntelligenceService:
             requirement, correlation_id=correlation_id,
         )
 
+    def build_discovery_report(
+        self, value: EngineeringContext | dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.discovery_service.build_report(value)
+
     def build_planning_context(
         self, requirement: dict[str, Any], *, correlation_id: str = "",
     ) -> dict[str, Any]:
@@ -849,6 +861,7 @@ class EngineeringIntelligenceService:
     generateImpactAnalysis = generate_impact_analysis
     generatePlanningContext = generate_planning_context
     buildRequirementContext = build_requirement_context
+    buildDiscoveryReport = build_discovery_report
     buildPlanningContext = build_planning_context
     buildExecutionContext = build_execution_context
     buildValidationContext = build_validation_context
@@ -875,6 +888,7 @@ class EngineeringIntelligenceService:
             ]
 
         return EngineeringMemorySummary(
+            available=True,
             matches=matches,
             similarStories=selected("story"),
             similarFeatures=selected("feature"),
@@ -929,6 +943,7 @@ class EngineeringIntelligenceService:
         ]
         return AzureDevOpsSummary(
             projectId=project_id,
+            available=True,
             epics=by_type["Epic"],
             features=by_type["Feature"],
             stories=by_type["Story"],
@@ -1036,6 +1051,11 @@ def _canonical_requirement(value: dict[str, Any]) -> dict[str, Any]:
         "projectName": _text(value.get("projectName")),
         "contextVersion": value.get("contextVersion"),
         "analysisId": value.get("analysisId"),
+        "analysisDocument": (
+            dict(value.get("analysisDocument") or value.get("canonicalRequirementAnalysis") or {})
+            if isinstance(value.get("analysisDocument") or value.get("canonicalRequirementAnalysis"), dict)
+            else {}
+        ),
     }
 
 

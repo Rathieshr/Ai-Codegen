@@ -126,6 +126,17 @@ def _services(health: dict[str, Any], extras: dict[str, Any], latencies: dict[st
 
 
 def _service_status(value: Any) -> str:
+    if isinstance(value, dict):
+        statuses = [_service_status(item) for item in value.values()]
+        if not statuses or all(status == "Not Registered" for status in statuses):
+            return "Not Registered"
+        if "Unavailable" in statuses:
+            return "Unavailable"
+        if "Degraded" in statuses or "Not Registered" in statuses:
+            return "Degraded"
+        return "Healthy"
+    if isinstance(value, (list, tuple, set)):
+        return _service_status({str(index): item for index, item in enumerate(value)})
     text = str(value or "Unknown").casefold()
     if text in {"healthy", "ready", "completed", "active"}: return "Healthy"
     if text in {"not_registered", "not configured", "pending"}: return "Not Registered"

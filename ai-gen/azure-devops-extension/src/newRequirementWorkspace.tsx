@@ -133,6 +133,59 @@ type RepositorySuggestion = {
   confidence: number; reason: string; alternativeRepositories: RepositoryCandidate[];
   availableRepositories: RepositoryCandidate[]; source: 'Detection' | 'ManualOverride'; detectedAt: string;
 };
+type AnalysisSectionSource = {
+  origin: string;
+  evidenceReferences: string[];
+  provider?: string;
+  reasoningMode?: string;
+};
+type RequirementAnalysisDocument = {
+  schemaVersion: 'hei-requirement-analysis-v2';
+  documentId: string;
+  requirementId: string;
+  contextVersion: string;
+  title: string;
+  executiveSummary: string;
+  businessGoal: string;
+  problemStatement: string;
+  primaryActor: string;
+  secondaryActors: string[];
+  businessValue: string;
+  capabilities: string[];
+  functionalRequirements: string[];
+  candidateNonFunctionalRequirements: string[];
+  acceptanceCriteria: string[];
+  businessRules: string[];
+  constraints: string[];
+  dependencies: string[];
+  affectedModules: string[];
+  affectedServices: string[];
+  affectedApis: string[];
+  affectedScreens: string[];
+  repositoryFindings: DiscoveryEvidence[];
+  markdownFindings: DiscoveryEvidence[];
+  azureDevOpsFindings: DiscoveryEvidence[];
+  reusableComponents: DiscoveryEvidence[];
+  risks: string[];
+  assumptions: string[];
+  openQuestions: string[];
+  engineeringInsights: string[];
+  planningReadiness: {
+    status: 'Ready' | 'ReadyWithRecommendations' | 'NeedsUserInput' | 'Blocked';
+    readyForPlanning: boolean;
+    score: number;
+    blockers: string[];
+    warnings: string[];
+    explanation: string;
+    dimensions: Record<string, number>;
+    evidenceStatus: string;
+  };
+  confidence: { score: number; level: string; reason: string };
+  evidence: DiscoveryEvidence[];
+  sectionSources: Record<string, AnalysisSectionSource>;
+  validation: { valid: boolean; checks: Record<string, boolean>; warnings: string[] };
+  generatedAt: string;
+};
 type RequirementAnalysisResult = {
   analysisId: string;
   requirementId: string;
@@ -212,6 +265,21 @@ type RequirementAnalysisResult = {
     knowledge: Record<string, unknown>; memory: { matches: unknown[] };
     similarWork: Record<string, unknown>; architecture: Record<string, unknown>;
     dependencies: Record<string, unknown>; rejectedContext: unknown[];
+    report?: {
+      schemaVersion: string; contextId: string; contextVersion: string;
+      status: 'Ready' | 'Partial' | 'DiscoveryPending' | 'NoRelevantEvidence';
+      summary: string;
+      whatIFound: Array<{ source: string; status: string; count: number; summary: string; evidenceReferences: string[] }>;
+      reusableComponents: DiscoveryEvidence[]; similarFeatures: DiscoveryEvidence[];
+      relevantDocumentation: DiscoveryEvidence[]; architectureEvidence: DiscoveryEvidence[];
+      repositoryEvidence: DiscoveryEvidence[]; azureDevOpsEvidence: DiscoveryEvidence[];
+      engineeringMemoryEvidence: DiscoveryEvidence[]; projectIntelligenceEvidence: DiscoveryEvidence[];
+      knowledgeEvidence: DiscoveryEvidence[];
+      conflicts: Array<{ reason?: string; path?: string; heading?: string }>;
+      unknowns: Array<{ area: string; reason: string; classification: string }>;
+      sourceStatus: Array<{ source: string; status: string; message: string }>;
+      confidence: { score: number; level: string; evidenceCoverage: number; evidenceCount: number; conflictCount: number; reason: string };
+    };
   };
   analysisLineage?: {
     provider: string; model: string; intentPromptVersion: string; synthesisPromptVersion: string;
@@ -224,6 +292,18 @@ type RequirementAnalysisResult = {
     generationMode?: string; reasoningMode?: string; provider?: string; model?: string;
     promptVersion?: string; warnings?: string[]; generationStatus?: string;
   };
+  analysisDocument?: RequirementAnalysisDocument;
+};
+
+type DiscoveryEvidence = {
+  evidenceId: string;
+  evidenceType: string;
+  title: string;
+  source: string;
+  sourceReference: string;
+  reason: string;
+  confidence: number;
+  metadata: Record<string, unknown>;
 };
 
 type IngestionResult = {
@@ -242,14 +322,25 @@ type RequirementRefinementResult = {
   requirementId: string;
   originalRequirement: string;
   refinedRequirement: string;
+  executiveSummary?: string;
   requirementSummary: string;
+  businessGoal?: string;
   businessObjective: string;
   problemStatement: string;
   userIntent: string;
   primaryActor: string;
   secondaryActors: string[];
   coreCapability: string;
+  coreCapabilities?: string[];
   expectedOutcome: string;
+  businessEntities?: string[];
+  engineeringConcepts?: string[];
+  domainTerminology?: string[];
+  repositorySearchHints?: string[];
+  markdownSearchHints?: string[];
+  azureDevOpsSearchHints?: string[];
+  possibleModuleNames?: string[];
+  possibleFeatureNames?: string[];
   potentialDomainTerms: string[];
   potentialSearchKeywords: string[];
   potentialRepositoryTerms: string[];
@@ -1944,24 +2035,44 @@ function RequirementRefinementCard({ value, busy, onAction }: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value.refinedRequirement);
   const accepted = value.status === 'Accepted';
+  const normalizedOriginal = value.originalRequirement.trim().replace(/\s+/g, ' ');
+  const normalizedRefinement = value.refinedRequirement.trim().replace(/\s+/g, ' ');
+  const wordingChanged = normalizedOriginal !== normalizedRefinement;
+  const capabilities = value.coreCapabilities?.length ? value.coreCapabilities : value.coreCapability ? [value.coreCapability] : [];
+  const repositoryHints = value.repositorySearchHints?.length ? value.repositorySearchHints : value.potentialRepositoryTerms || [];
+  const markdownHints = value.markdownSearchHints?.length ? value.markdownSearchHints : value.potentialMarkdownTerms || [];
+  const adoHints = value.azureDevOpsSearchHints?.length ? value.azureDevOpsSearchHints : value.potentialAzureDevOpsTerms || [];
   return <section className="hei-requirement-refinement" aria-label="AI Requirement Refinement">
     <header>
-      <div><span>AI Requirement Refinement</span><h3>Engineering-ready wording</h3><p>HEI improves clarity before repository or Azure DevOps discovery. Your original requirement remains unchanged.</p></div>
+      <div><span>AI Requirement Refinement</span><h3>{wordingChanged ? 'Engineering-ready wording' : 'Ready as written'}</h3><p>{wordingChanged ? 'HEI improved clarity before repository or Azure DevOps discovery. Your original requirement remains unchanged.' : 'HEI found the source requirement clear enough for engineering analysis. No rewritten copy is needed.'}</p></div>
       <Status value={`${value.status} · ${Math.round(value.confidence * 100)}%`} />
     </header>
     <div className="hei-requirement-refinement-comparison">
       <article><span>Original Requirement</span><p>{value.originalRequirement}</p></article>
       <article><span>Refined Requirement</span>{editing ? <textarea rows={7} value={draft} onChange={(event) => setDraft(event.target.value)} /> : <p>{value.refinedRequirement}</p>}</article>
     </div>
+    <div className="hei-requirement-refinement-summary">
+      <Signal label="Executive Summary" value={value.executiveSummary || value.requirementSummary || 'Not identified'} />
+      <Signal label="Business Goal" value={value.businessGoal || value.businessObjective || 'Needs clarification'} />
+      <Signal label="User Intent" value={value.userIntent || 'Needs clarification'} />
+      <Signal label="Expected Outcome" value={value.expectedOutcome || 'Needs clarification'} />
+    </div>
+    <div className="hei-requirement-refinement-taxonomy">
+      <ContextTags title="Actors" values={[value.primaryActor, ...(value.secondaryActors || [])].filter(Boolean)} empty="No actor identified." />
+      <ContextTags title="Core capabilities" values={capabilities} empty="No capability identified." />
+      <ContextTags title="Business entities" values={value.businessEntities || []} empty="No business entity identified." />
+      <ContextTags title="Engineering concepts" values={value.engineeringConcepts || []} empty="No engineering concept identified." />
+    </div>
     <div className="hei-requirement-refinement-details">
-      <div><strong>Changes Made</strong>{value.changes.length ? <ul>{value.changes.map((item, index) => <li key={`${index}-${item.change}`}><b>{item.change}</b><small>{item.reason}</small></li>)}</ul> : <p>No wording change was required.</p>}</div>
+      <div><strong>{wordingChanged ? 'Changes Made' : 'Wording Review'}</strong>{value.changes.length ? <ul>{value.changes.map((item, index) => <li key={`${index}-${item.change}`}><b>{item.change}</b><small>{item.reason}</small></li>)}</ul> : <p>{wordingChanged ? 'No change summary was provided.' : 'The source wording is suitable for analysis.'}</p>}</div>
+      <div><strong>Reasoning</strong>{value.reasoning.length ? <ul>{value.reasoning.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No additional reasoning was provided.</p>}</div>
       <div><strong>Ambiguities</strong>{value.ambiguities.length ? <ul>{value.ambiguities.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No explicit ambiguity identified.</p>}</div>
       <div><strong>Clarification Candidates</strong>{value.clarificationCandidates.length ? <ul>{value.clarificationCandidates.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No clarification required before analysis.</p>}</div>
     </div>
-    <details><summary>Refinement lineage and search hints</summary><div className="hei-requirement-refinement-lineage"><Signal label="Provider" value={value.provider || 'Deterministic'} /><Signal label="Model" value={value.model || 'Not applicable'} /><Signal label="Prompt" value={value.promptVersion} /><Signal label="Version" value={String(value.version)} /></div><ContextTags title="Repository terms" values={value.potentialRepositoryTerms || []} empty="No repository hints inferred." /><ContextTags title="Markdown terms" values={value.potentialMarkdownTerms || []} empty="No Markdown hints inferred." /><ContextTags title="Azure DevOps terms" values={value.potentialAzureDevOpsTerms || []} empty="No Azure DevOps hints inferred." /></details>
+    <details><summary>Refinement lineage and search hints</summary><div className="hei-requirement-refinement-lineage"><Signal label="Provider" value={value.provider || 'Deterministic'} /><Signal label="Model" value={value.model || 'Not applicable'} /><Signal label="Prompt" value={value.promptVersion} /><Signal label="Version" value={String(value.version)} /></div><ContextTags title="Repository search hints" values={repositoryHints} empty="No repository hints inferred." /><ContextTags title="Markdown search hints" values={markdownHints} empty="No Markdown hints inferred." /><ContextTags title="Azure DevOps search hints" values={adoHints} empty="No Azure DevOps hints inferred." /><ContextTags title="Possible modules" values={value.possibleModuleNames || []} empty="No possible module names inferred." /><ContextTags title="Possible features" values={value.possibleFeatureNames || []} empty="No possible feature names inferred." /></details>
     <footer>
       {editing ? <><button className="planner-button primary" type="button" disabled={busy || !draft.trim()} onClick={() => { onAction('edit', draft.trim()); setEditing(false); }}>Save Refinement</button><button className="planner-button secondary" type="button" disabled={busy} onClick={() => { setDraft(value.refinedRequirement); setEditing(false); }}>Cancel Edit</button></> : <>
-        <button className="planner-button primary" type="button" disabled={busy || accepted} onClick={() => onAction('accept')}>{accepted ? 'Refinement Accepted' : 'Accept Refinement'}</button>
+        <button className="planner-button primary" type="button" disabled={busy || accepted} onClick={() => onAction('accept')}>{accepted ? (wordingChanged ? 'Refinement Accepted' : 'Wording Accepted') : (wordingChanged ? 'Accept Refinement' : 'Use Original Requirement')}</button>
         <button className="planner-button secondary" type="button" disabled={busy} onClick={() => { setDraft(value.refinedRequirement); setEditing(true); }}>Edit</button>
         <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onAction('regenerate')}>Regenerate</button>
         <button className="planner-button secondary" type="button" disabled={busy || value.status === 'Skipped'} onClick={() => onAction('skip')}>Skip Refinement</button>
@@ -2030,7 +2141,6 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
       </div>
       {refinement ? <RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /> : null}
       <RequirementHealth analysis={analysis} ingestion={ingestion} />
-      <RequirementIntelligenceTrace analysis={analysis} />
       <section className="hei-repository-recommendation" aria-label="Suggested Repository">
         <header>
           <div><span>Repository Recommendation</span><h3>{recommendedRepository?.name || 'No repository detected'}</h3><p>{suggestion?.reason || 'Register a repository to enable engineering workspace detection.'}</p></div>
@@ -2062,17 +2172,9 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
           {suggestion?.alternativeRepositories.length ? <small>Alternatives: {suggestion.alternativeRepositories.map((repository) => `${repository.name} (${Math.round(repository.confidence * 100)}%)`).join(', ')}</small> : null}
         </> : null}
       </section>
-      <div className="hei-requirement-review-grid">
-        <RequirementList icon="BG" title="Business Goals" items={analysis.businessGoals} origin={analysis.fieldOrigins.businessGoals} empty="No Business Goals detected" action="Add Business Goal" onAction={onEdit} />
-        <RequirementList icon="FR" title="Functional Requirements" items={analysis.functionalRequirements} origin={analysis.fieldOrigins.functionalRequirements || analysis.fieldOrigins.businessGoals} empty="No Functional Requirements detected" action="Add Functional Requirement" onAction={onEdit} />
-        <RequirementList icon="NF" title="Non Functional Requirements" items={analysis.nonFunctionalRequirements} origin={analysis.fieldOrigins.nonFunctionalRequirements || analysis.fieldOrigins.businessGoals} empty="No Non Functional Requirements detected" action="Add Quality Requirement" onAction={onEdit} />
-        <AcceptanceCriteriaCard analysis={analysis} busy={busy} onEditRequirement={onEdit} onGenerate={onSuggestAcceptanceCriteria} onApprove={onApproveAcceptanceCriteria} onDiscard={onDiscardAcceptanceCriteria} onSkip={onSkipAcceptanceCriteria} onUpdate={onUpdateAcceptanceCriteria} />
-        <RequirementList icon="DP" title="Dependencies" items={analysis.dependencies} origin={analysis.fieldOrigins.dependencies} empty="No Dependencies detected" action="Add Dependency" onAction={onEdit} />
-        <RequirementList icon="RK" title="Risks" items={analysis.risks} origin={analysis.fieldOrigins.risks} empty="No Risks detected" action="Add Risk" onAction={onEdit} />
-      </div>
+      <RequirementAnalysisDocumentView analysis={analysis} />
+      <AcceptanceCriteriaCard analysis={analysis} busy={busy} onEditRequirement={onEdit} onGenerate={onSuggestAcceptanceCriteria} onApprove={onApproveAcceptanceCriteria} onDiscard={onDiscardAcceptanceCriteria} onSkip={onSkipAcceptanceCriteria} onUpdate={onUpdateAcceptanceCriteria} />
       <QualityFindings result={analysis} onEdit={onEdit} onReanalyze={onReanalyze} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} />
-      <EngineeringContext result={analysis} />
-      <RequirementAnalysisSummary result={analysis} />
       </div>
       <HEIInsights analysis={analysis} memoryStatus={review.engineeringMemory.status} busy={busy} blocked={blocked || acceptancePending} onEdit={onEdit} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} onContinue={onContinue} />
       </div>
@@ -2089,6 +2191,105 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
       <small>Requirement Context {analysis.contextVersion} · Review {analysis.reviewStatus}</small>
     </>}
   </section>;
+}
+
+function RequirementAnalysisDocumentView({ analysis }: { analysis: RequirementAnalysisResult }) {
+  const document = analysis.analysisDocument;
+  if (!document) return <RequirementIntelligenceTrace analysis={analysis} />;
+  const discovery = analysis.engineeringDiscovery?.report;
+  const businessSource = document.sectionSources.businessGoal;
+  const actorValues = [document.primaryActor, ...document.secondaryActors].filter(Boolean);
+  return <section className="hei-analysis-document" aria-label="Canonical Requirement Analysis">
+    <header className="hei-analysis-document-header">
+      <div><span>Requirement Analysis V2</span><h3>{document.title}</h3><p>{document.executiveSummary || 'An executive summary could not be established from the current requirement.'}</p></div>
+      <div><Status value={`${document.confidence.level} · ${document.confidence.score}%`} /><small>{document.schemaVersion}</small></div>
+    </header>
+
+    <AnalysisDocumentSection title="Business Understanding" source={businessSource}>
+      <div className="hei-analysis-understanding-grid">
+        <AnalysisValue label="Business Goal" value={document.businessGoal} empty="A distinct business outcome was not provided or supported." />
+        <AnalysisValue label="Problem Statement" value={document.problemStatement} empty="The current problem could not be stated without adding scope." />
+        <AnalysisValue label="Business Value" value={document.businessValue} empty="Measurable business value requires clarification." />
+        <AnalysisValue label="Primary Actor" value={document.primaryActor} empty="No primary actor could be identified." />
+      </div>
+      <ContextTags title="Actors" values={actorValues} empty="No actors were identifiable from the requirement." />
+      <ContextTags title="Capabilities" values={document.capabilities} empty="No capability could be identified without expanding the requirement." />
+      <ContextTags title="Functional Requirements" values={document.functionalRequirements} empty="No functional behavior was identified." />
+      <ContextTags title="Candidate Non-Functional Requirements" values={document.candidateNonFunctionalRequirements} empty="No evidence-supported quality candidates were identified." />
+      <ContextTags title="Business Rules" values={document.businessRules} empty="No evidenced business rules were found." />
+      <ContextTags title="Constraints" values={document.constraints} empty="No evidenced constraints were found." />
+      <ContextTags title="Dependencies" values={document.dependencies} empty="No evidenced dependencies were found." />
+    </AnalysisDocumentSection>
+
+    <AnalysisDocumentSection title="Engineering Discovery" source={{ origin: 'Engineering Discovery', evidenceReferences: document.evidence.map((item) => item.sourceReference) }}>
+      <div className="hei-analysis-discovery-summary">
+        <AnalysisValue label="Discovery Status" value={discoveryStatusLabel(discovery?.status)} empty="Discovery Pending" />
+        <AnalysisValue label="Discovery Confidence" value={discovery ? `${discovery.confidence.score}%` : ''} empty="Discovery Pending" />
+        <AnalysisValue label="Evidence Found" value={String(document.evidence.length)} empty="No relevant evidence found" />
+        <AnalysisValue label="Conflicts" value={String(discovery?.conflicts.length || 0)} empty="No conflicts detected" />
+      </div>
+      <ContextTags title="What HEI Found" values={discovery?.whatIFound.filter((item) => item.count > 0).map((item) => item.summary) || []} empty={discovery?.status === 'DiscoveryPending' ? 'Discovery Pending' : 'No relevant evidence found'} />
+      <ContextTags title="Engineering Insights" values={document.engineeringInsights} empty="No additional engineering insight was supported by current evidence." />
+      <DiscoveryEvidenceGroup title="Reusable Components" values={document.reusableComponents} />
+    </AnalysisDocumentSection>
+
+    <AnalysisDocumentSection title="Evidence" source={{ origin: 'Verified Sources', evidenceReferences: document.evidence.map((item) => item.sourceReference) }}>
+      <DiscoveryEvidenceGroup title="Repository Evidence" values={document.repositoryFindings} />
+      <DiscoveryEvidenceGroup title="Markdown Evidence" values={document.markdownFindings} />
+      <DiscoveryEvidenceGroup title="Azure DevOps Evidence" values={document.azureDevOpsFindings} />
+      {!document.evidence.length ? <p className="hei-analysis-empty">No relevant evidence found. HEI has not invented repository or project facts.</p> : null}
+    </AnalysisDocumentSection>
+
+    <AnalysisDocumentSection title="Repository Impact" source={document.sectionSources.repositoryImpact}>
+      <div className="hei-analysis-impact-grid">
+        <ContextTags title="Affected Modules" values={document.affectedModules} empty="No affected module was supported by repository evidence." />
+        <ContextTags title="Affected Services" values={document.affectedServices} empty="No affected service was supported by repository evidence." />
+        <ContextTags title="Affected APIs" values={document.affectedApis} empty="No affected API was supported by repository evidence." />
+        <ContextTags title="Affected Screens" values={document.affectedScreens} empty="No affected screen was supported by repository evidence." />
+      </div>
+    </AnalysisDocumentSection>
+
+    <div className="hei-analysis-review-grid">
+      <AnalysisDocumentSection title="Risks" source={document.sectionSources.risks} compact>
+        <ContextTags title="Inferred Risks" values={document.risks} empty="No material risk was inferred from current intent and evidence." />
+        <ContextTags title="Assumptions" values={document.assumptions} empty="No assumptions were introduced." />
+      </AnalysisDocumentSection>
+      <AnalysisDocumentSection title="Questions" source={document.sectionSources.openQuestions} compact>
+        <ContextTags title="Open Questions" values={document.openQuestions} empty="The current evidence resolved all identified questions." />
+      </AnalysisDocumentSection>
+    </div>
+
+    <AnalysisDocumentSection title="Planning Readiness" source={{ origin: 'Requirement Validation', evidenceReferences: document.evidence.map((item) => item.sourceReference) }}>
+      <div className="hei-analysis-readiness">
+        <div><Status value={readinessLabel(document.planningReadiness.status)} /><strong>{document.planningReadiness.score}%</strong><p>{document.planningReadiness.explanation}</p></div>
+        <div>{Object.entries(document.planningReadiness.dimensions).map(([key, value]) => <Signal key={key} label={humanizeAnalysisKey(key)} value={`${value}%`} />)}</div>
+      </div>
+      {document.planningReadiness.blockers.length ? <ContextTags title="Blockers" values={document.planningReadiness.blockers} empty="No blockers." /> : null}
+      {document.planningReadiness.warnings.length ? <ContextTags title="Recommendations" values={document.planningReadiness.warnings} empty="No recommendations." /> : null}
+      {document.validation.warnings.length ? <ContextTags title="Validation Notes" values={document.validation.warnings} empty="Validation passed." /> : null}
+    </AnalysisDocumentSection>
+  </section>;
+}
+
+function AnalysisDocumentSection({ title, source, compact = false, children }: { title: string; source?: AnalysisSectionSource; compact?: boolean; children: React.ReactNode }) {
+  return <section className={`hei-analysis-section${compact ? ' compact' : ''}`}>
+    <header><h4>{title}</h4><AnalysisSource value={source} /></header>
+    <div>{children}</div>
+  </section>;
+}
+
+function AnalysisSource({ value }: { value?: AnalysisSectionSource }) {
+  if (!value) return <span className="hei-analysis-source muted">Source not available</span>;
+  const evidenceCount = value.evidenceReferences?.length || 0;
+  return <span className="hei-analysis-source" title={value.evidenceReferences?.join('\n')}>{value.origin}{evidenceCount ? ` · ${evidenceCount} evidence` : ''}</span>;
+}
+
+function AnalysisValue({ label, value, empty }: { label: string; value: string; empty: string }) {
+  return <article className={value ? '' : 'empty'}><span>{label}</span><p>{value || empty}</p></article>;
+}
+
+function humanizeAnalysisKey(value: string) {
+  return value.replace(/([A-Z])/g, ' $1').replace(/^./, (character) => character.toUpperCase());
 }
 
 function RequirementList({ icon, title, items, origin, empty, action, onAction }: { icon: string; title: string; items: string[]; origin?: ArtifactOrigin; empty: string; action: string; onAction: () => void }) {
@@ -2218,6 +2419,7 @@ function RequirementIntelligenceTrace({ analysis }: { analysis: RequirementAnaly
   const markdown = discovery?.markdown?.selected || [];
   const workItems = discovery?.azureDevOps?.workItems || [];
   const memory = discovery?.memory?.matches || [];
+  const report = discovery?.report;
   const repositoryItems = [
     ...(discovery?.repository?.modules || []),
     ...(discovery?.repository?.services || []),
@@ -2238,27 +2440,61 @@ function RequirementIntelligenceTrace({ analysis }: { analysis: RequirementAnaly
       </article>
       <article>
         <span>Engineering Discovery</span>
-        <h4>{discovery?.repository?.mode || 'Repository unavailable'}</h4>
+        <h4>{report?.summary || discoveryEmptyLabel(discovery?.repository?.mode)}</h4>
+        {report ? <p>{report.confidence.score}% discovery confidence · {report.confidence.evidenceCount} traceable evidence item{report.confidence.evidenceCount === 1 ? '' : 's'}</p> : null}
         <div className="hei-requirement-discovery-counts">
-          <Signal label="Repository matches" value={String(repositoryItems.length)} />
-          <Signal label="Markdown findings" value={String(markdown.length)} />
-          <Signal label="ADO work items" value={String(workItems.length)} />
-          <Signal label="Memory matches" value={String(memory.length)} />
+          <Signal label="Repository evidence" value={String(report?.repositoryEvidence.length ?? repositoryItems.length)} />
+          <Signal label="Relevant documents" value={String(report?.relevantDocumentation.length ?? markdown.length)} />
+          <Signal label="Similar work" value={String(report?.azureDevOpsEvidence.length ?? workItems.length)} />
+          <Signal label="Reusable knowledge" value={String(report?.reusableComponents.length ?? memory.length)} />
         </div>
-        <ContextTags title="Affected engineering context" values={repositoryItems.slice(0, 10)} empty="No repository elements were verified." />
+        <ContextTags title="What HEI found" values={report?.whatIFound.filter((item) => item.count > 0).map((item) => item.summary) || repositoryItems.slice(0, 10)} empty={report?.status === 'DiscoveryPending' ? 'Discovery Pending' : 'No relevant evidence found'} />
       </article>
     </div>
     <details>
       <summary>Evidence, missing information, and lineage</summary>
       <div className="hei-requirement-trace-details">
-        <ContextTags title="Repository findings" values={synthesis?.repositoryFindings || []} empty="No repository finding was synthesized." />
-        <ContextTags title="Markdown evidence" values={markdown.map((item) => `${item.path} · ${item.heading}`)} empty="No Markdown evidence matched." />
-        <ContextTags title="Open or missing information" values={[...(analysis.openQuestions || []), ...(synthesis?.missingInformation || [])]} empty="No unresolved information identified." />
-        <ContextTags title="Engineering insights" values={synthesis?.engineeringInsights || []} empty="No additional evidence-backed insight." />
+        {report ? <>
+          <ContextTags title="Source status" values={report.sourceStatus.map((item) => `${item.source}: ${discoveryStatusLabel(item.status)}. ${item.message}`)} empty="Discovery Pending" />
+          <DiscoveryEvidenceGroup title="Repository evidence" values={report.repositoryEvidence} />
+          <DiscoveryEvidenceGroup title="Relevant documentation" values={report.relevantDocumentation} />
+          <DiscoveryEvidenceGroup title="Similar features and ADO work" values={report.azureDevOpsEvidence} />
+          <DiscoveryEvidenceGroup title="Reusable components" values={report.reusableComponents} />
+          <DiscoveryEvidenceGroup title="Architecture evidence" values={report.architectureEvidence} />
+          <DiscoveryEvidenceGroup title="Project knowledge and memory" values={[...report.projectIntelligenceEvidence, ...report.knowledgeEvidence, ...report.engineeringMemoryEvidence]} />
+          {report.conflicts.length ? <ContextTags title="Conflicts" values={report.conflicts.map((item) => `${item.path ? `${item.path}: ` : ''}${item.reason || 'Conflicting engineering evidence requires review.'}`)} empty="No evidence conflicts detected." /> : null}
+          {report.unknowns.length ? <ContextTags title="Unknowns" values={report.unknowns.map((item) => `${item.area}: ${item.reason}`)} empty="No unresolved information identified." /> : null}
+        </> : <>
+          <ContextTags title="Repository findings" values={synthesis?.repositoryFindings || []} empty="No relevant evidence found." />
+          <ContextTags title="Markdown evidence" values={markdown.map((item) => `${item.path} · ${item.heading}`)} empty="No relevant evidence found." />
+          <ContextTags title="Open or missing information" values={[...(analysis.openQuestions || []), ...(synthesis?.missingInformation || [])]} empty="No unresolved information identified." />
+          <ContextTags title="Engineering insights" values={synthesis?.engineeringInsights || []} empty="No relevant evidence found." />
+        </>}
         <p><strong>Context:</strong> {analysis.analysisLineage?.contextVersion || 'Not available'} · <strong>Repository revision:</strong> {analysis.analysisLineage?.repositoryRevision || 'Not available'} · <strong>Knowledge:</strong> {analysis.analysisLineage?.knowledgeVersion || 'Not available'}</p>
       </div>
     </details>
   </section>;
+}
+
+function DiscoveryEvidenceGroup({ title, values }: { title: string; values: DiscoveryEvidence[] }) {
+  if (!values.length) return null;
+  return <ContextTags
+    title={title}
+    values={values.map((item) => `${item.title} · ${item.reason} [${item.sourceReference}]`)}
+    empty="No relevant evidence found."
+  />;
+}
+
+function discoveryStatusLabel(value?: string) {
+  if (value === 'DiscoveryPending') return 'Discovery Pending';
+  if (value === 'NoRelevantEvidence') return 'No relevant evidence found';
+  return value || 'Discovery Pending';
+}
+
+function discoveryEmptyLabel(repositoryMode?: string) {
+  return repositoryMode && repositoryMode !== 'Unavailable'
+    ? 'No relevant evidence found'
+    : 'Discovery Pending';
 }
 
 function RequirementHealth({ analysis, ingestion }: { analysis: RequirementAnalysisResult; ingestion: IngestionResult }) {

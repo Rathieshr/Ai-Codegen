@@ -125,7 +125,7 @@ def _build_requirement_intent_prompt(
         _section("output_schema", "Output Schema", _output_schema(request.workflowType), True, 100, False, "schema"),
     ]
     profile = budgetProfileForProvider(
-        provider or "deterministic", model, operation="reason_requirement_intent_analysis",
+        provider or "deterministic", model, operation=f"reason_{_key(request.workflowType)}",
     )
     built = buildPrompt(sections, profile)
     return BuiltReasoningPrompt(
@@ -166,12 +166,15 @@ def _requirement_text(context: dict[str, Any]) -> str:
 
 def _intent(context: dict[str, Any]) -> dict[str, Any]:
     requirement = context.get("requirement") or {}
+    document = requirement.get("analysisDocument") or {}
     return {
         "title": requirement.get("title"),
-        "businessGoals": requirement.get("businessGoals") or [],
-        "functionalRequirements": requirement.get("functionalRequirements") or [],
-        "acceptanceCriteria": requirement.get("acceptanceCriteria") or [],
-        "actors": requirement.get("actors") or [],
+        "businessGoals": [document.get("businessGoal")] if document.get("businessGoal") else requirement.get("businessGoals") or [],
+        "functionalRequirements": document.get("functionalRequirements") or requirement.get("functionalRequirements") or [],
+        "acceptanceCriteria": document.get("acceptanceCriteria") or requirement.get("acceptanceCriteria") or [],
+        "actors": [value for value in [document.get("primaryActor"), *(document.get("secondaryActors") or [])] if value] or requirement.get("actors") or [],
+        "capabilities": document.get("capabilities") or [],
+        "canonicalRequirementAnalysis": document,
         "requirementIntent": requirement.get("requirementIntent") or {},
         "intentPolicy": "Interpretation and search hints only; not engineering fact.",
     }
@@ -332,14 +335,25 @@ def _output_schema(workflow_type: str) -> dict[str, Any]:
             "recommendation": {
                 "refinement": {
                     "refinedRequirement": "string",
+                    "executiveSummary": "string",
                     "requirementSummary": "string",
+                    "businessGoal": "string distinct from userIntent",
                     "businessObjective": "string",
                     "problemStatement": "string",
                     "userIntent": "string",
                     "primaryActor": "string or empty",
                     "secondaryActors": ["string"],
                     "coreCapability": "string",
+                    "coreCapabilities": ["string"],
                     "expectedOutcome": "string",
+                    "businessEntities": ["string"],
+                    "engineeringConcepts": ["string"],
+                    "domainTerminology": ["string"],
+                    "repositorySearchHints": ["string"],
+                    "markdownSearchHints": ["string"],
+                    "azureDevOpsSearchHints": ["string"],
+                    "possibleModuleNames": ["string"],
+                    "possibleFeatureNames": ["string"],
                     "potentialDomainTerms": ["string"],
                     "potentialSearchKeywords": ["string"],
                     "potentialRepositoryTerms": ["string"],
@@ -416,16 +430,29 @@ def _output_schema(workflow_type: str) -> dict[str, Any]:
             "recommendation": {
                 "executiveSummary": "string",
                 "businessGoal": "string",
+                "problemStatement": "string",
+                "primaryActor": "string",
+                "secondaryActors": ["string"],
+                "businessValue": "string",
+                "capabilities": ["string"],
                 "functionalRequirements": ["string"],
+                "candidateNonFunctionalRequirements": ["string"],
                 "nonFunctionalRequirements": ["string"],
                 "businessRules": ["string"],
                 "constraints": ["string"],
                 "dependencies": ["string"],
+                "affectedModules": ["string"],
+                "affectedServices": ["string"],
+                "affectedApis": ["string"],
+                "affectedScreens": ["string"],
                 "repositoryFindings": ["string"],
+                "markdownFindings": ["string"],
+                "reusableComponents": ["string"],
                 "architectureFindings": ["string"],
                 "reuseOpportunities": ["string"],
                 "affectedEngineeringElements": ["string"],
                 "risks": ["string"],
+                "assumptions": ["string"],
                 "openQuestions": ["string"],
                 "missingInformation": ["string"],
                 "engineeringInsights": ["string"],
@@ -493,14 +520,15 @@ def _output_schema(workflow_type: str) -> dict[str, Any]:
 
 
 def _prompt_version(request: ReasoningRequest, provider: str, model: str) -> str:
+    version = "requirement-refinement-v2" if _key(request.workflowType) == "requirement_refinement" else PROMPT_VERSION
     source = "|".join([
-        PROMPT_VERSION,
+        version,
         _key(request.workflowType),
         str(request.engineeringContext.get("contextVersion") or request.engineeringContext.get("contextId")),
         provider,
         model,
     ])
-    return f"{PROMPT_VERSION}:{hashlib.sha256(source.encode()).hexdigest()[:12]}"
+    return f"{version}:{hashlib.sha256(source.encode()).hexdigest()[:12]}"
 
 
 def _key(value: str) -> str:

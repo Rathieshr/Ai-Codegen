@@ -699,6 +699,199 @@ body {
   }
 }
 
+.hei-analysis-document {
+  display: grid;
+  gap: 12px;
+}
+
+.hei-analysis-document-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+  padding: 16px 0 10px;
+  border-bottom: 1px solid var(--hei-border-soft);
+}
+
+.hei-analysis-document-header > div:last-child {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.hei-analysis-document-header > div > span:first-child,
+.hei-analysis-section > header h4,
+.hei-analysis-understanding-grid article > span,
+.hei-analysis-discovery-summary article > span {
+  color: var(--hei-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.hei-analysis-document-header h3 {
+  margin: 3px 0;
+  font-size: 20px;
+}
+
+.hei-analysis-document-header p,
+.hei-analysis-document-header small {
+  margin: 0;
+  color: var(--hei-muted);
+}
+
+.hei-analysis-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  background: var(--hei-surface);
+}
+
+.hei-analysis-section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hei-border-soft);
+}
+
+.hei-analysis-section > header h4 {
+  margin: 0;
+  color: var(--hei-text);
+  font-size: 13px;
+}
+
+.hei-analysis-section > div {
+  display: grid;
+  gap: 10px;
+}
+
+.hei-analysis-source {
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  border: 1px solid var(--hei-border-soft);
+  border-radius: 8px;
+  padding: 2px 7px;
+  color: var(--hei-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hei-analysis-source.muted {
+  opacity: .7;
+}
+
+.hei-analysis-understanding-grid,
+.hei-analysis-discovery-summary,
+.hei-analysis-impact-grid,
+.hei-analysis-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hei-analysis-understanding-grid article,
+.hei-analysis-discovery-summary article {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  background: var(--hei-surface-subtle);
+}
+
+.hei-analysis-understanding-grid article p,
+.hei-analysis-discovery-summary article p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.hei-analysis-understanding-grid article.empty p,
+.hei-analysis-empty {
+  color: var(--hei-muted);
+}
+
+.hei-analysis-impact-grid > div {
+  min-width: 0;
+  padding: 10px;
+  border-left: 2px solid var(--hei-blue);
+  background: var(--hei-surface-subtle);
+}
+
+.hei-analysis-readiness {
+  display: grid;
+  grid-template-columns: minmax(240px, .9fr) minmax(0, 1.1fr);
+  gap: 12px;
+}
+
+.hei-analysis-readiness > div:first-child {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 7px;
+  padding: 12px;
+  border-left: 3px solid var(--hei-warning);
+  background: var(--hei-surface-subtle);
+}
+
+.hei-analysis-readiness > div:first-child strong {
+  font-size: 24px;
+}
+
+.hei-analysis-readiness > div:first-child p {
+  margin: 0;
+}
+
+.hei-analysis-readiness > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.hei-analysis-readiness > div:last-child > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+  background: var(--hei-surface-subtle);
+}
+
+.hei-analysis-document + .hei-acceptance-card {
+  padding: 14px;
+}
+
+.hei-analysis-document + .hei-acceptance-card > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+@media (max-width: 900px) {
+  .hei-analysis-document-header,
+  .hei-analysis-understanding-grid,
+  .hei-analysis-discovery-summary,
+  .hei-analysis-impact-grid,
+  .hei-analysis-review-grid,
+  .hei-analysis-readiness {
+    grid-template-columns: 1fr;
+  }
+
+  .hei-analysis-document-header > div:last-child {
+    justify-items: start;
+  }
+
+  .hei-analysis-source {
+    max-width: 65%;
+  }
+}
+
 @media (max-width: 620px) {
   .hei-command-header {
     grid-template-columns: minmax(0, 1fr);
@@ -3216,8 +3409,15 @@ button.hei-story-list-card {
 .hei-requirement-refinement-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .hei-requirement-refinement-comparison article { display: grid; align-content: start; gap: 7px; min-width: 0; min-height: 110px; padding: 12px; background: var(--hei-surface-subtle); }
 .hei-requirement-refinement-comparison article > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-requirement-refinement-unchanged { display: grid; gap: 7px; min-width: 0; padding: 12px; background: var(--hei-surface-subtle); }
+.hei-requirement-refinement-unchanged > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-requirement-refinement-unchanged p { max-width: 900px; }
 .hei-requirement-refinement-comparison textarea { width: 100%; box-sizing: border-box; resize: vertical; }
-.hei-requirement-refinement-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.hei-requirement-refinement-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.hei-requirement-refinement-summary > div { min-width: 0; padding: 10px; background: var(--hei-surface-subtle); }
+.hei-requirement-refinement-taxonomy { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.hei-requirement-refinement-taxonomy > div { min-width: 0; }
+.hei-requirement-refinement-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .hei-requirement-refinement-details > div { min-width: 0; padding: 10px; border: 1px solid var(--hei-border-soft); border-radius: 5px; }
 .hei-requirement-refinement-details ul { margin: 7px 0 0; padding-left: 18px; }
 .hei-requirement-refinement-details li small { display: block; color: var(--hei-muted); }
@@ -3519,7 +3719,7 @@ button.hei-story-list-card {
 }
 
 @media (max-width: 720px) {
-  .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals, .hei-uploaded-document-summary, .hei-requirement-analysis-grid, .hei-requirement-review-meta, .hei-requirement-review-grid, .hei-requirement-review-context, .hei-repository-recommendation-evidence, .hei-repository-mapping-form, .hei-requirement-refinement-comparison, .hei-requirement-refinement-details, .hei-requirement-refinement-lineage { grid-template-columns: 1fr; }
+  .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals, .hei-uploaded-document-summary, .hei-requirement-analysis-grid, .hei-requirement-review-meta, .hei-requirement-review-grid, .hei-requirement-review-context, .hei-repository-recommendation-evidence, .hei-repository-mapping-form, .hei-requirement-refinement-comparison, .hei-requirement-refinement-summary, .hei-requirement-refinement-taxonomy, .hei-requirement-refinement-details, .hei-requirement-refinement-lineage { grid-template-columns: 1fr; }
   .hei-requirement-health > div, .hei-quality-findings > div, .hei-engineering-context > div { grid-template-columns: 1fr; }
   .hei-requirement-health article { min-height: 0; }
   .hei-requirement-review-grid { grid-auto-rows: auto; }

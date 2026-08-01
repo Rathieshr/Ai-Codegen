@@ -8,7 +8,8 @@ Every new planning workflow starts in Requirement Intelligence. Planning Intelli
 Requirement Source
   -> Requirement Ingestion
   -> Document or Transcript Parsing
-  -> Requirement Analysis
+  -> Engineering Discovery
+  -> Requirement Analysis V2
   -> Repository Detection
   -> Engineering Memory Evidence
   -> Requirement Summary Review and Approval
@@ -19,7 +20,19 @@ Requirement Source
   -> Approved Azure DevOps Automation
 ```
 
-`RequirementSummary` is the canonical boundary shared by Requirement Intake, Context Orchestration, Planning Pack generation, and Engineering Estimation. It contains the approved requirement categories, planning readiness, repository mapping, memory evidence summary, source lineage, context version, and correlation ID.
+`RequirementAnalysisDocument` is the canonical planning input. It combines refined requirement intent with the evidence-backed Engineering Discovery report and keeps business understanding, repository impact, risks, questions, confidence, validation, and source lineage together in one versioned document.
+
+`RequirementSummary` remains the compatibility and approval boundary shared by Requirement Intake, Context Orchestration, Planning Pack generation, and Engineering Estimation. It embeds the reviewed document as `canonicalRequirementAnalysis` and projects its approved fields for older consumers. Planning Context carries the same document as `requirement.analysisDocument`; Planning Recommendation reasoning receives that document directly through the Engineering Context prompt section.
+
+## Requirement Analysis V2
+
+- AI reasoning may improve business understanding and infer risks or assumptions.
+- Repository, module, service, API, screen, Markdown, memory, and Azure DevOps findings come only from Engineering Discovery evidence.
+- Business rules, constraints, and dependencies are retained only when source-provided or supported by discovered evidence.
+- Business Goal explains why the outcome matters and is validated against Functional Requirements, which describe required behavior.
+- Open Questions are retained only when selected evidence does not resolve them.
+- Every section exposes its origin and evidence references. Empty sections explain why no supported value is available.
+- The document validates actor identification, capability coverage, repository evidence lineage, semantic separation, and readiness explanation before approval.
 
 ## Safety Rules
 

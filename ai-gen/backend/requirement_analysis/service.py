@@ -12,6 +12,7 @@ from backend.engineering_intelligence import EngineeringIntelligenceService
 from backend.requirement_intake.ingestion import RequirementIngestionService
 
 from .acceptance_criteria import IntelligentAcceptanceCriteriaEngine
+from .document import RequirementAnalysisDocumentBuilder
 from .engine import RequirementAnalysisEngine
 from .models import RequirementFinding
 
@@ -24,6 +25,7 @@ class RequirementAnalysisService:
         requirement_ingestion: RequirementIngestionService,
         engine: RequirementAnalysisEngine | None = None,
         acceptance_engine: IntelligentAcceptanceCriteriaEngine | None = None,
+        document_builder: RequirementAnalysisDocumentBuilder | None = None,
         repository_detector: Any | None = None,
         engineering_intelligence: Any | None = None,
         reasoning_engine: Any | None = None,
@@ -34,6 +36,7 @@ class RequirementAnalysisService:
         self.requirement_ingestion = requirement_ingestion
         self.engine = engine or RequirementAnalysisEngine()
         self.acceptance_engine = acceptance_engine or IntelligentAcceptanceCriteriaEngine()
+        self.document_builder = document_builder or RequirementAnalysisDocumentBuilder()
         self.repository_detector = repository_detector
         self.engineering_intelligence = engineering_intelligence or EngineeringIntelligenceService(
             repository_detector=repository_detector,
@@ -92,7 +95,11 @@ class RequirementAnalysisService:
         self._apply_evidence_synthesis(result, synthesis_reasoning)
         result.update(self.acceptance_engine.understand(result, requirement))
         result["aiAnalysis"] = self._reasoning_projection(synthesis_reasoning)
-        result["engineeringDiscovery"] = self._engineering_discovery(engineering_context)
+        discovery = self._engineering_discovery(engineering_context)
+        result["engineeringDiscovery"] = discovery
+        result["analysisDocument"] = self.document_builder.build(
+            requirement, result, engineering_context, discovery, synthesis_reasoning,
+        )
         result["analysisLineage"] = self._analysis_lineage(
             requirement, intent_reasoning, synthesis_reasoning, engineering_context,
         )
@@ -691,13 +698,12 @@ class RequirementAnalysisService:
             "evidence": list(reasoning.get("evidence") or []),
         }
 
-    @staticmethod
-    def _engineering_discovery(context: dict[str, Any]) -> dict[str, Any]:
+    def _engineering_discovery(self, context: dict[str, Any]) -> dict[str, Any]:
         markdown = context.get("repository_markdown_context") or {}
         repository = context.get("repository") or {}
         ado = context.get("azureDevOps") or {}
         memory = context.get("engineeringMemory") or {}
-        return {
+        compatibility = {
             "contextId": context.get("contextId"),
             "contextVersion": context.get("contextVersion"),
             "repository": {
@@ -720,6 +726,9 @@ class RequirementAnalysisService:
             "dependencies": context.get("dependencies") or {},
             "rejectedContext": context.get("rejectedContext") or [],
         }
+        builder = getattr(self.engineering_intelligence, "build_discovery_report", None)
+        report = builder(context) if callable(builder) else {}
+        return {**compatibility, "report": report}
 
     @staticmethod
     def _analysis_lineage(
@@ -752,7 +761,7 @@ class RequirementAnalysisService:
                 source_versions.get("repositoryMarkdown") or {}
             ).get("repositoryRevision") or source_versions.get("repositorySnapshotVersion"),
             "requirementContextVersion": requirement.get("contextVersion"),
-            "analysisVersion": "requirement-analysis-ai-v1",
+            "analysisVersion": "requirement-analysis-v2",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -854,7 +863,9 @@ class RequirementAnalysisService:
             and analysis.get("acceptanceDiagnostics", {}).get("engine")
             == "IntelligentAcceptanceCriteriaV1"
             and analysis.get("analysisLineage", {}).get("analysisVersion")
-            == "requirement-analysis-ai-v1"
+            == "requirement-analysis-v2"
+            and analysis.get("analysisDocument", {}).get("schemaVersion")
+            == "hei-requirement-analysis-v2"
         )
 
     def _restore_reviewed_acceptance(

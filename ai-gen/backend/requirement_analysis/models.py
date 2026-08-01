@@ -122,3 +122,52 @@ class RequirementAnalysis:
             camel = key.split("_")[0] + "".join(part.capitalize() for part in key.split("_")[1:])
             result[camel] = item
         return result
+
+
+@dataclass(frozen=True)
+class RequirementAnalysisDocument:
+    """Versioned, evidence-backed requirement consumed by downstream Planning."""
+
+    document_id: str
+    requirement_id: str
+    context_version: str
+    title: str
+    executive_summary: str
+    business_goal: str
+    problem_statement: str
+    primary_actor: str
+    secondary_actors: list[str]
+    business_value: str
+    capabilities: list[str]
+    functional_requirements: list[str]
+    candidate_non_functional_requirements: list[str]
+    acceptance_criteria: list[str]
+    business_rules: list[str]
+    constraints: list[str]
+    dependencies: list[str]
+    affected_modules: list[str]
+    affected_services: list[str]
+    affected_apis: list[str]
+    affected_screens: list[str]
+    repository_findings: list[dict[str, Any]]
+    markdown_findings: list[dict[str, Any]]
+    azure_devops_findings: list[dict[str, Any]]
+    reusable_components: list[dict[str, Any]]
+    risks: list[str]
+    assumptions: list[str]
+    open_questions: list[str]
+    engineering_insights: list[str]
+    planning_readiness: dict[str, Any]
+    confidence: dict[str, Any]
+    evidence: list[dict[str, Any]]
+    section_sources: dict[str, dict[str, Any]]
+    validation: dict[str, Any]
+    generated_at: str
+    schema_version: str = "hei-requirement-analysis-v2"
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        return {
+            key.split("_")[0] + "".join(part.capitalize() for part in key.split("_")[1:]): item
+            for key, item in value.items()
+        }

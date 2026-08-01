@@ -18,6 +18,16 @@ _FORBIDDEN_IMPLICIT_TERMS = {
     "notification", "notifications", "retry", "role management", "validation",
 }
 
+_ACTION_FAMILIES = {
+    "view": "observe", "show": "observe", "display": "observe", "see": "observe",
+    "search": "find", "find": "find", "locate": "find",
+    "identify": "identify", "detect": "identify",
+    "monitor": "monitor", "track": "monitor",
+    "manage": "manage", "update": "update", "delete": "delete", "create": "create",
+    "export": "export", "import": "import", "notify": "notify", "calculate": "calculate",
+    "filter": "filter", "approve": "approve", "reject": "reject", "submit": "submit",
+}
+
 
 class RequirementRefinementService:
     """Improves wording without discovering or inventing engineering facts."""
@@ -40,7 +50,11 @@ class RequirementRefinementService:
         if not requirement:
             raise ValueError("Requirement context was not found. Ingest the source before refinement.")
         existing = self.get(requirement_id)
-        if existing and not force and existing.get("sourceContentHash") == requirement.get("contentHash"):
+        if (
+            existing and not force
+            and existing.get("sourceContentHash") == requirement.get("contentHash")
+            and existing.get("schemaVersion") == "RequirementRefinementV2"
+        ):
             return existing
 
         original = _text(requirement.get("normalizedRequirement"))
@@ -53,6 +67,16 @@ class RequirementRefinementService:
         deterministic = _deterministic_refinement(requirement)
         value = {**deterministic, **{key: item for key, item in candidate.items() if item not in (None, "", [])}}
         intent = _normalize_intent(value.get("requirementIntent"), value, original)
+        business_goal = _distinct_business_goal(value, intent, original)
+        core_capabilities = _strings(value.get("coreCapabilities")) or _strings(intent.get("capabilities"))
+        if not core_capabilities and _text(value.get("coreCapability")):
+            core_capabilities = [_text(value.get("coreCapability"))]
+        business_entities = _strings(value.get("businessEntities")) or _strings(intent.get("entities"))
+        engineering_concepts = _strings(value.get("engineeringConcepts")) or _strings(intent.get("concepts"))
+        domain_terminology = _strings(value.get("domainTerminology")) or _strings(value.get("potentialDomainTerms"))
+        repository_hints = _strings(value.get("repositorySearchHints")) or _strings(value.get("potentialRepositoryTerms")) or list(intent.get("repositoryHints") or [])
+        markdown_hints = _strings(value.get("markdownSearchHints")) or _strings(value.get("potentialMarkdownTerms")) or list(intent.get("markdownHints") or [])
+        azure_devops_hints = _strings(value.get("azureDevOpsSearchHints")) or _strings(value.get("potentialAzureDevOpsTerms")) or list(intent.get("azureDevOpsHints") or [])
         now = _now()
         version = int(existing.get("version") or 0) + 1 if existing else 1
         history = list(existing.get("revisionHistory") or []) if existing else []
@@ -70,19 +94,30 @@ class RequirementRefinementService:
             requirement_id=requirement_id,
             original_requirement=original,
             refined_requirement=_text(value.get("refinedRequirement")) or original,
+            executive_summary=_text(value.get("executiveSummary") or value.get("requirementSummary")) or _summary(original),
             requirement_summary=_text(value.get("requirementSummary")) or _summary(original),
-            business_objective=_text(value.get("businessObjective")),
+            business_goal=business_goal,
+            business_objective=business_goal,
             problem_statement=_text(value.get("problemStatement")),
             user_intent=_text(value.get("userIntent")) or original,
             primary_actor=_text(value.get("primaryActor")),
             secondary_actors=_strings(value.get("secondaryActors")),
             core_capability=_text(value.get("coreCapability")),
+            core_capabilities=core_capabilities,
             expected_outcome=_text(value.get("expectedOutcome")),
-            potential_domain_terms=_strings(value.get("potentialDomainTerms")),
+            business_entities=business_entities,
+            engineering_concepts=engineering_concepts,
+            domain_terminology=domain_terminology,
+            repository_search_hints=repository_hints,
+            markdown_search_hints=markdown_hints,
+            azure_devops_search_hints=azure_devops_hints,
+            possible_module_names=_strings(value.get("possibleModuleNames")),
+            possible_feature_names=_strings(value.get("possibleFeatureNames")),
+            potential_domain_terms=domain_terminology,
             potential_search_keywords=_strings(value.get("potentialSearchKeywords")) or list(intent.get("keywords") or []),
-            potential_repository_terms=_strings(value.get("potentialRepositoryTerms")) or list(intent.get("repositoryHints") or []),
-            potential_azure_devops_terms=_strings(value.get("potentialAzureDevOpsTerms")) or list(intent.get("azureDevOpsHints") or []),
-            potential_markdown_terms=_strings(value.get("potentialMarkdownTerms")) or list(intent.get("markdownHints") or []),
+            potential_repository_terms=repository_hints,
+            potential_azure_devops_terms=azure_devops_hints,
+            potential_markdown_terms=markdown_hints,
             requirement_intent=intent,
             changes=_changes(value.get("changes"), original, _text(value.get("refinedRequirement")) or original),
             reasoning=_strings(value.get("reasoning")) or _strings(reasoning.get("reasoning")),
@@ -92,12 +127,13 @@ class RequirementRefinementService:
             status="PendingReview",
             provider=_text(reasoning.get("provider")) or "Deterministic",
             model=_text(reasoning.get("model")),
-            prompt_version=_text(reasoning.get("promptVersion")) or "requirement-refinement-v1",
+            prompt_version=_text(reasoning.get("promptVersion")) or "requirement-refinement-v2:deterministic",
             version=version,
             generated_at=now,
             revision_history=history,
             warnings=warnings,
         ).to_dict()
+        record["schemaVersion"] = "RequirementRefinementV2"
         record["sourceContentHash"] = requirement.get("contentHash")
         self._save(requirement_id, record)
         self._publish("RequirementRefined", record, requirement)
@@ -223,7 +259,11 @@ class RequirementRefinementService:
             return True
         source = original.casefold()
         output = refined.casefold()
-        return not any(term in output and term not in source for term in _FORBIDDEN_IMPLICIT_TERMS)
+        if any(term in output and term not in source for term in _FORBIDDEN_IMPLICIT_TERMS):
+            return False
+        source_actions = _semantic_actions(source)
+        output_actions = _semantic_actions(output)
+        return output_actions.issubset(source_actions)
 
     def _save(self, requirement_id: str, value: dict[str, Any]) -> None:
         values = self.store.read()
@@ -244,26 +284,67 @@ class RequirementRefinementService:
 def _deterministic_refinement(requirement: dict[str, Any]) -> dict[str, Any]:
     original = _text(requirement.get("normalizedRequirement"))
     title = _text(requirement.get("title"))
-    refined = original
-    if original and len(original.split()) < 8:
-        verb = "Implement" if re.match(r"^(need|add|build|create)\b", original, re.I) else "Support"
-        subject = re.sub(r"^(need|add|build|create)\s+", "", original, flags=re.I).rstrip(". ")
-        refined = f"{verb} {subject}." if subject else original
+    refined = _rewrite_for_clarity(original)
+    primary_actor = _extract_actor(original)
+    entities = _business_entities(original)
+    capabilities = _capability_candidates(original, title, entities)
+    terms = _unique([*entities, *capabilities, *_keywords(original)])
+    expected_outcome = _expected_outcome(original)
+    business_goal = _business_goal_from_source(original, expected_outcome)
+    user_intent = re.split(r"\s+so\s+that\s+", original, maxsplit=1, flags=re.I)[0].rstrip(". ")
+    clarification_candidates = []
+    if not primary_actor:
+        clarification_candidates.append("Who is the primary user or business actor for this requirement?")
+    if not expected_outcome:
+        clarification_candidates.append("What observable business outcome should this requirement achieve?")
     return {
         "refinedRequirement": refined,
+        "executiveSummary": title or _summary(refined),
         "requirementSummary": title or _summary(original),
-        "businessObjective": "",
+        "businessGoal": business_goal,
+        "businessObjective": business_goal,
         "problemStatement": original,
-        "userIntent": original,
-        "primaryActor": "",
-        "coreCapability": title,
-        "expectedOutcome": "",
-        "changes": [],
-        "reasoning": ["Normalized wording while preserving the source requirement."],
+        "userIntent": user_intent,
+        "primaryActor": primary_actor,
+        "secondaryActors": [],
+        "coreCapability": capabilities[0] if capabilities else title,
+        "coreCapabilities": capabilities,
+        "expectedOutcome": expected_outcome,
+        "businessEntities": entities,
+        "engineeringConcepts": capabilities,
+        "domainTerminology": entities,
+        "repositorySearchHints": terms[:12],
+        "markdownSearchHints": _unique([title, *entities, *capabilities])[:12],
+        "azureDevOpsSearchHints": _unique([title, *capabilities, *entities])[:12],
+        "possibleModuleNames": capabilities[:8],
+        "possibleFeatureNames": capabilities[:8],
+        "potentialDomainTerms": entities,
+        "potentialSearchKeywords": _keywords(original),
+        "potentialRepositoryTerms": terms[:12],
+        "potentialMarkdownTerms": _unique([title, *entities, *capabilities])[:12],
+        "potentialAzureDevOpsTerms": _unique([title, *capabilities, *entities])[:12],
+        "changes": _changes([], original, refined),
+        "reasoning": [
+            "Separated the user action from the expected business outcome.",
+            "Derived search hints only from terminology present in the source requirement.",
+        ],
         "ambiguities": [],
-        "clarificationCandidates": [],
+        "clarificationCandidates": clarification_candidates,
         "confidence": 0.6,
-        "requirementIntent": {},
+        "requirementIntent": {
+            "businessGoal": business_goal,
+            "functionalIntent": [user_intent] if user_intent else [],
+            "entities": entities,
+            "actions": _actions(original),
+            "concepts": capabilities,
+            "capabilities": capabilities,
+            "keywords": _keywords(original),
+            "repositoryHints": terms[:12],
+            "markdownHints": _unique([title, *entities, *capabilities])[:12],
+            "azureDevOpsHints": _unique([title, *capabilities, *entities])[:12],
+            "clarificationCandidates": clarification_candidates,
+            "confidence": 0.6,
+        },
     }
 
 
@@ -276,6 +357,7 @@ def _normalize_intent(value: Any, refinement: dict[str, Any], original: str) -> 
         "entities": _strings(source.get("entities")),
         "actions": _strings(source.get("actions")),
         "concepts": _strings(source.get("concepts")),
+        "capabilities": _strings(source.get("capabilities") or refinement.get("coreCapabilities")),
         "keywords": keywords,
         "repositoryHints": _strings(source.get("repositoryHints")),
         "markdownHints": _strings(source.get("markdownHints")),
@@ -283,6 +365,137 @@ def _normalize_intent(value: Any, refinement: dict[str, Any], original: str) -> 
         "clarificationCandidates": _strings(source.get("clarificationCandidates") or refinement.get("clarificationCandidates")),
         "confidence": _confidence(source.get("confidence"), refinement.get("confidence")),
     }
+
+
+def _distinct_business_goal(value: dict[str, Any], intent: dict[str, Any], original: str) -> str:
+    goal = _text(value.get("businessGoal") or value.get("businessObjective") or intent.get("businessGoal"))
+    functional = " ".join(_strings(intent.get("functionalIntent")) or [_text(value.get("userIntent"))])
+    if goal and goal.casefold() != functional.casefold():
+        return goal
+    outcome = _text(value.get("expectedOutcome")) or _expected_outcome(original)
+    if outcome and outcome.casefold() != functional.casefold():
+        return outcome[0].upper() + outcome[1:]
+    return ""
+
+
+def _rewrite_for_clarity(original: str) -> str:
+    if not original:
+        return ""
+    view = re.match(
+        r"^provide\s+(.+?)\s+with\s+(?:an?\s+)?real[- ]time\s+view\s+of\s+(.+?)"
+        r"\s+so\s+that\s+(.+?)[.]?$",
+        original,
+        re.I,
+    )
+    if view:
+        actor, subject, outcome = view.groups()
+        passive = re.match(r"^(.+?)\s+can be identified and acted on\s+(.+)$", outcome, re.I)
+        if passive:
+            outcome = f"can identify and act on {passive.group(1).strip()} {passive.group(2).strip()}"
+        return f"Enable {actor.strip()} to view {subject.strip()} in real time, so they {outcome.strip()}."
+    if len(original.split()) < 8:
+        verb = "Implement" if re.match(r"^(need|add|build|create)\b", original, re.I) else "Support"
+        subject = re.sub(r"^(need|add|build|create)\s+", "", original, flags=re.I).rstrip(". ")
+        return f"{verb} {subject}." if subject else original
+    return original
+
+
+def _extract_actor(value: str) -> str:
+    framed = re.search(r"\b(?:provide|allow|enable)\s+(.+?\s+Users?)\b", value, re.I)
+    if framed:
+        return framed.group(1).strip()
+    match = re.search(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3}\s+Users?)\b", value)
+    return match.group(1).strip() if match else ""
+
+
+def _expected_outcome(value: str) -> str:
+    parts = re.split(r"\s+so\s+that\s+", value, maxsplit=1, flags=re.I)
+    return parts[1].rstrip(". ") if len(parts) == 2 else ""
+
+
+def _business_goal_from_source(value: str, outcome: str) -> str:
+    if outcome:
+        passive = re.match(r"^(.+?)\s+can be identified and acted on\s+(.+)$", outcome, re.I)
+        if passive:
+            return f"Identify and act on {passive.group(1).strip()} {passive.group(2).strip()}."
+        normalized = re.sub(r"\bcan be\s+", "", outcome, flags=re.I)
+        return normalized[0].upper() + normalized[1:] if normalized else ""
+    match = re.search(r"\b(?:to|in order to)\s+(.+?)[.]?$", value, re.I)
+    return match.group(1).strip().capitalize() if match else ""
+
+
+def _business_entities(value: str) -> list[str]:
+    source = re.sub(r"\s+so\s+that\s+.*$", "", value, flags=re.I)
+    view = re.search(r"\b(?:view|display|summary|list)\s+of\s+(.+)$", source, re.I)
+    if view:
+        entities = _clean_entity_list(view.group(1))
+        outcome_entity = re.search(r"\b(.+?)\s+can be (?:identified|detected|monitored)\b", _expected_outcome(value), re.I)
+        return _unique([*entities, *(outcome_entity.groups() if outcome_entity else ())])
+    action = re.search(r"\b(?:search|monitor|manage|identify|review|detect|view)\s+(.+)$", source, re.I)
+    if action:
+        return _clean_entity_list(action.group(1))
+    nominalized = re.search(
+        r"\b(.+?)\s+(?:search|monitoring|management|visibility|detection|review)\b",
+        source,
+        re.I,
+    )
+    if nominalized:
+        subject = re.sub(r"^(?:need|support|implement|add|build|create)\s+", "", nominalized.group(1), flags=re.I)
+        return _clean_entity_list(subject)
+    return []
+
+
+def _clean_entity_list(value: str) -> list[str]:
+    items = re.split(r"\s*,\s*|\s*,?\s+and\s+", value)
+    output = []
+    for item in items:
+        cleaned = re.sub(r"^(?:and|or)\s+", "", item.strip(), flags=re.I)
+        cleaned = re.sub(r"^(?:a|an|the|current|real[- ]time)\s+", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"\s+(?:from|within|across)\s+.+$", "", cleaned, flags=re.I)
+        if 1 <= len(cleaned.split()) <= 6:
+            output.append(cleaned.rstrip(". "))
+    return _unique(output)
+
+
+def _actions(value: str) -> list[str]:
+    patterns = (
+        ("view", r"\b(?:view|display|show)\b"), ("search", r"\b(?:search|find|locate)\b"),
+        ("monitor", r"\bmonitor(?:ed|ing)?\b"), ("manage", r"\bmanag(?:e|ed|ing)\b"),
+        ("identify", r"\bidentif(?:y|ied|ication)\b"), ("review", r"\breview(?:ed|ing)?\b"),
+        ("detect", r"\bdetect(?:ed|ion|ing)?\b"), ("act", r"\bact(?:ed|ion|ing)?\s+on\b"),
+    )
+    return [name for name, pattern in patterns if re.search(pattern, value, re.I)]
+
+
+def _semantic_actions(value: str) -> set[str]:
+    words = set(re.findall(r"[A-Za-z]+", value.casefold()))
+    return {family for word, family in _ACTION_FAMILIES.items() if word in words}
+
+
+def _capability_candidates(value: str, title: str, entities: list[str]) -> list[str]:
+    actions = _actions(value)
+    suffix = {
+        "view": "Visibility", "display": "Visibility", "search": "Search",
+        "monitor": "Monitoring", "manage": "Management", "identify": "Identification",
+        "detect": "Detection", "review": "Review", "act": "Response",
+    }
+    capabilities = []
+    for action in actions:
+        if action not in suffix:
+            continue
+        if action in {"identify", "detect", "act"}:
+            subject = next((item for item in entities if re.search(r"\b(?:unhealthy|fault|issue|failure|risk)\b", item, re.I)), entities[-1] if entities else title)
+        else:
+            subject = entities[0] if entities else title
+        if subject:
+            capabilities.append(f"{subject.title()} {suffix[action]}")
+    if not capabilities and title:
+        capabilities.append(title)
+    return _unique(capabilities)[:8]
+
+
+def _unique(values: Any) -> list[str]:
+    return list(dict.fromkeys(_text(item) for item in values if _text(item)))
 
 
 def _changes(value: Any, original: str, refined: str) -> list[dict[str, str]]:
@@ -298,7 +511,12 @@ def _changes(value: Any, original: str, refined: str) -> list[dict[str, str]]:
 
 
 def _fallback(warning: str) -> dict[str, Any]:
-    return {"reasoningMode": "Deterministic", "provider": "Deterministic", "warnings": [warning]}
+    return {
+        "reasoningMode": "Deterministic",
+        "provider": "Deterministic",
+        "promptVersion": "requirement-refinement-v2:deterministic",
+        "warnings": [warning],
+    }
 
 
 def _summary(value: str) -> str:

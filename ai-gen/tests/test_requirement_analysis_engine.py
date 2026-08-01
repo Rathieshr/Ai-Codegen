@@ -304,6 +304,21 @@ Assumptions:
         self.assertIn("monitor", combined)
         self.assertEqual("AISuggested", generated["acceptanceCriteriaState"]["state"])
 
+    def test_real_time_operational_view_generates_atomic_fallback_criteria(self):
+        requirement = (
+            "Provide Operations Users with a real-time view of device health, communication status, "
+            "and operational alerts so that unhealthy devices can be identified and acted on before failures occur."
+        )
+        context = self.ingest(requirement, title="Device Health Operations View")
+        self.service.analyze(context["requirementId"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        criteria = generated["acceptanceCriteriaSuggestions"]
+        self.assertGreaterEqual(len(criteria), 5)
+        combined = "\n".join(item["text"] for item in criteria)
+        for expected in ("device health", "communication status", "operational alerts", "identifies unhealthy devices", "acts on unhealthy devices"):
+            self.assertIn(expected, combined.lower())
+        self.assertNotIn("the user Provide Operations Users", combined)
+
     def test_ado_import_promotes_real_business_goal_and_rejects_import_metadata(self):
         imported_content = (
             "Business Goals:\n"
@@ -426,7 +441,7 @@ Assumptions:
         self.assertEqual("AI", analyzed["aiAnalysis"]["reasoningMode"])
         self.assertEqual("Phi", analyzed["aiAnalysis"]["provider"])
         self.assertEqual("Device Health Overview", analyzed["requirementIntent"]["capabilities"][0])
-        self.assertEqual("requirement-analysis-ai-v1", analyzed["analysisLineage"]["analysisVersion"])
+        self.assertEqual("requirement-analysis-v2", analyzed["analysisLineage"]["analysisVersion"])
         self.assertIn("engineeringDiscovery", analyzed)
         self.assertEqual(
             [

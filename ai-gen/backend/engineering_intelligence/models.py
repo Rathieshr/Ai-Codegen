@@ -33,6 +33,7 @@ class RepositorySummary:
 @dataclass
 class AzureDevOpsSummary:
     projectId: str = ""
+    available: bool = False
     epics: list[dict[str, Any]] = field(default_factory=list)
     features: list[dict[str, Any]] = field(default_factory=list)
     stories: list[dict[str, Any]] = field(default_factory=list)
@@ -53,6 +54,7 @@ class AzureDevOpsSummary:
 
 @dataclass
 class EngineeringMemorySummary:
+    available: bool = False
     matches: list[dict[str, Any]] = field(default_factory=list)
     similarStories: list[dict[str, Any]] = field(default_factory=list)
     similarFeatures: list[dict[str, Any]] = field(default_factory=list)
@@ -128,6 +130,44 @@ class ReuseSummary:
     tests: list[dict[str, Any]] = field(default_factory=list)
     pullRequests: list[dict[str, Any]] = field(default_factory=list)
     implementations: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class DiscoveryEvidence:
+    evidenceId: str
+    evidenceType: str
+    title: str
+    source: str
+    sourceReference: str
+    reason: str
+    confidence: int
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class EngineeringDiscoveryReport:
+    schemaVersion: str
+    contextId: str
+    contextVersion: str
+    status: str
+    summary: str
+    whatIFound: list[dict[str, Any]] = field(default_factory=list)
+    reusableComponents: list[dict[str, Any]] = field(default_factory=list)
+    similarFeatures: list[dict[str, Any]] = field(default_factory=list)
+    relevantDocumentation: list[dict[str, Any]] = field(default_factory=list)
+    architectureEvidence: list[dict[str, Any]] = field(default_factory=list)
+    repositoryEvidence: list[dict[str, Any]] = field(default_factory=list)
+    azureDevOpsEvidence: list[dict[str, Any]] = field(default_factory=list)
+    engineeringMemoryEvidence: list[dict[str, Any]] = field(default_factory=list)
+    projectIntelligenceEvidence: list[dict[str, Any]] = field(default_factory=list)
+    knowledgeEvidence: list[dict[str, Any]] = field(default_factory=list)
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
+    unknowns: list[dict[str, Any]] = field(default_factory=list)
+    sourceStatus: list[dict[str, Any]] = field(default_factory=list)
+    confidence: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass

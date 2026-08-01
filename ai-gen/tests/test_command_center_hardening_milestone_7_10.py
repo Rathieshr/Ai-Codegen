@@ -80,6 +80,22 @@ class CommandCenterHardeningTests(unittest.TestCase):
         self.assertEqual("Degraded", value["status"])
         self.assertEqual("notification store unavailable", value["diagnostics"]["warnings"][0]["message"])
 
+    def test_healthy_context_source_map_does_not_degrade_platform(self):
+        self.platform.platform_health = lambda: {
+            "eventBusStatus": "healthy",
+            "jobQueueStatus": "healthy",
+            "contextOrchestratorStatus": "healthy",
+            "contextSourceStatus": {
+                "Planning": "healthy",
+                "Repository": "healthy",
+                "KnowledgeRegistry": "healthy",
+            },
+        }
+        value = self.service.snapshot(force=True, include_diagnostics=True)
+        context_source = next(item for item in value["services"] if item["name"] == "Context Source")
+        self.assertEqual("Healthy", context_source["status"])
+        self.assertEqual("Healthy", value["status"])
+
     def test_diagnostics_are_admin_only_and_health_is_safe_for_viewers(self):
         app = FastAPI(); app.include_router(build_command_center_hardening_router(self.service)); client = TestClient(app)
         self.assertEqual(200, client.get("/command-center/health").status_code)

@@ -27,14 +27,20 @@ _COMMON = (
 
 TEMPLATES: dict[str, PromptTemplate] = {
     "requirement_refinement": PromptTemplate(
-        "Requirement Refinement", "Senior Product Owner",
-        "Improve the user's requirement for engineering planning without changing its meaning.",
+        "Requirement Refinement", "Experienced Product Owner and Business Analyst",
+        "Transform the source into a clearer engineering requirement while preserving its business intent.",
         (
             "Use only the raw requirement and bounded product/project terminology supplied in this prompt.",
-            "Preserve intent while improving clarity, grammar, organization, and professional product language.",
+            "Rewrite noticeably when clarity, structure, actor, action, outcome, or terminology can be improved.",
+            "Preserve the original meaning and explicitly stated scope; refinement is not feature discovery.",
+            "Separate the executive summary, business goal, user intent, expected outcome, capabilities, entities, and concepts.",
+            "The business goal must describe the outcome or value and must not repeat the functional user intent.",
+            "Extract meaningful repository, Markdown, Azure DevOps, module, and feature search hints from source terminology.",
+            "Search hints are candidates for later discovery, not claims that engineering artifacts exist.",
             "Do not invent functionality, business rules, architecture, APIs, acceptance criteria, constraints, or dependencies.",
             "Do not add authentication, authorization, CRUD, validation, audit, notifications, caching, retry, or role management unless explicitly stated.",
             "Identify ambiguity; do not silently resolve it. Return clarification candidates instead.",
+            "Explain each material wording change and the reasoning behind the refinement.",
             "Treat repository, Markdown, and Azure DevOps terms as search hints only, never as facts.",
             "Return only one JSON object matching the output schema.",
         ),
@@ -52,10 +58,16 @@ TEMPLATES: dict[str, PromptTemplate] = {
     ),
     "requirement_evidence_synthesis": PromptTemplate(
         "Requirement Evidence Synthesis", "Senior Engineering Business Analyst",
-        "Synthesize a final requirement analysis from the original requirement and discovered engineering evidence.",
+        "Write a complete, planning-ready engineering requirement from the refined requirement and discovered engineering evidence.",
         _COMMON + (
             "Use Requirement Intent only as interpretation; Engineering Context is authoritative for engineering facts.",
+            "Write the Executive Summary, Problem Statement, Business Goal, Business Value, actors, capabilities, and Functional Requirements as distinct concepts.",
+            "The Business Goal must explain why the outcome matters; Functional Requirements must state what behavior is required.",
+            "Business Rules, constraints, dependencies, and repository impact require valid evidence references.",
+            "Candidate Non-Functional Requirements and assumptions are proposals and must be labelled as such.",
+            "Risks may be inferred, but explain the evidence or uncertainty behind each risk.",
             "State missing information only after checking repository, Markdown, Azure DevOps, knowledge, and memory evidence.",
+            "Ask an Open Question only when the supplied evidence cannot answer it.",
             "Keep source-derived, AI-inferred, and evidence-backed findings distinguishable.",
         ),
     ),

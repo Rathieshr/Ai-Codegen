@@ -58,6 +58,7 @@ providers; they do not rescan, recalculate, or invoke an AI model.
 | `MarkdownService` | Recursively discover, section-index, classify, and retrieve repository Markdown | Repository content and revision |
 | `ArchitectureService` | Architecture context from repository graph facts | Repository Intelligence graph |
 | `DependencyService` | Dependency context and affected modules | Engineering Graph |
+| `EngineeringDiscoveryService` | Evidence-backed discovery report, source state, conflicts, unknowns, and confidence | Canonical `EngineeringContext` |
 | `AzureDevOpsService` | Normalized project, open work, and similar stories | HEI Platform SDK synchronized cache |
 | `SimilarityService` | Similar requirement and reusable implementation projections | Planning context and retrieved evidence |
 | `MemoryService` | Approved memory search, lessons, and candidate storage | Engineering Memory |
@@ -115,6 +116,28 @@ conflicts, paths, headings, evidence IDs, classifications, authority,
 content hashes, and repository revision. `knowledge_synthesis` records the
 claims available from each source and the authority rules used for each claim
 type.
+
+## Engineering Discovery V2
+
+Engineering Discovery is a deterministic projection of the canonical
+`EngineeringContext`. It does not scan repositories or invoke an AI provider.
+It answers what the project already knows about a requirement by combining
+only relevance-selected facts from Repository Intelligence, repository
+Markdown, Project Intelligence, Knowledge Registry, synchronized Azure DevOps,
+and approved Engineering Memory.
+
+Every discovery evidence item includes its source, source reference, selection
+reason, confidence, and source-specific metadata. The report separates:
+
+- `conflicts`, where two authoritative sources disagree;
+- `unknowns`, where requirement information remains unresolved; and
+- `sourceStatus`, where a source is pending or completed without a relevant
+  match.
+
+`DiscoveryPending` therefore means that required source synchronization has
+not completed. `NoRelevantEvidence` means the source was searched successfully
+but did not match the requirement. This distinction is preserved in the UI and
+prevents empty search results from being presented as platform failures.
 
 The context ID is derived from source versions, including the requirement,
 repository snapshot, ADO revisions, memory versions, and Project Intelligence
@@ -220,7 +243,7 @@ Engine without moving provider code into Engineering Intelligence:
 User Requirement
         |
         v
-Requirement Refinement (configured provider; Phi by default)
+Requirement Refinement V2 (provider selected by the Provider Layer)
         |
         v
 Refined Requirement + RequirementIntent search hints
@@ -241,11 +264,15 @@ Deterministically validated Requirement Analysis
 The refinement pass receives only the original requirement and bounded
 project/product terminology. It cannot query repositories, Azure DevOps,
 Markdown, Engineering Memory, or Engineering Context. The persisted artifact
-always preserves the original text and records refined text, changes,
-reasoning, ambiguities, clarification candidates, provider, model, prompt
-version, acceptance status, timestamp, and revision history. Users may accept,
-edit, regenerate, or skip; skipping keeps the stage in the lineage while using
-the original text as canonical input.
+always preserves the original text. The V2 artifact separately records the
+executive summary, problem statement, business goal, user intent, expected
+outcome, actors, capabilities, entities, engineering concepts, domain terms,
+repository/Markdown/Azure DevOps search hints, possible module and feature
+names, changes, reasoning, ambiguities, clarification candidates, provider,
+model, prompt version, acceptance status, timestamp, and revision history.
+Search hints remain discovery candidates rather than repository facts. Users
+may accept, edit, regenerate, or skip; skipping keeps the stage in the lineage
+while using the original text as canonical input.
 
 `RequirementIntent` values produced during refinement are explicitly
 hypotheses and search hints; they are never stored as repository facts.

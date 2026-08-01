@@ -12,7 +12,7 @@ _ACTION_PATTERN = re.compile(
     r"\b(view|show|display|search|filter|create|update|delete|submit|review|"
     r"approve|reject|notify|calculate|export|import|open|select|identify|"
     r"detect|monitor|receive|access|manage|configure|generate|compare|load|respond|"
-    r"provide|enable|allow|recommend|surface|list|present|deliver|use|add|adding)\b",
+    r"provide|enable|allow|recommend|surface|list|present|deliver|use|add|adding|act)\b",
     re.I,
 )
 _TRIGGER_PATTERN = re.compile(r"\b(when|after|before|upon|once|if)\b", re.I)
@@ -450,11 +450,25 @@ class IntelligentAcceptanceCriteriaEngine:
             cleaned,
             re.I,
         )
-        return match.group(1).strip() if match else cleaned
+        if match:
+            return match.group(1).strip()
+        provided_view = re.match(
+            r"^provide\s+.+?\s+with\s+(?:an?\s+)?(?:real[- ]time\s+)?"
+            r"(view|display|summary|list)\s+of\s+(.+)$",
+            cleaned,
+            re.I,
+        )
+        if provided_view:
+            action = "view" if provided_view.group(1).lower() == "summary" else provided_view.group(1).lower()
+            return f"{action} {provided_view.group(2).strip()}"
+        return cleaned
 
     @staticmethod
     def _atomic_behaviors(behavior: str) -> list[str]:
         """Split coordinated product actions while preserving their shared target."""
+        observable = IntelligentAcceptanceCriteriaEngine._observable_list_behaviors(behavior)
+        if len(observable) > 1:
+            return observable
         explicit_segments = [
             IntelligentAcceptanceCriteriaEngine._normalize_nominalized_behavior(item)
             for item in re.split(r"\s+(?:and|or)\s+", behavior, flags=re.I)
@@ -477,6 +491,38 @@ class IntelligentAcceptanceCriteriaEngine:
         actions = re.findall(action, match.group(1), re.I)
         target = match.group(2).strip()
         return [f"{verb.lower()} {target}" for verb in actions]
+
+    @staticmethod
+    def _observable_list_behaviors(behavior: str) -> list[str]:
+        """Expand explicitly listed outputs and passive outcomes into atomic behavior."""
+        parts = re.split(r"\s+so\s+that\s+", behavior, maxsplit=1, flags=re.I)
+        main = parts[0]
+        purpose = parts[1] if len(parts) > 1 else ""
+        match = re.match(r"^(view|show|display|review|monitor|list)\s+(.+)$", main.strip(), re.I)
+        output: list[str] = []
+        if match and "," in match.group(2):
+            targets = [
+                item.strip()
+                for item in re.split(r"\s*,\s*|\s*,?\s+and\s+", match.group(2), flags=re.I)
+                if item.strip()
+            ]
+            if len(targets) > 1:
+                output.extend(f"{match.group(1).lower()} {target}" for target in targets)
+        if purpose:
+            passive = re.match(
+                r"^(.+?)\s+can\s+be\s+(identified|detected|monitored)"
+                r"(?:\s+and\s+(acted\s+on))?\s*(.*)$",
+                purpose.strip(),
+                re.I,
+            )
+            if passive:
+                subject = passive.group(1).strip()
+                qualifier = passive.group(4).strip()
+                verb = {"identified": "identify", "detected": "detect", "monitored": "monitor"}[passive.group(2).lower()]
+                output.append(" ".join(part for part in (verb, subject, qualifier) if part))
+                if passive.group(3):
+                    output.append(" ".join(part for part in ("act on", subject, qualifier) if part))
+        return list(dict.fromkeys(output)) if output else [behavior]
 
     @staticmethod
     def _normalize_nominalized_behavior(value: str) -> str:
@@ -525,6 +571,7 @@ class IntelligentAcceptanceCriteriaEngine:
             "identify": "identifies",
             "detect": "detects",
             "access": "accesses",
+            "act": "acts",
         }
         result = phrase
         for base, singular in actions.items():
@@ -563,6 +610,9 @@ class IntelligentAcceptanceCriteriaEngine:
         if action == "manage":
             subject = re.sub(r"^manage\s+", "", phrase, flags=re.I)
             return f"changes to {subject} are observable and complete"
+        if action == "act":
+            subject = re.sub(r"^act\s+on\s+", "", phrase, flags=re.I)
+            return f"the response to {subject} is observable and complete"
         if action in {"provide", "surface", "list", "present", "deliver", "recommend"}:
             subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
             return f"{subject} is available as the observable business result"

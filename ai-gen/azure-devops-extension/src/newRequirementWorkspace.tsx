@@ -1,4 +1,4 @@
-import React, { ChangeEvent, FormEvent, useState } from 'react';
+import React, { ChangeEvent, FormEvent, useEffect, useState } from 'react';
 import { HEIHostContext } from './host';
 
 type SourceType = 'PasteRequirement' | 'UploadDocument' | 'AzureDevOpsWorkItem' | 'MeetingTranscript';
@@ -218,10 +218,11 @@ type RequirementAnalysisResult = {
     contextId: string; contextVersion: string; knowledgeVersion?: string;
     repositoryRevision?: string; analysisVersion: string; timestamp: string;
   };
+  requirementRefinement?: RequirementRefinementResult;
   analysisMode?: 'AI' | 'Deterministic';
   acceptanceDiagnostics?: {
     generationMode?: string; reasoningMode?: string; provider?: string; model?: string;
-    promptVersion?: string; warnings?: string[];
+    promptVersion?: string; warnings?: string[]; generationStatus?: string;
   };
 };
 
@@ -234,6 +235,38 @@ type IngestionResult = {
   contextVersion: string;
   contentHash: string;
   correlationId: string;
+};
+
+type RequirementRefinementResult = {
+  refinementId: string;
+  requirementId: string;
+  originalRequirement: string;
+  refinedRequirement: string;
+  requirementSummary: string;
+  businessObjective: string;
+  problemStatement: string;
+  userIntent: string;
+  primaryActor: string;
+  secondaryActors: string[];
+  coreCapability: string;
+  expectedOutcome: string;
+  potentialDomainTerms: string[];
+  potentialSearchKeywords: string[];
+  potentialRepositoryTerms: string[];
+  potentialAzureDevOpsTerms: string[];
+  potentialMarkdownTerms: string[];
+  changes: Array<{ change: string; reason: string }>;
+  reasoning: string[];
+  ambiguities: string[];
+  clarificationCandidates: string[];
+  confidence: number;
+  status: 'PendingReview' | 'Accepted' | 'Skipped';
+  provider: string;
+  model: string;
+  promptVersion: string;
+  version: number;
+  generatedAt: string;
+  warnings: string[];
 };
 
 type DocumentResult = {
@@ -451,8 +484,9 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
   const [transcriptFormat, setTranscriptFormat] = useState<'TeamsTranscript' | 'ZoomTranscript' | 'TextTranscript'>('TeamsTranscript');
   const [transcriptResult, setTranscriptResult] = useState<TranscriptResult>();
   const [adoImportResult, setAdoImportResult] = useState<AdoWorkItemImportResult>();
-  const [busyStage, setBusyStage] = useState<'uploading' | 'parsing' | 'analyzing' | 'ingesting' | 'context' | 'planning' | ''>('');
+  const [busyStage, setBusyStage] = useState<'uploading' | 'parsing' | 'refining' | 'analyzing' | 'ingesting' | 'context' | 'planning' | ''>('');
   const [ingestion, setIngestion] = useState<IngestionResult>();
+  const [requirementRefinement, setRequirementRefinement] = useState<RequirementRefinementResult>();
   const [requirementAnalysis, setRequirementAnalysis] = useState<RequirementAnalysisResult>();
   const [editingReview, setEditingReview] = useState(false);
   const [reviewTitle, setReviewTitle] = useState('');
@@ -605,6 +639,16 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
       if (!ingestResponse.ok) throw new Error(ingested.error?.message || `Requirement Ingestion returned HTTP ${ingestResponse.status}.`);
       }
       setIngestion(ingested);
+
+      setBusyStage('refining');
+      const refinementResponse = await fetch(`${baseUrl}/requirements/${encodeURIComponent(ingested.requirementId)}/refine`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id, 'X-Correlation-ID': context.correlationId },
+        body: JSON.stringify({ actor: context.user.name }),
+      });
+      const refined = await refinementResponse.json() as RequirementRefinementResult & { error?: { message?: string } };
+      if (!refinementResponse.ok) throw new Error(refined.error?.message || `Requirement Refinement returned HTTP ${refinementResponse.status}.`);
+      setRequirementRefinement(refined);
 
       setBusyStage('analyzing');
       const requirementAnalysisResponse = await fetch(`${baseUrl}/requirements/analyze`, {
@@ -1004,6 +1048,36 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
     }
   }
 
+  async function refinementAction(action: 'accept' | 'regenerate' | 'skip' | 'edit', refinedRequirement?: string) {
+    if (!ingestion) return;
+    setBusyStage('refining');
+    try {
+      const isEdit = action === 'edit';
+      const path = isEdit ? 'refinement' : `refinement/${action}`;
+      const response = await fetch(`${baseUrl}/requirements/${encodeURIComponent(ingestion.requirementId)}/${path}`, {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ actor: context.user.name, refinedRequirement }),
+      });
+      const refined = await response.json() as RequirementRefinementResult & { error?: { message?: string } };
+      if (!response.ok) throw new Error(refined.error?.message || `Requirement Refinement returned HTTP ${response.status}.`);
+      setRequirementRefinement(refined);
+      setBusyStage('analyzing');
+      const analysisResponse = await fetch(`${baseUrl}/requirements/${encodeURIComponent(ingestion.requirementId)}/analysis/reanalyze`, {
+        method: 'POST', headers: { 'X-HEI-User': context.user.id },
+      });
+      const analyzed = await analysisResponse.json() as RequirementAnalysisResult & { error?: { message?: string } };
+      if (!analysisResponse.ok) throw new Error(analyzed.error?.message || `Requirement Re-analysis returned HTTP ${analysisResponse.status}.`);
+      setRequirementAnalysis(analyzed);
+      setReviewContent(analyzed.planningRequirement);
+      onError('');
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to update Requirement Refinement.');
+    } finally {
+      setBusyStage('');
+    }
+  }
+
   async function acceptanceCriteriaAction(
     action: 'suggest' | 'approve' | 'discard' | 'skip' | 'update',
     criteria?: AcceptanceCriterionSuggestion[],
@@ -1093,6 +1167,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
     setPlanningRecommendation(undefined);
     setPlanningContext(undefined);
     setIngestion(undefined);
+    setRequirementRefinement(undefined);
     setRequirementAnalysis(undefined);
     setEditingReview(false);
     setReviewTitle('');
@@ -1126,6 +1201,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
       </header>
       <RequirementProgressTimeline
         hasSource={Boolean(ingestion || result)}
+        hasRefinement={Boolean(requirementRefinement || requirementAnalysis || result)}
         hasAnalysis={Boolean(requirementAnalysis)}
         hasRepository={Boolean(requirementAnalysis?.repositorySuggestion?.suggestedRepository)}
         contextCreated={Boolean(planningContext || result)}
@@ -1174,6 +1250,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
       ) : requirementAnalysis && ingestion ? (
         <RequirementReviewScreen
           analysis={requirementAnalysis}
+          refinement={requirementRefinement || requirementAnalysis.requirementRefinement}
           ingestion={ingestion}
           editing={editingReview}
           title={reviewTitle}
@@ -1187,6 +1264,7 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
           onContinue={continueToPlanning}
           onCancel={cancelReview}
           onReanalyze={reanalyze}
+          onRefinementAction={refinementAction}
           onSuggestAcceptanceCriteria={() => acceptanceCriteriaAction('suggest')}
           onApproveAcceptanceCriteria={() => acceptanceCriteriaAction('approve')}
           onDiscardAcceptanceCriteria={() => acceptanceCriteriaAction('discard')}
@@ -1475,8 +1553,9 @@ function statusTone(value: string) {
 }
 function Status({ value }: { value: string }) { return <span className={`hei-operation-chip ${statusTone(value)}`.trim()}>{value}</span>; }
 
-function RequirementProgressTimeline({ hasSource, hasAnalysis, hasRepository, contextCreated, recommendationCreated, planningCreated, planningApproved }: {
+function RequirementProgressTimeline({ hasSource, hasRefinement, hasAnalysis, hasRepository, contextCreated, recommendationCreated, planningCreated, planningApproved }: {
   hasSource: boolean;
+  hasRefinement: boolean;
   hasAnalysis: boolean;
   hasRepository: boolean;
   contextCreated: boolean;
@@ -1486,7 +1565,8 @@ function RequirementProgressTimeline({ hasSource, hasAnalysis, hasRepository, co
 }) {
   const stages = [
     { label: 'Requirement Source', done: hasSource, active: !hasSource },
-    { label: 'Requirement Analysis', done: hasAnalysis, active: hasSource && !hasAnalysis },
+    { label: 'AI Refinement', done: hasRefinement, active: hasSource && !hasRefinement },
+    { label: 'Requirement Analysis', done: hasAnalysis, active: hasRefinement && !hasAnalysis },
     { label: 'Repository Detection', done: hasRepository, active: hasAnalysis && !hasRepository },
     { label: 'Engineering Memory', done: hasAnalysis, active: false },
     { label: 'Quality Review', done: contextCreated, active: hasAnalysis && !contextCreated },
@@ -1856,8 +1936,43 @@ function AdoWorkItemSummary({ result }: { result: AdoWorkItemImportResult }) {
   </section>;
 }
 
-function RequirementReviewScreen({ analysis, ingestion, editing, title, content, busy, onTitleChange, onContentChange, onEdit, onDiscardEdit, onSaveEdit, onContinue, onCancel, onReanalyze, onSuggestAcceptanceCriteria, onApproveAcceptanceCriteria, onDiscardAcceptanceCriteria, onSkipAcceptanceCriteria, onUpdateAcceptanceCriteria, onOverrideRepository, projectName }: {
+function RequirementRefinementCard({ value, busy, onAction }: {
+  value: RequirementRefinementResult;
+  busy: boolean;
+  onAction: (action: 'accept' | 'regenerate' | 'skip' | 'edit', refinedRequirement?: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value.refinedRequirement);
+  const accepted = value.status === 'Accepted';
+  return <section className="hei-requirement-refinement" aria-label="AI Requirement Refinement">
+    <header>
+      <div><span>AI Requirement Refinement</span><h3>Engineering-ready wording</h3><p>HEI improves clarity before repository or Azure DevOps discovery. Your original requirement remains unchanged.</p></div>
+      <Status value={`${value.status} · ${Math.round(value.confidence * 100)}%`} />
+    </header>
+    <div className="hei-requirement-refinement-comparison">
+      <article><span>Original Requirement</span><p>{value.originalRequirement}</p></article>
+      <article><span>Refined Requirement</span>{editing ? <textarea rows={7} value={draft} onChange={(event) => setDraft(event.target.value)} /> : <p>{value.refinedRequirement}</p>}</article>
+    </div>
+    <div className="hei-requirement-refinement-details">
+      <div><strong>Changes Made</strong>{value.changes.length ? <ul>{value.changes.map((item, index) => <li key={`${index}-${item.change}`}><b>{item.change}</b><small>{item.reason}</small></li>)}</ul> : <p>No wording change was required.</p>}</div>
+      <div><strong>Ambiguities</strong>{value.ambiguities.length ? <ul>{value.ambiguities.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No explicit ambiguity identified.</p>}</div>
+      <div><strong>Clarification Candidates</strong>{value.clarificationCandidates.length ? <ul>{value.clarificationCandidates.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No clarification required before analysis.</p>}</div>
+    </div>
+    <details><summary>Refinement lineage and search hints</summary><div className="hei-requirement-refinement-lineage"><Signal label="Provider" value={value.provider || 'Deterministic'} /><Signal label="Model" value={value.model || 'Not applicable'} /><Signal label="Prompt" value={value.promptVersion} /><Signal label="Version" value={String(value.version)} /></div><ContextTags title="Repository terms" values={value.potentialRepositoryTerms || []} empty="No repository hints inferred." /><ContextTags title="Markdown terms" values={value.potentialMarkdownTerms || []} empty="No Markdown hints inferred." /><ContextTags title="Azure DevOps terms" values={value.potentialAzureDevOpsTerms || []} empty="No Azure DevOps hints inferred." /></details>
+    <footer>
+      {editing ? <><button className="planner-button primary" type="button" disabled={busy || !draft.trim()} onClick={() => { onAction('edit', draft.trim()); setEditing(false); }}>Save Refinement</button><button className="planner-button secondary" type="button" disabled={busy} onClick={() => { setDraft(value.refinedRequirement); setEditing(false); }}>Cancel Edit</button></> : <>
+        <button className="planner-button primary" type="button" disabled={busy || accepted} onClick={() => onAction('accept')}>{accepted ? 'Refinement Accepted' : 'Accept Refinement'}</button>
+        <button className="planner-button secondary" type="button" disabled={busy} onClick={() => { setDraft(value.refinedRequirement); setEditing(true); }}>Edit</button>
+        <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onAction('regenerate')}>Regenerate</button>
+        <button className="planner-button secondary" type="button" disabled={busy || value.status === 'Skipped'} onClick={() => onAction('skip')}>Skip Refinement</button>
+      </>}
+    </footer>
+  </section>;
+}
+
+function RequirementReviewScreen({ analysis, refinement, ingestion, editing, title, content, busy, onTitleChange, onContentChange, onEdit, onDiscardEdit, onSaveEdit, onContinue, onCancel, onReanalyze, onRefinementAction, onSuggestAcceptanceCriteria, onApproveAcceptanceCriteria, onDiscardAcceptanceCriteria, onSkipAcceptanceCriteria, onUpdateAcceptanceCriteria, onOverrideRepository, projectName }: {
   analysis: RequirementAnalysisResult;
+  refinement?: RequirementRefinementResult;
   ingestion: IngestionResult;
   editing: boolean;
   title: string;
@@ -1871,6 +1986,7 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
   onContinue: () => void;
   onCancel: () => void;
   onReanalyze: () => void;
+  onRefinementAction: (action: 'accept' | 'regenerate' | 'skip' | 'edit', refinedRequirement?: string) => void;
   onSuggestAcceptanceCriteria: () => void;
   onApproveAcceptanceCriteria: () => void;
   onDiscardAcceptanceCriteria: () => void;
@@ -1912,6 +2028,7 @@ function RequirementReviewScreen({ analysis, ingestion, editing, title, content,
               : 'Deterministic baseline'}
         />
       </div>
+      {refinement ? <RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /> : null}
       <RequirementHealth analysis={analysis} ingestion={ingestion} />
       <RequirementIntelligenceTrace analysis={analysis} />
       <section className="hei-repository-recommendation" aria-label="Suggested Repository">
@@ -2012,6 +2129,13 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
   const aiSuggested = state.state === 'AISuggested';
   const approvedSuggestions = aiSuggested && state.status === 'Approved';
   const visibleSuggestions = editing ? drafts : suggestions;
+  const suggestionSignature = suggestions.map((item) => `${item.criterionId}:${item.text}`).join('|');
+
+  useEffect(() => {
+    setDrafts(suggestions.map((item) => ({ ...item })));
+    setEditing(false);
+    if (suggestions.length) setActiveView('criteria');
+  }, [suggestionSignature]);
 
   function beginEdit() {
     setDrafts(suggestions.map((item) => ({ ...item })));
@@ -2062,7 +2186,7 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
       {analysis.acceptanceDiagnostics?.generationMode ? <small>
         Last generation: {analysis.acceptanceDiagnostics.generationMode === 'AI'
           ? `${analysis.acceptanceDiagnostics.provider || 'Reasoning AI'}${analysis.acceptanceDiagnostics.model ? ` · ${analysis.acceptanceDiagnostics.model}` : ''}`
-          : 'Deterministic fallback'}
+          : 'Deterministic fallback'}{analysis.acceptanceDiagnostics.generationStatus === 'InsufficientEvidence' ? ' · More requirement detail is needed' : ''}
       </small> : null}
       <div>
         <button className="planner-button primary" type="button" disabled={busy} onClick={onGenerate}>{busy ? 'Generating with Reasoning AI...' : 'Generate Suggested Acceptance Criteria'}</button>

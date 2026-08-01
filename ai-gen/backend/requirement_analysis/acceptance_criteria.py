@@ -455,6 +455,14 @@ class IntelligentAcceptanceCriteriaEngine:
     @staticmethod
     def _atomic_behaviors(behavior: str) -> list[str]:
         """Split coordinated product actions while preserving their shared target."""
+        explicit_segments = [
+            IntelligentAcceptanceCriteriaEngine._normalize_nominalized_behavior(item)
+            for item in re.split(r"\s+(?:and|or)\s+", behavior, flags=re.I)
+            if item.strip()
+        ]
+        if "," not in behavior and len(explicit_segments) > 1 and all(_ACTION_PATTERN.search(item) for item in explicit_segments):
+            return explicit_segments
+        behavior = IntelligentAcceptanceCriteriaEngine._normalize_nominalized_behavior(behavior)
         action = (
             r"(?:view|show|display|search|filter|create|update|delete|submit|review|"
             r"open|select|identify|detect|monitor|access|manage|configure|compare|list)"
@@ -469,6 +477,32 @@ class IntelligentAcceptanceCriteriaEngine:
         actions = re.findall(action, match.group(1), re.I)
         target = match.group(2).strip()
         return [f"{verb.lower()} {target}" for verb in actions]
+
+    @staticmethod
+    def _normalize_nominalized_behavior(value: str) -> str:
+        """Convert explicit action nouns into equivalent observable verb phrases."""
+        text = value.strip().rstrip(".")
+        if re.search(r"\brecommendations?\b", text, re.I):
+            return "provide recommendations"
+        patterns = (
+            (r"\b(?:proactive\s+)?(.+?)\s+monitoring\b", "monitor"),
+            (r"\b(.+?)\s+detection\b", "detect"),
+            (r"\b(.+?)\s+filtering\b", "filter"),
+            (r"\b(.+?)\s+management\b", "manage"),
+            (r"\b(.+?)\s+search\b", "search"),
+        )
+        for pattern, action in patterns:
+            match = re.search(pattern, text, re.I)
+            if match:
+                subject = re.sub(
+                    r"^(?:need|support|implement|provide|allow|enable|helps?\s+in)\s+",
+                    "",
+                    match.group(1).strip(),
+                    flags=re.I,
+                )
+                if subject:
+                    return f"{action} {subject}"
+        return text
 
     @staticmethod
     def _actor_context(actor: str) -> str:

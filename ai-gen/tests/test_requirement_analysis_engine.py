@@ -289,6 +289,21 @@ Assumptions:
             criterion["evidence"][0]["requirementSentence"],
         )
 
+    def test_nominalized_product_intent_generates_criteria_when_provider_is_unavailable(self):
+        context = self.ingest(
+            "AI Intelligence Implementation in LineDefender helps in recommendation "
+            "and proactive fault monitoring.",
+            title="AI Intelligence Implementation in LineDefender",
+        )
+        result = self.service.analyze(context["requirementId"])
+        generated = self.service.suggest_acceptance_criteria(context["requirementId"])
+        criteria = generated["acceptanceCriteriaSuggestions"]
+        self.assertGreaterEqual(len(criteria), 2)
+        combined = "\n".join(item["text"] for item in criteria).lower()
+        self.assertIn("recommend", combined)
+        self.assertIn("monitor", combined)
+        self.assertEqual("AISuggested", generated["acceptanceCriteriaState"]["state"])
+
     def test_ado_import_promotes_real_business_goal_and_rejects_import_metadata(self):
         imported_content = (
             "Business Goals:\n"

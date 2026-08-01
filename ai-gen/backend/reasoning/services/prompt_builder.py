@@ -23,7 +23,7 @@ class PromptBuilder:
         context = _validate_context(request.engineeringContext, request.workflowType)
         template = resolve_template(request.workflowType)
         catalog = _evidence_catalog(context)
-        if _key(request.workflowType) == "requirement_intent_analysis":
+        if _key(request.workflowType) in {"requirement_refinement", "requirement_intent_analysis"}:
             return _build_requirement_intent_prompt(
                 request, context, template, catalog, provider, model,
             )
@@ -88,9 +88,13 @@ def _validate_context(value: Any, workflow_type: str = "") -> dict[str, Any]:
             "Reasoning AI accepts EngineeringContext only; remove raw sources: "
             + ", ".join(present)
         )
-    if _key(workflow_type) == "requirement_intent_analysis":
-        if value.get("contextType") != "RequirementIntentInput":
-            raise ValueError("Requirement Intent Analysis requires bounded RequirementIntentInput.")
+    bounded_type = {
+        "requirement_refinement": "RequirementRefinementInput",
+        "requirement_intent_analysis": "RequirementIntentInput",
+    }.get(_key(workflow_type))
+    if bounded_type:
+        if value.get("contextType") != bounded_type:
+            raise ValueError(f"{workflow_type} requires bounded {bounded_type}.")
         return value
     if not value.get("contextId") and not value.get("contextVersion"):
         raise ValueError("EngineeringContext must include contextId or contextVersion.")
@@ -264,7 +268,7 @@ def _validation(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _evidence_catalog(context: dict[str, Any]) -> list[dict[str, Any]]:
-    if context.get("contextType") == "RequirementIntentInput":
+    if context.get("contextType") in {"RequirementRefinementInput", "RequirementIntentInput"}:
         requirement = context.get("requirement") or {}
         return [{
             "referenceId": "source:requirement",
@@ -323,6 +327,51 @@ def _evidence(kind: str, value: Any, source: str, name: Any = "") -> dict[str, A
 
 def _output_schema(workflow_type: str) -> dict[str, Any]:
     workflow_key = _key(workflow_type)
+    if workflow_key == "requirement_refinement":
+        return {
+            "recommendation": {
+                "refinement": {
+                    "refinedRequirement": "string",
+                    "requirementSummary": "string",
+                    "businessObjective": "string",
+                    "problemStatement": "string",
+                    "userIntent": "string",
+                    "primaryActor": "string or empty",
+                    "secondaryActors": ["string"],
+                    "coreCapability": "string",
+                    "expectedOutcome": "string",
+                    "potentialDomainTerms": ["string"],
+                    "potentialSearchKeywords": ["string"],
+                    "potentialRepositoryTerms": ["string"],
+                    "potentialAzureDevOpsTerms": ["string"],
+                    "potentialMarkdownTerms": ["string"],
+                    "changes": [{"change": "string", "reason": "string"}],
+                    "ambiguities": ["string"],
+                    "clarificationCandidates": ["string"],
+                    "requirementIntent": {
+                        "businessGoal": "string",
+                        "functionalIntent": ["string"],
+                        "entities": ["string"],
+                        "actions": ["string"],
+                        "concepts": ["string"],
+                        "keywords": ["string"],
+                        "repositoryHints": ["string"],
+                        "markdownHints": ["string"],
+                        "azureDevOpsHints": ["string"],
+                        "clarificationCandidates": ["string"],
+                        "confidence": 0,
+                    },
+                    "confidence": 0,
+                },
+            },
+            "reasoning": ["string"],
+            "alternatives": [{"title": "string", "reason": "string"}],
+            "evidence": [{"referenceId": "source:requirement", "reason": "string"}],
+            "risks": ["string"],
+            "tradeOffs": ["string"],
+            "impact": {},
+            "confidence": 0,
+        }
     if workflow_key == "requirement_intent_analysis":
         return {
             "recommendation": {

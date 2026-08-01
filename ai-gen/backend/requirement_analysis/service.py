@@ -27,6 +27,7 @@ class RequirementAnalysisService:
         repository_detector: Any | None = None,
         engineering_intelligence: Any | None = None,
         reasoning_engine: Any | None = None,
+        refinement_service: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
@@ -38,18 +39,29 @@ class RequirementAnalysisService:
             repository_detector=repository_detector,
         )
         self.reasoning_engine = reasoning_engine
+        self.refinement_service = refinement_service
         self.platform = platform
 
     def analyze(self, requirement_id: str, *, force: bool = False) -> dict[str, Any]:
         requirement = self.requirement_ingestion.get(requirement_id)
         if not requirement:
             raise ValueError("Requirement context was not found. Ingest the source before analysis.")
+        refinement: dict[str, Any] = {}
+        if self.refinement_service:
+            requirement, refinement = self.refinement_service.canonical_requirement(requirement_id)
         existing = self.get(requirement_id)
-        if existing and not force and self._versions_current(existing) and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion"):
+        if existing and not force and self._versions_current(existing) and existing.get("contentHash") == requirement.get("contentHash") and existing.get("contextVersion") == requirement.get("contextVersion") and existing.get("refinementVersion") == refinement.get("version") and existing.get("refinementStatus") == refinement.get("status"):
             return existing
         result = self.engine.analyze(requirement).to_dict()
-        intent_reasoning = self._reason_about_intent(requirement, result)
-        intent = self._requirement_intent(intent_reasoning, result)
+        if refinement:
+            intent = self._refinement_intent(refinement, result)
+            intent_reasoning = self._refinement_reasoning(refinement)
+            result["requirementRefinement"] = refinement
+            result["refinementVersion"] = refinement.get("version")
+            result["refinementStatus"] = refinement.get("status")
+        else:
+            intent_reasoning = self._reason_about_intent(requirement, result)
+            intent = self._requirement_intent(intent_reasoning, result)
         result["requirementIntent"] = intent
         result["aiUnderstanding"] = self._reasoning_projection(intent_reasoning)
         self._apply_intent(result, intent)
@@ -97,6 +109,45 @@ class RequirementAnalysisService:
         self.store.write(values)
         self._publish(result, requirement)
         return result
+
+    @staticmethod
+    def _refinement_intent(refinement: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+        source = dict(refinement.get("requirementIntent") or {})
+        return _normalize_intent({
+            "intentSummary": refinement.get("requirementSummary"),
+            "businessGoal": source.get("businessGoal") or refinement.get("businessObjective"),
+            "functionalIntent": source.get("functionalIntent") or [refinement.get("userIntent")],
+            "entities": source.get("entities") or [],
+            "primaryActor": refinement.get("primaryActor"),
+            "actions": source.get("actions") or [],
+            "concepts": source.get("concepts") or [],
+            "searchKeywords": source.get("keywords") or [],
+            "possibleRepositoryTerms": source.get("repositoryHints") or [],
+            "possibleAzureDevOpsSearchTerms": source.get("azureDevOpsHints") or [],
+            "possibleMarkdownSearchTerms": source.get("markdownHints") or [],
+            "clarificationCandidates": source.get("clarificationCandidates") or refinement.get("clarificationCandidates") or [],
+            "confidence": source.get("confidence") or refinement.get("confidence") or analysis.get("confidence"),
+        })
+
+    @staticmethod
+    def _refinement_reasoning(refinement: dict[str, Any]) -> dict[str, Any]:
+        provider = str(refinement.get("provider") or "Deterministic")
+        mode = "AI" if provider != "Deterministic" else "Deterministic"
+        return {
+            "status": "Completed" if mode == "AI" else "Fallback",
+            "reasoningMode": mode,
+            "provider": provider,
+            "model": str(refinement.get("model") or ""),
+            "promptVersion": str(refinement.get("promptVersion") or ""),
+            "recommendation": {"requirementIntent": refinement.get("requirementIntent") or {}},
+            "insights": list(refinement.get("reasoning") or []),
+            "alternatives": [],
+            "warnings": list(refinement.get("warnings") or []),
+            "confidence": {"overall": round(float(refinement.get("confidence") or 0) * 100)},
+            "evidence": [{"referenceId": "source:requirement"}],
+            "telemetry": {},
+            "diagnostics": {"refinementId": refinement.get("refinementId"), "refinementVersion": refinement.get("version")},
+        }
 
     def get(self, requirement_id: str) -> dict[str, Any] | None:
         value = self.store.read().get(requirement_id)

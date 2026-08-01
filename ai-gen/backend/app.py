@@ -118,6 +118,7 @@ from backend.command_center_hardening import CommandCenterHardeningService, buil
 from backend.engineering_estimation import EngineeringEstimationEngine, EngineeringEstimationRepository, build_engineering_estimation_router
 from backend.requirement_intake import RequirementIngestionService, RequirementIntakeService, build_requirement_intake_router
 from backend.requirement_analysis import RequirementAnalysisService, build_requirement_analysis_router
+from backend.requirement_refinement import RequirementRefinementService, build_requirement_refinement_router
 from backend.reasoning import ReasoningEngine
 from backend.planning_integration import IntelligentPlanningEngine, RequirementPlanningService, build_requirement_planning_router
 from backend.planning_context import PlanningContextService, build_planning_context_router
@@ -257,11 +258,19 @@ requirement_ingestion_service = RequirementIngestionService(
     platform=platform_foundation,
 )
 repository_intelligence_module.detection_service.requirement_ingestion = requirement_ingestion_service
+requirement_refinement_service = RequirementRefinementService(
+    JsonMapStore(platform_foundation.storage_root / "requirement_refinements.json"),
+    requirement_ingestion=requirement_ingestion_service,
+    reasoning_engine=ReasoningEngine(),
+    platform=platform_foundation,
+)
+app.include_router(build_requirement_refinement_router(requirement_refinement_service))
 requirement_analysis_service = RequirementAnalysisService(
     JsonMapStore(platform_foundation.storage_root / "requirement_analyses.json"),
     requirement_ingestion=requirement_ingestion_service,
     repository_detector=repository_intelligence_module.detection_service,
     reasoning_engine=ReasoningEngine(),
+    refinement_service=requirement_refinement_service,
     platform=platform_foundation,
 )
 app.include_router(build_requirement_analysis_router(requirement_analysis_service))

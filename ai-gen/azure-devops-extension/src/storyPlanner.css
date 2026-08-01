@@ -3156,7 +3156,7 @@ button.hei-story-list-card {
 .hei-requirement-form label > span { color: var(--hei-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .hei-requirement-form .wide, .hei-intake-context, .hei-future-sources, .hei-requirement-form > button { grid-column: 1 / -1; }
 .hei-requirement-form textarea { min-height: 220px; resize: vertical; }
-.hei-requirement-progress { display: grid; grid-template-columns: repeat(10, minmax(86px, 1fr)); gap: 0; overflow-x: auto; border-block: 1px solid var(--hei-border-soft); padding: 10px 2px; }
+.hei-requirement-progress { display: grid; grid-template-columns: repeat(11, minmax(86px, 1fr)); gap: 0; overflow-x: auto; border-block: 1px solid var(--hei-border-soft); padding: 10px 2px; }
 .hei-requirement-progress > div { position: relative; display: grid; grid-template-rows: 20px auto; justify-items: center; align-items: start; gap: 5px; min-width: 108px; color: var(--hei-muted); font-size: 11px; font-weight: 600; text-align: center; }
 .hei-requirement-progress > div > i { position: absolute; z-index: 0; top: 10px; left: 50%; right: -50%; height: 1px; background: var(--hei-border); }
 .hei-requirement-progress-marker { position: relative; z-index: 1; display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--hei-border); border-radius: 50%; background: var(--hei-surface); color: var(--hei-muted); font-size: 11px; }
@@ -3208,6 +3208,23 @@ button.hei-story-list-card {
 .hei-requirement-review-meta > div, .hei-requirement-review-context > div { display: grid; gap: 4px; padding: 10px; background: var(--hei-surface-subtle); min-width: 0; }
 .hei-requirement-review-meta span, .hei-requirement-review-context span { color: var(--hei-muted); font-size: 10px; text-transform: uppercase; }
 .hei-requirement-review-meta strong { overflow-wrap: anywhere; }
+.hei-requirement-refinement { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--hei-border); border-left: 3px solid var(--hei-blue); border-radius: 6px; background: var(--hei-surface); }
+.hei-requirement-refinement > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.hei-requirement-refinement > header span:first-child { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-requirement-refinement h3 { margin: 2px 0; font-size: 18px; }
+.hei-requirement-refinement header p, .hei-requirement-refinement article p, .hei-requirement-refinement-details p { margin: 0; color: var(--hei-muted); }
+.hei-requirement-refinement-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.hei-requirement-refinement-comparison article { display: grid; align-content: start; gap: 7px; min-width: 0; min-height: 110px; padding: 12px; background: var(--hei-surface-subtle); }
+.hei-requirement-refinement-comparison article > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-requirement-refinement-comparison textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.hei-requirement-refinement-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.hei-requirement-refinement-details > div { min-width: 0; padding: 10px; border: 1px solid var(--hei-border-soft); border-radius: 5px; }
+.hei-requirement-refinement-details ul { margin: 7px 0 0; padding-left: 18px; }
+.hei-requirement-refinement-details li small { display: block; color: var(--hei-muted); }
+.hei-requirement-refinement > footer { display: flex; flex-wrap: wrap; gap: 7px; }
+.hei-requirement-refinement-lineage { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 8px; margin: 8px 0; }
+.hei-requirement-refinement-lineage > div { display: grid; gap: 3px; padding: 8px; background: var(--hei-surface-subtle); }
+.hei-requirement-refinement-lineage span { color: var(--hei-muted); font-size: 10px; text-transform: uppercase; }
 .hei-requirement-health { display: grid; gap: 10px; }
 .hei-requirement-health > header, .hei-quality-findings > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .hei-requirement-health > header span:first-child, .hei-quality-findings > header span:first-child, .hei-engineering-context > header > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -3502,7 +3519,7 @@ button.hei-story-list-card {
 }
 
 @media (max-width: 720px) {
-  .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals, .hei-uploaded-document-summary, .hei-requirement-analysis-grid, .hei-requirement-review-meta, .hei-requirement-review-grid, .hei-requirement-review-context, .hei-repository-recommendation-evidence, .hei-repository-mapping-form { grid-template-columns: 1fr; }
+  .hei-requirement-form, .hei-settings-grid, .hei-requirement-signals, .hei-uploaded-document-summary, .hei-requirement-analysis-grid, .hei-requirement-review-meta, .hei-requirement-review-grid, .hei-requirement-review-context, .hei-repository-recommendation-evidence, .hei-repository-mapping-form, .hei-requirement-refinement-comparison, .hei-requirement-refinement-details, .hei-requirement-refinement-lineage { grid-template-columns: 1fr; }
   .hei-requirement-health > div, .hei-quality-findings > div, .hei-engineering-context > div { grid-template-columns: 1fr; }
   .hei-requirement-health article { min-height: 0; }
   .hei-requirement-review-grid { grid-auto-rows: auto; }

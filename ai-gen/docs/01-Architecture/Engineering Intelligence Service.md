@@ -213,17 +213,17 @@ sections influence an output.
 
 ## AI-Driven Requirement Analysis
 
-Requirement Analysis uses the shared Reasoning Engine twice without moving
-provider code into Engineering Intelligence:
+Requirement Refinement and Requirement Analysis use the shared Reasoning
+Engine without moving provider code into Engineering Intelligence:
 
 ```text
 User Requirement
         |
         v
-Requirement Intent Analysis (Phi by default)
+Requirement Refinement (configured provider; Phi by default)
         |
         v
-RequirementIntent search hints
+Refined Requirement + RequirementIntent search hints
         |
         v
 Engineering Intelligence discovery
@@ -238,20 +238,28 @@ Requirement Evidence Synthesis (Phi by default)
 Deterministically validated Requirement Analysis
 ```
 
-The first provider pass receives only the original requirement and bounded
-project/repository metadata. `RequirementIntent` values are explicitly
+The refinement pass receives only the original requirement and bounded
+project/product terminology. It cannot query repositories, Azure DevOps,
+Markdown, Engineering Memory, or Engineering Context. The persisted artifact
+always preserves the original text and records refined text, changes,
+reasoning, ambiguities, clarification candidates, provider, model, prompt
+version, acceptance status, timestamp, and revision history. Users may accept,
+edit, regenerate, or skip; skipping keeps the stage in the lineage while using
+the original text as canonical input.
+
+`RequirementIntent` values produced during refinement are explicitly
 hypotheses and search hints; they are never stored as repository facts.
 Engineering Intelligence uses the hints to narrow repository, Markdown,
 Project Intelligence, Knowledge Registry, Engineering Memory, Azure DevOps,
 architecture, graph, similarity, and dependency retrieval.
 
-The second provider pass receives the original requirement, the intent
-projection embedded in the canonical requirement, and bounded
+The evidence-synthesis pass receives the refined canonical requirement, the
+intent projection embedded in it, and bounded
 `EngineeringContext` evidence. The response validator rejects unknown
 evidence references. The deterministic Requirement Analysis and Acceptance
 Criteria engines remain the validation and availability fallback.
 
-Persisted analyses record provider, model, both prompt versions, Engineering
-Context ID/version, Knowledge version, repository revision, analysis version,
-and timestamp. A provider outage is represented as deterministic mode rather
-than an analysis failure.
+Persisted analyses record the refinement ID/version, provider, model, prompt
+versions, Engineering Context ID/version, Knowledge version, repository
+revision, analysis version, and timestamp. A provider outage is represented as
+deterministic refinement/analysis mode rather than a workflow failure.

@@ -26,6 +26,19 @@ _COMMON = (
 
 
 TEMPLATES: dict[str, PromptTemplate] = {
+    "requirement_refinement": PromptTemplate(
+        "Requirement Refinement", "Senior Product Owner",
+        "Improve the user's requirement for engineering planning without changing its meaning.",
+        (
+            "Use only the raw requirement and bounded product/project terminology supplied in this prompt.",
+            "Preserve intent while improving clarity, grammar, organization, and professional product language.",
+            "Do not invent functionality, business rules, architecture, APIs, acceptance criteria, constraints, or dependencies.",
+            "Do not add authentication, authorization, CRUD, validation, audit, notifications, caching, retry, or role management unless explicitly stated.",
+            "Identify ambiguity; do not silently resolve it. Return clarification candidates instead.",
+            "Treat repository, Markdown, and Azure DevOps terms as search hints only, never as facts.",
+            "Return only one JSON object matching the output schema.",
+        ),
+    ),
     "requirement_intent_analysis": PromptTemplate(
         "Requirement Intent Analysis", "Senior Product and Business Analyst",
         "Interpret the supplied requirement into bounded search intent for Engineering Intelligence.",

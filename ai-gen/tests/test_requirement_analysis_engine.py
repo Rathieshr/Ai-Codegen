@@ -224,14 +224,14 @@ Assumptions:
         self.assertEqual("PendingReview", suggested["acceptanceCriteriaState"]["status"])
         self.assertEqual([], suggested["acceptanceCriteria"])
         self.assertEqual(1, len(suggested["acceptanceCriteriaSuggestions"]))
-        self.assertTrue(all(item["origin"] == "AI Inferred" for item in suggested["acceptanceCriteriaSuggestions"]))
+        self.assertTrue(all(item["origin"] == "Deterministic Fallback" for item in suggested["acceptanceCriteriaSuggestions"]))
         self.assertIn("Given", suggested["acceptanceCriteriaSuggestions"][0]["text"])
         self.assertEqual(
             suggested["functionalRequirements"][0],
             suggested["acceptanceCriteriaSuggestions"][0]["mappedFunctionalRequirement"],
         )
         self.assertTrue(suggested["acceptanceCriteriaSuggestions"][0]["evidence"])
-        with self.assertRaisesRegex(ValueError, "Review the AI Suggested"):
+        with self.assertRaisesRegex(ValueError, "Review the generated"):
             self.service.approve(context["requirementId"], "Product Owner")
 
         summary = build_requirement_summary(self.ingestion.get(context["requirementId"]), suggested)
@@ -248,7 +248,7 @@ Assumptions:
         self.service.suggest_acceptance_criteria(context["requirementId"], "Product Owner")
         approved = self.service.approve_acceptance_criteria(context["requirementId"], "Product Owner")
         self.assertEqual("Approved", approved["acceptanceCriteriaState"]["status"])
-        self.assertEqual("AI Suggested", approved["fieldOrigins"]["acceptanceCriteria"])
+        self.assertEqual("Deterministic Fallback", approved["fieldOrigins"]["acceptanceCriteria"])
         self.assertEqual(1, len(approved["acceptanceCriteria"]))
         self.assertFalse(approved["missingAcceptanceCriteria"])
         summary = build_requirement_summary(self.ingestion.get(context["requirementId"]), approved)
@@ -444,6 +444,10 @@ Assumptions:
         self.assertEqual("requirement-analysis-v2", analyzed["analysisLineage"]["analysisVersion"])
         self.assertIn("engineeringDiscovery", analyzed)
         self.assertEqual(
+            analyzed["analysisLineage"]["contextId"],
+            analyzed["engineeringContext"]["contextId"],
+        )
+        self.assertEqual(
             [
                 "Requirement Intent Analysis",
                 "Requirement Evidence Synthesis",
@@ -454,7 +458,11 @@ Assumptions:
         self.assertEqual("AI", generated["acceptanceDiagnostics"]["generationMode"])
         self.assertEqual("Phi", generated["acceptanceDiagnostics"]["provider"])
         self.assertEqual(
-            "AI Suggested",
+            analyzed["engineeringContext"]["contextId"],
+            generated["acceptanceDiagnostics"]["engineeringContextId"],
+        )
+        self.assertEqual(
+            "AI Enhanced",
             generated["acceptanceCriteriaSuggestions"][0]["origin"],
         )
         self.assertIn(
@@ -777,7 +785,8 @@ Assumptions:
         source = (ROOT / "azure-devops-extension/src/newRequirementWorkspace.tsx").read_text()
         styles = (ROOT / "azure-devops-extension/src/storyPlanner.css").read_text()
         for label in (
-            "SourceProvided", "AISuggested", "AI Suggested", "User Edited", "Imported",
+            "SourceProvided", "AISuggested", "Project Intelligence Generated", "AI Enhanced",
+            "Deterministic Fallback", "User Edited", "Imported",
             "Generate Suggested Acceptance Criteria", "Approve Suggestions", "Regenerate",
             "Discard", "This is not an AI error", "Ready with Recommendations",
         ):

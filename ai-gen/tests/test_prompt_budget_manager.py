@@ -113,6 +113,29 @@ class PromptBudgetManagerTests(unittest.TestCase):
         self.assertLessEqual(result["diagnostics"]["section_tokens"].get("repository_evidence", 0), 90)
         self.assertIn("repository_evidence", {step["section"] for step in result["diagnostics"]["compression_steps"]})
 
+    def test_phi_compresses_required_engineering_context_before_blocking(self) -> None:
+        profile = budgetProfileForProvider("Phi", "Phi-4-mini-instruct")
+        sections = [
+            section("role", "template", "Senior Business Analyst", priority=100, required=True, compressible=False),
+            section("objective", "template", "Generate evidence-backed acceptance criteria.", priority=100, required=True, compressible=False),
+            section("current_work_item", "engineering_context", "Monitor transformer health. " * 30, priority=100, required=True),
+            section("current_intent", "engineering_context", {"requirements": ["Monitor transformer health. " * 25] * 8}, priority=100, required=True),
+            section("planning_boundary", "engineering_context", {"dependencies": [f"Dependency {index}" for index in range(80)]}, priority=90, required=True),
+            section("validation", "engineering_context", {"risks": [f"Risk {index}" for index in range(60)]}, priority=85),
+            section("evidence_catalog", "engineering_context", [{"referenceId": f"file:src/file_{index}.ts"} for index in range(100)], priority=95, required=True),
+            section("instructions", "template", "Return JSON only and preserve evidence references.", priority=100, required=True, compressible=False),
+            section("output_schema", "schema", {"recommendation": {"acceptanceCriteria": []}}, priority=100, required=True, compressible=False),
+        ]
+
+        result = buildPrompt(sections, profile)
+
+        self.assertFalse(result["diagnostics"]["blockedByBudgetGuard"])
+        self.assertTrue(result["diagnostics"]["compressionApplied"])
+        self.assertIn(
+            "evidence_catalog",
+            {step["section"] for step in result["diagnostics"]["compression_steps"]},
+        )
+
     def test_examples_and_diagnostics_are_removed_before_required_sections(self) -> None:
         profile = PromptBudgetProfile(provider="azure_phi", context_limit=180, reserved_tokens=40)
         sections = self._base_sections(

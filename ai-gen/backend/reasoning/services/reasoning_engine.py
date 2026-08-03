@@ -139,7 +139,7 @@ class ReasoningEngine:
             if validation is not None:
                 warnings.extend(validation.errors)
                 warnings.extend(validation.warnings)
-            if selected is None:
+            if selected is None and not provider_was_available:
                 warnings.append(
                     "No configured reasoning provider was available; deterministic reasoning used."
                 )

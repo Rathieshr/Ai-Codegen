@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 from typing import Any
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -29,6 +30,7 @@ class RequirementAnalysisService:
         repository_detector: Any | None = None,
         engineering_intelligence: Any | None = None,
         reasoning_engine: Any | None = None,
+        project_intelligence_analyzer: Any | None = None,
         refinement_service: Any | None = None,
         platform: Any | None = None,
     ) -> None:
@@ -42,6 +44,7 @@ class RequirementAnalysisService:
             repository_detector=repository_detector,
         )
         self.reasoning_engine = reasoning_engine
+        self.project_intelligence_analyzer = project_intelligence_analyzer
         self.refinement_service = refinement_service
         self.platform = platform
 
@@ -89,9 +92,16 @@ class RequirementAnalysisService:
                     "message": suggestion.get("reason") or "Repository reuse will be validated during Planning.",
                 }
         engineering_context = self._build_engineering_context(requirement, result)
-        synthesis_reasoning = self._reason_about_requirement(
-            requirement, result, engineering_context,
-        )
+        result["engineeringContext"] = self._acceptance_context(engineering_context)
+        if self.project_intelligence_analyzer:
+            project_reasoning = self.project_intelligence_analyzer.analyze(requirement, engineering_context)
+            if self._project_intelligence_shadow_mode():
+                synthesis_reasoning = self._reason_about_requirement(requirement, result, engineering_context)
+                synthesis_reasoning.setdefault("diagnostics", {})["projectIntelligenceShadow"] = project_reasoning
+            else:
+                synthesis_reasoning = project_reasoning
+        else:
+            synthesis_reasoning = self._reason_about_requirement(requirement, result, engineering_context)
         self._apply_evidence_synthesis(result, synthesis_reasoning)
         result.update(self.acceptance_engine.understand(result, requirement))
         result["aiAnalysis"] = self._reasoning_projection(synthesis_reasoning)
@@ -185,7 +195,7 @@ class RequirementAnalysisService:
         acceptance_state = analysis.get("acceptanceCriteriaState") or {}
         if acceptance_state.get("state") == "AISuggested" and acceptance_state.get("status") == "PendingReview":
             raise ValueError(
-                "Review the AI Suggested Acceptance Criteria. Approve, edit, or discard them before Planning."
+                "Review the generated Acceptance Criteria. Approve, edit, or discard them before Planning."
             )
         selected = (analysis.get("repositorySuggestion") or {}).get("suggestedRepository") or {}
         current_repository_id = str(requirement.get("metadata", {}).get("repositoryId") or "")
@@ -262,11 +272,45 @@ class RequirementAnalysisService:
             raise ValueError(
                 "Source-provided Acceptance Criteria are already authoritative. Edit the source requirement to change them."
             )
-        reasoning = self._reason_about_acceptance(requirement, analysis)
+        reasoning_context = self._acceptance_context_for_analysis(requirement, analysis)
+        if self.project_intelligence_analyzer:
+            project_reasoning = self.project_intelligence_analyzer.generate_acceptance_criteria(
+                requirement, analysis, reasoning_context,
+            )
+            if self._project_intelligence_shadow_mode():
+                reasoning = self._reason_about_acceptance(requirement, analysis, reasoning_context)
+                reasoning.setdefault("diagnostics", {})["projectIntelligenceShadow"] = project_reasoning
+            else:
+                reasoning = project_reasoning
+        else:
+            reasoning = self._reason_about_acceptance(requirement, analysis, reasoning_context)
         suggestions = self._acceptance_suggestions_from_reasoning(reasoning, analysis)
-        generation_mode = "AI" if suggestions else "DeterministicFallback"
+        generation_mode = (
+            "ProjectIntelligence"
+            if suggestions and reasoning.get("provider") == "Project Intelligence"
+            else "AI"
+            if suggestions
+            else "DeterministicFallback"
+        )
         if not suggestions:
             suggestions = self.acceptance_engine.generate(analysis, requirement)
+            for suggestion in suggestions:
+                suggestion.update({
+                    "origin": "Deterministic Fallback",
+                    "provider": "Deterministic",
+                    "model": "",
+                    "promptVersion": "acceptance-deterministic-fallback-v1",
+                    "confidence": min(float(suggestion.get("confidence") or 0.55), 0.55),
+                    "confidenceBasis": "Rule-based mapping to supplied requirement evidence.",
+                    "contextVersion": reasoning_context.get("contextVersion"),
+                    "knowledgeVersion": (reasoning_context.get("sourceVersions") or {}).get("projectKnowledgeVersion"),
+                    "repositoryRevision": (
+                        ((reasoning_context.get("sourceVersions") or {}).get("repositoryMarkdown") or {}).get("repositoryRevision")
+                        if isinstance((reasoning_context.get("sourceVersions") or {}).get("repositoryMarkdown"), dict)
+                        else None
+                    ) or (reasoning_context.get("sourceVersions") or {}).get("repositorySnapshotVersion"),
+                })
+        reasoning_diagnostics = reasoning.get("diagnostics") if isinstance(reasoning.get("diagnostics"), dict) else {}
         analysis.setdefault("acceptanceDiagnostics", {}).update({
             "generationMode": generation_mode,
             "reasoningMode": str(reasoning.get("reasoningMode") or "Deterministic"),
@@ -274,6 +318,18 @@ class RequirementAnalysisService:
             "model": str(reasoning.get("model") or ""),
             "promptVersion": str(reasoning.get("promptVersion") or ""),
             "warnings": list(reasoning.get("warnings") or []),
+            "engineeringContextId": reasoning_context.get("contextId"),
+            "engineeringContextVersion": reasoning_context.get("contextVersion"),
+            "projectIntelligenceUsed": bool(reasoning_context.get("projectIntelligence")),
+            "repositoryEvidenceUsed": bool(reasoning_context.get("repository")),
+            "markdownEvidenceUsed": bool(
+                (reasoning_context.get("repository_markdown_context") or {}).get("selected")
+            ),
+            "degraded": generation_mode == "DeterministicFallback",
+            "retryAvailable": generation_mode == "DeterministicFallback",
+            "projectIntelligencePrimary": bool(self.project_intelligence_analyzer),
+            "projectIntelligenceDiagnostics": reasoning_diagnostics,
+            "fallbackReason": (list(reasoning.get("warnings") or []) or [""])[0],
         })
         if not suggestions:
             analysis["acceptanceCriteriaSuggestions"] = []
@@ -302,14 +358,21 @@ class RequirementAnalysisService:
             self._publish_review("AcceptanceCriteriaSuggestionUnavailable", analysis, requirement)
             return analysis
         analysis["acceptanceCriteriaSuggestions"] = suggestions
+        origin = (
+            "Project Intelligence Generated"
+            if generation_mode == "ProjectIntelligence"
+            else "AI Enhanced"
+            if generation_mode == "AI"
+            else "Deterministic Fallback"
+        )
         analysis["acceptanceCriteriaState"] = {
             "state": "AISuggested",
-            "origin": "AI Suggested",
+            "origin": origin,
             "status": "PendingReview",
             "description": (
                 f"Acceptance Criteria were generated by {analysis['acceptanceDiagnostics']['provider']} "
                 "and require explicit review."
-                if generation_mode == "AI"
+                if generation_mode in {"AI", "ProjectIntelligence"}
                 else "Acceptance Criteria were generated by HEI's deterministic fallback and require explicit review."
             ),
             "generatedBy": actor or "HEI",
@@ -509,11 +572,12 @@ class RequirementAnalysisService:
         self,
         requirement: dict[str, Any],
         analysis: dict[str, Any],
+        engineering_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.reasoning_engine:
             return self._reasoning_not_requested()
         try:
-            context = self._reasoning_context(requirement, analysis)
+            context = engineering_context or self._reasoning_context(requirement, analysis)
             return self.reasoning_engine.analyze(
                 "Acceptance Criteria Generation",
                 context,
@@ -523,6 +587,43 @@ class RequirementAnalysisService:
             )
         except Exception as error:
             return self._reasoning_failure(error)
+
+    def _acceptance_context_for_analysis(
+        self,
+        requirement: dict[str, Any],
+        analysis: dict[str, Any],
+    ) -> dict[str, Any]:
+        stored = analysis.get("engineeringContext")
+        lineage = analysis.get("analysisLineage") or {}
+        if (
+            isinstance(stored, dict)
+            and stored.get("contextId")
+            and stored.get("contextVersion")
+            and stored.get("contextId") == lineage.get("contextId")
+            and stored.get("contextVersion") == lineage.get("contextVersion")
+        ):
+            return stored
+        refreshed = self._reasoning_context(requirement, analysis)
+        bounded = self._acceptance_context(refreshed)
+        analysis["engineeringContext"] = bounded
+        return bounded
+
+    @staticmethod
+    def _acceptance_context(context: dict[str, Any]) -> dict[str, Any]:
+        """Persist the bounded evidence used by analysis for repeatable AC generation."""
+
+        allowed = (
+            "contextId", "contextVersion", "requirement", "repository",
+            "projectIntelligence", "repository_markdown_context",
+            "relevantDocumentation", "knowledge_synthesis", "azureDevOps",
+            "engineeringMemory", "similarWork", "architecture", "dependencies",
+            "impact", "reuse", "readiness", "sourceVersions", "rejectedContext",
+        )
+        return {
+            key: context[key]
+            for key in allowed
+            if key in context
+        }
 
     def _reasoning_context(
         self,
@@ -683,9 +784,29 @@ class RequirementAnalysisService:
                 analysis[target] = _unique([*_strings(analysis.get(target)), *additions])
                 analysis.setdefault("fieldOrigins", {}).setdefault(target, "Evidence Backed")
         business_goal = str(recommendation.get("businessGoal") or "").strip()
-        if business_goal and not analysis.get("businessGoals"):
+        functional = _strings(analysis.get("functionalRequirements"))
+        current_business = _strings(analysis.get("businessGoals"))
+        current_duplicates_functional = bool(
+            current_business and any(_normalized_phrase(current_business[0]) == _normalized_phrase(item) for item in functional)
+        )
+        if business_goal and not any(
+            _normalized_phrase(business_goal) == _normalized_phrase(item) for item in functional
+        ) and (not current_business or current_duplicates_functional):
             analysis["businessGoals"] = [business_goal]
-            analysis.setdefault("fieldOrigins", {})["businessGoals"] = "Evidence Backed"
+            analysis.setdefault("fieldOrigins", {})["businessGoals"] = "Project Intelligence Generated"
+        actors = _unique([
+            str(recommendation.get("primaryActor") or "").strip(),
+            *_strings(recommendation.get("secondaryActors")),
+        ])
+        if actors:
+            analysis["actors"] = _unique([*_strings(analysis.get("actors")), *actors])
+            analysis.setdefault("fieldOrigins", {}).setdefault("actors", "Project Intelligence Generated")
+        intent = analysis.get("requirementIntent") if isinstance(analysis.get("requirementIntent"), dict) else {}
+        intent["capabilities"] = _unique([*_strings(intent.get("capabilities")), *_strings(recommendation.get("capabilities"))])
+        intent["possibleRepositoryTerms"] = _unique([*_strings(intent.get("possibleRepositoryTerms")), *_strings(recommendation.get("repositorySearchHints"))])
+        intent["possibleMarkdownSearchTerms"] = _unique([*_strings(intent.get("possibleMarkdownSearchTerms")), *_strings(recommendation.get("markdownSearchHints"))])
+        intent["possibleAzureDevOpsSearchTerms"] = _unique([*_strings(intent.get("possibleAzureDevOpsSearchTerms")), *_strings(recommendation.get("azureDevOpsSearchHints"))])
+        analysis["requirementIntent"] = intent
         if recommendation.get("executiveSummary"):
             analysis["requirementSummary"] = str(recommendation["executiveSummary"])
         analysis["evidenceSynthesis"] = {
@@ -781,6 +902,12 @@ class RequirementAnalysisService:
         }
 
     @staticmethod
+    def _project_intelligence_shadow_mode() -> bool:
+        return os.getenv("AI_GEN_REQUIREMENT_PI_SHADOW_MODE", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+
+    @staticmethod
     def _reasoning_failure(error: Exception) -> dict[str, Any]:
         return {
             "status": "Fallback",
@@ -829,27 +956,41 @@ class RequirementAnalysisService:
                 confidence_value = 0.8
             if confidence_value > 1:
                 confidence_value /= 100
-            evidence = [{
-                "requirementSentence": mapped,
-                "matchedPhrase": mapped,
-                "confidence": max(0.0, min(1.0, confidence_value)),
-                "source": "Engineering Context",
-            }]
+            evidence = value.get("evidence") if isinstance(value.get("evidence"), list) else []
+            if not evidence:
+                evidence = [{
+                    "requirementSentence": mapped,
+                    "matchedPhrase": mapped,
+                    "confidence": max(0.0, min(1.0, confidence_value)),
+                    "source": "Engineering Context",
+                }]
+            origin = str(value.get("origin") or (
+                "Project Intelligence Generated"
+                if reasoning.get("provider") == "Project Intelligence"
+                else "AI Enhanced"
+            ))
             normalized = self.acceptance_engine.normalize_edited(
                 {
                     **value,
                     "mappedFunctionalRequirement": mapped,
                     "evidence": evidence,
-                    "origin": "AI Suggested",
+                    "origin": origin,
                 },
                 text=text,
                 order=len(suggestions) + 1,
             )
             normalized.update({
-                "origin": "AI Suggested",
+                "origin": origin,
                 "status": "PendingReview",
                 "type": str(value.get("type") or "Functional"),
                 "confidence": max(0.0, min(1.0, confidence_value)),
+                "provider": value.get("provider") or reasoning.get("provider"),
+                "model": value.get("model") or reasoning.get("model"),
+                "promptVersion": value.get("promptVersion") or reasoning.get("promptVersion"),
+                "confidenceBasis": value.get("confidenceBasis") or "Mapped to supplied functional evidence.",
+                "contextVersion": value.get("contextVersion"),
+                "knowledgeVersion": value.get("knowledgeVersion"),
+                "repositoryRevision": value.get("repositoryRevision"),
             })
             normalized.pop("editedFrom", None)
             suggestions.append(normalized)
@@ -933,7 +1074,7 @@ class RequirementAnalysisService:
             readiness["status"] = "ReadyWithRecommendations"
             readiness["readyForPlanning"] = True
             readiness["warnings"] = [
-                "AI Suggested Acceptance Criteria require approval, editing, or discard before Planning approval.",
+                "Generated Acceptance Criteria require approval, editing, or discard before Planning approval.",
                 *[warning for warning in readiness["warnings"] if "Acceptance Criteria" not in warning],
             ]
         analysis["requirementQualityScore"] = score
@@ -992,6 +1133,10 @@ def _strings(value: Any) -> list[str]:
 
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
+
+
+def _normalized_phrase(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", str(value).casefold()))
 
 
 def _search_words(value: str) -> list[str]:

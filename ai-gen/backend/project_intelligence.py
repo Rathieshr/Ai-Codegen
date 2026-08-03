@@ -1024,6 +1024,85 @@ class ProjectIntelligenceService:
             return _phi_error_response(phi)
         return _with_provider_metadata(deterministic, phi["metadata"])
 
+    def analyze_requirement_intelligence(
+        self,
+        requirement: dict[str, Any],
+        engineering_context: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run requirement reasoning through the stabilized Project Intelligence pipeline."""
+
+        profile = _requirement_profile_with_context(self.get_profile(), engineering_context)
+        item = _project_requirement_item(requirement, engineering_context)
+        deterministic = _project_requirement_draft(requirement, engineering_context)
+        expected = [
+            "executiveSummary", "businessGoal", "problemStatement", "primaryActor",
+            "secondaryActors", "businessValue", "functionalRequirements",
+            "nonFunctionalRequirements", "businessRules", "constraints", "dependencies",
+            "risks", "openQuestions", "capabilities", "repositorySearchHints",
+            "markdownSearchHints", "azureDevOpsSearchHints", "engineeringInsights",
+            "confidence", "evidence",
+        ]
+        phi = _project_phi_json(
+            "analyze_requirement_intelligence",
+            profile,
+            item,
+            deterministic,
+            {"allow_fallback": True, **(options or {})},
+            expected,
+        )
+        return {
+            "used": bool(phi.get("used")),
+            "analysis": phi.get("parsed") if isinstance(phi.get("parsed"), dict) else {},
+            "metadata": dict(phi.get("metadata") or {}),
+        }
+
+    def generate_requirement_acceptance_criteria(
+        self,
+        requirement: dict[str, Any],
+        engineering_context: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Generate requirement criteria using stabilized Phi and AC quality controls."""
+
+        profile = _requirement_profile_with_context(self.get_profile(), engineering_context)
+        item = _project_requirement_item(requirement, engineering_context)
+        deterministic = _project_requirement_draft(requirement, engineering_context)
+        deterministic.update({
+            "acceptanceCriteria": [],
+            "qualityRules": [
+                "Map every criterion to supplied functional evidence.",
+                "Use specific business-observable Given/When/Then outcomes.",
+                "Do not invent authentication, authorization, validation, CRUD, audit, or APIs.",
+                "Generate between three and seven criteria when the supplied behavior supports them.",
+            ],
+        })
+        phi = _project_phi_json(
+            "generate_requirement_acceptance_criteria",
+            profile,
+            item,
+            deterministic,
+            {"allow_fallback": True, **(options or {})},
+            ["acceptanceCriteria"],
+        )
+        parsed = phi.get("parsed") if isinstance(phi.get("parsed"), dict) else {}
+        raw = parsed.get("acceptanceCriteria") if isinstance(parsed.get("acceptanceCriteria"), list) else []
+        texts = [_clean_text(value.get("text") if isinstance(value, dict) else value) for value in raw]
+        accepted, rejected = _reject_generic_acceptance_criteria([value for value in texts if value])
+        accepted_set = set(accepted)
+        criteria = [value for value in raw if _clean_text(value.get("text") if isinstance(value, dict) else value) in accepted_set]
+        metadata = dict(phi.get("metadata") or {})
+        metadata.update({
+            "acceptance_quality_score": _acceptance_criteria_quality_score(accepted),
+            "rejected_acceptance_criteria": rejected,
+            "quality_gate": "passed" if criteria and not rejected else "needs_review",
+        })
+        return {
+            "used": bool(phi.get("used")) and bool(criteria),
+            "acceptanceCriteria": criteria,
+            "metadata": metadata,
+        }
+
     def generate_story_prompts(
         self,
         story: dict[str, Any] | None = None,
@@ -9079,6 +9158,100 @@ def _execution_readiness_score(profile: dict[str, Any], has_impact: bool = False
     }
 
 
+def _requirement_profile_with_context(
+    profile: dict[str, Any], engineering_context: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_profile(profile)
+    project = engineering_context.get("projectIntelligence") if isinstance(engineering_context.get("projectIntelligence"), dict) else {}
+    knowledge = project.get("knowledge") if isinstance(project.get("knowledge"), dict) else {}
+    repository = engineering_context.get("repository") if isinstance(engineering_context.get("repository"), dict) else {}
+    markdown = engineering_context.get("repository_markdown_context") if isinstance(engineering_context.get("repository_markdown_context"), dict) else {}
+    source_versions = engineering_context.get("sourceVersions") if isinstance(engineering_context.get("sourceVersions"), dict) else {}
+    source_files = []
+    for value in [*(knowledge.get("sourceFiles") or []), *(repository.get("files") or [])]:
+        path = _clean_text(value.get("path") if isinstance(value, dict) else value)
+        if path:
+            source_files.append(path)
+    architecture = engineering_context.get("architecture") if isinstance(engineering_context.get("architecture"), dict) else {}
+    markdown_selected = markdown.get("selected") if isinstance(markdown.get("selected"), list) else []
+    architecture_summary = _clean_text(architecture.get("summary")) or " ".join(
+        _clean_text(item.get("summary") if isinstance(item, dict) else item)
+        for item in markdown_selected[:4]
+    )
+    capsule = {
+        "capsule_id": engineering_context.get("contextId"),
+        "capsule_type": "project",
+        "version": engineering_context.get("contextVersion"),
+        "source_version": source_versions.get("projectKnowledgeVersion"),
+        "payload": {
+            "project_name": (project.get("project") or {}).get("projectName") or normalized.get("project_name"),
+            "domain": (project.get("project") or {}).get("domain") or normalized.get("domain"),
+            "project_type": (project.get("project") or {}).get("projectType") or normalized.get("project_type"),
+            "project_summary": (project.get("project") or {}).get("description") or normalized.get("project_description"),
+            "modules": _string_list(knowledge.get("modules") or repository.get("affectedModules")),
+            "flows": _string_list(knowledge.get("flows")),
+            "applications": _string_list(knowledge.get("applications")),
+            "standards": _string_list(knowledge.get("standards")),
+            "architecture_summary": architecture_summary,
+            "impacted_files": _unique(source_files),
+        },
+        "diagnostics": {"source": "Engineering Context"},
+    }
+    return {**normalized, "_active_context_capsule": capsule}
+
+
+def _project_requirement_item(
+    requirement: dict[str, Any], engineering_context: dict[str, Any],
+) -> dict[str, Any]:
+    context_requirement = engineering_context.get("requirement") if isinstance(engineering_context.get("requirement"), dict) else {}
+    return {
+        "id": requirement.get("requirementId") or context_requirement.get("requirementId"),
+        "type": "Requirement",
+        "title": requirement.get("title") or context_requirement.get("title"),
+        "description": (
+            requirement.get("normalizedRequirement")
+            or requirement.get("planningRequirement")
+            or context_requirement.get("planningRequirement")
+        ),
+        "acceptance_criteria": context_requirement.get("acceptanceCriteria") or [],
+    }
+
+
+def _project_requirement_draft(
+    requirement: dict[str, Any], engineering_context: dict[str, Any],
+) -> dict[str, Any]:
+    current = engineering_context.get("requirement") if isinstance(engineering_context.get("requirement"), dict) else {}
+    source_versions = engineering_context.get("sourceVersions") if isinstance(engineering_context.get("sourceVersions"), dict) else {}
+    project = engineering_context.get("projectIntelligence") if isinstance(engineering_context.get("projectIntelligence"), dict) else {}
+    knowledge = project.get("knowledge") if isinstance(project.get("knowledge"), dict) else {}
+    markdown = engineering_context.get("repository_markdown_context") if isinstance(engineering_context.get("repository_markdown_context"), dict) else {}
+    repository = engineering_context.get("repository") if isinstance(engineering_context.get("repository"), dict) else {}
+    azure_devops = engineering_context.get("azureDevOps") if isinstance(engineering_context.get("azureDevOps"), dict) else {}
+    return {
+        "executiveSummary": current.get("requirementSummary") or requirement.get("title") or "",
+        "businessGoal": (_string_list(current.get("businessGoals")) or [""])[0],
+        "functionalRequirements": _string_list(current.get("functionalRequirements")),
+        "acceptanceCriteria": _string_list(current.get("acceptanceCriteria")),
+        "businessRules": _string_list(current.get("businessRules")),
+        "constraints": _string_list(current.get("constraints")),
+        "dependencies": _string_list(current.get("dependencies")),
+        "evidenceCatalog": {
+            "contextId": engineering_context.get("contextId"),
+            "contextVersion": engineering_context.get("contextVersion"),
+            "knowledgeVersion": source_versions.get("projectKnowledgeVersion"),
+            "repositorySnapshotVersion": source_versions.get("repositorySnapshotVersion"),
+            "repositoryMarkdown": source_versions.get("repositoryMarkdown"),
+            "selectedMarkdown": list(markdown.get("selected") or [])[:5],
+            "repositoryFiles": list(repository.get("files") or [])[:8],
+            "approvedProjectKnowledge": list(project.get("approvedArtifacts") or [])[:6],
+            "knowledgeModules": _string_list(knowledge.get("modules"))[:8],
+            "knowledgeFlows": _string_list(knowledge.get("flows"))[:8],
+            "azureDevOpsWork": list(azure_devops.get("existingPlanning") or [])[:6],
+            "rejectedContext": list(engineering_context.get("rejectedContext") or [])[:8],
+        },
+    }
+
+
 def _project_phi_json(
     operation: str,
     profile: dict[str, Any],
@@ -9595,9 +9768,30 @@ def _project_phi_payload(
         "project_context": project_context,
         "input": input_payload,
         "draft": draft,
-        "instruction": PROJECT_PHI_INSTRUCTION,
+        "instruction": _project_phi_instruction(operation),
     }
     return payload, draft_diagnostics
+
+
+def _project_phi_instruction(operation: str) -> str:
+    if operation == "analyze_requirement_intelligence":
+        return (
+            "Act as a senior Business Analyst. Use only the supplied requirement and selected "
+            "engineering evidence. Separate WHY (businessGoal) from WHAT (functionalRequirements). "
+            "Do not invent architecture, APIs, business rules, constraints, or dependencies. "
+            "Attach evidence references and return only the requested JSON keys. "
+            + PROJECT_PHI_INSTRUCTION
+        )
+    if operation == "generate_requirement_acceptance_criteria":
+        return (
+            "Generate three to seven specific, testable, business-observable Acceptance Criteria "
+            "when supported. Each item must contain text, mappedFunctionalRequirement, evidence, "
+            "confidence, and confidenceBasis. Use Given/When/Then. Do not invent authentication, "
+            "authorization, permissions, validation, CRUD, audit, APIs, or error behavior unless "
+            "explicit evidence supports it. Return acceptanceCriteria as a JSON array. "
+            + PROJECT_PHI_INSTRUCTION
+        )
+    return PROJECT_PHI_INSTRUCTION
 
 
 def _compact_input_item(item: dict[str, Any]) -> dict[str, Any]:

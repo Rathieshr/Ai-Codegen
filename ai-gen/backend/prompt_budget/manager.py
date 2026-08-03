@@ -110,11 +110,13 @@ def budgetProfileForProvider(
     if capabilities.provider in {"azure_phi", "phi"}:
         if operation.startswith("build_"):
             section_budgets = {
+                "current_work_item": 80,
                 "current_intent": 80,
                 "current_capability": 120,
                 "dna": 160,
                 "planning_boundary": 120,
                 "validation": 100,
+                "evidence_catalog": 100,
                 "repository_evidence": 140,
                 "knowledge_summary": 110,
                 "instructions": 140,
@@ -123,11 +125,13 @@ def budgetProfileForProvider(
             }
         else:
             section_budgets = {
+                "current_work_item": 100,
                 "current_intent": 100,
                 "current_capability": 120,
                 "dna": 180,
                 "planning_boundary": 140,
                 "validation": 120,
+                "evidence_catalog": 120,
                 "repository_evidence": 180,
                 "knowledge_summary": 120,
                 "instructions": 150,
@@ -162,7 +166,7 @@ def budgetProfileForProvider(
         input_budget=input_budget,
         compression_strategy=strategy,
         section_budgets=section_budgets,
-        compression_order=["draft", "knowledge", "repository"],
+        compression_order=["draft", "knowledge", "repository", "engineering_context"],
         removable_sources=["examples", "diagnostics"],
         capabilities=capabilities,
     )

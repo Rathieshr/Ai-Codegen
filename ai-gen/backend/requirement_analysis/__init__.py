@@ -16,11 +16,13 @@ from .models import (
     RequirementIntent,
 )
 from .service import RequirementAnalysisService
+from .project_intelligence_adapter import ProjectIntelligenceRequirementAnalyzer
 from .summary import build_requirement_summary
 
 __all__ = [
     "RequirementAnalysis", "RequirementAnalysisDocument", "RequirementAnalysisDocumentBuilder",
     "RequirementAnalysisEngine", "RequirementAnalysisService",
+    "ProjectIntelligenceRequirementAnalyzer",
     "RequirementEvidence", "RequirementFacts", "RequirementFinding", "RequirementIntent",
     "ACCEPTANCE_CRITERIA_PROMPT_RULES", "IntelligentAcceptanceCriteriaEngine",
     "build_requirement_analysis_router",

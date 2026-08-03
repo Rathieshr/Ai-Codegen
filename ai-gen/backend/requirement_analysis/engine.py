@@ -234,7 +234,7 @@ class RequirementAnalysisEngine:
         if not values["acceptance_criteria"]:
             return [RequirementFinding(
                 "No Acceptance Criteria were provided in the source requirement.",
-                "Generate AI Suggested Acceptance Criteria or continue with reduced testability.",
+                "Generate suggested Acceptance Criteria or continue with reduced testability.",
                 evidence="Source requirement contains no Acceptance Criteria section.",
                 confidence=1.0,
             )]

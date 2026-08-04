@@ -812,6 +812,53 @@ body {
   overflow-wrap: anywhere;
 }
 
+.hei-statement-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  color: var(--hei-muted);
+  font-size: 10px;
+}
+
+.hei-statement-badge {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--hei-border);
+  border-radius: 8px;
+  padding: 2px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hei-statement-badge.source,
+.hei-statement-badge.evidence { border-color: var(--hei-success); color: var(--hei-success); }
+.hei-statement-badge.ai_inferred { border-color: var(--hei-blue); color: var(--hei-blue); }
+.hei-statement-badge.ai_suggestion { border-color: var(--hei-warning); color: var(--hei-warning); }
+
+.hei-governed-statements {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hei-governed-statements > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 7px;
+}
+
+.hei-governed-statements article {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border-left: 2px solid var(--hei-border);
+  background: var(--hei-surface-subtle);
+}
+
+.hei-governed-statements article p { margin: 0; overflow-wrap: anywhere; }
+
 .hei-analysis-understanding-grid article.empty p,
 .hei-analysis-empty {
   color: var(--hei-muted);

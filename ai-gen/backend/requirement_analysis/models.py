@@ -157,6 +157,8 @@ class RequirementAnalysisDocument:
     assumptions: list[str]
     open_questions: list[str]
     engineering_insights: list[str]
+    statement_governance: list[dict[str, Any]]
+    suggested_enhancements: list[dict[str, Any]]
     planning_readiness: dict[str, Any]
     confidence: dict[str, Any]
     evidence: list[dict[str, Any]]

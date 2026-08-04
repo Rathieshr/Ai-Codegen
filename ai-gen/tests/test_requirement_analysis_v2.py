@@ -113,6 +113,25 @@ def base_analysis() -> dict:
         },
         "requirementQualityScore": 78,
         "confidence": 0.84,
+        "statementGovernance": {
+            "statements": [{
+                "id": "statement-functional-1",
+                "category": "Functional Requirement",
+                "text": "Display current device health and communication status.",
+                "classification": "SOURCE",
+                "source": "User Requirement",
+                "provider": "",
+                "model": "",
+                "promptVersion": "",
+                "confidence": 1.0,
+                "evidenceReferences": ["source:requirement"],
+                "generatedAt": "2026-08-04T00:00:00+00:00",
+                "approvedStatus": "NotRequired",
+                "why": "Directly stated by the requirement.",
+            }],
+            "suggestedEnhancements": [],
+            "governedValues": {},
+        },
     }
 
 
@@ -167,6 +186,18 @@ class RequirementAnalysisV2Tests(unittest.TestCase):
         self.assertEqual("Operations User", document["primaryActor"])
         self.assertIn("Device Health Overview", document["capabilities"])
         self.assertTrue(document["validation"]["checks"]["businessGoalDistinct"])
+        self.assertEqual("SOURCE", document["statementGovernance"][0]["classification"])
+        self.assertIn("strengths", document["planningReadiness"])
+
+    def test_raw_provider_suggestion_is_not_reintroduced_into_canonical_document(self) -> None:
+        analysis = base_analysis()
+        analysis["suggestedEnhancements"] = [{"text": "Add automatic retry handling."}]
+        ai = reasoning()
+        ai["recommendation"]["functionalRequirements"].append("Add automatic retry handling.")
+
+        document = self.build(analysis=analysis, ai=ai)
+
+        self.assertNotIn("Add automatic retry handling.", document["functionalRequirements"])
 
     def test_repository_impact_contains_only_traceable_discovery_evidence(self) -> None:
         document = self.build()

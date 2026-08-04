@@ -8,6 +8,7 @@ from .acceptance_criteria import (
     RequirementFacts,
 )
 from .engine import RequirementAnalysisEngine
+from .governance import RequirementGovernanceEngine, StatementClassification
 from .document import RequirementAnalysisDocumentBuilder
 from .models import (
     RequirementAnalysis,
@@ -22,6 +23,7 @@ from .summary import build_requirement_summary
 __all__ = [
     "RequirementAnalysis", "RequirementAnalysisDocument", "RequirementAnalysisDocumentBuilder",
     "RequirementAnalysisEngine", "RequirementAnalysisService",
+    "RequirementGovernanceEngine", "StatementClassification",
     "ProjectIntelligenceRequirementAnalyzer",
     "RequirementEvidence", "RequirementFacts", "RequirementFinding", "RequirementIntent",
     "ACCEPTANCE_CRITERIA_PROMPT_RULES", "IntelligentAcceptanceCriteriaEngine",

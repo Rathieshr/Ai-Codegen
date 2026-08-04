@@ -78,6 +78,16 @@ class EngineeringDiscoveryService:
                 "count": len(items),
                 "summary": _finding_summary(source, items),
                 "evidenceReferences": [item["sourceReference"] for item in items[:8]],
+                "findings": [
+                    {
+                        "title": item.get("title") or item.get("sourceReference"),
+                        "type": item.get("evidenceType") or "Evidence",
+                        "sourceReference": item.get("sourceReference"),
+                        "reason": item.get("reason"),
+                        "confidence": item.get("confidence"),
+                    }
+                    for item in items[:8]
+                ],
             }
             for source, items in groups.items()
         ]

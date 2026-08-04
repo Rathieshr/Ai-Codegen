@@ -25,12 +25,14 @@ class RequirementAnalysisDocumentBuilder:
         recommendation = dict(reasoning.get("recommendation") or {})
         refinement = dict(analysis.get("requirementRefinement") or {})
         intent = dict(analysis.get("requirementIntent") or {})
+        governance = dict(analysis.get("statementGovernance") or {})
+        governed = dict(governance.get("governedValues") or {})
 
-        functional = _unique(
-            _strings(recommendation.get("functionalRequirements"))
-            + _strings(analysis.get("functionalRequirements"))
-        )
+        # Governance has already removed unsupported provider suggestions. Never
+        # re-merge the raw provider payload into the canonical planning input.
+        functional = _unique(_strings(analysis.get("functionalRequirements")))
         business_goal = _first(
+            governed.get("businessGoal"),
             recommendation.get("businessGoal"),
             refinement.get("businessGoal"),
             refinement.get("businessObjective"),
@@ -44,20 +46,23 @@ class RequirementAnalysisDocumentBuilder:
             )
 
         actors = _unique([
+            _text(governed.get("primaryActor")),
             _text(recommendation.get("primaryActor")),
             _text(refinement.get("primaryActor")),
             _text(intent.get("primaryActor")),
             *_strings(analysis.get("actors")),
         ])
         secondary = _unique(
-            _strings(recommendation.get("secondaryActors"))
+            _strings(governed.get("secondaryActors"))
+            + _strings(recommendation.get("secondaryActors"))
             + _strings(refinement.get("secondaryActors"))
             + _strings(intent.get("secondaryActors"))
             + actors[1:]
         )
         primary_actor = actors[0] if actors else ""
         capabilities = _unique(
-            _strings(recommendation.get("capabilities"))
+            _strings(governed.get("capabilities"))
+            + _strings(recommendation.get("capabilities"))
             + _strings(refinement.get("coreCapabilities"))
             + _strings(intent.get("capabilities"))
         )
@@ -149,6 +154,7 @@ class RequirementAnalysisDocumentBuilder:
             ),
             "business_goal": business_goal,
             "problem_statement": _first(
+                governed.get("problemStatement"),
                 recommendation.get("problemStatement"),
                 refinement.get("problemStatement"),
                 f"The requirement does not yet define a distinct problem statement for {primary_actor}." if primary_actor else "A distinct problem statement was not provided or inferred.",
@@ -156,6 +162,7 @@ class RequirementAnalysisDocumentBuilder:
             "primary_actor": primary_actor,
             "secondary_actors": secondary,
             "business_value": _first(
+                governed.get("businessValue"),
                 recommendation.get("businessValue"),
                 refinement.get("expectedOutcome"),
                 refinement.get("businessGoal"),
@@ -163,9 +170,8 @@ class RequirementAnalysisDocumentBuilder:
             "capabilities": capabilities,
             "functional_requirements": functional,
             "candidate_non_functional_requirements": _unique(
-                _strings(recommendation.get("candidateNonFunctionalRequirements"))
-                + _strings(recommendation.get("nonFunctionalRequirements"))
-                + _strings(analysis.get("nonFunctionalRequirements"))
+                _strings(analysis.get("nonFunctionalRequirements"))
+                + _strings(analysis.get("candidateNonFunctionalRequirements"))
             ),
             "acceptance_criteria": _strings(analysis.get("acceptanceCriteria")),
             "business_rules": business_rules,
@@ -183,6 +189,8 @@ class RequirementAnalysisDocumentBuilder:
             "assumptions": assumptions,
             "open_questions": questions,
             "engineering_insights": insights,
+            "statement_governance": list(governance.get("statements") or []),
+            "suggested_enhancements": list(governance.get("suggestedEnhancements") or []),
             "planning_readiness": readiness,
             "confidence": confidence,
             "evidence": all_evidence,
@@ -267,11 +275,23 @@ class RequirementAnalysisDocumentBuilder:
             if not capabilities:
                 warnings.append("Confirm at least one capability before Planning approval.")
         explanation = (
-            f"Readiness is {status} at {score}%. "
-            f"It reflects business clarity, {len(functional)} functional requirement(s), "
-            f"{len(capabilities)} capability signal(s), and "
-            f"{(report.get('confidence') or {}).get('evidenceCount') or 0} engineering evidence item(s)."
+            f"{len(functional)} governed functional requirement(s) and {len(capabilities)} capability signal(s) "
+            f"are available. {(report.get('confidence') or {}).get('evidenceCount') or 0} engineering evidence "
+            f"item(s) were selected. The score is supporting context, not the decision itself."
         )
+        strengths = []
+        attention = []
+        if business_goal:
+            strengths.append("A distinct business outcome is defined.")
+        if functional:
+            strengths.append(f"{len(functional)} governed functional requirement(s) are ready for planning.")
+        if primary_actor:
+            strengths.append(f"Primary actor identified as {primary_actor}.")
+        if int((report.get("confidence") or {}).get("evidenceCount") or 0):
+            strengths.append("Engineering findings include traceable source references.")
+        attention.extend(_unique([*blockers, *warnings]))
+        if analysis.get("suggestedEnhancements"):
+            attention.append("AI suggestions remain outside the planning scope until explicitly approved.")
         return {
             **current,
             "status": status,
@@ -279,6 +299,8 @@ class RequirementAnalysisDocumentBuilder:
             "readyForPlanning": status in {"Ready", "ReadyWithRecommendations"},
             "blockers": _unique(blockers),
             "warnings": _unique(warnings),
+            "strengths": _unique(strengths),
+            "needsAttention": _unique(attention),
             "explanation": explanation,
             "dimensions": dimensions,
             "evidenceStatus": report.get("status") or "DiscoveryPending",
@@ -315,6 +337,12 @@ class RequirementAnalysisDocumentBuilder:
             "capabilitiesPresent": bool(value["capabilities"]),
             "repositoryEvidenceValid": repository_evidence_valid,
             "planningReadinessExplained": bool(value["planning_readiness"].get("explanation")),
+            "suggestionsExcludedFromFunctionalRequirements": not any(
+                item.get("classification") == "AI_SUGGESTION"
+                and item.get("category") == "Functional Requirement"
+                and item.get("text") in functional
+                for item in value.get("statement_governance") or []
+            ),
         }
         warnings = []
         if not business_goal_distinct:

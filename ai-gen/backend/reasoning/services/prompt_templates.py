@@ -63,6 +63,8 @@ TEMPLATES: dict[str, PromptTemplate] = {
             "Use Requirement Intent only as interpretation; Engineering Context is authoritative for engineering facts.",
             "Write the Executive Summary, Problem Statement, Business Goal, Business Value, actors, capabilities, and Functional Requirements as distinct concepts.",
             "The Business Goal must explain why the outcome matters; Functional Requirements must state what behavior is required.",
+            "Do not add rollback, retry, authentication, authorization, audit, notification, role-management, or CRUD behavior unless the source or cited engineering evidence explicitly supports it.",
+            "Place useful but unsupported patterns in suggestedEnhancements with a reason; never place them in Functional Requirements.",
             "Business Rules, constraints, dependencies, and repository impact require valid evidence references.",
             "Candidate Non-Functional Requirements and assumptions are proposals and must be labelled as such.",
             "Risks may be inferred, but explain the evidence or uncertainty behind each risk.",

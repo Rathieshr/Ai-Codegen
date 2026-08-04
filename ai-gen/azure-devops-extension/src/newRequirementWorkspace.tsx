@@ -139,6 +139,22 @@ type AnalysisSectionSource = {
   provider?: string;
   reasoningMode?: string;
 };
+type GovernedStatement = {
+  id: string;
+  category: string;
+  text: string;
+  classification: 'SOURCE' | 'EVIDENCE' | 'AI_INFERRED' | 'AI_SUGGESTION' | 'UNKNOWN';
+  source: string;
+  provider?: string;
+  model?: string;
+  promptVersion?: string;
+  confidence: number;
+  evidenceReferences: string[];
+  generatedAt: string;
+  approvedStatus: string;
+  why: string;
+  requiresConfirmation?: boolean;
+};
 type RequirementAnalysisDocument = {
   schemaVersion: 'hei-requirement-analysis-v2';
   documentId: string;
@@ -170,12 +186,16 @@ type RequirementAnalysisDocument = {
   assumptions: string[];
   openQuestions: string[];
   engineeringInsights: string[];
+  statementGovernance: GovernedStatement[];
+  suggestedEnhancements: GovernedStatement[];
   planningReadiness: {
     status: 'Ready' | 'ReadyWithRecommendations' | 'NeedsUserInput' | 'Blocked';
     readyForPlanning: boolean;
     score: number;
     blockers: string[];
     warnings: string[];
+    strengths?: string[];
+    needsAttention?: string[];
     explanation: string;
     dimensions: Record<string, number>;
     evidenceStatus: string;
@@ -269,7 +289,7 @@ type RequirementAnalysisResult = {
       schemaVersion: string; contextId: string; contextVersion: string;
       status: 'Ready' | 'Partial' | 'DiscoveryPending' | 'NoRelevantEvidence';
       summary: string;
-      whatIFound: Array<{ source: string; status: string; count: number; summary: string; evidenceReferences: string[] }>;
+      whatIFound: Array<{ source: string; status: string; count: number; summary: string; evidenceReferences: string[]; findings?: Array<{ title: string; type: string; sourceReference: string; reason: string; confidence: number }> }>;
       reusableComponents: DiscoveryEvidence[]; similarFeatures: DiscoveryEvidence[];
       relevantDocumentation: DiscoveryEvidence[]; architectureEvidence: DiscoveryEvidence[];
       repositoryEvidence: DiscoveryEvidence[]; azureDevOpsEvidence: DiscoveryEvidence[];
@@ -2237,6 +2257,10 @@ function RequirementAnalysisDocumentView({ analysis }: { analysis: RequirementAn
   const confidence = document.confidence || { score: Math.round(analysis.confidence * 100), level: 'Needs Review', reason: '' };
   const businessSource = sectionSources.businessGoal;
   const actorValues = [document.primaryActor, ...(document.secondaryActors || [])].filter(Boolean);
+  const statements = document.statementGovernance || [];
+  const discoveryFindings = (discovery?.whatIFound || []).flatMap((group) =>
+    (group.findings || []).map((item) => `${item.title} · ${group.source}`),
+  );
   return <section className="hei-analysis-document" aria-label="Canonical Requirement Analysis">
     <header className="hei-analysis-document-header">
       <div><span>Requirement Analysis V2</span><h3>{document.title}</h3><p>{document.executiveSummary || 'An executive summary could not be established from the current requirement.'}</p></div>
@@ -2245,15 +2269,16 @@ function RequirementAnalysisDocumentView({ analysis }: { analysis: RequirementAn
 
     <AnalysisDocumentSection title="Business Understanding" source={businessSource}>
       <div className="hei-analysis-understanding-grid">
-        <AnalysisValue label="Business Goal" value={document.businessGoal} empty="A distinct business outcome was not provided or supported." />
-        <AnalysisValue label="Problem Statement" value={document.problemStatement} empty="The current problem could not be stated without adding scope." />
-        <AnalysisValue label="Business Value" value={document.businessValue} empty="Measurable business value requires clarification." />
-        <AnalysisValue label="Primary Actor" value={document.primaryActor} empty="No primary actor could be identified." />
+        <AnalysisValue label="Business Goal" value={document.businessGoal} empty="A distinct business outcome was not provided or supported." statement={findGovernedStatement(statements, 'Business Goal', document.businessGoal)} />
+        <AnalysisValue label="Problem Statement" value={document.problemStatement} empty="The current problem could not be stated without adding scope." statement={findGovernedStatement(statements, 'Problem Statement', document.problemStatement)} />
+        <AnalysisValue label="Business Value" value={document.businessValue} empty="Measurable business value requires clarification." statement={findGovernedStatement(statements, 'Business Value', document.businessValue)} />
+        <AnalysisValue label="Primary Actor" value={document.primaryActor} empty="No primary actor could be identified." statement={findGovernedStatement(statements, 'Primary Actor', document.primaryActor)} />
       </div>
-      <ContextTags title="Actors" values={actorValues} empty="No actors were identifiable from the requirement." />
-      <ContextTags title="Capabilities" values={document.capabilities || []} empty="No capability could be identified without expanding the requirement." />
-      <ContextTags title="Functional Requirements" values={document.functionalRequirements || []} empty="No functional behavior was identified." />
-      <ContextTags title="Candidate Non-Functional Requirements" values={document.candidateNonFunctionalRequirements || []} empty="No evidence-supported quality candidates were identified." />
+      <GovernedStatements title="Actors" statements={statements.filter((item) => item.category === 'Primary Actor' || item.category === 'Secondary Actor')} fallback={actorValues} empty="No actors were identifiable from the requirement." />
+      <GovernedStatements title="Capabilities" statements={statements.filter((item) => item.category === 'Capability')} fallback={document.capabilities || []} empty="No capability could be identified without expanding the requirement." />
+      <GovernedStatements title="Functional Requirements" statements={statements.filter((item) => item.category === 'Functional Requirement' && item.classification !== 'AI_SUGGESTION')} fallback={document.functionalRequirements || []} empty="No governed functional behavior was identified." />
+      <GovernedStatements title="Non-Functional Requirements and Candidates" statements={statements.filter((item) => item.category === 'Non-Functional Requirement' || item.category === 'Candidate Non-Functional Requirement')} fallback={document.candidateNonFunctionalRequirements || []} empty="No quality requirements or candidates were identified." />
+      <GovernedStatements title="Suggested Enhancements" statements={document.suggestedEnhancements || []} fallback={[]} empty="No unsupported enhancements were proposed." />
       <ContextTags title="Business Rules" values={document.businessRules || []} empty="No evidenced business rules were found." />
       <ContextTags title="Constraints" values={document.constraints || []} empty="No evidenced constraints were found." />
       <ContextTags title="Dependencies" values={document.dependencies || []} empty="No evidenced dependencies were found." />
@@ -2266,7 +2291,7 @@ function RequirementAnalysisDocumentView({ analysis }: { analysis: RequirementAn
         <AnalysisValue label="Evidence Found" value={String(evidence.length)} empty="No relevant evidence found" />
         <AnalysisValue label="Conflicts" value={String(discovery?.conflicts?.length || 0)} empty="No conflicts detected" />
       </div>
-      <ContextTags title="What HEI Found" values={(discovery?.whatIFound || []).filter((item) => item.count > 0).map((item) => item.summary)} empty={discovery?.status === 'DiscoveryPending' ? 'Discovery Pending' : 'No relevant evidence found'} />
+      <ContextTags title="What HEI Found" values={discoveryFindings} empty={discovery?.status === 'DiscoveryPending' ? 'Discovery Pending' : 'No relevant evidence found'} />
       <ContextTags title="Engineering Insights" values={document.engineeringInsights || []} empty="No additional engineering insight was supported by current evidence." />
       <DiscoveryEvidenceGroup title="Reusable Components" values={reusableComponents} />
     </AnalysisDocumentSection>
@@ -2299,9 +2324,11 @@ function RequirementAnalysisDocumentView({ analysis }: { analysis: RequirementAn
 
     <AnalysisDocumentSection title="Planning Readiness" source={{ origin: 'Requirement Validation', evidenceReferences: evidence.map((item) => item.sourceReference) }}>
       <div className="hei-analysis-readiness">
-        <div><Status value={readinessLabel(readiness.status)} /><strong>{readiness.score}%</strong><p>{readiness.explanation || 'Planning readiness was calculated from requirement quality and available engineering evidence.'}</p></div>
+        <div><Status value={readinessLabel(readiness.status)} /><p>{readiness.explanation || 'Planning readiness was calculated from requirement quality and available engineering evidence.'}</p><small>Supporting score: {readiness.score}%</small></div>
         <div>{Object.entries(dimensions).map(([key, value]) => <Signal key={key} label={humanizeAnalysisKey(key)} value={`${value}%`} />)}</div>
       </div>
+      {(readiness.strengths || []).length ? <ContextTags title="Strengths" values={readiness.strengths || []} empty="No strengths identified." /> : null}
+      {(readiness.needsAttention || []).length ? <ContextTags title="Needs Attention" values={readiness.needsAttention || []} empty="Nothing requires attention." /> : null}
       {(readiness.blockers || []).length ? <ContextTags title="Blockers" values={readiness.blockers || []} empty="No blockers." /> : null}
       {(readiness.warnings || []).length ? <ContextTags title="Recommendations" values={readiness.warnings || []} empty="No recommendations." /> : null}
       {validationWarnings.length ? <ContextTags title="Validation Notes" values={validationWarnings} empty="Validation passed." /> : null}
@@ -2322,8 +2349,23 @@ function AnalysisSource({ value }: { value?: AnalysisSectionSource }) {
   return <span className="hei-analysis-source" title={value.evidenceReferences?.join('\n')}>{value.origin}{evidenceCount ? ` · ${evidenceCount} evidence` : ''}</span>;
 }
 
-function AnalysisValue({ label, value, empty }: { label: string; value: string; empty: string }) {
-  return <article className={value ? '' : 'empty'}><span>{label}</span><p>{value || empty}</p></article>;
+function AnalysisValue({ label, value, empty, statement }: { label: string; value: string; empty: string; statement?: GovernedStatement }) {
+  return <article className={value ? '' : 'empty'} title={statement?.why || ''}><span>{label}</span><p>{value || empty}</p>{statement ? <StatementMeta statement={statement} /> : null}</article>;
+}
+
+function GovernedStatements({ title, statements, fallback, empty }: { title: string; statements: GovernedStatement[]; fallback: string[]; empty: string }) {
+  if (!statements.length) return <ContextTags title={title} values={fallback} empty={empty} />;
+  return <div className="hei-governed-statements"><strong>{title}</strong><div>{statements.map((statement) => <article key={statement.id} title={statement.why}><p>{statement.text}</p><StatementMeta statement={statement} /></article>)}</div></div>;
+}
+
+function StatementMeta({ statement }: { statement: GovernedStatement }) {
+  const label = statement.classification.replace('_', ' ');
+  return <small className="hei-statement-meta"><span className={`hei-statement-badge ${statement.classification.toLowerCase()}`}>{label}</span><span>{Math.round(statement.confidence * 100)}%</span>{statement.evidenceReferences?.length ? <span title={statement.evidenceReferences.join('\n')}>{statement.evidenceReferences.length} evidence</span> : null}{statement.requiresConfirmation ? <span>Review required</span> : null}</small>;
+}
+
+function findGovernedStatement(statements: GovernedStatement[], category: string, text: string) {
+  return statements.find((statement) => statement.category === category && statement.text === text)
+    || statements.find((statement) => statement.category === category);
 }
 
 function humanizeAnalysisKey(value: string) {

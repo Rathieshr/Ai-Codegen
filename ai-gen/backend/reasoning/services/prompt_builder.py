@@ -436,6 +436,7 @@ def _output_schema(workflow_type: str) -> dict[str, Any]:
                 "businessValue": "string",
                 "capabilities": ["string"],
                 "functionalRequirements": ["string"],
+                "suggestedEnhancements": [{"text": "string", "reason": "string"}],
                 "candidateNonFunctionalRequirements": ["string"],
                 "nonFunctionalRequirements": ["string"],
                 "businessRules": ["string"],

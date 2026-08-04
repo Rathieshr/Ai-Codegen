@@ -15,6 +15,7 @@ from backend.requirement_intake.ingestion import RequirementIngestionService
 from .acceptance_criteria import IntelligentAcceptanceCriteriaEngine
 from .document import RequirementAnalysisDocumentBuilder
 from .engine import RequirementAnalysisEngine
+from .governance import RequirementGovernanceEngine
 from .models import RequirementFinding
 
 
@@ -27,6 +28,7 @@ class RequirementAnalysisService:
         engine: RequirementAnalysisEngine | None = None,
         acceptance_engine: IntelligentAcceptanceCriteriaEngine | None = None,
         document_builder: RequirementAnalysisDocumentBuilder | None = None,
+        governance_engine: RequirementGovernanceEngine | None = None,
         repository_detector: Any | None = None,
         engineering_intelligence: Any | None = None,
         reasoning_engine: Any | None = None,
@@ -39,6 +41,7 @@ class RequirementAnalysisService:
         self.engine = engine or RequirementAnalysisEngine()
         self.acceptance_engine = acceptance_engine or IntelligentAcceptanceCriteriaEngine()
         self.document_builder = document_builder or RequirementAnalysisDocumentBuilder()
+        self.governance_engine = governance_engine or RequirementGovernanceEngine()
         self.repository_detector = repository_detector
         self.engineering_intelligence = engineering_intelligence or EngineeringIntelligenceService(
             repository_detector=repository_detector,
@@ -103,10 +106,15 @@ class RequirementAnalysisService:
         else:
             synthesis_reasoning = self._reason_about_requirement(requirement, result, engineering_context)
         self._apply_evidence_synthesis(result, synthesis_reasoning)
-        result.update(self.acceptance_engine.understand(result, requirement))
-        result["aiAnalysis"] = self._reasoning_projection(synthesis_reasoning)
         discovery = self._engineering_discovery(engineering_context)
         result["engineeringDiscovery"] = discovery
+        governance = self.governance_engine.govern(
+            requirement, result, discovery, synthesis_reasoning,
+        )
+        result["statementGovernance"] = governance
+        self._apply_statement_governance(result, governance)
+        result.update(self.acceptance_engine.understand(result, requirement))
+        result["aiAnalysis"] = self._reasoning_projection(synthesis_reasoning)
         result["analysisDocument"] = self.document_builder.build(
             requirement, result, engineering_context, discovery, synthesis_reasoning,
         )
@@ -819,6 +827,18 @@ class RequirementAnalysisService:
             "evidence": list(reasoning.get("evidence") or []),
         }
 
+    @staticmethod
+    def _apply_statement_governance(
+        analysis: dict[str, Any], governance: dict[str, Any],
+    ) -> None:
+        analysis["functionalRequirements"] = _strings(governance.get("acceptedFunctionalRequirements"))
+        analysis["nonFunctionalRequirements"] = _strings(governance.get("acceptedNonFunctionalRequirements"))
+        analysis["suggestedEnhancements"] = list(governance.get("suggestedEnhancements") or [])
+        analysis["candidateNonFunctionalRequirements"] = list(governance.get("candidateNonFunctionalRequirements") or [])
+        # Preserve source extraction semantics. Inferred business outcomes and
+        # candidate actors live in statementGovernance/analysisDocument where
+        # their provenance remains visible; they do not become source facts.
+
     def _engineering_discovery(self, context: dict[str, Any]) -> dict[str, Any]:
         markdown = context.get("repository_markdown_context") or {}
         repository = context.get("repository") or {}
@@ -1007,6 +1027,8 @@ class RequirementAnalysisService:
             == "requirement-analysis-v2"
             and analysis.get("analysisDocument", {}).get("schemaVersion")
             == "hei-requirement-analysis-v2"
+            and analysis.get("statementGovernance", {}).get("schemaVersion")
+            == "hei-statement-governance-v1"
         )
 
     def _restore_reviewed_acceptance(

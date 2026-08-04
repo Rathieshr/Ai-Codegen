@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from ..domain import AzureDevOpsIntegrationError
 from .contracts import (
     AzureDevOpsReconcileRequest, AzureDevOpsSyncRequest, RegisterConnectionRequest,
-    WebhookRequest, WIQLRequest,
+    UpdateConnectionRequest, WebhookRequest, WIQLRequest,
 )
 
 
@@ -46,6 +46,10 @@ def build_azure_devops_router(module) -> APIRouter:
     @router.get("/connections/{connection_id}")
     def get_connection(connection_id: str):
         return call(lambda: module.connections.get(connection_id) or module.connections.require(connection_id))
+
+    @router.put("/connections/{connection_id}")
+    def update_connection(connection_id: str, request: UpdateConnectionRequest, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):
+        return call(lambda: module.connections.update(connection_id, request.as_service_input(), correlation_id=correlation(x_correlation_id)))
 
     @router.post("/connections/{connection_id}/validate")
     def validate_connection(connection_id: str, x_correlation_id: str = Header(default="", alias="X-Correlation-ID")):

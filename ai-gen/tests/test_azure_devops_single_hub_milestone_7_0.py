@@ -203,6 +203,14 @@ class AzureDevOpsSingleHubTests(unittest.TestCase):
         self.assertIn("syncType: 'ManualSync'", settings)
         self.assertNotIn("type=\"password\"", settings)
 
+    def test_rejected_azure_devops_connection_can_be_corrected_and_revalidated(self):
+        settings = (EXTENSION / "src/settingsWorkspace.tsx").read_text()
+        self.assertIn("'failed', 'rejected', 'degraded', 'pendingvalidation'", settings)
+        self.assertIn("Save & Validate Connection", settings)
+        self.assertIn("Update the rejected connection settings", settings)
+        self.assertIn("'PUT'", settings)
+        self.assertNotIn("disabled={connectionBusy || Boolean(connection)}", settings)
+
     def test_saved_mapping_drives_repository_center_and_overview_uses_host_project(self):
         app = (EXTENSION / "src/heiApp.tsx").read_text()
         overview = (EXTENSION / "src/overviewDashboard.tsx").read_text()

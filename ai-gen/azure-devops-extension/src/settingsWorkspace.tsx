@@ -91,6 +91,7 @@ export function SettingsWorkspace({
     () => repositories.find((repository) => repository.id === repositoryId),
     [repositories, repositoryId],
   );
+  const connectionCanBeCorrected = !connection || ['failed', 'rejected', 'degraded', 'pendingvalidation'].includes(String(connection.status || '').toLowerCase());
 
   useEffect(() => {
     setAdoProject(mapping?.ado_project || context.project.name);
@@ -198,6 +199,20 @@ export function SettingsWorkspace({
           secretReference: secretReference.trim() || 'ADO_PAT',
           permissions: ['Project.Read', 'WorkItems.Read', 'Code.Read', 'Build.Read'],
         });
+      } else if (connectionCanBeCorrected) {
+        current = await writeJson<AzureDevOpsConnection>(
+          `${baseUrl}/integrations/azure-devops/connections/${encodeURIComponent(current.connectionId)}`,
+          {
+            organizationUrl: organizationUrl.trim(),
+            organizationName: context.organization.name,
+            projectId: context.project.id || context.project.name,
+            projectName: context.project.name,
+            authenticationMode: 'PAT',
+            secretReference: secretReference.trim() || 'ADO_PAT',
+            permissions: ['Project.Read', 'WorkItems.Read', 'Code.Read', 'Build.Read'],
+          },
+          'PUT',
+        );
       }
       const validated = await writeJson<AzureDevOpsConnection>(
         `${baseUrl}/integrations/azure-devops/connections/${encodeURIComponent(current.connectionId)}/validate`,
@@ -282,15 +297,16 @@ export function SettingsWorkspace({
           <strong>{connection?.status || 'Not Connected'}</strong>
         </div>
         <div className="hei-repository-mapping-form">
-          <label><span>Organization URL</span><input value={organizationUrl} onChange={(event) => setOrganizationUrl(event.target.value)} disabled={connectionBusy || Boolean(connection)} placeholder="https://dev.azure.com/organization" /></label>
+          <label><span>Organization URL</span><input value={organizationUrl} onChange={(event) => setOrganizationUrl(event.target.value)} disabled={connectionBusy || !connectionCanBeCorrected} placeholder="https://dev.azure.com/organization" /></label>
           <label><span>Project</span><input value={context.project.name} readOnly /></label>
-          <label><span>Credential Reference</span><input value={secretReference} onChange={(event) => setSecretReference(event.target.value)} disabled={connectionBusy || Boolean(connection)} placeholder="ADO_PAT" /></label>
+          <label><span>Credential Reference</span><input value={secretReference} onChange={(event) => setSecretReference(event.target.value)} disabled={connectionBusy || !connectionCanBeCorrected} placeholder="ADO_PAT" /></label>
         </div>
         <p className="hei-settings-help">The credential reference names a secure backend environment variable. HEI never stores or returns the PAT value.</p>
         {connection?.validationMessage ? <p className="hei-settings-validation">{connection.validationMessage}</p> : null}
+        {connection && connectionCanBeCorrected ? <p className="hei-settings-help">Update the rejected connection settings, then save and validate again.</p> : null}
         {connectionNotice ? <p className="hei-settings-notice" role="status">{connectionNotice}</p> : null}
         <div className="hei-settings-actions">
-          <button className="planner-button primary" type="button" onClick={() => void connectAzureDevOps()} disabled={connectionBusy || connection?.status === 'Connected'}>{connectionBusy ? 'Connecting...' : connection ? 'Validate Connection' : 'Connect Azure DevOps'}</button>
+          <button className="planner-button primary" type="button" onClick={() => void connectAzureDevOps()} disabled={connectionBusy || connection?.status === 'Connected'}>{connectionBusy ? 'Connecting...' : connectionCanBeCorrected && connection ? 'Save & Validate Connection' : connection ? 'Validate Connection' : 'Connect Azure DevOps'}</button>
           <button className="planner-button secondary" type="button" onClick={() => void synchronizeAzureDevOps()} disabled={connectionBusy || connection?.status !== 'Connected'}>Synchronize Project</button>
           <button className="planner-button secondary" type="button" onClick={() => void loadAzureDevOpsConnection()} disabled={connectionBusy}>Refresh Connection</button>
         </div>
@@ -391,9 +407,9 @@ async function readJson<T>(url: string): Promise<T> {
   return payload;
 }
 
-async function writeJson<T>(url: string, body?: unknown): Promise<T> {
+async function writeJson<T>(url: string, body?: unknown, method = 'POST'): Promise<T> {
   const response = await fetch(url, {
-    method: 'POST',
+    method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });

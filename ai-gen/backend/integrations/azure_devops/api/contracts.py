@@ -22,6 +22,10 @@ class RegisterConnectionRequest(BaseModel):
         return self.model_dump(by_alias=True)
 
 
+class UpdateConnectionRequest(RegisterConnectionRequest):
+    """Editable connection metadata; credentials remain secure references only."""
+
+
 class WIQLRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project: str

@@ -54,6 +54,25 @@ class AzureDevOpsConnectionService:
     def list(self) -> list[dict[str, Any]]:
         return [item.to_public_dict() for item in self._repository.list()]
 
+    def update(self, connection_id: str, value: dict[str, Any], *, correlation_id: str = "") -> dict[str, Any]:
+        self._reject_plaintext(value)
+        existing = self.require(connection_id)
+        updated = AzureDevOpsConnection.create({**value, "connectionId": connection_id})
+        duplicate = self._repository.find_duplicate(updated.organization_url, updated.project_id)
+        if duplicate and duplicate.connection_id != connection_id:
+            raise AzureDevOpsValidationError(
+                "This Azure DevOps organization and project connection is already registered.",
+                correlation_id=correlation_id,
+            )
+        updated.created_at = existing.created_at
+        updated.updated_at = _now()
+        updated.status = AzureDevOpsConnectionStatus.PENDING_VALIDATION.value
+        updated.last_validated_at = ""
+        updated.validation_message = "Connection settings changed. Validate the connection before synchronization."
+        self._repository.save(updated)
+        self._publish("AzureDevOpsConnectionUpdated", updated, correlation_id)
+        return updated.to_public_dict()
+
     def get(self, connection_id: str) -> dict[str, Any] | None:
         connection = self._repository.get(connection_id)
         return connection.to_public_dict() if connection else None

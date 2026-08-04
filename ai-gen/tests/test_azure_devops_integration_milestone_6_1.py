@@ -126,6 +126,45 @@ class AzureDevOpsIntegrationMilestone61Tests(unittest.TestCase):
         self.assertEqual(AzureDevOpsConnectionStatus.CONNECTED.value, result["status"])
         self.assertEqual("corr-validation", factory.created[-1][1])
 
+    def test_failed_connection_can_be_corrected_without_exposing_credentials(self):
+        service, repository, _ = self._service(FakeClient(error=AzureDevOpsAuthenticationError("Invalid credential.")))
+        item = service.register({
+            "organizationUrl": "https://dev.azure.com/wrong", "projectId": "p1",
+            "authenticationMode": "PAT", "secretReference": "WRONG_PAT",
+        })
+        failed = service.validate(item["connectionId"])
+        self.assertEqual(AzureDevOpsConnectionStatus.FAILED.value, failed["status"])
+
+        corrected = service.update(item["connectionId"], {
+            "organizationUrl": "https://dev.azure.com/hei", "projectId": "p1",
+            "authenticationMode": "PAT", "secretReference": "ADO_HEI_PAT",
+        }, correlation_id="corr-correction")
+
+        self.assertEqual(item["connectionId"], corrected["connectionId"])
+        self.assertEqual(AzureDevOpsConnectionStatus.PENDING_VALIDATION.value, corrected["status"])
+        self.assertEqual("https://dev.azure.com/hei", corrected["organizationUrl"])
+        self.assertNotIn("secretReference", corrected)
+        self.assertEqual("ADO_HEI_PAT", repository.get(item["connectionId"]).secret_reference)
+
+    def test_connection_update_api_resets_failed_validation(self):
+        app = FastAPI()
+        module = register_azure_devops_integration(self.root, client_factory=FakeFactory(FakeClient()))
+        item = module.connections.register({
+            "organizationUrl": "https://dev.azure.com/wrong", "projectId": "p1",
+            "authenticationMode": "PAT", "secretReference": "WRONG_PAT",
+        })
+        app.include_router(build_azure_devops_router(module))
+        response = TestClient(app).put(
+            f"/integrations/azure-devops/connections/{item['connectionId']}",
+            json={
+                "organizationUrl": "https://dev.azure.com/hei", "projectId": "p1",
+                "authenticationMode": "PAT", "secretReference": "ADO_HEI_PAT",
+            },
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(AzureDevOpsConnectionStatus.PENDING_VALIDATION.value, response.json()["status"])
+        self.assertNotIn("ADO_HEI_PAT", response.text)
+
     def test_invalid_credentials_are_not_retried_by_read_client(self):
         executor = SequenceExecutor([HttpResponse(401, {}, {"message": "bad credential"})])
         client = AzureDevOpsReadClient(connection(), StaticCredentials(), executor=executor, max_attempts=3, sleeper=lambda _: None)

@@ -121,6 +121,23 @@ class AzureDevOpsAgentMilestone68Tests(unittest.TestCase):
         self.assertEqual(ActionPackStatus.APPLIED.value, applied["approvalStatus"])
         self.assertIn(("apply", "ApplyPlanningPack", "pack-1", "apply-1"), self.sdk.calls)
 
+    def test_structured_automation_failure_does_not_mark_pack_applied(self):
+        pack = self._prepared_pack()
+        self.service.approve(pack["packId"], "product-owner")
+        original_apply = self.sdk.apply
+        self.sdk.apply = lambda *_args, **_kwargs: {
+            "status": "Failed",
+            "failure": {"message": "Azure DevOps rejected the work-item create request."},
+            "externalIds": {},
+        }
+        try:
+            result = self.service.apply(pack["packId"], "release-manager", idempotency_key="apply-failed")
+        finally:
+            self.sdk.apply = original_apply
+        self.assertEqual(ActionPackStatus.FAILED.value, result["approvalStatus"])
+        self.assertEqual("Failed", result["applicationResults"][0]["status"])
+        self.assertIn("rejected", result["applicationResults"][0]["error"])
+
     def test_expired_approval_is_rejected(self):
         pack = self.repository.get(self._prepared_pack()["packId"])
         pack.expires_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()

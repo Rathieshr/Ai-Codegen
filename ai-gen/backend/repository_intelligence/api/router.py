@@ -102,6 +102,16 @@ def build_repository_router(module: object) -> APIRouter:
             )
         return health
 
+    @router.get("/{repository_id}/documentation")
+    def get_repository_documentation(repository_id: str) -> dict:
+        registry = module.application.get_markdown_registry(repository_id)
+        if registry is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Repository '{repository_id}' was not found."},
+            )
+        return registry
+
     @router.get("/{repository_id}/snapshot")
     def get_repository_snapshot(repository_id: str) -> dict:
         snapshot = module.application.get_current_snapshot(repository_id)

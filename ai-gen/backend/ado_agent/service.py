@@ -179,6 +179,23 @@ class AzureDevOpsAgentService:
             }
             try:
                 result = self.sdk.apply(operation, source_id, request, pack.correlation_id)
+                result_status = str(result.get("status") or "Completed") if isinstance(result, dict) else "Completed"
+                if result_status.casefold() not in {"completed", "applied", "success", "succeeded"}:
+                    failure_count += 1
+                    failure = result.get("failure") if isinstance(result, dict) else None
+                    error_message = (
+                        str(failure.get("message") or "")
+                        if isinstance(failure, dict)
+                        else ""
+                    ) or f"Azure DevOps automation returned {result_status}."
+                    results.append({
+                        "actionId": action_id,
+                        "operation": operation,
+                        "status": "Failed",
+                        "error": error_message,
+                        "result": result,
+                    })
+                    break
                 results.append({"actionId": action_id, "operation": operation, "status": "Completed", "result": result})
             except Exception as error:
                 failure_count += 1

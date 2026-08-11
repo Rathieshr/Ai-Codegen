@@ -94,6 +94,39 @@ class PlanningProposalService:
             raise LookupError("Planning Proposal was not found.")
         return proposal
 
+    def list(
+        self,
+        *,
+        project_id: str = "",
+        status: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        proposals = [
+            deepcopy(value)
+            for value in self.store.read().values()
+            if isinstance(value, dict)
+        ]
+        if project_id:
+            proposals = [
+                value for value in proposals
+                if _text(value.get("projectId")).casefold() == project_id.casefold()
+            ]
+        if status:
+            proposals = [
+                value for value in proposals
+                if _text(value.get("status")).casefold() == status.casefold()
+            ]
+        proposals.sort(
+            key=lambda value: _text(value.get("updatedAt") or value.get("createdAt")),
+            reverse=True,
+        )
+        safe_limit = min(100, max(1, int(limit)))
+        return {
+            "proposals": proposals[:safe_limit],
+            "count": len(proposals),
+            "generatedAt": _now(),
+        }
+
     def update(self, proposal_id: str, request: dict[str, Any]) -> dict[str, Any]:
         actor = _text(request.get("actor")) or "HEI User"
         reason = _text(request.get("reason")) or "Planning Proposal edited."

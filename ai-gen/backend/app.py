@@ -315,6 +315,7 @@ engineering_intelligence_service = EngineeringIntelligenceService(
     pull_request_provider=lambda project_id: list(
         azure_devops_sdk.cached_collection(project_id, "pullRequests").values()
     ) if project_id else [],
+    markdown_service=repository_intelligence_module.markdown_service,
 )
 requirement_analysis_service.engineering_intelligence = engineering_intelligence_service
 planning_context_service = PlanningContextService(

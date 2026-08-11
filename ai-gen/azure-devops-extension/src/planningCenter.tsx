@@ -94,7 +94,19 @@ type Props = {
   currentWorkItemId?: string;
   canContribute: boolean;
   onGenerateExecutionPackage: () => void;
+  onContinueRequirementPlanning?: () => void;
   onError: (message: string) => void;
+};
+
+type PlanningProposalSummary = {
+  proposalId: string;
+  title: string;
+  status: string;
+  version: number;
+  updatedAt: string;
+  nodes?: Array<{ status?: string }>;
+  validation?: { status?: string; mandatoryPassed?: boolean };
+  azureDevOpsAutomation?: { status?: string; message?: string; operationCount?: number };
 };
 
 type PlanningTreeNode = PlanningCenterItem & { children: PlanningTreeNode[] };
@@ -102,7 +114,8 @@ const HIERARCHY_TYPES = new Set(['Requirement', 'Epic', 'Feature', 'Story', 'Tas
 const TYPE_ORDER: Record<string, number> = { Requirement: 0, Epic: 1, Feature: 2, Story: 3, Task: 4 };
 
 export function PlanningCenter({
-  baseUrl, projectId, actor, currentWorkItemId, canContribute, onGenerateExecutionPackage, onError,
+  baseUrl, projectId, actor, currentWorkItemId, canContribute, onGenerateExecutionPackage,
+  onContinueRequirementPlanning, onError,
 }: Props) {
   const [data, setData] = useState<PlanningCenterResponse>();
   const [selectedId, setSelectedId] = useState('');
@@ -147,11 +160,12 @@ export function PlanningCenter({
   const [planningDiffLoading, setPlanningDiffLoading] = useState(false);
   const [planningDiffError, setPlanningDiffError] = useState('');
   const [planningDiffBusy, setPlanningDiffBusy] = useState(false);
+  const [currentProposal, setCurrentProposal] = useState<PlanningProposalSummary>();
   const overviewRequest = useRef(0);
   const hierarchyRequest = useRef(0);
   const dependencyRequest = useRef(0);
 
-  useEffect(() => { void load(true); }, [projectId]);
+  useEffect(() => { void load(true); void loadCurrentProposal(); }, [projectId]);
   useEffect(() => {
     if (!currentWorkItemId || !data?.items.length) return;
     const match = data.items.find((item) => [item.id, item.sourceItemId].includes(currentWorkItemId));
@@ -239,6 +253,24 @@ export function PlanningCenter({
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadCurrentProposal() {
+    try {
+      const params = new URLSearchParams({ limit: '1' });
+      if (projectId) params.set('projectId', projectId);
+      const response = await fetch(`${baseUrl}/planning/proposal?${params.toString()}`);
+      const payload = await response.json() as { proposals?: PlanningProposalSummary[]; error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message || 'Unable to load the current Planning Proposal.');
+      setCurrentProposal(payload.proposals?.[0]);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unable to load the current Planning Proposal.');
+    }
+  }
+
+  function continueRequirementPlanning() {
+    if (onContinueRequirementPlanning) onContinueRequirementPlanning();
+    else onError('Open the HEI Command Center New Requirement workspace to continue this Planning Proposal.');
   }
 
   async function loadOverview(planningId: string) {
@@ -614,7 +646,9 @@ export function PlanningCenter({
     onExport: exportPlanning,
   } : null;
 
-  if (!selected || !workspaceActions) return <section className="hei-planning-center"><div className="hei-planning-empty"><strong>No Planning Pack is available.</strong><span>Generate a Planning Pack from an approved Requirement Summary.</span></div></section>;
+  const proposalContinuation = currentProposal ? <PlanningProposalContinuation value={currentProposal} onContinue={continueRequirementPlanning} /> : null;
+
+  if (!selected || !workspaceActions) return <section className="hei-planning-center">{proposalContinuation}<div className="hei-planning-empty"><strong>No published Planning Pack is available.</strong><span>{currentProposal ? 'Continue the current Planning Proposal to edit, validate, and approve its work items.' : 'Create a Requirement, review its Planning Proposal, and approve it before Azure DevOps creation.'}</span>{currentProposal ? <button className="planner-button primary" type="button" onClick={continueRequirementPlanning}>Continue Planning Proposal</button> : null}</div></section>;
 
   const overview = <PlanningOverview
     data={overviewData}
@@ -648,12 +682,24 @@ export function PlanningCenter({
     Approval: <PlanningContent title="Planning Approval" description="Review the decision record, capture comments, and advance the approved engineering artifact."><EstimationReport estimate={selectedEstimate} loading={estimationBusy === selected.id} onRecalculate={() => void estimate(selected, true)} onEdit={() => setActiveTab('Estimate')} /><div className="hei-planning-actions"><Detail label="Status" value={selected.status} /><Detail label="Readiness" value={selected.readiness} /><Detail label="Confidence" value={`${selected.confidence}%`} /><Detail label="Approver" value={selected.approver || 'Approval Pending'} /><Detail label="Approved On" value={selected.approvedAt || 'Not approved'} /><Detail label="Version" value={`v${selected.version}`} /></div><section className="hei-planning-approval-controls"><label><span>Approval Comments</span><textarea value={approvalComments} onChange={(event) => setApprovalComments(event.target.value)} placeholder="Record the decision context, requested changes, or publication note." /></label><div>{selected.canApprove ? <button className="planner-button primary" type="button" disabled={!canContribute || !selectedEstimate || Boolean(actionId)} onClick={() => void decide(selected, 'approve')}>Approve</button> : null}{selected.canReject ? <button className="planner-button danger" type="button" disabled={!canContribute || !approvalComments.trim() || Boolean(actionId)} onClick={() => void decide(selected, 'reject')}>Reject</button> : null}{selected.canRequestChanges ? <button className="planner-button secondary" type="button" disabled={!canContribute || !approvalComments.trim() || Boolean(actionId)} onClick={() => void transitionPlanning('request-changes')}>Request Changes</button> : null}{selected.canPublish ? <button className="planner-button primary" type="button" disabled={!canContribute || Boolean(actionId)} onClick={() => void transitionPlanning('publish')}>Publish</button> : null}</div></section><ApprovalHistory value={approvalHistory} loading={approvalHistoryLoading} onRollback={(version) => void transitionPlanning('rollback', version)} canRollback={canContribute && selected.canRollback && !Boolean(actionId)} /></PlanningContent>,
   };
 
-  return <PlanningWorkspace
+  return <section className="hei-planning-center">{proposalContinuation}<PlanningWorkspace
     header={<PlanningHeader name={selected.title} status={selected.status} confidence={selected.confidence} repository={repositoryName} version={selected.version} updated={selected.updatedAt} />}
     tabs={<PlanningTabs active={activeTab} onChange={setActiveTab} />}
     actionPanel={<PlanningActions {...workspaceActions} />}
     footer={<PlanningActions {...workspaceActions} compact />}
-  >{tabBodies[activeTab]}{data?.pagination.hasMore ? <p className="hei-planning-limit">Showing {data.pagination.returned} of {data.pagination.total} items.</p> : null}</PlanningWorkspace>;
+  >{tabBodies[activeTab]}{data?.pagination.hasMore ? <p className="hei-planning-limit">Showing {data.pagination.returned} of {data.pagination.total} items.</p> : null}</PlanningWorkspace></section>;
+}
+
+function PlanningProposalContinuation({ value, onContinue }: { value: PlanningProposalSummary; onContinue: () => void }) {
+  const included = (value.nodes || []).filter((item) => item.status !== 'Rejected').length;
+  const automation = value.azureDevOpsAutomation;
+  const next = value.status === 'Approved'
+    ? automation?.status === 'NeedsConfiguration' ? 'Azure DevOps configuration required' : 'Azure DevOps creation approval required'
+    : value.validation?.mandatoryPassed ? 'Review and approve the proposal' : 'Review and complete the proposal';
+  return <section className="hei-current-proposal" aria-label="Current Planning Proposal">
+    <div><span>Current Planning Proposal</span><h3>{value.title}</h3><p>{included} work item{included === 1 ? '' : 's'} · v{value.version} · {next}</p></div>
+    <div><span className={`hei-planning-status status-${value.status.toLowerCase()}`}>{value.status}</span><button className="planner-button primary" type="button" onClick={onContinue}>Continue Planning</button></div>
+  </section>;
 }
 
 function Detail({ label, value }: { label: string; value: string | number }) {

@@ -42,6 +42,7 @@ export function ApprovalCenter({ baseUrl, actor, role, canApprove, onError }: Pr
   const [search, setSearch] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [decisionMessage, setDecisionMessage] = useState('');
   const [view, setView] = useState<'preview' | 'details' | 'compare' | 'audit'>('preview');
 
   const approvals = response?.approvals || [];
@@ -72,10 +73,21 @@ export function ApprovalCenter({ baseUrl, actor, role, canApprove, onError }: Pr
     if (!selected) return;
     setBusy(true);
     try {
-      await request(`${baseUrl}/approvals/${encodeURIComponent(selected.id)}/${decision}`, {
+      const result = await request<{ sourceResult?: { application?: { approvalStatus?: string; applicationResults?: Array<{ result?: { externalIds?: Record<string, string> } }> } } }>(`${baseUrl}/approvals/${encodeURIComponent(selected.id)}/${decision}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor, role, reason }),
       });
+      if (selected.category === 'ADO Action Packs' && decision === 'approve') {
+        const application = result.sourceResult?.application;
+        const created = Object.keys(application?.applicationResults?.[0]?.result?.externalIds || {}).length;
+        setDecisionMessage(application?.approvalStatus === 'Applied'
+          ? created > 0
+            ? `${created} Azure DevOps work item${created === 1 ? '' : 's'} created successfully.`
+            : 'Azure DevOps work item creation completed successfully.'
+          : `Azure DevOps creation finished with status ${application?.approvalStatus || 'Unknown'}. Open Activity for the failure details.`);
+      } else {
+        setDecisionMessage(`${selected.title} was ${decision === 'approve' ? 'approved' : 'rejected'}.`);
+      }
       setReason('');
       await load();
       await loadDetails(selected.id);
@@ -88,6 +100,7 @@ export function ApprovalCenter({ baseUrl, actor, role, canApprove, onError }: Pr
         <div><span className="hei-eyebrow">Human Review</span><h2>Approval Center</h2><p>Review and decide every engineering approval from one queue.</p></div>
         <button type="button" onClick={() => void load()} disabled={busy}>Refresh</button>
       </header>
+      {decisionMessage ? <div className="approval-outcome" role="status"><span>{decisionMessage}</span><button type="button" onClick={() => setDecisionMessage('')}>Dismiss</button></div> : null}
 
       <div className="approval-summary">
         <Summary label="Pending" value={(response?.summary.byStatus.Pending || 0) + (response?.summary.byStatus.NeedsReview || 0) + (response?.summary.byStatus.Draft || 0)} tone="attention" />

@@ -68,6 +68,7 @@ type PlanningProposalResult = {
   review: { status: string; checklist: Array<{ name?: string; label?: string; passed: boolean; mandatory: boolean }>; reviewer: string; comments: string };
   history: Array<{ version: number; author: string; reason: string; timestamp: string; changes: string[] }>;
   createdAt: string; updatedAt: string; approvedBy: string; approvedAt: string;
+  azureDevOpsAutomation?: { status: string; packId: string; operationCount: number; message: string };
 };
 type EngineeringReviewResult = {
   reviewId: string; proposalId: string; proposalVersion: number; contextVersion: string;
@@ -581,9 +582,10 @@ type PlanningRecommendationResult = {
   };
 };
 
-export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onError }: {
+export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal = false, onOpenApprovals, onError }: {
   baseUrl: string;
   context: HEIHostContext;
+  resumeLatestProposal?: boolean;
   onOpenApprovals: () => void;
   onError: (message: string) => void;
 }) {
@@ -609,6 +611,30 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
   const [engineeringReview, setEngineeringReview] = useState<EngineeringReviewResult>();
   const [planningContext, setPlanningContext] = useState<PlanningContextResult>();
   const [planningRecommendation, setPlanningRecommendation] = useState<PlanningRecommendationResult>();
+
+  useEffect(() => {
+    if (!resumeLatestProposal) return;
+    let cancelled = false;
+    const resume = async () => {
+      try {
+        const projectId = context.project.id || context.project.name;
+        const params = new URLSearchParams({ limit: '1' });
+        if (projectId) params.set('projectId', projectId);
+        const response = await fetch(`${baseUrl}/planning/proposal?${params.toString()}`, { headers: { 'X-HEI-User': context.user.id } });
+        const payload = await response.json() as { proposals?: PlanningProposalResult[]; error?: { message?: string } };
+        if (!response.ok) throw new Error(payload.error?.message || 'Unable to restore the current Planning Proposal.');
+        const proposal = payload.proposals?.[0];
+        if (!cancelled && proposal) {
+          setResult(proposal);
+          await refreshEngineeringReview(proposal.proposalId);
+        }
+      } catch (error) {
+        if (!cancelled) onError(error instanceof Error ? error.message : 'Unable to restore the current Planning Proposal.');
+      }
+    };
+    void resume();
+    return () => { cancelled = true; };
+  }, [baseUrl, context.project.id, context.project.name, context.user.id, resumeLatestProposal]);
 
   async function readDocument(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -1624,13 +1650,14 @@ function EngineeringReviewPanel({ value, review, busy, onStart, onAction, onExpo
     {canDecide ? <label className="hei-single-approval-comment"><span>Approval note (optional)</span><textarea rows={3} value={comments} onChange={(event) => setComments(event.target.value)} placeholder="Add a decision note or explain requested changes" /></label> : null}
     <div className="hei-review-actions">
       {canDecide ? <><button className="planner-button primary" type="button" disabled={busy || !review.readiness.approvalAllowed} onClick={() => onAction('decision', { decision: comments.trim() ? 'ApproveWithComments' : 'Approve', role: stage.role, comments: comments.trim() })}>Approve Proposal</button><button className="planner-button secondary" type="button" disabled={busy || !comments.trim()} onClick={() => onAction('decision', { decision: 'RequestChanges', role: stage.role, comments: comments.trim(), changeType: 'Business Clarification' })}>Request Changes</button><button className="planner-button danger" type="button" disabled={busy || !comments.trim()} onClick={() => onAction('decision', { decision: 'Reject', role: stage.role, comments: comments.trim() })}>Reject</button></> : null}
-      {review.status === 'Approved' ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Create in Azure DevOps</button> : null}
+      {review.status === 'Approved' && value.azureDevOpsAutomation?.status !== 'NeedsConfiguration' ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Review &amp; Create in Azure DevOps</button> : null}
     </div>
     <details className="hei-single-approval-details"><summary>Review details</summary>
       <div className="hei-review-sections">{review.sections.map((item) => <article key={item.name}><div><strong>{item.name}</strong><p>{item.commentCount} comment(s)</p></div><Status value={item.status} /></article>)}</div>
       {review.decisions.length ? <div className="hei-review-history">{review.decisions.map((item) => <article key={item.decisionId}><Status value={item.decision} /><div><strong>{item.stage}</strong><p>{item.comments || 'No additional comments.'}</p></div><small>{item.reviewer}</small></article>)}</div> : null}
       <div className="hei-review-actions"><button className="planner-button secondary" type="button" onClick={() => onExport('Review Report')}>Export Review</button><button className="planner-button secondary" type="button" onClick={onOpenApprovals}>Open Approval Center</button></div>
     </details>
+    {review.status === 'Approved' ? <div className={`hei-ado-creation-state ${value.azureDevOpsAutomation?.status === 'NeedsConfiguration' ? 'blocked' : ''}`}><strong>{value.azureDevOpsAutomation?.status === 'NeedsConfiguration' ? 'Azure DevOps creation is not configured' : 'Azure DevOps work items are not created yet'}</strong><p>{value.azureDevOpsAutomation?.message || 'Open Approval Center, review the creation preview, then explicitly approve the Azure DevOps write.'}</p></div> : null}
   </section>;
   return <section className="hei-proposal-review-panel hei-engineering-review">
     <header><div><span>Planning Approval</span><h3>{review.status}</h3><p>{stage.name ? 'One approval is required before Azure DevOps creation.' : 'Approval complete.'}</p></div><Status value={review.readiness.status} /></header>

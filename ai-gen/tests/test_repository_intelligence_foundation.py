@@ -1182,12 +1182,97 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
         self.assertEqual(dashboard["filesIndexed"], 3)
         self.assertEqual(len(dashboard["repositories"]), 2)
 
+    def test_repository_scan_indexes_and_persists_markdown_registry(self) -> None:
+        root = Path(self.repo_dir.name)
+        (root / "docs" / "architecture.md").write_text(
+            "# Architecture\nThe Device Service must use repository interfaces.\n",
+            encoding="utf-8",
+        )
+        (root / "node_modules" / "package").mkdir(parents=True)
+        (root / "node_modules" / "package" / "README.md").write_text(
+            "# Dependency internals\nThis content must not enter HEI knowledge.\n",
+            encoding="utf-8",
+        )
+        created = self.module.application.create_repository({
+            "name": "Documentation Registry",
+            "url": "https://github.com/org/documentation-registry",
+            "repositoryType": "GitHub",
+            "projectId": "project-docs",
+            "metadata": {"localPath": self.repo_dir.name},
+        })
+
+        result = self.module.application.scan_repository(created["repositoryId"], mode="Full")
+        registry = self.module.application.get_markdown_registry(created["repositoryId"])
+        snapshot = result["snapshot"]
+
+        self.assertEqual("Available", registry["status"])
+        self.assertIn("docs/architecture.md", registry["sourceFiles"])
+        self.assertNotIn("node_modules/package/README.md", registry["sourceFiles"])
+        self.assertGreater(registry["sectionsIndexed"], 0)
+        self.assertGreater(registry["statementsIndexed"], 0)
+        self.assertEqual(
+            registry["documentsIndexed"],
+            snapshot["metadata"]["documentationRegistry"]["documentsIndexed"],
+        )
+        health = self.module.application.get_repository_health(created["repositoryId"])
+        self.assertEqual(registry["sourceFiles"], health["documentation"]["sourceFiles"])
+
+        documentation_endpoint = next(
+            route.endpoint for route in build_repository_router(self.module).routes
+            if getattr(route, "path", "") == "/repositories/{repository_id}/documentation"
+        )
+        self.assertEqual(
+            registry["sectionsIndexed"],
+            documentation_endpoint(created["repositoryId"])["sectionsIndexed"],
+        )
+
+        reloaded = register_repository_intelligence(Path(self.temp_dir.name))
+        persisted = reloaded.application.get_markdown_registry(created["repositoryId"])
+        self.assertEqual(registry["sourceFiles"], persisted["sourceFiles"])
+        self.assertEqual(registry["sectionsIndexed"], persisted["sectionsIndexed"])
+
+    def test_incremental_scan_replaces_stale_markdown_registry_entries(self) -> None:
+        root = Path(self.repo_dir.name)
+        created = self.module.application.create_repository({
+            "name": "Incremental Documentation",
+            "url": "https://github.com/org/incremental-documentation",
+            "repositoryType": "GitHub",
+            "metadata": {"localPath": self.repo_dir.name},
+        })
+        self.module.application.scan_repository(created["repositoryId"], mode="Full")
+        self.assertIn(
+            "docs/readme.md",
+            self.module.application.get_markdown_registry(created["repositoryId"])["sourceFiles"],
+        )
+
+        (root / "docs" / "readme.md").unlink()
+        (root / "docs" / "device-health.mdx").write_text(
+            "# Device Health\nThe dashboard must display current device health.\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-C", str(root), "commit", "-m", "update documentation"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.module.application.scan_repository(created["repositoryId"], mode="Incremental")
+        registry = self.module.application.get_markdown_registry(created["repositoryId"])
+
+        self.assertNotIn("docs/readme.md", registry["sourceFiles"])
+        self.assertIn("docs/device-health.mdx", registry["sourceFiles"])
+
     def _seed_repository_files(self, root: Path) -> None:
         (root / "src").mkdir(parents=True, exist_ok=True)
         (root / "docs").mkdir(parents=True, exist_ok=True)
         (root / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
         (root / "src" / "index.ts").write_text("export const app = true;\n", encoding="utf-8")
-        (root / "docs" / "readme.md").write_text("# Repo\n", encoding="utf-8")
+        (root / "docs" / "readme.md").write_text(
+            "# Repo\nRepository guidance for the sample application.\n",
+            encoding="utf-8",
+        )
 
     def _initialize_git_repository(self, root: Path) -> None:
         commands = [

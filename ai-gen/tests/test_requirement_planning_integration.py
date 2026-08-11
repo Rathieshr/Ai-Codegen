@@ -806,6 +806,18 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertEqual(200, ai_review.status_code)
         self.assertTrue(ai_review.json()["aiReview"]["status"])
 
+    def test_planning_proposal_list_returns_latest_project_draft(self):
+        _, _, recommendation, first = self.prepare_proposal()
+        second = self.proposal.build({
+            "recommendationId": recommendation["recommendationId"],
+            "actor": "Planner",
+            "force": True,
+        })
+        result = self.proposal.list(project_id=second["projectId"], limit=1)
+        self.assertEqual(1, len(result["proposals"]))
+        self.assertEqual(second["proposalId"], result["proposals"][0]["proposalId"])
+        self.assertGreaterEqual(result["count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

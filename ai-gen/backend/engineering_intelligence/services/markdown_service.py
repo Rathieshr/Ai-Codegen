@@ -9,8 +9,11 @@ from pathlib import Path
 import re
 from typing import Any, Iterable
 
+from backend.platform.shared import JsonMapStore
 
-DEFAULT_INCLUDES = ("*.md", "*.markdown", "**/*.md", "**/*.markdown")
+
+MARKDOWN_EXTENSIONS = (".md", ".markdown", ".mdx")
+DEFAULT_INCLUDES = ("*.md", "*.markdown", "*.mdx", "**/*.md", "**/*.markdown", "**/*.mdx")
 DEFAULT_EXCLUDED_DIRECTORIES = {
     ".git", ".cache", ".next", ".nuxt", ".pytest_cache", ".turbo",
     "__pycache__", "bin", "build", "coverage", "dist", "generated",
@@ -45,11 +48,20 @@ class MarkdownService:
         *,
         include_patterns: Iterable[str] | None = None,
         exclude_patterns: Iterable[str] | None = None,
+        storage_path: str | Path | None = None,
     ) -> None:
         self.include_patterns = tuple(include_patterns or DEFAULT_INCLUDES)
         self.exclude_patterns = tuple(exclude_patterns or ())
-        self._sections: list[dict[str, Any]] = []
-        self._scan_diagnostics: dict[str, dict[str, Any]] = {}
+        self._store = JsonMapStore(Path(storage_path)) if storage_path else None
+        persisted = self._store.read() if self._store else {}
+        self._sections = [
+            dict(item) for item in persisted.get("sections") or [] if isinstance(item, dict)
+        ]
+        self._scan_diagnostics = {
+            str(repository_id): dict(value)
+            for repository_id, value in (persisted.get("diagnostics") or {}).items()
+            if isinstance(value, dict)
+        }
 
     def discover_repository(
         self,
@@ -74,7 +86,7 @@ class MarkdownService:
                 continue
             relative = path.relative_to(root).as_posix()
             if self._ignored(relative, includes, excludes):
-                ignored += int(path.suffix.casefold() in {".md", ".markdown"})
+                ignored += int(path.suffix.casefold() in MARKDOWN_EXTENSIONS)
                 continue
             try:
                 content = path.read_text(encoding="utf-8", errors="replace")
@@ -89,6 +101,8 @@ class MarkdownService:
             project_id=project_id,
             revision=revision,
             ignored_count=ignored,
+            include_patterns=includes,
+            exclude_patterns=excludes,
         )
 
     def index_repository_documents(
@@ -100,16 +114,20 @@ class MarkdownService:
         project_id: str = "",
         revision: str = "",
         ignored_count: int = 0,
+        include_patterns: Iterable[str] | None = None,
+        exclude_patterns: Iterable[str] | None = None,
     ) -> dict[str, Any]:
         indexed_at = datetime.now(timezone.utc).isoformat()
+        includes = tuple(include_patterns or self.include_patterns)
+        excludes = tuple(exclude_patterns or self.exclude_patterns)
         sections: list[dict[str, Any]] = []
         files_scanned = 0
         for document in documents:
             path = str(document.get("path") or "").strip().replace("\\", "/")
             content = str(document.get("content") or "")
-            if not path.casefold().endswith((".md", ".markdown")) or not content.strip():
+            if not path.casefold().endswith(MARKDOWN_EXTENSIONS) or not content.strip():
                 continue
-            if self._ignored(path, self.include_patterns, self.exclude_patterns):
+            if self._ignored(path, includes, excludes):
                 ignored_count += 1
                 continue
             files_scanned += 1
@@ -135,7 +153,32 @@ class MarkdownService:
             "contentHashes": sorted({item["contentHash"] for item in sections}),
         }
         self._scan_diagnostics[repository_id] = diagnostic
+        self._persist()
         return {**diagnostic, "sections": self._public(sections)}
+
+    def get_repository_registry(self, repository_id: str) -> dict[str, Any]:
+        sections = [
+            dict(item) for item in self._sections if item.get("repositoryId") == repository_id
+        ]
+        diagnostics = dict(self._scan_diagnostics.get(repository_id) or {})
+        classifications: dict[str, int] = {}
+        statement_count = 0
+        for section in sections:
+            classification = str(section.get("classification") or "general_documentation")
+            classifications[classification] = classifications.get(classification, 0) + 1
+            statement_count += len(section.get("extractedStatements") or [])
+        return {
+            "repositoryId": repository_id,
+            "repositoryRevision": str(diagnostics.get("repositoryRevision") or ""),
+            "documentsIndexed": int(diagnostics.get("filesScanned") or 0),
+            "sectionsIndexed": len(sections),
+            "statementsIndexed": statement_count,
+            "sourceFiles": sorted({str(item.get("path") or "") for item in sections if item.get("path")}),
+            "classifications": classifications,
+            "indexedAt": str(diagnostics.get("indexedAt") or ""),
+            "ignoredFiles": int(diagnostics.get("ignoredFiles") or 0),
+            "sections": self._public(sections),
+        }
 
     def index_markdown(self, documents: dict[str, str]) -> dict[str, Any]:
         result = self.index_repository_documents(
@@ -374,9 +417,17 @@ class MarkdownService:
     def _public(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [dict(item) for item in sections]
 
+    def _persist(self) -> None:
+        if self._store:
+            self._store.write({
+                "sections": self._sections,
+                "diagnostics": self._scan_diagnostics,
+            })
+
     indexMarkdown = index_markdown
     searchDocumentation = search_documentation
     getArchitectureSummary = get_architecture_summary
+    getRepositoryRegistry = get_repository_registry
 
 
 def _classification(path: str, heading: str, content: str) -> str:

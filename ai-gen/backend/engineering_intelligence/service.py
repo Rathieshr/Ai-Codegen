@@ -48,6 +48,7 @@ class EngineeringIntelligenceService:
         project_intelligence: Any | None = None,
         pull_request_provider: Any | None = None,
         context_builder: EngineeringContextBuilder | None = None,
+        markdown_service: MarkdownService | None = None,
     ) -> None:
         self.repository_intelligence = repository_intelligence
         self.repository_detector = repository_detector
@@ -64,7 +65,7 @@ class EngineeringIntelligenceService:
         self.repository_service = RepositoryService(
             self._analyze_repository, repository_intelligence,
         )
-        self.markdown_service = MarkdownService()
+        self.markdown_service = markdown_service or MarkdownService()
         self.architecture_service = ArchitectureService(self._analyze_architecture)
         self.dependency_service = DependencyService(self._analyze_dependencies)
         self.discovery_service = EngineeringDiscoveryService()
@@ -321,16 +322,36 @@ class EngineeringIntelligenceService:
         repository_record = (
             self.repository_intelligence.get_repository(repository.repositoryId) or {}
         )
+        snapshot_record = (
+            self.repository_intelligence.get_current_snapshot(repository.repositoryId) or {}
+        )
         metadata = repository_record.get("metadata") or {}
         project_id = _text(requirement.get("projectId"))
         revision = _text(
-            metadata.get("commitId")
+            snapshot_record.get("commitId")
+            or metadata.get("commitId")
             or metadata.get("revision")
+            or snapshot_record.get("version")
             or repository.repositorySnapshotVersion
         )
         local_path = _text(metadata.get("localPath"))
         discovery: dict[str, Any]
-        if local_path:
+        registry = self.markdown_service.get_repository_registry(repository.repositoryId)
+        registry_is_current = bool(
+            registry.get("indexedAt")
+            and _text(registry.get("repositoryRevision")) == revision
+        )
+        if registry_is_current:
+            discovery = {
+                "repositoryId": repository.repositoryId,
+                "repositoryRevision": registry.get("repositoryRevision"),
+                "filesScanned": registry.get("documentsIndexed", 0),
+                "sectionsIndexed": registry.get("sectionsIndexed", 0),
+                "ignoredFiles": registry.get("ignoredFiles", 0),
+                "indexedAt": registry.get("indexedAt"),
+                "registrySource": "RepositoryIntelligenceScan",
+            }
+        elif local_path:
             discovery = self.markdown_service.discover_repository(
                 local_path,
                 repository_id=repository.repositoryId,

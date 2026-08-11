@@ -43,6 +43,8 @@ class RepositoryIntelligenceJobHandler:
         graph_service: Any,
         file_ranking_service: Any,
         event_bus: EventBus,
+        markdown_service: Any | None = None,
+        repository_content_provider: Callable[[Repository, str], str] | None = None,
     ) -> None:
         self.repository_service = repository_service
         self.scanner = scanner
@@ -51,6 +53,8 @@ class RepositoryIntelligenceJobHandler:
         self.graph_service = graph_service
         self.file_ranking_service = file_ranking_service
         self.event_bus = event_bus
+        self.markdown_service = markdown_service
+        self.repository_content_provider = repository_content_provider
 
     def handle(self, job: dict[str, Any]) -> dict[str, Any]:
         payload = dict(job.get("payload") or {})
@@ -70,6 +74,11 @@ class RepositoryIntelligenceJobHandler:
         if completed_scan.status != "Completed":
             raise RuntimeError(completed_scan.message or "Repository scan failed.")
 
+        documentation_registry = self._index_repository_markdown(repository, snapshot, completed_scan)
+        snapshot.metadata = {
+            **dict(snapshot.metadata or {}),
+            "documentationRegistry": documentation_registry,
+        }
         self.snapshot_service.save_snapshot(snapshot)
         symbols = self.parser_service.parse_snapshot(repository, snapshot)
         self.parser_service.save_symbols(repository_id, snapshot.snapshot_id, symbols)
@@ -98,6 +107,7 @@ class RepositoryIntelligenceJobHandler:
             "graphNodeCount": len(graph.nodes),
             "graphRelationshipCount": len(graph.relationships),
             "rankingRefreshCount": len(ranking_probe),
+            "documentationRegistry": documentation_registry,
             "completedAt": now_iso(),
         }
         self.event_bus.publish(
@@ -110,6 +120,74 @@ class RepositoryIntelligenceJobHandler:
             }
         )
         return result
+
+    def _index_repository_markdown(
+        self,
+        repository: Repository,
+        snapshot: Any,
+        scan: Any,
+    ) -> dict[str, Any]:
+        if not self.markdown_service:
+            return {"status": "Unavailable", "documentsIndexed": 0, "sectionsIndexed": 0}
+        files = [
+            item for item in list((snapshot.metadata or {}).get("files") or [])
+            if isinstance(item, dict)
+            and str(item.get("path") or "").casefold().endswith((".md", ".markdown", ".mdx"))
+        ]
+        root_value = str(scan.root_path or repository.metadata.get("localPath") or "")
+        root = Path(root_value).expanduser()
+        root_resolved = root.resolve() if root.is_dir() else None
+        documents: list[dict[str, Any]] = []
+        unreadable = 0
+        for item in files:
+            path = str(item.get("path") or "").strip().lstrip("/")
+            if not path:
+                continue
+            try:
+                if root_resolved:
+                    candidate = (root_resolved / path).resolve()
+                    if root_resolved not in candidate.parents and candidate != root_resolved:
+                        unreadable += 1
+                        continue
+                    content = candidate.read_text(encoding="utf-8", errors="replace")
+                elif self.repository_content_provider:
+                    content = self.repository_content_provider(repository, path)
+                else:
+                    unreadable += 1
+                    continue
+            except Exception:
+                unreadable += 1
+                continue
+            if str(content).strip():
+                documents.append({
+                    "path": path,
+                    "content": str(content),
+                    "revision": snapshot.commit_id or str(snapshot.version),
+                    "contentHash": item.get("contentHash"),
+                })
+        indexed = self.markdown_service.index_repository_documents(
+            documents,
+            repository_id=repository.repository_id,
+            repository_name=repository.name,
+            project_id=repository.project_id or str(repository.metadata.get("adoProject") or ""),
+            revision=snapshot.commit_id or str(snapshot.version),
+            ignored_count=unreadable,
+            include_patterns=repository.metadata.get("markdownIncludePatterns"),
+            exclude_patterns=repository.metadata.get("markdownExcludePatterns"),
+        )
+        registry = self.markdown_service.get_repository_registry(repository.repository_id)
+        return {
+            "status": "Available" if registry["documentsIndexed"] else "NoDocuments",
+            "documentsDiscovered": len(files),
+            "documentsIndexed": registry["documentsIndexed"],
+            "sectionsIndexed": registry["sectionsIndexed"],
+            "statementsIndexed": registry["statementsIndexed"],
+            "sourceFiles": registry["sourceFiles"],
+            "classifications": registry["classifications"],
+            "ignoredFiles": indexed.get("ignoredFiles", 0),
+            "indexedAt": registry["indexedAt"],
+            "repositoryRevision": registry["repositoryRevision"],
+        }
 
 
 class RepositoryIntelligenceAgent:

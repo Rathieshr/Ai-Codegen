@@ -32,6 +32,7 @@ class RepositoryIntelligenceApplicationService:
     agent: object
     monitoring_service: object
     repository_content_provider: Callable[[Repository, str], str] | None = None
+    markdown_service: object | None = None
 
     def create_repository(self, payload: dict) -> dict:
         repository = Repository.from_dict(payload)
@@ -84,6 +85,7 @@ class RepositoryIntelligenceApplicationService:
         graph = self.graph_service.get_graph_status(repository_id)
         scan = self.scanner.get_scan(repository_id)
         snapshot = self.snapshot_service.get_latest_snapshot(repository_id)
+        documentation = dict((snapshot.metadata or {}).get("documentationRegistry") or {}) if snapshot else {}
         return {
             "repositoryId": repository.repository_id,
             "repositoryName": repository.name,
@@ -97,6 +99,9 @@ class RepositoryIntelligenceApplicationService:
             "latestScanId": scan.scan_id if scan else "",
             "scanMode": scan.mode if scan else "",
             "progress": dict(scan.progress) if scan else {},
+            "documentationStatus": documentation.get("status") or "NotIndexed",
+            "markdownDocumentsIndexed": int(documentation.get("documentsIndexed") or 0),
+            "markdownSectionsIndexed": int(documentation.get("sectionsIndexed") or 0),
         }
 
     def get_current_snapshot(self, repository_id: str) -> dict | None:
@@ -116,7 +121,7 @@ class RepositoryIntelligenceApplicationService:
         files = [
             item for item in list(metadata.get("files") or [])
             if isinstance(item, dict)
-            and str(item.get("path") or "").casefold().endswith((".md", ".markdown"))
+            and str(item.get("path") or "").casefold().endswith((".md", ".markdown", ".mdx"))
         ]
         root = Path(str(repository.metadata.get("localPath") or "")).expanduser()
         documents = []
@@ -144,6 +149,23 @@ class RepositoryIntelligenceApplicationService:
                     "contentHash": item.get("contentHash"),
                 })
         return documents
+
+    def get_markdown_registry(self, repository_id: str) -> dict | None:
+        if not self.repository_service.get_repository(repository_id):
+            return None
+        if not self.markdown_service:
+            return {
+                "repositoryId": repository_id,
+                "status": "Unavailable",
+                "documentsIndexed": 0,
+                "sectionsIndexed": 0,
+                "sections": [],
+            }
+        registry = self.markdown_service.get_repository_registry(repository_id)
+        return {
+            **registry,
+            "status": "Available" if registry.get("documentsIndexed") else "NoDocuments",
+        }
 
     def list_snapshot_history(self, repository_id: str) -> dict | None:
         repository = self.repository_service.get_repository(repository_id)
@@ -462,6 +484,7 @@ class RepositoryIntelligenceApplicationService:
                 if isinstance(item, dict) and str(item.get("path") or "")
             )[:1000],
             "rootFiles": list(snapshot_metadata.get("rootFiles") or [])[:200],
+            "documentation": dict(snapshot_metadata.get("documentationRegistry") or {}),
             "services": graph_items.get("Service", [])[:100],
             "controllers": graph_items.get("Controller", [])[:100],
             "repositories": graph_items.get("Repository", [])[:100],
@@ -493,6 +516,7 @@ class RepositoryIntelligenceApplicationService:
 
     def _build_repository_response(self, repository: Repository) -> dict:
         snapshot = self.snapshot_service.get_latest_snapshot(repository.repository_id)
+        documentation = dict((snapshot.metadata or {}).get("documentationRegistry") or {}) if snapshot else {}
         graph = self.graph_service.get_graph_status(repository.repository_id)
         scan = self.scanner.get_scan(repository.repository_id)
         return {
@@ -501,6 +525,8 @@ class RepositoryIntelligenceApplicationService:
             "latestScanId": scan.scan_id if scan else "",
             "latestScanStatus": scan.status if scan else RepositoryStatus.PENDING_SCAN.value,
             "graphStatus": graph.get("status") or "NotConnected",
+            "documentationStatus": documentation.get("status") or "NotIndexed",
+            "markdownDocumentsIndexed": int(documentation.get("documentsIndexed") or 0),
         }
 
     def _validate_repository(self, repository: Repository) -> None:

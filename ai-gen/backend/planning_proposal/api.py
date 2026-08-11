@@ -23,6 +23,14 @@ def build_planning_proposal_router(service: Any) -> APIRouter:
     def build(request: dict[str, Any] = Body(...)):
         return call(lambda: service.build(request))
 
+    @router.get("")
+    def list_proposals(
+        project_id: str = Query(default="", alias="projectId"),
+        status: str = Query(default=""),
+        limit: int = Query(default=50, ge=1, le=100),
+    ):
+        return call(lambda: service.list(project_id=project_id, status=status, limit=limit))
+
     @router.get("/history")
     def history(proposal_id: str = Query(..., alias="proposalId")):
         return call(lambda: service.history(proposal_id))

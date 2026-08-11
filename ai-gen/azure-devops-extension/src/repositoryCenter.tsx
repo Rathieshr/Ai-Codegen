@@ -24,7 +24,17 @@ type RepositorySnapshot = {
   modules: string[];
   status: string;
   scanMode: string;
-  metadata?: { sourceRoots?: string[]; folders?: string[]; files?: Array<{ path?: string }>; rootFiles?: string[] };
+  metadata?: { sourceRoots?: string[]; folders?: string[]; files?: Array<{ path?: string }>; rootFiles?: string[]; documentationRegistry?: RepositoryDocumentation };
+};
+
+type RepositoryDocumentation = {
+  status?: string;
+  documentsIndexed?: number;
+  sectionsIndexed?: number;
+  statementsIndexed?: number;
+  sourceFiles?: string[];
+  classifications?: Record<string, number>;
+  indexedAt?: string;
 };
 
 type RepositoryChange = { path: string; changeType: string };
@@ -62,6 +72,7 @@ type RepositoryHealth = {
   folders: string[];
   files: string[];
   rootFiles: string[];
+  documentation: RepositoryDocumentation;
   services: Array<Record<string, unknown>>;
   controllers: Array<Record<string, unknown>>;
   repositories: Array<Record<string, unknown>>;
@@ -218,6 +229,7 @@ export function RepositoryCenter({
                       <StructureGroup title="APIs" items={health.apis.map(nameOf)} empty="No APIs identified." />
                       <StructureGroup title="Tests" items={health.tests.map(nameOf)} empty="No tests identified." />
                       <StructureGroup title="Entities" items={(health.entities || []).map(nameOf)} empty="No domain entities identified." />
+                      <StructureGroup title="Documentation" items={health.documentation?.sourceFiles || []} empty="No Markdown documentation indexed." />
                     </div>
                   </section>
                   <div className="hei-repository-operational-grid">
@@ -239,6 +251,8 @@ export function RepositoryCenter({
                       <Metric label="APIs" value={health.engineeringGraph.counts?.API || health.apis.length} />
                       <Metric label="Tests" value={health.engineeringGraph.counts?.Test || health.tests.length} />
                       <Metric label="Languages" value={Object.keys(snapshot?.languages || {}).length} />
+                      <Metric label="Markdown Documents" value={health.documentation?.documentsIndexed || 0} />
+                      <Metric label="Knowledge Sections" value={health.documentation?.sectionsIndexed || 0} />
                     </div>
                   </details>
                   {snapshotOpen && snapshot ? <SnapshotPanel snapshot={snapshot} /> : null}

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from backend.engineering_memory.engine import EngineeringMemoryEngine
+from backend.engineering_intelligence.services import MarkdownService
 from backend.ado.client import AdoClient
 
 from .application import RepositoryDetectionService, RepositoryIntelligenceApplicationService
@@ -36,6 +37,7 @@ class RepositoryIntelligenceModule:
     context_capsule_builder: RepositoryContextCapsuleBuilder
     agent: RepositoryIntelligenceAgent
     monitoring_service: RepositoryMonitoringService
+    markdown_service: MarkdownService
     memory_engine: EngineeringMemoryEngine
     detection_service: RepositoryDetectionService
     application: RepositoryIntelligenceApplicationService
@@ -80,6 +82,9 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
         memory_engine=memory_engine,
     )
     context_capsule_builder = RepositoryContextCapsuleBuilder()
+    markdown_service = MarkdownService(
+        storage_path=storage_root / "repository_markdown_registry.json",
+    )
     event_bus = EventBus(storage_root / "repository_agent_events.json")
     agent_handler = RepositoryIntelligenceJobHandler(
         repository_service=repository_service,
@@ -89,6 +94,8 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
         graph_service=graph_service,
         file_ranking_service=file_ranking_service,
         event_bus=event_bus,
+        markdown_service=markdown_service,
+        repository_content_provider=remote_content_provider,
     )
     agent = RepositoryIntelligenceAgent(storage_root, agent_handler)
     monitoring_service = RepositoryMonitoringService(
@@ -109,6 +116,7 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
         agent=agent,
         monitoring_service=monitoring_service,
         repository_content_provider=remote_content_provider,
+        markdown_service=markdown_service,
     )
     return RepositoryIntelligenceModule(
         repository_service=repository_service,
@@ -120,6 +128,7 @@ def register_repository_intelligence(storage_root: Path) -> RepositoryIntelligen
         context_capsule_builder=context_capsule_builder,
         agent=agent,
         monitoring_service=monitoring_service,
+        markdown_service=markdown_service,
         memory_engine=memory_engine,
         detection_service=detection_service,
         application=application,

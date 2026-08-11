@@ -29,6 +29,7 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
   const [route, setRoute] = useState<HEIRoute>('overview');
   const [overview, setOverview] = useState<DashboardOverview>();
   const [repositoryMapping, setRepositoryMapping] = useState<RepositoryMapping>();
+  const [resumePlanningProposal, setResumePlanningProposal] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [startupAttempt, setStartupAttempt] = useState(0);
@@ -84,7 +85,8 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
   const actor = context?.user.name || 'HEI User';
   const activeNavigation = useMemo(() => workspace?.navigation.find((item) => item.id === route)?.id || 'overview', [workspace, route]);
 
-  function navigate(next: HEIRoute) {
+  function navigate(next: HEIRoute, options?: { resumePlanningProposal?: boolean }) {
+    setResumePlanningProposal(next === 'new-requirement' && Boolean(options?.resumePlanningProposal));
     if (!context || next === route) return;
     hostAdapter.navigate({ view: next, workItemId: context.route.workItemId, repositoryId: context.route.repositoryId });
     setRoute(next);
@@ -208,8 +210,8 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
           onOpenSprint={() => navigate('azure-devops')}
           onRefresh={() => void loadOverview(context)}
         /> : null}
-        {route === 'new-requirement' ? <NewRequirementWorkspace baseUrl={BASE_URL} context={context} onOpenApprovals={() => navigate('approvals')} onError={reportError} /> : null}
-        {route === 'planning' ? <PlanningCenter baseUrl={BASE_URL} projectId={projectId} actor={actor} currentWorkItemId={context.route.workItemId} canContribute={canContribute} onGenerateExecutionPackage={() => navigate('execution')} onError={reportError} /> : null}
+        {route === 'new-requirement' ? <NewRequirementWorkspace baseUrl={BASE_URL} context={context} resumeLatestProposal={resumePlanningProposal} onOpenApprovals={() => navigate('approvals')} onError={reportError} /> : null}
+        {route === 'planning' ? <PlanningCenter baseUrl={BASE_URL} projectId={projectId} actor={actor} currentWorkItemId={context.route.workItemId} canContribute={canContribute} onGenerateExecutionPackage={() => navigate('execution')} onContinueRequirementPlanning={() => navigate('new-requirement', { resumePlanningProposal: true })} onError={reportError} /> : null}
         {route === 'repository' ? <RepositoryCenter baseUrl={BASE_URL} preferredRepositoryId={repositoryMapping?.intelligenceRepositoryId || context.repository.id} actor={actor} canManage={canAdmin} onError={reportError} /> : null}
         {route === 'execution' ? <ExecutionCenter baseUrl={BASE_URL} onError={reportError} /> : null}
         {route === 'approvals' ? <ApprovalCenter baseUrl={BASE_URL} actor={actor} role={role} canApprove={canContribute} onError={reportError} /> : null}

@@ -2,7 +2,7 @@
   "name": "ai-gen-vscode",
   "displayName": "HEI Engineering Assistant",
   "description": "Repository-aware Engineering Intelligence for HEI.",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "publisher": "rathiesh",
   "engines": {
     "vscode": "^1.85.0"

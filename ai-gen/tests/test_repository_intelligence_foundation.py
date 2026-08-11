@@ -1188,6 +1188,11 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
             "# Architecture\nThe Device Service must use repository interfaces.\n",
             encoding="utf-8",
         )
+        (root / "packages" / "device-health").mkdir(parents=True)
+        (root / "packages" / "device-health" / "design.md").write_text(
+            "# Device Health Design\nThe package exposes reusable health status components.\n",
+            encoding="utf-8",
+        )
         (root / "node_modules" / "package").mkdir(parents=True)
         (root / "node_modules" / "package" / "README.md").write_text(
             "# Dependency internals\nThis content must not enter HEI knowledge.\n",
@@ -1207,6 +1212,7 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
 
         self.assertEqual("Available", registry["status"])
         self.assertIn("docs/architecture.md", registry["sourceFiles"])
+        self.assertIn("packages/device-health/design.md", registry["sourceFiles"])
         self.assertNotIn("node_modules/package/README.md", registry["sourceFiles"])
         self.assertGreater(registry["sectionsIndexed"], 0)
         self.assertGreater(registry["statementsIndexed"], 0)
@@ -1230,6 +1236,15 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
         persisted = reloaded.application.get_markdown_registry(created["repositoryId"])
         self.assertEqual(registry["sourceFiles"], persisted["sourceFiles"])
         self.assertEqual(registry["sectionsIndexed"], persisted["sectionsIndexed"])
+
+        self.module.markdown_service.index_repository_documents(
+            [{"path": "docs/live-registry.md", "content": "# Live Registry\nCurrent project guidance."}],
+            repository_id=created["repositoryId"],
+            repository_name=created["name"],
+            revision="live-registry-update",
+        )
+        refreshed_health = self.module.application.get_repository_health(created["repositoryId"])
+        self.assertIn("docs/live-registry.md", refreshed_health["documentation"]["sourceFiles"])
 
     def test_incremental_scan_replaces_stale_markdown_registry_entries(self) -> None:
         root = Path(self.repo_dir.name)

@@ -566,6 +566,38 @@ def _output_schema(workflow_type: str) -> dict[str, Any]:
             "impact": {},
             "confidence": 0,
         }
+    if workflow_key in {"planning_proposal", "planning_proposal_quality_repair"}:
+        return {
+            "recommendation": {
+                "hierarchy": {
+                    "workItems": [{
+                        "key": "stable key unique within this response",
+                        "parentKey": "parent key or empty for Epic",
+                        "type": "Epic | Feature | Story | Task",
+                        "title": "concise item-specific title",
+                        "description": "item-specific scope and outcome",
+                        "businessValue": "value specific to this item",
+                        "acceptanceCriteriaIds": ["AC-1"],
+                        "completionChecks": ["task-specific verifiable completion check"],
+                        "storyPoints": "0 for Epic/Feature/Task; 1 | 2 | 3 | 5 | 8 | 13 for Story",
+                        "engineeringDays": 0,
+                        "taskType": "Frontend | Backend | API | Database | Mobile | Infrastructure | Testing | Documentation | DevOps | Security | Architecture | AI | empty",
+                        "repositoryModules": ["verified module name"],
+                        "technicalNotes": ["bounded implementation guidance"],
+                        "risk": "Low | Medium | High | Critical",
+                        "priority": "Low | Medium | High | Critical",
+                    }],
+                },
+                "qualitySummary": "how the hierarchy covers the approved requirement without duplication",
+            },
+            "reasoning": ["string"],
+            "alternatives": [{"title": "string", "reason": "string"}],
+            "evidence": [{"referenceId": "string", "reason": "string"}],
+            "risks": ["string"],
+            "tradeOffs": ["string"],
+            "impact": {},
+            "confidence": 0,
+        }
     return {
         "recommendation": {},
         "reasoning": ["string"],

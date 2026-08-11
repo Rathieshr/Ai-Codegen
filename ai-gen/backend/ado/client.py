@@ -218,9 +218,43 @@ class AdoClient:
         self._require_platform_config()
         if not project or not repo_id:
             raise AdoClientError("ADO project and repository_id are required to list repository items.")
+        discovered = {
+            str(item.get("path")): item
+            for item in self._list_repository_scope(project, repo_id, branch, "/")
+            if item.get("path")
+        }
+
+        # Some ADO Server/proxy combinations return only the immediate children even
+        # when Full recursion is requested. Expand any tree that has no returned
+        # descendants so Repository Intelligence never silently becomes root-only.
+        visited: set[str] = {"/"}
+        while len(visited) <= 500:
+            trees = sorted(
+                path for path, item in discovered.items()
+                if path not in visited
+                and (bool(item.get("isFolder")) or str(item.get("gitObjectType") or "").casefold() == "tree")
+                and not any(other != path and other.startswith(f"{path.rstrip('/')}/") for other in discovered)
+            )
+            if not trees:
+                break
+            for scope_path in trees:
+                visited.add(scope_path)
+                for item in self._list_repository_scope(project, repo_id, branch, scope_path):
+                    path = str(item.get("path") or "")
+                    if path:
+                        discovered[path] = item
+        return [discovered[path] for path in sorted(discovered)]
+
+    def _list_repository_scope(
+        self,
+        project: str,
+        repo_id: str,
+        branch: str,
+        scope_path: str,
+    ) -> list[dict[str, Any]]:
         query = urllib.parse.urlencode(
             {
-                "scopePath": "/",
+                "scopePath": scope_path or "/",
                 "recursionLevel": "Full",
                 "includeContentMetadata": "true",
                 "versionDescriptor.version": branch or "main",

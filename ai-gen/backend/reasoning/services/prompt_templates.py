@@ -94,8 +94,27 @@ TEMPLATES: dict[str, PromptTemplate] = {
     ),
     "planning_proposal": PromptTemplate(
         "Planning Proposal", "Engineering Planning Lead",
-        "Propose a scoped, non-duplicative engineering hierarchy.",
-        _COMMON + ("Keep every proposal traceable to the requirement and selected evidence.",),
+        "Create a scoped, implementation-ready Epic, Feature, Story, and Task hierarchy.",
+        _COMMON + (
+            "Keep every proposal item traceable to the requirement and selected evidence.",
+            "Write a distinct title, description, business value, and engineering scope for every item; never clone requirement text down the hierarchy.",
+            "Epic describes the business initiative, Feature describes a cohesive capability, Story describes one independently valuable user outcome, and Task describes one concrete engineering activity.",
+            "Only Stories receive Story Points. Use only 1, 2, 3, 5, 8, or 13 and size each Story independently.",
+            "Map Stories to approved Acceptance Criteria by the supplied AC identifiers. Do not copy requirement-level criteria onto Epics or Features.",
+            "Tasks use item-specific completionChecks and engineeringDays; do not copy all parent Story criteria into every Task.",
+            "Generate enough distinct Stories and Tasks to cover the approved scope without creating duplicate or filler work items.",
+            "Use repository modules and engineering evidence only when they exist in Engineering Context.",
+        ),
+    ),
+    "planning_proposal_quality_repair": PromptTemplate(
+        "Planning Proposal Quality Repair", "Senior Engineering Planning Reviewer",
+        "Repair a weak Planning Proposal while preserving approved scope and evidence.",
+        _COMMON + (
+            "Resolve every supplied quality issue and return the complete corrected hierarchy.",
+            "Make descriptions, Story acceptance mappings, Story Points, Task scopes, completion checks, and engineering-day estimates item-specific.",
+            "Do not add scope, repository facts, or Acceptance Criteria that are not supplied in Engineering Context.",
+            "Only Stories receive Story Points. Tasks receive engineeringDays and completionChecks.",
+        ),
     ),
     "execution_package": PromptTemplate(
         "Execution Package", "Principal Engineer",

@@ -79,14 +79,95 @@ class PlanningProposalService:
             "actor": actor,
             "force": bool(request.get("force")),
         })
+        generated, generation_diagnostics = self._enrich_hierarchy(
+            generated, context, recommendation, request,
+        )
         version = int((existing or {}).get("version") or 0) + 1
         proposal = self._assemble(generated, context, recommendation, actor, version, existing)
+        proposal["generationDiagnostics"] = generation_diagnostics
         values[proposal["proposalId"]] = proposal
         self.store.write(values)
         if existing and self.review_service:
             self.review_service.invalidate(proposal["proposalId"], proposal["version"], actor)
         self._publish("PlanningProposalGenerated", proposal)
         return proposal
+
+    def _enrich_hierarchy(
+        self,
+        generated: dict[str, Any],
+        context: dict[str, Any],
+        recommendation: dict[str, Any],
+        request: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Use Reasoning AI for item-specific planning, with one semantic repair pass."""
+        baseline = deepcopy(generated)
+        engineering_context = context.get("engineeringContext") or {}
+        provider = _text(request.get("provider") or request.get("providerPreference")) or "Auto"
+        available = getattr(self.reasoning_engine, "is_provider_available", None)
+        if (
+            not self.reasoning_engine
+            or not engineering_context
+            or (callable(available) and not available(provider))
+        ):
+            return baseline, {
+                "reasoningMode": "Deterministic",
+                "provider": "Deterministic",
+                "model": "",
+                "qualityRepairApplied": False,
+                "qualityIssues": ["AI provider unavailable; evidence-safe planning fallback used."],
+            }
+
+        prompt_projection = _proposal_prompt_projection(
+            baseline.get("planningProposal") or {}, context, recommendation,
+        )
+        result = self.reasoning_engine.analyze(
+            "Planning Proposal",
+            engineering_context,
+            user_requirement=_proposal_requirement_text(context),
+            provider=provider,
+            correlation_id=_text(recommendation.get("correlationId")),
+            options={"proposalSummary": prompt_projection},
+        )
+        candidate = _reasoned_work_items(result, context)
+        issues = _reasoned_hierarchy_issues(candidate, context)
+        repair_applied = False
+        if issues and _text(result.get("reasoningMode")) == "AI":
+            repaired = self.reasoning_engine.analyze(
+                "Planning Proposal Quality Repair",
+                engineering_context,
+                user_requirement=_proposal_requirement_text(context),
+                provider=provider,
+                correlation_id=_text(recommendation.get("correlationId")),
+                options={
+                    "proposalSummary": {
+                        **prompt_projection,
+                        "weakCandidate": candidate,
+                        "qualityIssues": issues,
+                    },
+                },
+            )
+            repaired_candidate = _reasoned_work_items(repaired, context)
+            repaired_issues = _reasoned_hierarchy_issues(repaired_candidate, context)
+            if len(repaired_issues) < len(issues):
+                result, candidate, issues = repaired, repaired_candidate, repaired_issues
+                repair_applied = True
+
+        diagnostics = {
+            "reasoningMode": _text(result.get("reasoningMode")) or "Deterministic",
+            "provider": _text(result.get("provider")) or "Deterministic",
+            "model": _text(result.get("model")),
+            "promptVersion": _text(result.get("promptVersion")),
+            "qualityRepairApplied": repair_applied,
+            "qualityIssues": issues,
+            "warnings": _strings(result.get("warnings")),
+        }
+        if issues:
+            return baseline, diagnostics
+        enriched = deepcopy(baseline)
+        enriched["planningProposal"] = _legacy_proposal_from_reasoned_items(
+            candidate, baseline.get("planningProposal") or {}, result,
+        )
+        return enriched, diagnostics
 
     def get(self, proposal_id: str) -> dict[str, Any]:
         proposal = self.store.read().get(proposal_id)
@@ -505,9 +586,11 @@ class PlanningProposalService:
         criteria = _strings(item.get("acceptanceCriteria"))
         if kind == "Story" and not criteria:
             criteria = _strings(requirement.get("acceptanceCriteria"))
+        if kind in {"Epic", "Feature"}:
+            criteria = []
         business_goals = _strings(requirement.get("businessGoals"))
         functional = _strings(requirement.get("functionalRequirements"))
-        modules = _strings(impact.get("affectedModules"))
+        modules = _strings(item.get("repositoryModules")) or _strings(impact.get("affectedModules"))
         repository = engineering_context.get("repository") or context.get("repository") or {}
         knowledge = (
             (engineering_context.get("projectIntelligence") or {}).get("knowledge") or {}
@@ -535,7 +618,9 @@ class PlanningProposalService:
         )
         confidence = int(change.get("confidence") or recommendation.get("confidence", {}).get("overall") or 0)
         description = _text(item.get("description")) or _text(change.get("reason"))
-        business_value = business_goals[0] if business_goals else _text(impact.get("businessImpact"))
+        business_value = _text(item.get("businessValue")) or (
+            business_goals[0] if business_goals else _text(impact.get("businessImpact"))
+        )
         if _same_meaning(description, business_value):
             distinct_scope = _first(functional)
             description = distinct_scope if distinct_scope and not _same_meaning(distinct_scope, business_value) else (
@@ -552,18 +637,24 @@ class PlanningProposalService:
             acceptanceCriteria=criteria,
             businessRules=_strings(requirement.get("businessRules")),
             dependencies=_strings(requirement.get("dependencies")),
-            estimate={"engineeringDays": 0.0, "storyPoints": 0, "confidence": confidence},
-            storyPoints=0,
+            estimate={
+                "engineeringDays": float(item.get("engineeringDays") or 0),
+                "storyPoints": int(item.get("storyPoints") or 0) if kind == "Story" else 0,
+                "confidence": confidence,
+                "source": "Reasoning AI" if item.get("engineeringDays") or item.get("storyPoints") else "AI Estimate",
+            },
+            storyPoints=int(item.get("storyPoints") or 0) if kind == "Story" else 0,
             repositoryModules=modules,
             affectedApis=_strings(impact.get("affectedApis")),
             affectedScreens=_strings(impact.get("affectedScreens")),
             technicalNotes=_unique([
+                *_strings(item.get("technicalNotes")),
                 recommendation.get("expectedRepositoryImpact", ""),
                 *recommendation.get("engineeringReasoning", []),
             ]),
             generatedTests=_suggested_tests(kind, criteria, impact),
-            risk=_text(impact.get("riskLevel")) or "Medium",
-            priority="High" if _text(impact.get("riskLevel")) in {"High", "Critical"} else "Medium",
+            risk=_text(item.get("risk") or impact.get("riskLevel")) or "Medium",
+            priority=_text(item.get("priority")) or ("High" if _text(impact.get("riskLevel")) in {"High", "Critical"} else "Medium"),
             origin="AI Suggested",
             confidence=confidence,
             reason=_text(change.get("reason")) or "Derived from the approved Planning Recommendation.",
@@ -587,6 +678,7 @@ class PlanningProposalService:
             traceability=traceability,
             planningVersion=version,
             status="Draft",
+            taskType=_text(item.get("taskType")) if kind == "Task" else "",
             storyType=_story_type(kind, recommendation),
             order=order,
             acceptanceCriteriaDetails=criteria_details,
@@ -624,7 +716,7 @@ class PlanningProposalService:
                     title=task["title"],
                     description=task["description"],
                     businessValue=story["businessValue"],
-                    acceptanceCriteria=story["acceptanceCriteria"],
+                    acceptanceCriteria=task["completionChecks"],
                     businessRules=story["businessRules"],
                     dependencies=[],
                     estimate={"engineeringDays": 0.0, "storyPoints": 0, "confidence": story["confidence"]},
@@ -1308,6 +1400,206 @@ def _validation_recommendations(findings: list[dict[str, Any]]) -> list[str]:
     ]) or ["Complete the human review checklist before approval."]
 
 
+def _proposal_requirement_text(context: dict[str, Any]) -> str:
+    requirement = context.get("requirement") or {}
+    return _text(
+        requirement.get("planningRequirement")
+        or requirement.get("normalizedRequirement")
+        or requirement.get("title")
+    )
+
+
+def _proposal_prompt_projection(
+    baseline: dict[str, Any],
+    context: dict[str, Any],
+    recommendation: dict[str, Any],
+) -> dict[str, Any]:
+    requirement = context.get("requirement") or {}
+    criteria = _strings(requirement.get("acceptanceCriteria"))
+    return {
+        "approvedStrategy": recommendation.get("strategy"),
+        "approvedAcceptanceCriteria": [
+            {"id": f"AC-{index}", "text": value}
+            for index, value in enumerate(criteria, start=1)
+        ],
+        "baselineHierarchy": {
+            "changes": list(baseline.get("changes") or []),
+            "items": list(baseline.get("items") or []),
+        },
+        "qualityRules": [
+            "Descriptions and business values must be specific to each item.",
+            "Only Stories use approved Acceptance Criteria identifiers and Story Points.",
+            "Tasks require distinct engineering scope, completion checks, task type, and engineering days.",
+            "Epic and Feature must not repeat Story Acceptance Criteria.",
+        ],
+    }
+
+
+def _reasoned_work_items(
+    result: dict[str, Any],
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    recommendation = result.get("recommendation") or {}
+    hierarchy = recommendation.get("hierarchy") or {}
+    raw_items = hierarchy.get("workItems") or recommendation.get("workItems") or []
+    requirement = context.get("requirement") or {}
+    approved = _strings(requirement.get("acceptanceCriteria"))
+    criteria_by_id = {f"AC-{index}": value for index, value in enumerate(approved, start=1)}
+    criteria_by_text = {value.casefold(): value for value in approved}
+    repository = (context.get("engineeringContext") or {}).get("repository") or {}
+    allowed_modules = _unique(_strings(repository.get("modules") or repository.get("affectedModules")))
+    allowed_by_name = {value.casefold(): value for value in allowed_modules}
+    output: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_items if isinstance(raw_items, list) else []):
+        if not isinstance(raw, dict):
+            continue
+        kind = _type(raw.get("type"))
+        if kind not in {"Epic", "Feature", "Story", "Task"}:
+            continue
+        criterion_ids = _strings(raw.get("acceptanceCriteriaIds"))
+        criteria = [criteria_by_id[value] for value in criterion_ids if value in criteria_by_id]
+        for value in _strings(raw.get("acceptanceCriteria")):
+            approved_value = criteria_by_text.get(value.casefold())
+            if approved_value:
+                criteria.append(approved_value)
+        criteria = _unique(criteria) if kind == "Story" else []
+        checks = _unique(_strings(raw.get("completionChecks")))
+        modules = [
+            allowed_by_name[value.casefold()]
+            for value in _strings(raw.get("repositoryModules"))
+            if value.casefold() in allowed_by_name
+        ]
+        story_points = int(raw.get("storyPoints") or 0) if kind == "Story" else 0
+        output.append({
+            "key": _text(raw.get("key")) or f"item-{index + 1}",
+            "parentKey": _text(raw.get("parentKey")),
+            "type": kind,
+            "title": _text(raw.get("title")),
+            "description": _text(raw.get("description")),
+            "businessValue": _text(raw.get("businessValue")),
+            "acceptanceCriteria": criteria,
+            "completionChecks": checks,
+            "storyPoints": story_points,
+            "engineeringDays": round(float(raw.get("engineeringDays") or 0), 2),
+            "taskType": _text(raw.get("taskType")),
+            "repositoryModules": _unique(modules),
+            "technicalNotes": _unique(_strings(raw.get("technicalNotes"))),
+            "risk": _text(raw.get("risk")) or "Medium",
+            "priority": _text(raw.get("priority")) or "Medium",
+        })
+    return output
+
+
+def _reasoned_hierarchy_issues(
+    items: list[dict[str, Any]],
+    context: dict[str, Any],
+) -> list[str]:
+    issues: list[str] = []
+    by_key = {item["key"]: item for item in items}
+    counts = {kind: sum(1 for item in items if item["type"] == kind) for kind in ("Epic", "Feature", "Story", "Task")}
+    if counts["Epic"] != 1:
+        issues.append("Return exactly one Epic.")
+    for kind in ("Feature", "Story", "Task"):
+        if not counts[kind]:
+            issues.append(f"Return at least one {kind}.")
+    if len(by_key) != len(items):
+        issues.append("Every work item key must be unique.")
+    title_keys: set[tuple[str, str, str]] = set()
+    descriptions: dict[str, list[str]] = {}
+    expected_parent = {"Feature": "Epic", "Story": "Feature", "Task": "Story"}
+    for item in items:
+        label = f"{item['type']} {item['title'] or item['key']}"
+        if not item["title"]:
+            issues.append(f"{label} requires a title.")
+        if len(item["description"].split()) < 6:
+            issues.append(f"{label} requires an item-specific description.")
+        if not item["businessValue"]:
+            issues.append(f"{label} requires item-specific business value.")
+        parent_type = expected_parent.get(item["type"])
+        if parent_type:
+            parent = by_key.get(item["parentKey"])
+            if not parent or parent["type"] != parent_type:
+                issues.append(f"{label} requires a {parent_type} parentKey.")
+        normalized_title = _text(item["title"]).casefold()
+        title_key = (item["type"], item["parentKey"], normalized_title)
+        if title_key in title_keys:
+            issues.append(f"Duplicate {label} title.")
+        title_keys.add(title_key)
+        normalized_description = " ".join(item["description"].casefold().split())
+        if normalized_description:
+            descriptions.setdefault(normalized_description, []).append(label)
+        if item["type"] == "Story":
+            if not item["acceptanceCriteria"]:
+                issues.append(f"{label} must map at least one approved Acceptance Criterion.")
+            if item["storyPoints"] not in {1, 2, 3, 5, 8, 13}:
+                issues.append(f"{label} Story Points must be 1, 2, 3, 5, 8, or 13.")
+        if item["type"] == "Task":
+            if not item["completionChecks"]:
+                issues.append(f"{label} requires task-specific completion checks.")
+            if item["engineeringDays"] <= 0:
+                issues.append(f"{label} requires a positive engineeringDays estimate.")
+            if item["taskType"] not in TASK_TYPES:
+                issues.append(f"{label} requires a supported taskType.")
+    for labels in descriptions.values():
+        if len(labels) > 1:
+            issues.append("Cloned description detected across: " + ", ".join(labels) + ".")
+    approved_count = len(_strings((context.get("requirement") or {}).get("acceptanceCriteria")))
+    if approved_count and not any(item["acceptanceCriteria"] for item in items if item["type"] == "Story"):
+        issues.append("Map approved Acceptance Criteria to Stories by AC identifier.")
+    return _unique(issues)
+
+
+def _legacy_proposal_from_reasoned_items(
+    items: list[dict[str, Any]],
+    baseline: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    by_key = {item["key"]: item for item in items}
+    confidence = _confidence_value(result.get("confidence"))
+    changes: list[dict[str, Any]] = []
+    legacy_items: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        parent = by_key.get(item["parentKey"]) or {}
+        reason = f"Item-specific {item['type']} scope generated from the approved Planning Recommendation."
+        changes.append({
+            "changeId": "change-" + _digest([item["key"], item["type"], item["title"]]),
+            "action": "Create",
+            "artifactType": item["type"],
+            "title": item["title"],
+            "parentTitle": parent.get("title", ""),
+            "confidence": confidence,
+            "reason": reason,
+            "selected": True,
+        })
+        legacy_items.append({
+            "alias": item["key"],
+            "parentAlias": item["parentKey"],
+            "type": item["type"],
+            "title": item["title"],
+            "description": item["description"],
+            "businessValue": item["businessValue"],
+            "acceptanceCriteria": item["acceptanceCriteria"] if item["type"] == "Story" else item["completionChecks"] if item["type"] == "Task" else [],
+            "storyPoints": item["storyPoints"],
+            "engineeringDays": item["engineeringDays"],
+            "taskType": item["taskType"],
+            "repositoryModules": item["repositoryModules"],
+            "technicalNotes": item["technicalNotes"],
+            "risk": item["risk"],
+            "priority": item["priority"],
+        })
+    return {
+        **deepcopy(baseline),
+        "schemaVersion": "hei-planning-proposal-ai-v1",
+        "changes": changes,
+        "items": legacy_items,
+        "confidence": confidence,
+        "reasoning": _strings(result.get("reasoning")),
+        "provider": _text(result.get("provider")),
+        "model": _text(result.get("model")),
+        "promptVersion": _text(result.get("promptVersion")),
+    }
+
+
 def _proposal_estimate(value: dict[str, Any], recommendation: dict[str, Any]) -> dict[str, Any]:
     effective = value.get("effectiveEstimate") or value.get("originalEstimate") or {}
     report = effective.get("report") or {}
@@ -1331,51 +1623,64 @@ def _distribute_estimate(nodes: list[dict[str, Any]], estimate: dict[str, Any]) 
     work = [node for node in nodes if node["type"] in {"Story", "Task", "Sub Task"}]
     if not work:
         return
-    per_days = round(float(estimate["engineeringDays"]) / len(work), 2)
-    per_points = max(1, round(int(estimate["storyPoints"]) / len(work))) if estimate["storyPoints"] else 0
+    supplied_days = sum(float(node.get("estimate", {}).get("engineeringDays") or 0) for node in work)
+    missing_days = [node for node in work if not node.get("estimate", {}).get("engineeringDays")]
+    remaining_days = max(0.0, float(estimate["engineeringDays"]) - supplied_days)
+    per_days = round(remaining_days / len(missing_days), 2) if missing_days else 0
+    stories = [node for node in work if node["type"] == "Story"]
+    supplied_points = sum(int(node.get("storyPoints") or 0) for node in stories)
+    missing_points = [node for node in stories if not node.get("storyPoints")]
+    remaining_points = max(0, int(estimate["storyPoints"]) - supplied_points)
+    per_points = max(1, round(remaining_points / len(missing_points))) if missing_points and remaining_points else 0
     for node in work:
+        days = float(node.get("estimate", {}).get("engineeringDays") or per_days)
+        points = int(node.get("storyPoints") or per_points) if node["type"] == "Story" else 0
         node["estimate"] = {
-            "engineeringDays": per_days,
-            "storyPoints": per_points,
+            "engineeringDays": days,
+            "storyPoints": points,
             "confidence": estimate["confidence"],
-            "source": "AI Estimate",
+            "source": node.get("estimate", {}).get("source") or "AI Estimate",
         }
-        node["storyPoints"] = per_points
+        node["storyPoints"] = points
 
 
 def _task_blueprints(story: dict[str, Any], recommendation: dict[str, Any]) -> list[dict[str, Any]]:
     blueprints = []
     scope = _task_scope(story.get("title"))
     if story.get("affectedScreens"):
-        blueprints.append(("Frontend", f"Implement {scope} user experience", "Implement the approved interaction states and screen behavior."))
+        blueprints.append(("Frontend", f"Build {scope} user experience", "Implement the approved interaction states and screen behavior.", ["The approved user states render and respond as described by the Story."]))
     if story.get("affectedApis"):
-        blueprints.append(("API", f"Implement {scope} API behavior", "Implement bounded API behavior and validation for the mapped Acceptance Criteria."))
+        blueprints.append(("API", f"Add {scope} API behavior", "Implement bounded API behavior and validation for the mapped Acceptance Criteria.", ["The mapped API behavior returns the expected result and validates invalid input."]))
     if story.get("repositoryModules"):
-        blueprints.append(("Backend", f"Implement {scope} domain behavior", "Implement the approved behavior in evidence-matched repository modules."))
+        blueprints.append(("Backend", f"Implement {scope} domain behavior", "Implement the approved behavior in evidence-matched repository modules.", ["The domain behavior satisfies the mapped Story outcome within approved modules."]))
     if not any(item[0] in {"Frontend", "API", "Backend"} for item in blueprints):
         blueprints.append((
             "Repository",
             f"Locate {scope} implementation boundary",
             "Identify the closest existing implementation and confirm the files and modules allowed for this Story.",
+            ["The implementation boundary and affected existing files are documented without inventing paths."],
         ))
         blueprints.append((
             "Repository",
             f"Implement {scope} in the confirmed boundary",
             "Implement only the approved Story behavior after the repository boundary is confirmed.",
+            ["The approved behavior is implemented only inside the confirmed repository boundary."],
         ))
     blueprints.append((
         "Testing",
-        f"Validate {scope} acceptance scenarios",
+        f"Verify {scope} acceptance scenarios",
         "Add focused tests mapped to the Story Acceptance Criteria and affected engineering areas.",
+        ["Each mapped Story criterion has a focused passing test and relevant negative coverage."],
     ))
     return [
         {
             "type": kind,
             "title": title,
             "description": description,
+            "completionChecks": checks,
             "tests": _suggested_tests("Task", story.get("acceptanceCriteria") or [], recommendation.get("impact") or {}),
         }
-        for kind, title, description in blueprints
+        for kind, title, description, checks in blueprints
     ]
 
 

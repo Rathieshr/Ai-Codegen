@@ -112,6 +112,8 @@ class AzureDevOpsSingleHubTests(unittest.TestCase):
         self.assertIn("prefers-color-scheme: dark", styles)
         self.assertIn('"light": "static/hei-icon-light.png"', manifest)
         self.assertIn('"dark": "static/hei-icon-dark.png"', manifest)
+        self.assertIn('"iconAsset": "AiIntelliCodegen.hei-engineering-platform/static/hei-icon-light.png"', manifest)
+        self.assertIn('AiIntelliCodegen.hei-engineering-platform/static/hei-icon-dark.png', manifest)
         self.assertNotIn('"iconName": "EngineeringGroup"', manifest)
 
     def test_azure_devops_sdk_is_isolated_to_host_adapter(self):

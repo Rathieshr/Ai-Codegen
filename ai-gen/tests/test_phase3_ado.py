@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+import urllib.parse
 from unittest.mock import MagicMock, patch, call
 
 from backend.ado.client import AdoClient, AdoConfig, AdoClientError
@@ -137,6 +138,34 @@ class AdoClientTests(unittest.TestCase):
         body = sent_bodies[0]
         self.assertEqual(body["sourceRefName"], "refs/heads/already-prefixed")
         self.assertNotIn("refs/heads/refs/heads", body["sourceRefName"])
+
+    def test_repository_items_expand_trees_when_full_recursion_is_root_only(self) -> None:
+        client = self._make_client()
+
+        def fake_get(url: str):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            scope = query.get("scopePath", [""])[0]
+            if scope == "/":
+                return {"value": [
+                    {"path": "/README.md", "gitObjectType": "blob"},
+                    {"path": "/docs", "gitObjectType": "tree", "isFolder": True},
+                ]}
+            if scope == "/docs":
+                return {"value": [
+                    {"path": "/docs/architecture.md", "gitObjectType": "blob"},
+                    {"path": "/docs/api", "gitObjectType": "tree", "isFolder": True},
+                ]}
+            return {"value": [
+                {"path": "/docs/api/contracts.md", "gitObjectType": "blob"},
+            ]}
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            items = client.list_repository_items("TestProject", "repo-1", "main")
+
+        self.assertEqual(
+            ["/README.md", "/docs", "/docs/api", "/docs/api/contracts.md", "/docs/architecture.md"],
+            [item["path"] for item in items],
+        )
 
     def test_send_raises_ado_client_error_on_http_error(self) -> None:
         import urllib.error

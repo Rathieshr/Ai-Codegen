@@ -17,7 +17,7 @@ DEFAULT_INCLUDES = ("*.md", "*.markdown", "*.mdx", "**/*.md", "**/*.markdown", "
 DEFAULT_EXCLUDED_DIRECTORIES = {
     ".git", ".cache", ".next", ".nuxt", ".pytest_cache", ".turbo",
     "__pycache__", "bin", "build", "coverage", "dist", "generated",
-    "node_modules", "obj", "out", "packages", "target", "vendor",
+    "node_modules", "obj", "out", "target", "vendor",
 }
 CLASSIFICATIONS = {
     "product", "business_rule", "architecture", "adr", "domain_glossary",

@@ -179,6 +179,48 @@ class RequirementRefinementTests(unittest.TestCase):
         self.assertIn("not configured", result["fallbackReason"].casefold())
         self.assertEqual([], result["providerAttempts"])
 
+    def test_unchanged_provider_wording_is_safely_refined_for_notification_intent(self):
+        requirement = self.ingestion.ingest({
+            "sourceType": "PasteRequirement",
+            "projectId": "linedefender",
+            "projectName": "LineDefender",
+            "title": "Critical condition notification",
+            "content": (
+                "Notify maintenance engineers when a LineDefender device reports "
+                "a critical condition or stops transmitting telemetry."
+            ),
+        })
+
+        class UnchangedRefinementReasoning:
+            def refine(self, *_args, **_kwargs):
+                return {
+                    "reasoningMode": "AI",
+                    "provider": "Phi",
+                    "model": "phi-test",
+                    "recommendation": {"refinement": {
+                        "refinedRequirement": requirement["normalizedRequirement"],
+                        "primaryActor": "Maintenance Engineer",
+                        "coreCapabilities": ["Critical Condition Notification"],
+                        "confidence": 0.84,
+                    }},
+                }
+
+        service = RequirementRefinementService(
+            JsonMapStore(Path(self.temp.name) / "unchanged-refinement.json"),
+            requirement_ingestion=self.ingestion,
+            reasoning_engine=UnchangedRefinementReasoning(),
+        )
+        result = service.refine(requirement["requirementId"])
+
+        self.assertNotEqual(result["originalRequirement"], result["refinedRequirement"])
+        self.assertEqual(
+            "Enable maintenance engineers to receive a notification when a LineDefender "
+            "device reports a critical condition or stops transmitting telemetry.",
+            result["refinedRequirement"],
+        )
+        self.assertTrue(result["changes"])
+        self.assertEqual("Phi", result["provider"])
+
     def test_v2_prompt_is_provider_neutral_and_requests_complete_refinement(self):
         request = ReasoningRequest(
             workflowType="Requirement Refinement",

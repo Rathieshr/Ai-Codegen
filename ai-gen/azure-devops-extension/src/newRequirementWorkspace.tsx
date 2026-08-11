@@ -15,6 +15,7 @@ const FUTURE_SOURCES = ['Confluence', 'SharePoint', 'Notion', 'Email', 'REST API
 type ProposalNode = {
   nodeId: string; parentId: string; type: string; title: string; description: string; businessValue: string;
   acceptanceCriteria: string[]; businessRules: string[]; dependencies: string[]; storyPoints: number;
+  estimate?: { engineeringDays: number; storyPoints: number; confidence: number; source?: string };
   repositoryModules: string[]; affectedApis: string[]; affectedScreens: string[]; technicalNotes: string[];
   generatedTests: string[]; risk: string; priority: string; origin: string; confidence: number; reason: string;
   taskType: string; storyType: string; owner: string; order: number; status: string; planningVersion: number;
@@ -1578,6 +1579,7 @@ function ProposalNodeEditor({ node, nodes, editable, busy, onUpdate, onRegenerat
   const [description, setDescription] = useState(node.description);
   const [businessValue, setBusinessValue] = useState(node.businessValue);
   const [acceptance, setAcceptance] = useState(node.acceptanceCriteria.join('\n'));
+  const criteriaLabel = node.type === 'Story' ? 'Acceptance Criteria' : node.type === 'Task' ? 'Completion Checks' : 'Success Measures';
   const siblings = nodes.filter((item) => item.parentId === node.parentId && item.nodeId !== node.nodeId && item.type === node.type);
   const parentOptions = nodes.filter((item) => ({ Feature: 'Epic', Story: 'Feature', Task: 'Story', 'Sub Task': 'Task' } as Record<string, string>)[node.type] === item.type);
   return <section className="hei-proposal-node-editor">
@@ -1585,8 +1587,8 @@ function ProposalNodeEditor({ node, nodes, editable, busy, onUpdate, onRegenerat
     <label><span>Title</span><input value={title} disabled={!editable} onChange={(event) => setTitle(event.target.value)} /></label>
     <label><span>Description</span><textarea rows={5} value={description} disabled={!editable} onChange={(event) => setDescription(event.target.value)} /></label>
     <label><span>Business Value</span><textarea rows={3} value={businessValue} disabled={!editable} onChange={(event) => setBusinessValue(event.target.value)} /></label>
-    <label><span>Acceptance Criteria</span><textarea rows={6} value={acceptance} disabled={!editable} onChange={(event) => setAcceptance(event.target.value)} /></label>
-    <div className="hei-proposal-node-meta"><Signal label="Story Points" value={String(node.storyPoints)} /><Signal label="Risk" value={node.risk} /><Signal label="Priority" value={node.priority} /><Signal label="Repository" value={node.repositoryMapping.repositoryName || 'Mapping pending'} />{node.storyType ? <Signal label="Story Type" value={node.storyType} /> : null}</div>
+    <label><span>{criteriaLabel}</span><textarea rows={6} value={acceptance} disabled={!editable} onChange={(event) => setAcceptance(event.target.value)} /></label>
+    <div className="hei-proposal-node-meta">{node.type === 'Story' ? <Signal label="Story Points" value={String(node.storyPoints)} /> : node.type === 'Task' ? <Signal label="Engineering Effort" value={`${node.estimate?.engineeringDays || 0} days`} /> : <Signal label="Estimate" value="Calculated from children" />}<Signal label="Risk" value={node.risk} /><Signal label="Priority" value={node.priority} /><Signal label="Repository" value={node.repositoryMapping.repositoryName || 'Mapping pending'} />{node.storyType ? <Signal label="Story Type" value={node.storyType} /> : null}</div>
     <details><summary>Engineering context</summary><p>{node.repositoryMapping.reason || 'Repository mapping requires review.'}</p><ContextTags title="Repository Modules" values={node.repositoryModules} empty="Repository mapping pending." /><ContextTags title="Services, APIs and Screens" values={[...node.affectedServices, ...node.affectedApis, ...node.affectedScreens]} empty="No service, API, or screen impact identified." /><ContextTags title="Database and Integrations" values={[...node.affectedDatabaseObjects, ...node.externalIntegrations]} empty="No database or external integration impact identified." /><ContextTags title="Technical Notes" values={node.technicalNotes} empty="No technical notes." /><ContextTags title="Generated Tests" values={node.generatedTests} empty="No generated tests." /><ContextTags title="Definition of Done" values={node.definitionOfDone} empty="Definition of Done pending." /></details>
     <div className="hei-proposal-node-actions">
       <button className="planner-button primary" type="button" disabled={!editable || busy || !title.trim()} onClick={() => onUpdate({ nodeId: node.nodeId, changes: { title: title.trim(), description: description.trim(), businessValue: businessValue.trim(), acceptanceCriteria: acceptance.split('\n').map((item) => item.trim()).filter(Boolean) }, reason: `Edited ${node.type} ${node.title}` })}>Save Changes</button>
@@ -2106,9 +2108,9 @@ function RequirementRefinementCard({ value, busy, onAction }: {
       <div><span>AI Requirement Refinement</span><h3>{wordingChanged ? 'Engineering-ready wording' : 'Ready as written'}</h3><p>{wordingChanged ? 'HEI improved clarity before repository or Azure DevOps discovery. Your original requirement remains unchanged.' : 'HEI found the source requirement clear enough for engineering analysis. No rewritten copy is needed.'}</p></div>
       <Status value={`${value.status} · ${Math.round(value.confidence * 100)}%`} />
     </header>
-    <div className="hei-requirement-refinement-comparison">
-      <article><span>Original Requirement</span><p>{value.originalRequirement}</p></article>
-      <article><span>Refined Requirement</span>{editing ? <textarea rows={7} value={draft} onChange={(event) => setDraft(event.target.value)} /> : <p>{value.refinedRequirement}</p>}</article>
+    <div className={`hei-requirement-refinement-comparison${wordingChanged ? '' : ' single'}`}>
+      {wordingChanged ? <article><span>Original Requirement</span><p>{value.originalRequirement}</p></article> : null}
+      <article><span>{wordingChanged ? 'Refined Requirement' : 'Requirement Wording'}</span>{editing ? <textarea rows={7} value={draft} onChange={(event) => setDraft(event.target.value)} /> : <p>{value.refinedRequirement}</p>}</article>
     </div>
     <div className="hei-requirement-refinement-summary">
       <Signal label="Executive Summary" value={value.executiveSummary || value.requirementSummary || 'Not identified'} />
@@ -2132,7 +2134,7 @@ function RequirementRefinementCard({ value, busy, onAction }: {
     <details><summary>Refinement lineage and search hints</summary><div className="hei-requirement-refinement-lineage"><Signal label="Provider" value={value.provider || 'Deterministic'} /><Signal label="Model" value={value.model || 'Not applicable'} /><Signal label="Prompt" value={value.promptVersion} /><Signal label="Version" value={String(value.version)} /></div><ContextTags title="Repository search hints" values={repositoryHints} empty="No repository hints inferred." /><ContextTags title="Markdown search hints" values={markdownHints} empty="No Markdown hints inferred." /><ContextTags title="Azure DevOps search hints" values={adoHints} empty="No Azure DevOps hints inferred." /><ContextTags title="Possible modules" values={value.possibleModuleNames || []} empty="No possible module names inferred." /><ContextTags title="Possible features" values={value.possibleFeatureNames || []} empty="No possible feature names inferred." /></details>
     <footer>
       {editing ? <><button className="planner-button primary" type="button" disabled={busy || !draft.trim()} onClick={() => { onAction('edit', draft.trim()); setEditing(false); }}>Save Refinement</button><button className="planner-button secondary" type="button" disabled={busy} onClick={() => { setDraft(value.refinedRequirement); setEditing(false); }}>Cancel Edit</button></> : <>
-        <button className="planner-button primary" type="button" disabled={busy || accepted} onClick={() => onAction('accept')}>{accepted ? (wordingChanged ? 'Refinement Accepted' : 'Wording Accepted') : (wordingChanged ? 'Accept Refinement' : 'Use Original Requirement')}</button>
+        <button className="planner-button primary" type="button" disabled={busy || accepted} onClick={() => onAction('accept')}>{accepted ? (wordingChanged ? 'Refined Requirement Accepted' : 'Requirement Wording Confirmed') : (wordingChanged ? 'Accept Refined Requirement' : 'Confirm Requirement Wording')}</button>
         <button className="planner-button secondary" type="button" disabled={busy} onClick={() => { setDraft(value.refinedRequirement); setEditing(true); }}>Edit</button>
         <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onAction('regenerate')}>Regenerate</button>
         <button className="planner-button secondary" type="button" disabled={busy || value.status === 'Skipped'} onClick={() => onAction('skip')}>Skip Refinement</button>

@@ -255,6 +255,11 @@ Assumptions:
         self.assertEqual(approved["acceptanceCriteria"], summary["acceptanceCriteria"])
         self.assertEqual(100, summary["acceptanceCoverage"]["coveragePercent"])
 
+        refreshed = self.service.analyze(context["requirementId"], force=True)
+        self.assertEqual(approved["acceptanceCriteria"], refreshed["acceptanceCriteria"])
+        self.assertEqual("Approved", refreshed["acceptanceCriteriaState"]["status"])
+        self.assertFalse(refreshed["missingAcceptanceCriteria"])
+
     def test_generated_criteria_are_evidence_driven_without_generic_templates(self):
         context = self.ingest(
             "Business Goal:\nReduce outage investigation time.\n"

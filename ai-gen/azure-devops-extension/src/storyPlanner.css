@@ -3454,6 +3454,7 @@ button.hei-story-list-card {
 .hei-requirement-refinement h3 { margin: 2px 0; font-size: 18px; }
 .hei-requirement-refinement header p, .hei-requirement-refinement article p, .hei-requirement-refinement-details p { margin: 0; color: var(--hei-muted); }
 .hei-requirement-refinement-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.hei-requirement-refinement-comparison.single { grid-template-columns: minmax(0, 1fr); }
 .hei-requirement-refinement-comparison article { display: grid; align-content: start; gap: 7px; min-width: 0; min-height: 110px; padding: 12px; background: var(--hei-surface-subtle); }
 .hei-requirement-refinement-comparison article > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .hei-requirement-refinement-unchanged { display: grid; gap: 7px; min-width: 0; padding: 12px; background: var(--hei-surface-subtle); }
@@ -3461,9 +3462,11 @@ button.hei-story-list-card {
 .hei-requirement-refinement-unchanged p { max-width: 900px; }
 .hei-requirement-refinement-comparison textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .hei-requirement-refinement-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.hei-requirement-refinement-summary > div { min-width: 0; padding: 10px; background: var(--hei-surface-subtle); }
+.hei-requirement-refinement-summary > div { display: grid; align-content: start; gap: 5px; min-width: 0; padding: 12px; background: var(--hei-surface-subtle); }
+.hei-requirement-refinement-summary > div > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; line-height: 1.3; text-transform: uppercase; }
+.hei-requirement-refinement-summary > div > strong { display: block; line-height: 1.35; overflow-wrap: anywhere; }
 .hei-requirement-refinement-taxonomy { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.hei-requirement-refinement-taxonomy > div { min-width: 0; }
+.hei-requirement-refinement-taxonomy > div { min-width: 0; padding: 4px 2px; }
 .hei-requirement-refinement-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .hei-requirement-refinement-details > div { min-width: 0; padding: 10px; border: 1px solid var(--hei-border-soft); border-radius: 5px; }
 .hei-requirement-refinement-details ul { margin: 7px 0 0; padding-left: 18px; }
@@ -3510,7 +3513,7 @@ button.hei-story-list-card {
 .hei-acceptance-card.missing { border-style: dashed; border-color: var(--hei-warning); }
 .hei-acceptance-description, .hei-acceptance-callout p { margin: 0; color: var(--hei-muted); }
 .hei-acceptance-callout { display: grid; gap: 3px; border-left: 3px solid var(--hei-blue); padding: 8px 10px; background: var(--hei-surface-subtle); }
-.hei-acceptance-suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.hei-acceptance-suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 10px; }
 .hei-acceptance-suggestions article, .hei-acceptance-suggestions label { display: grid; align-content: start; gap: 7px; min-width: 0; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 10px; }
 .hei-acceptance-suggestions pre { margin: 0; color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .hei-acceptance-suggestions label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -3522,11 +3525,14 @@ button.hei-story-list-card {
 .hei-acceptance-records, .hei-acceptance-intelligence-list, .hei-acceptance-coverage, .hei-acceptance-evidence { display: grid; gap: 8px; }
 .hei-acceptance-coverage-areas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .hei-criterion-record, .hei-acceptance-intelligence-list article, .hei-acceptance-coverage article, .hei-acceptance-evidence article { display: grid; gap: 7px; min-width: 0; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 10px; background: var(--hei-surface); }
-.hei-criterion-record > header, .hei-acceptance-intelligence-list article > div, .hei-acceptance-coverage > header, .hei-acceptance-coverage article > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.hei-criterion-record > header > div, .hei-criterion-record details blockquote { display: grid; gap: 3px; }
-.hei-criterion-record > header > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.hei-criterion-record > header { display: grid; gap: 8px; min-width: 0; }
+.hei-acceptance-intelligence-list article > div, .hei-acceptance-coverage > header, .hei-acceptance-coverage article > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.hei-criterion-record > header > div, .hei-criterion-record details blockquote { display: grid; min-width: 0; gap: 3px; }
+.hei-criterion-record > header > div:first-child strong { line-height: 1.25; overflow-wrap: anywhere; }
+.hei-criterion-record > header > div:last-child { display: flex; width: 100%; min-width: 0; flex-wrap: wrap; justify-content: flex-start; gap: 5px; }
+.hei-criterion-record > header > div:last-child > * { max-width: 100%; }
 .hei-criterion-record pre { margin: 0; color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
-.hei-criterion-record p { display: grid; gap: 2px; padding: 7px; background: var(--hei-surface-subtle); }
+.hei-criterion-record p { display: grid; min-width: 0; gap: 2px; padding: 7px; background: var(--hei-surface-subtle); overflow-wrap: anywhere; }
 .hei-criterion-record p span, .hei-criterion-record small, .hei-acceptance-intelligence-list small, .hei-acceptance-coverage small, .hei-acceptance-evidence small { color: var(--hei-muted); font-size: 10px; }
 .hei-criterion-record details summary { cursor: pointer; font-weight: 600; }
 .hei-criterion-record blockquote, .hei-acceptance-evidence blockquote { margin: 5px 0 0; border-left: 2px solid var(--hei-blue); padding-left: 8px; }

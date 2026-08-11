@@ -71,6 +71,7 @@ class RequirementAnalysisService:
         else:
             intent_reasoning = self._reason_about_intent(requirement, result)
             intent = self._requirement_intent(intent_reasoning, result)
+        reviewed_acceptance = self._reviewed_acceptance_snapshot(existing, requirement)
         result["requirementIntent"] = intent
         result["aiUnderstanding"] = self._reasoning_projection(intent_reasoning)
         self._apply_intent(result, intent)
@@ -129,6 +130,10 @@ class RequirementAnalysisService:
             )
             else "Deterministic"
         )
+        if reviewed_acceptance:
+            self._restore_reviewed_acceptance(
+                result, reviewed_acceptance, requirement, persist=False,
+            )
         values = self.store.read()
         values[requirement_id] = result
         self.store.write(values)
@@ -1036,6 +1041,8 @@ class RequirementAnalysisService:
         analysis: dict[str, Any],
         snapshot: dict[str, Any],
         requirement: dict[str, Any],
+        *,
+        persist: bool = True,
     ) -> None:
         state = snapshot.get("acceptanceCriteriaState") or {}
         if state.get("state") == "SourceProvided":
@@ -1052,7 +1059,28 @@ class RequirementAnalysisService:
         if analysis["acceptanceCriteria"]:
             analysis["missingAcceptanceCriteria"] = []
         self._refresh_acceptance_projection(analysis, requirement)
-        self._save(str(analysis.get("requirementId") or ""), analysis)
+        if persist:
+            self._save(str(analysis.get("requirementId") or ""), analysis)
+
+    @staticmethod
+    def _reviewed_acceptance_snapshot(
+        analysis: dict[str, Any] | None,
+        requirement: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not analysis or analysis.get("contentHash") != requirement.get("contentHash"):
+            return None
+        state = analysis.get("acceptanceCriteriaState") or {}
+        if state.get("state") != "AISuggested" or state.get("status") != "Approved":
+            return None
+        if not analysis.get("acceptanceCriteria"):
+            return None
+        return {
+            "acceptanceCriteria": list(analysis.get("acceptanceCriteria") or []),
+            "acceptanceCriteriaRecords": list(analysis.get("acceptanceCriteriaRecords") or []),
+            "acceptanceCriteriaSuggestions": list(analysis.get("acceptanceCriteriaSuggestions") or []),
+            "acceptanceCriteriaState": dict(state),
+            "acceptanceCriteriaOrigin": (analysis.get("fieldOrigins") or {}).get("acceptanceCriteria"),
+        }
 
     @staticmethod
     def _reset_review(analysis: dict[str, Any]) -> None:

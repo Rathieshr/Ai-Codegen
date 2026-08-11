@@ -441,6 +441,8 @@ class RepositoryIntelligenceApplicationService:
         graph = self.graph_service.get_graph(repository_id)
         symbols = self.parser_service.list_symbols(repository_id, snapshot_id=snapshot.snapshot_id if snapshot else "")
         snapshot_metadata = dict(snapshot.metadata or {}) if snapshot else {}
+        live_documentation = self.get_markdown_registry(repository_id) or {}
+        documentation = live_documentation or dict(snapshot_metadata.get("documentationRegistry") or {})
         graph_counts: dict[str, int] = {}
         graph_items: dict[str, list[dict]] = {}
         if graph:
@@ -484,7 +486,7 @@ class RepositoryIntelligenceApplicationService:
                 if isinstance(item, dict) and str(item.get("path") or "")
             )[:1000],
             "rootFiles": list(snapshot_metadata.get("rootFiles") or [])[:200],
-            "documentation": dict(snapshot_metadata.get("documentationRegistry") or {}),
+            "documentation": documentation,
             "services": graph_items.get("Service", [])[:100],
             "controllers": graph_items.get("Controller", [])[:100],
             "repositories": graph_items.get("Repository", [])[:100],

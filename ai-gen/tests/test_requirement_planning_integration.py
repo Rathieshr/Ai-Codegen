@@ -560,6 +560,89 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertTrue(all(not task["title"].startswith("Add verification coverage:") for task in tasks))
         self.assertEqual(1, len(self.artifacts))
 
+    def test_planning_proposal_repairs_weak_model_hierarchy_with_item_specific_content(self):
+        class ProposalReasoningSpy:
+            def __init__(self):
+                self.calls = []
+
+            def is_provider_available(self, _provider="Auto"):
+                return True
+
+            def analyze(self, workflow, _context, **_kwargs):
+                self.calls.append(workflow)
+                weak = workflow == "Planning Proposal"
+                work_items = [{
+                    "key": "epic", "parentKey": "", "type": "Epic",
+                    "title": "Device Health Operations", "description": "Same copied scope.",
+                    "businessValue": "Reduce time to identify unhealthy devices.",
+                    "storyPoints": 0, "engineeringDays": 0,
+                }] if weak else [
+                    {
+                        "key": "epic", "parentKey": "", "type": "Epic",
+                        "title": "Device Health Operations",
+                        "description": "Improve operational awareness of unhealthy field devices across the product.",
+                        "businessValue": "Reduce the time required to identify unhealthy devices.",
+                        "storyPoints": 0, "engineeringDays": 0,
+                    },
+                    {
+                        "key": "feature", "parentKey": "epic", "type": "Feature",
+                        "title": "Health Status Filtering",
+                        "description": "Provide a cohesive capability for narrowing the device inventory by current health state.",
+                        "businessValue": "Help operators isolate unhealthy devices without reviewing healthy inventory.",
+                        "storyPoints": 0, "engineeringDays": 0,
+                    },
+                    {
+                        "key": "story", "parentKey": "feature", "type": "Story",
+                        "title": "Filter Devices by Offline Status",
+                        "description": "Allow operations users to select Offline and see only devices currently classified as offline.",
+                        "businessValue": "Shorten investigation time by focusing attention on devices requiring action.",
+                        "acceptanceCriteriaIds": ["AC-1"], "storyPoints": 5,
+                        "engineeringDays": 3, "risk": "Medium", "priority": "High",
+                    },
+                    {
+                        "key": "task-api", "parentKey": "story", "type": "Task",
+                        "title": "Apply Health Status Filter to Device Query",
+                        "description": "Add bounded query behavior that returns devices matching the selected health status.",
+                        "businessValue": "Provide the filtered data required by the approved Story.",
+                        "completionChecks": ["Offline selection returns only offline device records."],
+                        "storyPoints": 0, "engineeringDays": 1.5, "taskType": "API",
+                    },
+                    {
+                        "key": "task-test", "parentKey": "story", "type": "Task",
+                        "title": "Verify Offline Device Filtering",
+                        "description": "Add focused functional and negative tests for offline status filtering behavior.",
+                        "businessValue": "Prevent incorrect device states from appearing in filtered results.",
+                        "completionChecks": ["Filtering tests cover matching, non-matching, and empty results."],
+                        "storyPoints": 0, "engineeringDays": 1, "taskType": "Testing",
+                    },
+                ]
+                return {
+                    "recommendation": {"hierarchy": {"workItems": work_items}},
+                    "reasoning": ["Mapped approved scope into item-specific planning artifacts."],
+                    "alternatives": [], "evidence": [], "risks": [], "tradeOffs": [],
+                    "impact": {}, "confidence": {"overall": 88}, "reasoningMode": "AI",
+                    "provider": "Phi", "model": "phi-test", "promptVersion": "proposal-test-v1",
+                    "warnings": [],
+                }
+
+        spy = ProposalReasoningSpy()
+        self.proposal.reasoning_engine = spy
+        _, _, _, proposal = self.prepare_proposal()
+
+        self.assertEqual(["Planning Proposal", "Planning Proposal Quality Repair"], spy.calls)
+        self.assertTrue(proposal["generationDiagnostics"]["qualityRepairApplied"])
+        self.assertEqual([], proposal["generationDiagnostics"]["qualityIssues"])
+        nodes = proposal["nodes"]
+        story = next(node for node in nodes if node["type"] == "Story")
+        tasks = [node for node in nodes if node["type"] == "Task"]
+        self.assertEqual(5, story["storyPoints"])
+        self.assertEqual(["Filtering by Offline returns only offline devices."], story["acceptanceCriteria"])
+        self.assertTrue(all(node["storyPoints"] == 0 for node in tasks))
+        self.assertTrue(all(node["estimate"]["engineeringDays"] > 0 for node in tasks))
+        self.assertEqual(2, len({tuple(node["acceptanceCriteria"]) for node in tasks}))
+        self.assertTrue(all(not node["acceptanceCriteria"] for node in nodes if node["type"] in {"Epic", "Feature"}))
+        self.assertEqual(len(nodes), len({node["description"] for node in nodes}))
+
     def test_acceptance_criterion_shaped_story_cannot_report_full_health(self):
         _, _, _, proposal = self.prepare_proposal()
         story = next(node for node in proposal["nodes"] if node["type"] == "Story")

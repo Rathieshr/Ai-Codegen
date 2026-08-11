@@ -27,6 +27,7 @@ _ACTION_FAMILIES = {
     "export": "export", "import": "import", "notify": "notify", "calculate": "calculate",
     "filter": "filter", "approve": "approve", "reject": "reject", "submit": "submit",
 }
+_REFINEMENT_SCHEMA_VERSION = "RequirementRefinementV2.1"
 
 
 class RequirementRefinementService:
@@ -55,7 +56,7 @@ class RequirementRefinementService:
         if (
             existing and not force
             and existing.get("sourceContentHash") == requirement.get("contentHash")
-            and existing.get("schemaVersion") == "RequirementRefinementV2"
+            and existing.get("schemaVersion") == _REFINEMENT_SCHEMA_VERSION
             and not self._retryable_fallback(existing)
         ):
             return existing
@@ -70,6 +71,10 @@ class RequirementRefinementService:
             candidate = {}
         deterministic = _deterministic_refinement(requirement)
         value = {**deterministic, **{key: item for key, item in candidate.items() if item not in (None, "", [])}}
+        value["refinedRequirement"] = _ensure_meaningful_refinement(
+            original,
+            _text(value.get("refinedRequirement")),
+        )
         intent = _normalize_intent(value.get("requirementIntent"), value, original)
         business_goal = _distinct_business_goal(value, intent, original)
         core_capabilities = _strings(value.get("coreCapabilities")) or _strings(intent.get("capabilities"))
@@ -146,7 +151,7 @@ class RequirementRefinementService:
             revision_history=history,
             warnings=warnings,
         ).to_dict()
-        record["schemaVersion"] = "RequirementRefinementV2"
+        record["schemaVersion"] = _REFINEMENT_SCHEMA_VERSION
         record["sourceContentHash"] = requirement.get("contentHash")
         record["fallbackReason"] = _fallback_reason(reasoning)
         record["providerAttempts"] = list(
@@ -474,11 +479,35 @@ def _rewrite_for_clarity(original: str) -> str:
         if passive:
             outcome = f"can identify and act on {passive.group(1).strip()} {passive.group(2).strip()}"
         return f"Enable {actor.strip()} to view {subject.strip()} in real time, so they {outcome.strip()}."
+    notification = re.match(
+        r"^notify\s+(.+?)\s+when\s+(.+?)[.]?$",
+        original,
+        re.I,
+    )
+    if notification:
+        actor, condition = notification.groups()
+        return (
+            f"Enable {actor.strip()} to receive a notification when "
+            f"{condition.strip()}."
+        )
     if len(original.split()) < 8:
         verb = "Implement" if re.match(r"^(need|add|build|create)\b", original, re.I) else "Support"
         subject = re.sub(r"^(need|add|build|create)\s+", "", original, flags=re.I).rstrip(". ")
         return f"{verb} {subject}." if subject else original
     return original
+
+
+def _ensure_meaningful_refinement(original: str, refined: str) -> str:
+    """Prefer provider wording, but never present an unchanged echo as refinement."""
+    candidate = refined or original
+    if _normalized_text(candidate) != _normalized_text(original):
+        return candidate
+    deterministic = _rewrite_for_clarity(original)
+    return deterministic if _normalized_text(deterministic) != _normalized_text(original) else original
+
+
+def _normalized_text(value: str) -> str:
+    return re.sub(r"\s+", " ", _text(value)).strip().casefold()
 
 
 def _extract_actor(value: str) -> str:

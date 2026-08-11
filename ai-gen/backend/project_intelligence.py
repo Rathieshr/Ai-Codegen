@@ -1057,6 +1057,64 @@ class ProjectIntelligenceService:
             "metadata": dict(phi.get("metadata") or {}),
         }
 
+    def refine_requirement_intelligence(
+        self,
+        requirement: dict[str, Any],
+        engineering_context: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Refine requirement wording through the stabilized Project Intelligence provider path."""
+
+        profile = _requirement_profile_with_context(self.get_profile(), engineering_context)
+        item = _project_requirement_item(requirement, engineering_context)
+        original = _clean_text(requirement.get("normalizedRequirement"))
+        title = _clean_text(requirement.get("title"))
+        draft = {
+            "refinedRequirement": original,
+            "executiveSummary": title or original,
+            "requirementSummary": title or original,
+            "businessGoal": "",
+            "problemStatement": original,
+            "userIntent": original,
+            "primaryActor": "",
+            "secondaryActors": [],
+            "coreCapabilities": [],
+            "expectedOutcome": "",
+            "businessEntities": [],
+            "engineeringConcepts": [],
+            "domainTerminology": [],
+            "repositorySearchHints": [],
+            "markdownSearchHints": [],
+            "azureDevOpsSearchHints": [],
+            "possibleModuleNames": [],
+            "possibleFeatureNames": [],
+            "changes": [],
+            "reasoning": [],
+            "ambiguities": [],
+            "clarificationCandidates": [],
+            "confidence": 0.5,
+        }
+        clarification_responses = engineering_context.get("clarificationResponses") or []
+        if clarification_responses:
+            item["description"] = json.dumps({
+                "requirement": original,
+                "clarificationResponses": clarification_responses,
+            }, ensure_ascii=True)
+        expected = list(draft.keys())
+        phi = _project_phi_json(
+            "refine_requirement_intelligence",
+            profile,
+            item,
+            draft,
+            {"allow_fallback": True, **(options or {})},
+            expected,
+        )
+        return {
+            "used": bool(phi.get("used")),
+            "analysis": phi.get("parsed") if isinstance(phi.get("parsed"), dict) else {},
+            "metadata": dict(phi.get("metadata") or {}),
+        }
+
     def generate_requirement_acceptance_criteria(
         self,
         requirement: dict[str, Any],
@@ -9774,6 +9832,17 @@ def _project_phi_payload(
 
 
 def _project_phi_instruction(operation: str) -> str:
+    if operation == "refine_requirement_intelligence":
+        return (
+            "Act as an experienced Product Owner and senior Business Analyst. Improve the supplied "
+            "requirement into precise engineering-ready wording while preserving intent. Produce a "
+            "distinct businessGoal (WHY), userIntent (WHAT), expectedOutcome, actors, capabilities, "
+            "business entities, engineering concepts, domain terminology, and useful repository, "
+            "Markdown, Azure DevOps, module, and feature search hints. Apply supplied clarification "
+            "answers. Do not invent business rules, architecture, APIs, acceptance criteria, security, "
+            "constraints, dependencies, or implementation details. Explain material wording changes "
+            "and return only the requested JSON keys. " + PROJECT_PHI_INSTRUCTION
+        )
     if operation == "analyze_requirement_intelligence":
         return (
             "Act as a senior Business Analyst. Use only the supplied requirement and selected "

@@ -91,10 +91,11 @@ class EngineeringReviewWorkflowTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_dashboard_contains_versioned_summary_and_default_approval_chain(self):
+    def test_dashboard_contains_versioned_summary_and_single_approval(self):
         review = self.service.create({"proposalId": "proposal-1", "owner": "Owner"})
-        self.assertEqual(5, len(review["stages"]))
-        self.assertEqual("Product Owner", review["currentStage"]["role"])
+        self.assertEqual(1, len(review["stages"]))
+        self.assertEqual("Planning Approver", review["currentStage"]["role"])
+        self.assertEqual("Single", review["approvalMode"])
         self.assertEqual("context-v4", review["contextVersion"])
         self.assertEqual("knowledge-v7", review["knowledgeVersion"])
         self.assertEqual(2, review["recommendationVersion"])
@@ -125,7 +126,11 @@ class EngineeringReviewWorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(history["count"], 2)
 
     def test_configured_roles_approve_in_order_and_final_stage_freezes_proposal(self):
-        review = self.service.create({"proposalId": "proposal-1", "owner": "Owner"})
+        approval_chain = [
+            {"stageId": role.casefold().replace(" ", "-"), "name": role, "role": role, "order": index}
+            for index, role in enumerate(("Product Owner", "Engineering Lead", "Architect", "QA Lead", "Delivery Manager"), 1)
+        ]
+        review = self.service.create({"proposalId": "proposal-1", "owner": "Owner", "approvalChain": approval_chain})
         for role in ("Product Owner", "Engineering Lead", "Architect", "QA Lead", "Delivery Manager"):
             review = self.service.decide(review["reviewId"], {
                 "decision": "Approve",
@@ -150,8 +155,30 @@ class EngineeringReviewWorkflowTests(unittest.TestCase):
             })
         with self.assertRaises(ValueError):
             self.service.decide(review["reviewId"], {
-                "decision": "Reject", "actor": "Product Owner", "role": "Product Owner",
+                "decision": "Reject", "actor": "Planning Approver", "role": "Planning Approver",
             })
+
+    def test_pending_multi_stage_review_is_migrated_to_single_approval(self):
+        values = {
+            "review-existing": {
+                "reviewId": "review-existing", "proposalId": "proposal-1", "proposalVersion": 3,
+                "status": "InReview", "currentStageId": "architect", "stages": [
+                    {"stageId": "engineering-lead", "role": "Engineering Lead", "status": "Approved", "order": 1},
+                    {"stageId": "architect", "role": "Architect", "status": "Pending", "order": 2},
+                ],
+            },
+        }
+        store = JsonMapStore(self.root / "migration-reviews.json")
+        store.write(values)
+        EngineeringReviewService(
+            store,
+            proposal_provider=lambda proposal_id: self.proposals[proposal_id],
+            proposal_approver=lambda proposal_id, actor, comments: self.proposals[proposal_id],
+        )
+        migrated = store.read()["review-existing"]
+        self.assertEqual("Single", migrated["approvalMode"])
+        self.assertEqual("PendingReview", migrated["status"])
+        self.assertEqual("Planning Approver", migrated["stages"][0]["role"])
 
     def test_proposal_version_change_supersedes_review_and_blocks_sync(self):
         review = self.service.create({"proposalId": "proposal-1", "owner": "Owner"})
@@ -207,8 +234,8 @@ class EngineeringReviewWorkflowTests(unittest.TestCase):
         decided = center.approve(
             item["id"], "Product Reviewer", "contributor", "Business scope approved."
         )
-        self.assertEqual("InReview", decided["sourceResult"]["status"])
-        self.assertEqual("Engineering Lead", decided["sourceResult"]["currentStage"]["role"])
+        self.assertEqual("Approved", decided["sourceResult"]["status"])
+        self.assertEqual({}, decided["sourceResult"]["currentStage"])
 
 
 if __name__ == "__main__":

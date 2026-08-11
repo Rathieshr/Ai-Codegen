@@ -3396,7 +3396,7 @@ button.hei-story-list-card {
 .hei-requirement-form label > span { color: var(--hei-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .hei-requirement-form .wide, .hei-intake-context, .hei-future-sources, .hei-requirement-form > button { grid-column: 1 / -1; }
 .hei-requirement-form textarea { min-height: 220px; resize: vertical; }
-.hei-requirement-progress { display: grid; grid-template-columns: repeat(11, minmax(86px, 1fr)); gap: 0; overflow-x: auto; border-block: 1px solid var(--hei-border-soft); padding: 10px 2px; }
+.hei-requirement-progress { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 0; overflow-x: auto; border-block: 1px solid var(--hei-border-soft); padding: 10px 2px; }
 .hei-requirement-progress > div { position: relative; display: grid; grid-template-rows: 20px auto; justify-items: center; align-items: start; gap: 5px; min-width: 108px; color: var(--hei-muted); font-size: 11px; font-weight: 600; text-align: center; }
 .hei-requirement-progress > div > i { position: absolute; z-index: 0; top: 10px; left: 50%; right: -50%; height: 1px; background: var(--hei-border); }
 .hei-requirement-progress-marker { position: relative; z-index: 1; display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--hei-border); border-radius: 50%; background: var(--hei-surface); color: var(--hei-muted); font-size: 11px; }
@@ -3468,6 +3468,12 @@ button.hei-story-list-card {
 .hei-requirement-refinement-details > div { min-width: 0; padding: 10px; border: 1px solid var(--hei-border-soft); border-radius: 5px; }
 .hei-requirement-refinement-details ul { margin: 7px 0 0; padding-left: 18px; }
 .hei-requirement-refinement-details li small { display: block; color: var(--hei-muted); }
+.hei-requirement-clarifications { display: grid; align-content: start; gap: 8px; }
+.hei-requirement-clarifications label { display: grid; gap: 5px; }
+.hei-requirement-clarifications label span { color: var(--hei-text); font-weight: 600; }
+.hei-requirement-clarifications textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.hei-requirement-refinement-fallback { margin: 8px 0; padding: 9px 10px; border-left: 3px solid var(--hei-warning); background: var(--hei-surface-subtle); }
+.hei-requirement-refinement-fallback p { margin: 3px 0 0; color: var(--hei-muted); }
 .hei-requirement-refinement > footer { display: flex; flex-wrap: wrap; gap: 7px; }
 .hei-requirement-refinement-lineage { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 8px; margin: 8px 0; }
 .hei-requirement-refinement-lineage > div { display: grid; gap: 3px; padding: 8px; background: var(--hei-surface-subtle); }
@@ -4011,12 +4017,12 @@ button.hei-story-list-card {
 .hei-planning-proposal-header span:first-child, .hei-planning-proposal-workspace section > header span:first-child { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .hei-planning-proposal-header h2 { margin: 2px 0 3px; font-size: 24px; }
 .hei-planning-proposal-header p, .hei-planning-proposal-workspace section > header p { margin: 0; color: var(--hei-muted); }
-.hei-planning-proposal-metrics { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 6px; }
-.hei-planning-proposal-metrics > div, .hei-proposal-card-grid > div { min-width: 0; border: 1px solid var(--hei-border); border-radius: 5px; padding: 8px 10px; background: var(--hei-surface); }
+.hei-planning-proposal-metrics { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 6px; }
+.hei-planning-proposal-metrics > div, .hei-proposal-card-grid > div { display: grid; gap: 2px; min-width: 0; border: 1px solid var(--hei-border); border-radius: 5px; padding: 8px 10px; background: var(--hei-surface); }
 .hei-planning-proposal-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--hei-border); }
 .hei-planning-proposal-tabs button { flex: 0 0 auto; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--hei-text); padding: 8px 10px; }
 .hei-planning-proposal-tabs button.active { border-bottom-color: var(--hei-yellow); font-weight: 700; }
-.hei-planning-proposal-layout { display: grid; grid-template-columns: minmax(230px, .65fr) minmax(380px, 1.6fr) minmax(220px, .65fr); min-height: 520px; gap: 9px; }
+.hei-planning-proposal-layout { display: grid; grid-template-columns: minmax(240px, .7fr) minmax(440px, 1.8fr); min-height: 520px; gap: 9px; }
 .hei-planning-proposal-layout > * { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
 .hei-proposal-tree, .hei-proposal-health { padding: 10px; }
 .hei-proposal-tree > header { display: flex; justify-content: space-between; margin-bottom: 8px; }
@@ -4034,11 +4040,18 @@ button.hei-story-list-card {
 .hei-proposal-node-editor label > span, .hei-proposal-review-panel label > span, .hei-proposal-estimate-form label > span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .hei-proposal-node-editor input, .hei-proposal-node-editor textarea, .hei-proposal-node-editor select, .hei-proposal-review-panel textarea, .hei-proposal-estimate-form input { width: 100%; min-height: 32px; box-sizing: border-box; border: 1px solid var(--hei-border); border-radius: 4px; background: var(--hei-surface); color: var(--hei-text); padding: 7px 8px; }
 .hei-proposal-node-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.hei-proposal-node-meta > div { min-width: 0; padding: 7px; background: var(--hei-surface-subtle); }
+.hei-proposal-node-meta > div { display: grid; gap: 2px; min-width: 0; padding: 7px; background: var(--hei-surface-subtle); }
+.hei-proposal-node-meta > div span { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.hei-proposal-node-meta > div strong { overflow-wrap: anywhere; }
 .hei-proposal-node-editor details { border-top: 1px solid var(--hei-border); padding-top: 8px; }
 .hei-proposal-node-editor summary { cursor: pointer; font-weight: 700; }
 .hei-proposal-node-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .hei-proposal-node-actions select { width: auto; max-width: 210px; }
+.hei-proposal-item-more { border: 0 !important; padding: 0 !important; }
+.hei-proposal-item-more > summary, .hei-proposal-header-actions > summary { min-height: 32px; box-sizing: border-box; border: 1px solid var(--hei-border); border-radius: 4px; padding: 7px 10px; cursor: pointer; font-weight: 600; list-style-position: inside; }
+.hei-proposal-item-more > div, .hei-proposal-header-actions > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.hei-proposal-header-actions { position: relative; }
+.hei-proposal-header-actions > div { position: absolute; z-index: 10; top: 100%; right: 0; min-width: 260px; border: 1px solid var(--hei-border); border-radius: 5px; padding: 8px; background: var(--hei-surface); box-shadow: var(--hei-shadow); }
 .hei-proposal-health h3, .hei-proposal-health h4 { margin: 2px 0 10px; }
 .hei-proposal-health ol { max-height: 230px; margin: 0; overflow: auto; padding-left: 22px; color: var(--hei-muted); }
 .hei-proposal-meter { display: grid; gap: 4px; margin-bottom: 10px; }
@@ -4072,6 +4085,25 @@ button.hei-story-list-card {
 .hei-review-compose > div { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 7px; }
 .hei-review-compose select, .hei-review-compose input { min-height: 32px; border: 1px solid var(--hei-border); border-radius: 4px; background: var(--hei-surface); color: var(--hei-text); padding: 6px 8px; }
 .hei-proposal-estimate-form { display: grid; grid-template-columns: 160px 160px minmax(260px, 1fr); gap: 8px; }
+.hei-proposal-advanced, .hei-requirement-advanced, .hei-requirement-accepted-refinement, .hei-single-approval-details { border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
+.hei-proposal-advanced > summary, .hei-requirement-advanced > summary, .hei-requirement-accepted-refinement > summary, .hei-single-approval-details > summary { padding: 10px 12px; cursor: pointer; font-weight: 700; }
+.hei-proposal-advanced[open], .hei-requirement-advanced[open], .hei-requirement-accepted-refinement[open], .hei-single-approval-details[open] { padding-bottom: 10px; }
+.hei-proposal-advanced > nav { display: flex; gap: 3px; overflow-x: auto; border-block: 1px solid var(--hei-border); padding: 5px 10px; }
+.hei-proposal-advanced > nav button { flex: 0 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--hei-text); padding: 7px 9px; }
+.hei-proposal-advanced > nav button.active { border-bottom-color: var(--hei-yellow); font-weight: 700; }
+.hei-proposal-advanced > :not(summary):not(nav), .hei-requirement-advanced > :not(summary), .hei-requirement-accepted-refinement > :not(summary), .hei-single-approval-details > :not(summary) { margin: 10px; }
+.hei-process-details { min-width: 0; border: 1px solid var(--hei-border); border-radius: 6px; background: var(--hei-surface); }
+.hei-process-details > summary { padding: 11px 13px; cursor: pointer; font-weight: 700; }
+.hei-process-details[open] { padding-bottom: 12px; }
+.hei-process-details > :not(summary) { margin: 12px; }
+.hei-process-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; border-top: 1px solid var(--hei-border); padding-top: 10px; }
+.hei-requirement-accepted-refinement > summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; }
+.hei-requirement-accepted-refinement > summary span { color: var(--hei-success); font-size: 10px; text-transform: uppercase; }
+.hei-requirement-accepted-refinement > summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hei-single-approval-summary { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 7px; }
+.hei-single-approval-summary > div { display: grid; gap: 3px; padding: 10px; background: var(--hei-surface-subtle); }
+.hei-single-approval-summary span { color: var(--hei-muted); font-size: 10px; text-transform: uppercase; }
+.hei-single-approval-comment { max-width: 720px; }
 .hei-planning-proposal-footer { position: sticky; z-index: 4; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--hei-border); border-left: 3px solid var(--hei-yellow); border-radius: 5px; padding: 9px 12px; background: var(--hei-surface); box-shadow: 0 -3px 10px rgb(0 0 0 / 8%); }
 .hei-planning-proposal-footer > div { display: flex; align-items: center; gap: 8px; }
 .hei-planning-proposal-footer span { color: var(--hei-muted); }

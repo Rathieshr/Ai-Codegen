@@ -126,7 +126,7 @@ export function ApprovalCenter({ baseUrl, actor, role, canApprove, onError }: Pr
             {view === 'audit' ? <div className="approval-audit">{selected.audit?.length ? selected.audit.map((event, index) => <div key={String(event.id || index)}><strong>{String(event.what || event.eventType || 'Approval event')}</strong><span>{String(event.who || 'HEI')} · {formatDate(String(event.when || ''))}</span><p>{String(event.why || '')}</p></div>) : <p>No audit events recorded for this artifact.</p>}</div> : null}
             <div className="approval-decision">
               <label>Decision note<input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Optional reason" /></label>
-              <div><button type="button" className="secondary" onClick={() => void decide('reject')} disabled={!canApprove || !selected.canReject || busy}>Reject</button><button type="button" className="primary" onClick={() => void decide('approve')} disabled={!canApprove || !selected.canApprove || busy}>Approve</button></div>
+              <div><button type="button" className="secondary" onClick={() => void decide('reject')} disabled={!canApprove || !selected.canReject || busy}>Reject</button><button type="button" className="primary" onClick={() => void decide('approve')} disabled={!canApprove || !selected.canApprove || busy}>{selected.category === 'ADO Action Packs' ? 'Approve & Create in Azure DevOps' : 'Approve'}</button></div>
               {!canApprove ? <small>Your current role has read-only access.</small> : null}
             </div>
           </> : <div className="approval-empty"><strong>Select an approval</strong><span>Preview its evidence, comparison, and audit history.</span></div>}

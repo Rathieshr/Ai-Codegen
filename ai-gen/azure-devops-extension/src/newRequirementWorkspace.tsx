@@ -370,6 +370,7 @@ type RequirementRefinementResult = {
   reasoning: string[];
   ambiguities: string[];
   clarificationCandidates: string[];
+  clarificationResponses?: Array<{ question: string; answer: string }>;
   confidence: number;
   status: 'PendingReview' | 'Accepted' | 'Skipped';
   provider: string;
@@ -378,6 +379,8 @@ type RequirementRefinementResult = {
   version: number;
   generatedAt: string;
   warnings: string[];
+  fallbackReason?: string;
+  providerAttempts?: string[];
 };
 
 type DocumentResult = {
@@ -1159,16 +1162,20 @@ export function NewRequirementWorkspace({ baseUrl, context, onOpenApprovals, onE
     }
   }
 
-  async function refinementAction(action: 'accept' | 'regenerate' | 'skip' | 'edit', refinedRequirement?: string) {
+  async function refinementAction(action: 'accept' | 'regenerate' | 'skip' | 'edit' | 'clarify', payload?: string | Array<{ question: string; answer: string }>) {
     if (!ingestion) return;
     setBusyStage('refining');
     try {
       const isEdit = action === 'edit';
-      const path = isEdit ? 'refinement' : `refinement/${action}`;
+      const path = isEdit ? 'refinement' : action === 'clarify' ? 'refinement/clarifications' : `refinement/${action}`;
       const response = await fetch(`${baseUrl}/requirements/${encodeURIComponent(ingestion.requirementId)}/${path}`, {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
-        body: JSON.stringify({ actor: context.user.name, refinedRequirement }),
+        body: JSON.stringify({
+          actor: context.user.name,
+          refinedRequirement: typeof payload === 'string' ? payload : undefined,
+          responses: Array.isArray(payload) ? payload : undefined,
+        }),
       });
       const refined = await response.json() as RequirementRefinementResult & { error?: { message?: string } };
       if (!response.ok) throw new Error(refined.error?.message || `Requirement Refinement returned HTTP ${response.status}.`);
@@ -1444,8 +1451,10 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
   onOpenApprovals: () => void;
   onStartAnother: () => void;
 }) {
-  const tabs = ['Overview', 'Hierarchy', 'Traceability', 'Dependencies', 'Engineering Estimate', 'Validation', 'Diff', 'Azure DevOps Preview', 'Review & Approval', 'History'];
-  const [tab, setTab] = useState('Hierarchy');
+  const tabs = ['Summary', 'Work Items', 'Approval'];
+  const advancedTabs = ['Traceability', 'Dependencies', 'Engineering Estimate', 'Validation', 'Diff', 'Azure DevOps Preview', 'History'];
+  const [tab, setTab] = useState('Work Items');
+  const [advancedTab, setAdvancedTab] = useState('Traceability');
   const [selectedId, setSelectedId] = useState(value.nodes[0]?.nodeId || '');
   const selected = value.nodes.find((node) => node.nodeId === selectedId) || value.nodes[0];
   const nodeCounts = value.nodes.reduce<Record<string, number>>((counts, node) => ({ ...counts, [node.type]: (counts[node.type] || 0) + 1 }), {});
@@ -1464,40 +1473,28 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
 
   return <section className="hei-planning-proposal-workspace" aria-live="polite">
     <header className="hei-planning-proposal-header">
-      <div><span>Planning Proposal</span><h2>{value.title}</h2><p>Editable HEI working draft. Azure DevOps remains unchanged until a later approved synchronization.</p></div>
-      <div><Status value={value.status} /><strong>v{value.version}</strong><button className="planner-button secondary" type="button" disabled={busy} onClick={onAIReview}>Request AI Review</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export Proposal</button></div>
+      <div><span>Planning Proposal</span><h2>{value.title}</h2><p>Review the work items, approve the proposal, then create them in Azure DevOps.</p></div>
+      <div><Status value={value.status} /><strong>v{value.version}</strong><details className="hei-proposal-header-actions"><summary>More</summary><div><button className="planner-button secondary" type="button" disabled={busy || !editable} onClick={() => onRegenerate('Entire Proposal')}>Regenerate</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onAIReview}>AI Review</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export</button></div></details></div>
     </header>
     <div className="hei-planning-proposal-metrics">
       <Signal label="Health" value={`${value.health.overallHealth}%`} />
-      <Signal label="Engineering Days" value={String(value.estimate.engineeringDays)} />
-      <Signal label="Story Points" value={String(value.estimate.storyPoints)} />
-      <Signal label="Features" value={String(nodeCounts.Feature || 0)} />
-      <Signal label="Stories" value={String(nodeCounts.Story || 0)} />
-      <Signal label="Tasks" value={String(nodeCounts.Task || 0)} />
+      <Signal label="Scope" value={`${nodeCounts.Feature || 0} Features · ${nodeCounts.Story || 0} Stories · ${nodeCounts.Task || 0} Tasks`} />
+      <Signal label="Estimate" value={`${value.estimate.engineeringDays} days · ${value.estimate.storyPoints} points`} />
       <Signal label="Risk" value={value.health.risk} />
     </div>
     <nav className="hei-planning-proposal-tabs" aria-label="Planning Proposal sections">
       {tabs.map((item) => <button key={item} type="button" className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}
     </nav>
 
-    {tab === 'Hierarchy' ? <div className="hei-planning-proposal-layout">
+    {tab === 'Work Items' ? <div className="hei-planning-proposal-layout">
       <aside className="hei-proposal-tree" aria-label="Planning hierarchy">
         <header><strong>Planning Hierarchy</strong><span>{value.nodes.length} items</span></header>
         <div>{roots.map((node) => renderTree(node))}</div>
       </aside>
       <main>{selected ? <ProposalNodeEditor key={`${selected.nodeId}-${value.version}`} node={selected} nodes={value.nodes} editable={editable} busy={busy} onUpdate={onUpdate} onRegenerate={onRegenerate} /> : <p>No planning item selected.</p>}</main>
-      <aside className="hei-proposal-health">
-        <h3>Proposal Health</h3>
-        <ProposalMeter label="Coverage" value={value.health.coverage} />
-        <ProposalMeter label="Repository" value={value.health.repositoryCoverage} />
-        <ProposalMeter label="Requirements" value={value.health.requirementCoverage} />
-        <ProposalMeter label="Estimates" value={value.health.estimateCompleteness} />
-        <h4>Implementation Order</h4>
-        <ol>{value.implementationOrder.slice(0, 8).map((id) => <li key={id}>{value.nodes.find((node) => node.nodeId === id)?.title || id}</li>)}</ol>
-      </aside>
     </div> : null}
 
-    {tab === 'Overview' ? <div className="hei-proposal-card-grid">
+    {tab === 'Summary' ? <div className="hei-proposal-card-grid">
       <ProposalSummaryCard title="Executive Summary" items={[value.executiveSummary || 'Executive summary pending.']} />
       <ProposalSummaryCard title="Business Goal" items={[value.businessGoal || 'Business goal requires review.']} />
       <ProposalSummaryCard title="Recommended Strategy" items={[value.recommendedStrategy.title || value.recommendedStrategy.type.replace(/_/g, ' '), value.recommendedStrategy.reason || value.recommendedStrategy.summary, `${value.recommendedStrategy.confidence}% confidence`]} />
@@ -1509,38 +1506,39 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
       {value.aiReview?.status ? <ProposalSummaryCard title="HEI Proposal Review" items={[value.aiReview.status, value.aiReview.summary || 'Review completed.', `${value.aiReview.confidence || 0}% confidence`, ...(value.aiReview.recommendations || []).slice(0, 3)]} /> : null}
     </div> : null}
 
-    {tab === 'Traceability' ? <><div className="hei-proposal-table-wrap"><table><thead><tr><th>Artifact</th><th>Requirement</th><th>Business Goals</th><th>Acceptance Criteria</th><th>Repository Modules</th><th>Knowledge</th></tr></thead><tbody>{value.nodes.map((node) => <tr key={node.nodeId}><td><strong>{node.title}</strong><small>{node.type}</small></td><td>{node.traceability.requirementId}</td><td>{node.traceability.businessGoals.join(', ') || 'Not mapped'}</td><td>{node.traceability.acceptanceCriterionIds?.length || 0} mapped</td><td>{node.traceability.repositoryModules.join(', ') || 'Repository mapping pending'}</td><td>{node.traceability.knowledgeReferences?.join(', ') || 'No knowledge references'}</td></tr>)}</tbody></table></div>
+    <details className="hei-proposal-advanced"><summary>Advanced details</summary><nav aria-label="Advanced proposal sections">{advancedTabs.map((item) => <button key={item} type="button" className={advancedTab === item ? 'active' : ''} onClick={() => setAdvancedTab(item)}>{item}</button>)}</nav>
+    {advancedTab === 'Traceability' ? <><div className="hei-proposal-table-wrap"><table><thead><tr><th>Artifact</th><th>Requirement</th><th>Business Goals</th><th>Acceptance Criteria</th><th>Repository Modules</th><th>Knowledge</th></tr></thead><tbody>{value.nodes.map((node) => <tr key={node.nodeId}><td><strong>{node.title}</strong><small>{node.type}</small></td><td>{node.traceability.requirementId}</td><td>{node.traceability.businessGoals.join(', ') || 'Not mapped'}</td><td>{node.traceability.acceptanceCriterionIds?.length || 0} mapped</td><td>{node.traceability.repositoryModules.join(', ') || 'Repository mapping pending'}</td><td>{node.traceability.knowledgeReferences?.join(', ') || 'No knowledge references'}</td></tr>)}</tbody></table></div>
       <div className="hei-proposal-card-grid">{value.acceptanceCriteria.map((criterion) => <article key={criterion.criterionId}><span>{criterion.origin} · {criterion.status}</span><h3>{criterion.title}</h3><p>{criterion.text}</p><small>{criterion.mappedNodeIds.length} Story mapping(s) · {Math.round((criterion.confidence || 0) * (criterion.confidence <= 1 ? 100 : 1))}% confidence</small></article>)}</div></> : null}
 
-    {tab === 'Dependencies' ? <div className="hei-proposal-card-grid">
+    {advancedTab === 'Dependencies' ? <div className="hei-proposal-card-grid">
       {value.dependencies.length ? value.dependencies.map((edge, index) => <article key={`${edge.from}-${edge.to}-${index}`}><span>{edge.type || 'Depends On'}</span><h3>{value.nodes.find((node) => node.nodeId === edge.from)?.title || edge.from}</h3><p>Depends on {value.nodes.find((node) => node.nodeId === edge.to)?.title || edge.to}</p></article>) : <article><h3>No dependencies identified</h3><p>Add dependencies to establish implementation order and critical path.</p></article>}
       {Object.entries(value.dependencyGraph.categories || {}).map(([category, entries]) => <article key={category}><span>Dependency Category</span><h3>{category.replace(/([A-Z])/g, ' $1')}</h3><p>{entries.length ? `${entries.length} mapped` : 'No dependencies identified'}</p></article>)}
     </div> : null}
 
-    {tab === 'Engineering Estimate' ? <ProposalEstimateEditor value={value} editable={editable} busy={busy} onUpdate={onUpdate} onRegenerate={onRegenerate} /> : null}
+    {advancedTab === 'Engineering Estimate' ? <ProposalEstimateEditor value={value} editable={editable} busy={busy} onUpdate={onUpdate} onRegenerate={onRegenerate} /> : null}
 
-    {tab === 'Validation' ? <section className="hei-proposal-review-panel"><header><div><span>Proposal Validation</span><h3>{value.validation.status}</h3></div><button className="planner-button primary" type="button" disabled={busy} onClick={onValidate}>Validate Proposal</button></header>
+    {advancedTab === 'Validation' ? <section className="hei-proposal-review-panel"><header><div><span>Proposal Validation</span><h3>{value.validation.status}</h3></div><button className="planner-button primary" type="button" disabled={busy} onClick={onValidate}>Validate Proposal</button></header>
       {value.validation.findings.length ? value.validation.findings.map((finding, index) => <article key={`${finding.code}-${index}`}><Status value={finding.severity} /><div><strong>{finding.code.replace(/_/g, ' ')}</strong><p>{finding.message}</p></div></article>) : <p>No validation findings. The proposal satisfies the current mandatory gates.</p>}
     </section> : null}
 
-    {tab === 'Diff' ? <section className="hei-proposal-review-panel"><header><div><span>HEI Planning Diff</span><h3>{value.diff.changes.length} proposed changes</h3><p>{value.diff.estimatedSprintImpact}</p></div></header>
+    {advancedTab === 'Diff' ? <section className="hei-proposal-review-panel"><header><div><span>HEI Planning Diff</span><h3>{value.diff.changes.length} proposed changes</h3><p>{value.diff.estimatedSprintImpact}</p></div></header>
       {value.diff.changes.map((change, index) => <article key={`${change.title}-${index}`}><Status value={change.action} /><div><strong>{change.artifactType || change.type || 'Artifact'}: {change.title}</strong><p>{change.reason}</p></div><small>{change.confidence}%</small></article>)}
     </section> : null}
 
-    {tab === 'Azure DevOps Preview' ? <section className="hei-proposal-review-panel"><header><div><span>Azure DevOps Preview</span><h3>{value.azureDevOpsPreview.workItems.length} proposed work items</h3><p>Preview only. Nothing is created until this proposal is approved and a separate synchronization action is authorized.</p></div><Status value={value.azureDevOpsPreview.writeStatus} /></header>
+    {advancedTab === 'Azure DevOps Preview' ? <section className="hei-proposal-review-panel"><header><div><span>Azure DevOps Preview</span><h3>{value.azureDevOpsPreview.workItems.length} proposed work items</h3><p>Preview only. Nothing is created until this proposal is approved and a separate synchronization action is authorized.</p></div><Status value={value.azureDevOpsPreview.writeStatus} /></header>
       <div className="hei-proposal-card-grid"><Signal label="Writes Performed" value={String(value.azureDevOpsPreview.writesPerformed)} /><Signal label="Area Path" value={value.azureDevOpsPreview.areaPath || 'Not selected'} /><Signal label="Iteration" value={value.azureDevOpsPreview.iterationPath || 'Not selected'} /><Signal label="Links" value={String(value.azureDevOpsPreview.links.length)} /></div>
       {value.azureDevOpsPreview.workItems.map((item) => <article key={item.proposalNodeId}><Status value={item.operation} /><div><strong>{item.workItemType}: {item.title}</strong><p>{item.parentProposalNodeId ? 'Parent-child link prepared.' : 'Hierarchy root.'}</p></div><small>{item.storyPoints ? `${item.storyPoints} points` : 'No point field'}</small></article>)}
     </section> : null}
 
-    {tab === 'Review & Approval' ? <EngineeringReviewPanel value={value} review={engineeringReview} busy={busy} onStart={onStartReview} onAction={onReviewAction} onExport={onExportReview} onOpenApprovals={onOpenApprovals} /> : null}
-
-    {tab === 'History' ? <section className="hei-proposal-review-panel"><header><div><span>Version History</span><h3>{value.history.length + 1} versions</h3></div></header>
+    {advancedTab === 'History' ? <section className="hei-proposal-review-panel"><header><div><span>Version History</span><h3>{value.history.length + 1} versions</h3></div></header>
       {value.history.length ? [...value.history].reverse().map((entry) => <article key={`${entry.version}-${entry.timestamp}`}><Status value={`v${entry.version}`} /><div><strong>{entry.reason}</strong><p>{entry.author} · {new Date(entry.timestamp).toLocaleString()}</p><small>{entry.changes.join(' ')}</small></div>{editable ? <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onUpdate({ operation: 'rollback', targetVersion: entry.version, reason: `Rollback to version ${entry.version}` })}>Restore</button> : null}</article>) : <p>This is the first Planning Proposal version.</p>}
-    </section> : null}
+    </section> : null}</details>
+
+    {tab === 'Approval' ? <EngineeringReviewPanel value={value} review={engineeringReview} busy={busy} onStart={onStartReview} onAction={onReviewAction} onExport={onExportReview} onOpenApprovals={onOpenApprovals} /> : null}
 
     <footer className="hei-planning-proposal-footer">
       <div><strong>{value.status}</strong><span>Health {value.health.overallHealth}% · Repository {value.health.repositoryCoverage}% · v{value.version}</span></div>
-      <div>{value.status === 'Approved' && engineeringReview?.synchronization.authorized ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Proceed to Azure DevOps Sync</button> : engineeringReview ? <button className="planner-button primary" type="button" onClick={() => setTab('Review & Approval')}>Continue Engineering Review</button> : <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed} onClick={onStartReview}>Start Engineering Review</button>}{value.status === 'Approved' ? <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onUpdate({ createNewVersion: true, reason: 'Created a new draft from the approved Planning Proposal.' })}>Create New Version</button> : null}<button className="planner-button secondary" type="button" onClick={onExport}>Export</button><button className="planner-button secondary" type="button" onClick={onStartAnother}>Start Another</button></div>
+      <div>{value.status === 'Approved' && engineeringReview?.synchronization.authorized ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Create in Azure DevOps</button> : engineeringReview ? <button className="planner-button primary" type="button" onClick={() => setTab('Approval')}>Continue Approval</button> : <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed} onClick={onStartReview}>Review &amp; Approve</button>}<button className="planner-button secondary" type="button" onClick={onStartAnother}>Start Another</button></div>
     </footer>
   </section>;
 }
@@ -1568,12 +1566,14 @@ function ProposalNodeEditor({ node, nodes, editable, busy, onUpdate, onRegenerat
       <button className="planner-button primary" type="button" disabled={!editable || busy || !title.trim()} onClick={() => onUpdate({ nodeId: node.nodeId, changes: { title: title.trim(), description: description.trim(), businessValue: businessValue.trim(), acceptanceCriteria: acceptance.split('\n').map((item) => item.trim()).filter(Boolean) }, reason: `Edited ${node.type} ${node.title}` })}>Save Changes</button>
       <button className="planner-button secondary" type="button" disabled={!editable || busy || node.status === 'Approved'} onClick={() => onUpdate({ operation: 'approve', nodeId: node.nodeId, reason: `Approved ${node.title}` })}>Approve Item</button>
       <button className="planner-button secondary" type="button" disabled={!editable || busy || node.status === 'Rejected'} onClick={() => onUpdate({ operation: 'reject', nodeId: node.nodeId, reason: `Rejected ${node.title}` })}>Reject Item</button>
-      <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => onRegenerate(node.type, node.nodeId)}>Regenerate</button>
-      <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => onUpdate({ operation: 'duplicate', nodeId: node.nodeId, reason: `Duplicated ${node.title}` })}>Duplicate</button>
-      {['Feature', 'Story', 'Task'].includes(node.type) ? <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => { const second = window.prompt('Second item title'); if (second) onUpdate({ operation: 'split', nodeId: node.nodeId, titles: [node.title, second], reason: `Split ${node.title}` }); }}>Split</button> : null}
-      {siblings.length ? <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => onUpdate({ operation: 'merge', nodeId: node.nodeId, mergeNodeIds: [node.nodeId, siblings[0].nodeId], reason: `Merged ${node.title}` })}>Merge with Next</button> : null}
-      {parentOptions.length ? <select aria-label="Move to parent" disabled={!editable || busy} value={node.parentId} onChange={(event) => onUpdate({ operation: 'move', nodeId: node.nodeId, parentId: event.target.value, reason: `Moved ${node.title}` })}>{parentOptions.map((parent) => <option key={parent.nodeId} value={parent.nodeId}>{parent.title}</option>)}</select> : null}
-      {node.type !== 'Epic' ? <button className="planner-button danger" type="button" disabled={!editable || busy} onClick={() => { if (window.confirm(`Delete ${node.title} and its children?`)) onUpdate({ operation: 'delete', nodeId: node.nodeId, reason: `Deleted ${node.title}` }); }}>Delete</button> : null}
+      <details className="hei-proposal-item-more"><summary>More actions</summary><div>
+        <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => onRegenerate(node.type, node.nodeId)}>Regenerate</button>
+        <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => onUpdate({ operation: 'duplicate', nodeId: node.nodeId, reason: `Duplicated ${node.title}` })}>Duplicate</button>
+        {['Feature', 'Story', 'Task'].includes(node.type) ? <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => { const second = window.prompt('Second item title'); if (second) onUpdate({ operation: 'split', nodeId: node.nodeId, titles: [node.title, second], reason: `Split ${node.title}` }); }}>Split</button> : null}
+        {siblings.length ? <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => onUpdate({ operation: 'merge', nodeId: node.nodeId, mergeNodeIds: [node.nodeId, siblings[0].nodeId], reason: `Merged ${node.title}` })}>Merge with Next</button> : null}
+        {parentOptions.length ? <select aria-label="Move to parent" disabled={!editable || busy} value={node.parentId} onChange={(event) => onUpdate({ operation: 'move', nodeId: node.nodeId, parentId: event.target.value, reason: `Moved ${node.title}` })}>{parentOptions.map((parent) => <option key={parent.nodeId} value={parent.nodeId}>{parent.title}</option>)}</select> : null}
+        {node.type !== 'Epic' ? <button className="planner-button danger" type="button" disabled={!editable || busy} onClick={() => { if (window.confirm(`Delete ${node.title} and its children?`)) onUpdate({ operation: 'delete', nodeId: node.nodeId, reason: `Deleted ${node.title}` }); }}>Delete</button> : null}
+      </div></details>
     </div>
   </section>;
 }
@@ -1605,14 +1605,35 @@ function EngineeringReviewPanel({ value, review, busy, onStart, onAction, onExpo
   const [changeType, setChangeType] = useState('Business Clarification');
   const [reviewer, setReviewer] = useState('');
   if (!review) return <section className="hei-proposal-review-panel">
-    <header><div><span>Engineering Review</span><h3>Review not started</h3><p>Validation must pass before the configurable approval chain begins.</p></div><Status value={value.validation.status} /></header>
+    <header><div><span>Planning Approval</span><h3>Approval not started</h3><p>Validation must pass before the proposal can receive its single approval.</p></div><Status value={value.validation.status} /></header>
     <div className="hei-proposal-card-grid"><Signal label="Proposal Version" value={`v${value.version}`} /><Signal label="Context Version" value={value.contextVersion} /><Signal label="Knowledge Version" value={value.knowledgeVersion || 'Not versioned'} /><Signal label="Validation" value={value.validation.status} /></div>
-    <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed} onClick={onStart}>Start Engineering Review</button>
+    <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed} onClick={onStart}>Start Planning Approval</button>
   </section>;
   const stage = review.currentStage;
   const canDecide = Boolean(stage.stageId) && !['Approved', 'Rejected', 'Superseded', 'Expired'].includes(review.status);
+  if (review.stages.length === 1) return <section className="hei-proposal-review-panel hei-engineering-review hei-single-approval">
+    <header><div><span>Planning Approval</span><h3>{review.status === 'Approved' ? 'Proposal approved' : 'Ready for one approval'}</h3><p>{review.status === 'Approved' ? 'The approved proposal can now be created in Azure DevOps.' : 'Confirm the scope, validation, estimate, and repository mapping.'}</p></div><Status value={review.readiness.status} /></header>
+    <div className="hei-single-approval-summary">
+      <Signal label="Work Items" value={String(value.nodes.filter((item) => item.status !== 'Rejected').length)} />
+      <Signal label="Estimate" value={`${value.estimate.engineeringDays} days · ${value.estimate.storyPoints} points`} />
+      <Signal label="Validation" value={review.proposalSummary.validationStatus} />
+      <Signal label="Risk" value={review.proposalSummary.riskScore || 'Not rated'} />
+    </div>
+    {review.stale ? <div className="hei-review-blocker">The proposal changed after this approval started. Start approval again for the latest version.</div> : null}
+    {review.readiness.blockers.length ? <div className="hei-review-blocker"><strong>Resolve before approval</strong><ul>{review.readiness.blockers.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+    {canDecide ? <label className="hei-single-approval-comment"><span>Approval note (optional)</span><textarea rows={3} value={comments} onChange={(event) => setComments(event.target.value)} placeholder="Add a decision note or explain requested changes" /></label> : null}
+    <div className="hei-review-actions">
+      {canDecide ? <><button className="planner-button primary" type="button" disabled={busy || !review.readiness.approvalAllowed} onClick={() => onAction('decision', { decision: comments.trim() ? 'ApproveWithComments' : 'Approve', role: stage.role, comments: comments.trim() })}>Approve Proposal</button><button className="planner-button secondary" type="button" disabled={busy || !comments.trim()} onClick={() => onAction('decision', { decision: 'RequestChanges', role: stage.role, comments: comments.trim(), changeType: 'Business Clarification' })}>Request Changes</button><button className="planner-button danger" type="button" disabled={busy || !comments.trim()} onClick={() => onAction('decision', { decision: 'Reject', role: stage.role, comments: comments.trim() })}>Reject</button></> : null}
+      {review.status === 'Approved' ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Create in Azure DevOps</button> : null}
+    </div>
+    <details className="hei-single-approval-details"><summary>Review details</summary>
+      <div className="hei-review-sections">{review.sections.map((item) => <article key={item.name}><div><strong>{item.name}</strong><p>{item.commentCount} comment(s)</p></div><Status value={item.status} /></article>)}</div>
+      {review.decisions.length ? <div className="hei-review-history">{review.decisions.map((item) => <article key={item.decisionId}><Status value={item.decision} /><div><strong>{item.stage}</strong><p>{item.comments || 'No additional comments.'}</p></div><small>{item.reviewer}</small></article>)}</div> : null}
+      <div className="hei-review-actions"><button className="planner-button secondary" type="button" onClick={() => onExport('Review Report')}>Export Review</button><button className="planner-button secondary" type="button" onClick={onOpenApprovals}>Open Approval Center</button></div>
+    </details>
+  </section>;
   return <section className="hei-proposal-review-panel hei-engineering-review">
-    <header><div><span>Engineering Review</span><h3>{review.status}</h3><p>{stage.name ? `Current stage: ${stage.name} · ${stage.role}` : 'Approval chain complete.'}</p></div><Status value={review.readiness.status} /></header>
+    <header><div><span>Planning Approval</span><h3>{review.status}</h3><p>{stage.name ? 'One approval is required before Azure DevOps creation.' : 'Approval complete.'}</p></div><Status value={review.readiness.status} /></header>
     <div className="hei-planning-proposal-metrics">
       <Signal label="Proposal" value={`v${review.proposalVersion}`} /><Signal label="Context" value={review.contextVersion} />
       <Signal label="Knowledge" value={review.knowledgeVersion || 'Not versioned'} /><Signal label="Recommendation" value={`v${review.recommendationVersion}`} />
@@ -1675,17 +1696,10 @@ function RequirementProgressTimeline({ hasSource, hasRefinement, hasAnalysis, ha
   planningApproved: boolean;
 }) {
   const stages = [
-    { label: 'Requirement Source', done: hasSource, active: !hasSource },
-    { label: 'AI Refinement', done: hasRefinement, active: hasSource && !hasRefinement },
-    { label: 'Requirement Analysis', done: hasAnalysis, active: hasRefinement && !hasAnalysis },
-    { label: 'Repository Detection', done: hasRepository, active: hasAnalysis && !hasRepository },
-    { label: 'Engineering Memory', done: hasAnalysis, active: false },
-    { label: 'Quality Review', done: contextCreated, active: hasAnalysis && !contextCreated },
-    { label: 'Planning Context', done: recommendationCreated, active: contextCreated && !recommendationCreated },
-    { label: 'Planning Recommendation', done: planningCreated, active: recommendationCreated && !planningCreated },
-    { label: 'Planning Proposal', done: planningApproved, active: planningCreated && !planningApproved },
-    { label: 'Approval', done: planningApproved, active: false },
-    { label: 'Azure DevOps', done: false, active: false },
+    { label: 'Understand', done: hasAnalysis && hasRepository, active: !hasAnalysis || !hasRepository },
+    { label: 'Plan', done: planningCreated, active: hasAnalysis && hasRepository && !planningCreated },
+    { label: 'Approve', done: planningApproved, active: planningCreated && !planningApproved },
+    { label: 'Create in Azure DevOps', done: false, active: planningApproved },
   ];
   return <nav className="hei-requirement-progress" aria-label="Requirement progress">
     {stages.map((stage, index) => {
@@ -1717,7 +1731,7 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
   const classifications = ['NEW_INITIATIVE', 'NEW_FEATURE', 'EXTEND_FEATURE', 'MODIFY_EXISTING', 'BUG', 'ENHANCEMENT', 'AI_RECOMMENDED'];
   return <section className="hei-planning-context-workspace" aria-label="Planning Context">
     <header>
-      <div><span>Engineering Landscape Review</span><h2>Planning Context</h2><p>Review what exists, what can be reused, and what HEI recommends before a Planning Pack is generated.</p></div>
+      <div><span>Plan Preparation</span><h2>Engineering Context</h2><p>HEI checked existing work, repository evidence, and reusable engineering knowledge.</p></div>
       <Status value={planningContextReadiness(value.readiness.status)} />
     </header>
 
@@ -1733,7 +1747,7 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
       </div>
     </section>
 
-    <div className="hei-planning-context-grid">
+    <details className="hei-process-details"><summary>Review engineering context and evidence</summary><div className="hei-planning-context-grid">
       <section>
         <header><div><span>Azure DevOps Overview</span><h3>Existing project work</h3></div><Status value={`${Object.values(counts).reduce((total, count) => total + Number(count || 0), 0)} items`} /></header>
         <div className="hei-planning-context-metrics">
@@ -1824,7 +1838,7 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
         <ContextTags title="Modify" values={value.recommendation.modify} empty="No modification candidates." />
         <ContextTags title="Do Not Create" values={value.recommendation.doNotCreate} empty="No duplicate scope detected." />
       </div>
-    </section>
+    </section></details>
 
     <section className="hei-planning-context-readiness">
       <header><div><span>Planning Readiness</span><h3>{planningContextReadiness(value.readiness.status)}</h3></div><strong>{value.readiness.score}%</strong></header>
@@ -1841,9 +1855,7 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
     <footer className="hei-planning-context-actions">
       <div><span>Context {value.contextVersion}</span><strong>{value.reviewStatus}</strong></div>
       <button className="planner-button secondary" type="button" disabled={busy} onClick={onEditRequirement}>Edit Requirement</button>
-      <button className="planner-button secondary" type="button" disabled={busy} onClick={onRefresh}>Refresh Context</button>
-      <button className="planner-button secondary" type="button" disabled={busy} onClick={onSaveDraft}>Save Draft</button>
-      <button className="planner-button primary" type="button" disabled={busy || blocked} onClick={onContinue}>{busy ? 'Preparing Recommendation...' : 'Continue to Planning Recommendation'}</button>
+      <button className="planner-button primary" type="button" disabled={busy || blocked} onClick={onContinue}>{busy ? 'Preparing Plan...' : 'Continue to Plan'}</button>
     </footer>
   </section>;
 }
@@ -1865,7 +1877,7 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
   const diffSymbols: Record<string, string> = { Create: '+', Modify: '~', Reuse: '=', Ignore: '-', Merge: 'M', Split: 'S', Delete: 'D', Move: '>' };
   return <section className="hei-planning-recommendation-workspace" aria-label="Planning Recommendation" aria-live="polite">
     <header>
-      <div><span>Recommendation Review</span><h2>Planning Recommendation</h2><p>Review HEI's proposed planning strategy and intended work-item changes before generating a Planning Proposal.</p></div>
+      <div><span>Plan Decision</span><h2>Recommended Plan</h2><p>Confirm HEI's recommended approach before generating editable work items.</p></div>
       <Status value={approved ? 'Approved' : 'Needs Review'} />
     </header>
 
@@ -1875,21 +1887,18 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
         <strong>{value.confidence.overall}%</strong>
       </header>
       <div className="hei-planning-context-metrics">
-        <Signal label="Engineering" value={`${value.confidence.engineering}%`} />
-        <Signal label="Repository" value={`${value.confidence.repository}%`} />
-        <Signal label="Memory" value={`${value.confidence.memory}%`} />
-        <Signal label="Planning" value={`${value.confidence.planning}%`} />
+        <Signal label="Expected Scope" value={`${value.summary.expectedStoryCount} Stories · ${value.summary.expectedTaskCount} Tasks`} />
+        <Signal label="Estimated Effort" value={value.primaryRecommendation?.estimatedEffort || 'Calculated in proposal'} />
+        <Signal label="Reuse" value={`${value.primaryRecommendation?.reuseScore ?? 0}%`} />
         <Signal label="Complexity" value={value.impact.estimatedComplexity} />
         <Signal label="Risk" value={value.impact.riskLevel} />
-        <Signal label="Estimated Effort" value={value.primaryRecommendation?.estimatedEffort || 'Planning Proposal required'} />
-        <Signal label="Reuse" value={`${value.primaryRecommendation?.reuseScore ?? 0}%`} />
       </div>
       <div className="hei-planning-recommendation-actions-list">
         {value.actions.map((action) => <article key={action.action}><div><strong>{action.action}</strong><p>{action.reason}</p></div><Status value={`${action.confidence}% confidence`} /></article>)}
       </div>
     </section>
 
-    <div className="hei-planning-recommendation-grid">
+    <details className="hei-process-details"><summary>Compare recommendation, evidence, and alternatives</summary><div className="hei-planning-recommendation-grid">
       <section>
         <header><div><span>Recommendation Summary</span><h3>Expected planning shape</h3></div></header>
         <div className="hei-planning-context-metrics">
@@ -1991,16 +2000,14 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
         <label><span>Reason</span><input value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} placeholder="Why is this strategy more appropriate?" /></label>
         <button className="planner-button secondary" type="button" disabled={busy || !overrideReason.trim() || overrideStrategy === value.strategy} onClick={() => onOverride(overrideStrategy, overrideReason.trim())}>Apply Override</button>
       </div>
-    </details>
+    </details><div className="hei-process-detail-actions"><button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export Report</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onRegenerate}>Re-evaluate with AI</button></div></details>
 
     <footer className="hei-planning-context-actions">
       <div><span>Recommendation v{value.version}</span><strong>{approved ? `Approved by ${value.approvedBy}` : 'Awaiting decision'}</strong></div>
-      <button className="planner-button secondary" type="button" disabled={busy} onClick={onBack}>Back to Context</button>
-      <button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export Report</button>
-      <button className="planner-button secondary" type="button" disabled={busy} onClick={onRegenerate}>Request AI Re-evaluation</button>
+      <button className="planner-button secondary" type="button" disabled={busy} onClick={onBack}>Back</button>
       {approved
-        ? <button className="planner-button primary" type="button" disabled={busy} onClick={onContinue}>{busy ? 'Generating Planning Proposal...' : 'Continue to Planning Proposal'}</button>
-        : <button className="planner-button primary" type="button" disabled={busy} onClick={onApprove}>{busy ? 'Approving...' : 'Accept Recommendation'}</button>}
+        ? <button className="planner-button primary" type="button" disabled={busy} onClick={onContinue}>{busy ? 'Generating Work Items...' : 'Generate Work Items'}</button>
+        : <button className="planner-button primary" type="button" disabled={busy} onClick={onApprove}>{busy ? 'Accepting...' : 'Accept Recommended Plan'}</button>}
     </footer>
   </section>;
 }
@@ -2050,10 +2057,15 @@ function AdoWorkItemSummary({ result }: { result: AdoWorkItemImportResult }) {
 function RequirementRefinementCard({ value, busy, onAction }: {
   value: RequirementRefinementResult;
   busy: boolean;
-  onAction: (action: 'accept' | 'regenerate' | 'skip' | 'edit', refinedRequirement?: string) => void;
+  onAction: (action: 'accept' | 'regenerate' | 'skip' | 'edit' | 'clarify', payload?: string | Array<{ question: string; answer: string }>) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value.refinedRequirement);
+  const [clarifications, setClarifications] = useState<Record<string, string>>(() => Object.fromEntries((value.clarificationResponses || []).map((item) => [item.question, item.answer])));
+  useEffect(() => {
+    setDraft(value.refinedRequirement);
+    setClarifications(Object.fromEntries((value.clarificationResponses || []).map((item) => [item.question, item.answer])));
+  }, [value.version, value.refinedRequirement]);
   const accepted = value.status === 'Accepted';
   const normalizedOriginal = value.originalRequirement.trim().replace(/\s+/g, ' ');
   const normalizedRefinement = value.refinedRequirement.trim().replace(/\s+/g, ' ');
@@ -2087,8 +2099,9 @@ function RequirementRefinementCard({ value, busy, onAction }: {
       <div><strong>{wordingChanged ? 'Changes Made' : 'Wording Review'}</strong>{value.changes.length ? <ul>{value.changes.map((item, index) => <li key={`${index}-${item.change}`}><b>{item.change}</b><small>{item.reason}</small></li>)}</ul> : <p>{wordingChanged ? 'No change summary was provided.' : 'The source wording is suitable for analysis.'}</p>}</div>
       <div><strong>Reasoning</strong>{value.reasoning.length ? <ul>{value.reasoning.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No additional reasoning was provided.</p>}</div>
       <div><strong>Ambiguities</strong>{value.ambiguities.length ? <ul>{value.ambiguities.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No explicit ambiguity identified.</p>}</div>
-      <div><strong>Clarification Candidates</strong>{value.clarificationCandidates.length ? <ul>{value.clarificationCandidates.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No clarification required before analysis.</p>}</div>
+      <div className="hei-requirement-clarifications"><strong>Clarification Candidates</strong>{value.clarificationCandidates.length ? <>{value.clarificationCandidates.map((item) => <label key={item}><span>{item}</span><textarea rows={2} value={clarifications[item] || ''} onChange={(event) => setClarifications((current) => ({ ...current, [item]: event.target.value }))} placeholder="Add the business answer HEI should use" /></label>)}<button className="planner-button secondary" type="button" disabled={busy || !value.clarificationCandidates.some((item) => (clarifications[item] || '').trim())} onClick={() => onAction('clarify', value.clarificationCandidates.filter((item) => (clarifications[item] || '').trim()).map((question) => ({ question, answer: clarifications[question].trim() })))}>Apply Answers &amp; Regenerate</button></> : <p>No clarification required before analysis.</p>}</div>
     </div>
+    {value.provider === 'Deterministic' && value.fallbackReason ? <div className="hei-requirement-refinement-fallback" role="status"><strong>AI refinement fallback</strong><p>{value.fallbackReason}</p></div> : null}
     <details><summary>Refinement lineage and search hints</summary><div className="hei-requirement-refinement-lineage"><Signal label="Provider" value={value.provider || 'Deterministic'} /><Signal label="Model" value={value.model || 'Not applicable'} /><Signal label="Prompt" value={value.promptVersion} /><Signal label="Version" value={String(value.version)} /></div><ContextTags title="Repository search hints" values={repositoryHints} empty="No repository hints inferred." /><ContextTags title="Markdown search hints" values={markdownHints} empty="No Markdown hints inferred." /><ContextTags title="Azure DevOps search hints" values={adoHints} empty="No Azure DevOps hints inferred." /><ContextTags title="Possible modules" values={value.possibleModuleNames || []} empty="No possible module names inferred." /><ContextTags title="Possible features" values={value.possibleFeatureNames || []} empty="No possible feature names inferred." /></details>
     <footer>
       {editing ? <><button className="planner-button primary" type="button" disabled={busy || !draft.trim()} onClick={() => { onAction('edit', draft.trim()); setEditing(false); }}>Save Refinement</button><button className="planner-button secondary" type="button" disabled={busy} onClick={() => { setDraft(value.refinedRequirement); setEditing(false); }}>Cancel Edit</button></> : <>
@@ -2117,7 +2130,7 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
   onContinue: () => void;
   onCancel: () => void;
   onReanalyze: () => void;
-  onRefinementAction: (action: 'accept' | 'regenerate' | 'skip' | 'edit', refinedRequirement?: string) => void;
+  onRefinementAction: (action: 'accept' | 'regenerate' | 'skip' | 'edit' | 'clarify', payload?: string | Array<{ question: string; answer: string }>) => void;
   onSuggestAcceptanceCriteria: () => void;
   onApproveAcceptanceCriteria: () => void;
   onDiscardAcceptanceCriteria: () => void;
@@ -2130,6 +2143,8 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
   const blocked = analysis.planningReadiness.status === 'Blocked';
   const needsReview = analysis.planningReadiness.status !== 'Ready';
   const acceptancePending = analysis.acceptanceCriteriaState?.state === 'AISuggested' && analysis.acceptanceCriteriaState?.status === 'PendingReview';
+  const qualityFindingCount = (analysis.acceptanceCriteriaSuggestions.length ? 0 : analysis.missingAcceptanceCriteria.length)
+    + analysis.ambiguousRequirements.length + analysis.conflictingRequirements.length + analysis.duplicateRequirements.length;
   const suggestion = analysis.repositorySuggestion;
   const recommendedRepository = suggestion?.suggestedRepository;
   const repositoryOptions = suggestion?.availableRepositories || [];
@@ -2145,19 +2160,17 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
     </div> : <>
       <div className="hei-requirement-review-layout">
       <div className="hei-requirement-review-main">
-      <div className="hei-requirement-review-meta">
+      <details className="hei-requirement-advanced"><summary>Source and analysis details</summary><div className="hei-requirement-review-meta">
         <Signal label="Source" value={review.source || ingestion.sourceType} />
         <Signal label="Requirement Context" value={analysis.contextVersion} />
         <Signal label="Document Type" value={review.documentType || 'Not Applicable'} />
         <Signal label="Review Status" value={analysis.reviewStatus} />
         <Signal
           label="Analysis Mode"
-          value={analysis.aiAnalysis?.reasoningMode === 'AI'
-            ? `${analysis.aiAnalysis.provider}${analysis.aiAnalysis.model ? ` · ${analysis.aiAnalysis.model}` : ''}`
-            : reasoningFallbackLabel(analysis.aiAnalysis?.warnings || [])}
+          value={requirementAnalysisModeLabel(analysis, refinement)}
         />
-      </div>
-      {refinement ? <RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /> : null}
+      </div></details>
+      {refinement ? refinement.status === 'Accepted' ? <details className="hei-requirement-accepted-refinement"><summary><span>AI refinement accepted</span><strong>{refinement.executiveSummary || refinement.requirementSummary}</strong></summary><RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /></details> : <RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /> : null}
       <RequirementHealth analysis={analysis} ingestion={ingestion} />
       <section className="hei-repository-recommendation" aria-label="Suggested Repository">
         <header>
@@ -2190,11 +2203,11 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
           {(suggestion?.alternativeRepositories || []).length ? <small>Alternatives: {(suggestion?.alternativeRepositories || []).map((repository) => `${repository.name || 'Unnamed repository'} (${Math.round((repository.confidence || 0) * 100)}%)`).join(', ')}</small> : null}
         </> : null}
       </section>
-      <RequirementAnalysisViewBoundary key={analysis.analysisDocument?.documentId || analysis.analysisId} analysis={analysis}>
+      <details className="hei-requirement-advanced"><summary>Engineering analysis details</summary><RequirementAnalysisViewBoundary key={analysis.analysisDocument?.documentId || analysis.analysisId} analysis={analysis}>
         <RequirementAnalysisDocumentView analysis={analysis} />
-      </RequirementAnalysisViewBoundary>
+      </RequirementAnalysisViewBoundary></details>
       <AcceptanceCriteriaCard analysis={analysis} busy={busy} onEditRequirement={onEdit} onGenerate={onSuggestAcceptanceCriteria} onApprove={onApproveAcceptanceCriteria} onDiscard={onDiscardAcceptanceCriteria} onSkip={onSkipAcceptanceCriteria} onUpdate={onUpdateAcceptanceCriteria} />
-      <QualityFindings result={analysis} onEdit={onEdit} onReanalyze={onReanalyze} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} />
+      <details className="hei-requirement-advanced" open={blocked}><summary>Quality findings ({qualityFindingCount})</summary><QualityFindings result={analysis} onEdit={onEdit} onReanalyze={onReanalyze} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} /></details>
       </div>
       <HEIInsights analysis={analysis} memoryStatus={review.engineeringMemory.status} busy={busy} blocked={blocked || acceptancePending} onEdit={onEdit} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} onContinue={onContinue} />
       </div>
@@ -2203,8 +2216,7 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
         <div className="hei-requirement-actions">
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Requirement</button>
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onReanalyze}>Re-analyze</button>
-          <button className="planner-button secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
-          <button className="planner-button primary" type="button" disabled={busy || blocked || acceptancePending} onClick={onContinue}>{busy ? 'Building Planning Context...' : needsReview ? 'Approve & Continue to Planning Context' : 'Continue to Planning Context'}</button>
+          <button className="planner-button primary" type="button" disabled={busy || blocked || acceptancePending} onClick={onContinue}>{busy ? 'Preparing Plan...' : needsReview ? 'Accept & Continue to Plan' : 'Continue to Plan'}</button>
         </div>
       </div>
       {blocked ? <p className="hei-requirement-review-blocker">Resolve blocking findings with Edit before continuing to Planning.</p> : acceptancePending ? <p className="hei-requirement-review-guidance">Approve, edit, or discard the generated Acceptance Criteria before Planning approval.</p> : needsReview ? <p className="hei-requirement-review-guidance">Recommendations are visible and Planning may continue with the reviewed interpretation.</p> : null}
@@ -2392,6 +2404,20 @@ function reasoningFallbackLabel(warnings: string[]) {
   if (value.includes('parse_error') || value.includes('missing_field') || value.includes('missing_valid_evidence')) return 'Deterministic fallback · provider response rejected';
   if (value.includes('provider_error') || value.includes('no configured reasoning provider')) return 'Deterministic fallback · provider unavailable';
   return warnings.length ? 'Deterministic fallback · see diagnostics' : 'Deterministic baseline';
+}
+
+function requirementAnalysisModeLabel(
+  analysis: RequirementAnalysisResult,
+  refinement?: RequirementRefinementResult,
+) {
+  const analysisLabel = analysis.aiAnalysis?.reasoningMode === 'AI'
+    ? `${analysis.aiAnalysis.provider}${analysis.aiAnalysis.model ? ` · ${analysis.aiAnalysis.model}` : ''}`
+    : reasoningFallbackLabel(analysis.aiAnalysis?.warnings || []);
+  if (!refinement) return analysisLabel;
+  if (refinement.provider === 'Deterministic' && analysis.aiAnalysis?.reasoningMode === 'AI') {
+    return `Mixed · ${analysisLabel} analysis · deterministic refinement`;
+  }
+  return analysisLabel;
 }
 
 function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate, onApprove, onDiscard, onSkip, onUpdate }: {
@@ -2656,7 +2682,6 @@ function HEIInsights({ analysis, memoryStatus, busy, blocked, onEdit, onGenerate
     <div className="hei-insights-actions">
       {!analysis.acceptanceCriteria.length && !analysis.acceptanceCriteriaSuggestions.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onGenerateAcceptanceCriteria}>Generate Acceptance Criteria</button> : null}
       {!analysis.acceptanceCriteria.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Requirement</button> : null}
-      <button className="planner-button secondary" type="button" disabled={busy || blocked} onClick={onContinue}>Continue to Planning Context</button>
     </div>
   </div></details></aside>;
 }

@@ -45,6 +45,7 @@ class PlanningProposalService:
         requirement_planning_service: Any,
         reasoning_engine: Any | None = None,
         review_service: Any | None = None,
+        ado_action_pack_preparer: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
@@ -55,6 +56,7 @@ class PlanningProposalService:
             recommendation_service, "reasoning_engine", None
         )
         self.review_service = review_service
+        self.ado_action_pack_preparer = ado_action_pack_preparer
         self.platform = platform
 
     def build(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -218,6 +220,26 @@ class PlanningProposalService:
         values[proposal["proposalId"]] = proposal
         self.store.write(values)
         self._publish("PlanningProposalApproved", proposal)
+        if self.ado_action_pack_preparer:
+            try:
+                action_pack = self.ado_action_pack_preparer(proposal)
+                proposal["azureDevOpsAutomation"] = {
+                    "status": action_pack.get("approvalStatus") or "Prepared",
+                    "packId": action_pack.get("packId"),
+                    "operationCount": len(action_pack.get("proposedActions") or []),
+                    "message": "Azure DevOps creation preview is ready in Approval Center.",
+                }
+            except Exception as error:
+                proposal["azureDevOpsAutomation"] = {
+                    "status": "NeedsConfiguration",
+                    "packId": "",
+                    "operationCount": 0,
+                    "message": str(error),
+                }
+            proposal["updatedAt"] = _now()
+            values = self.store.read()
+            values[proposal["proposalId"]] = proposal
+            self.store.write(values)
         return proposal
 
     def history(self, proposal_id: str) -> dict[str, Any]:
@@ -480,6 +502,12 @@ class PlanningProposalService:
         )
         confidence = int(change.get("confidence") or recommendation.get("confidence", {}).get("overall") or 0)
         description = _text(item.get("description")) or _text(change.get("reason"))
+        business_value = business_goals[0] if business_goals else _text(impact.get("businessImpact"))
+        if _same_meaning(description, business_value):
+            distinct_scope = _first(functional)
+            description = distinct_scope if distinct_scope and not _same_meaning(distinct_scope, business_value) else (
+                f"Define the approved {kind.lower()} scope for {title}."
+            )
         return ProposalNode(
             nodeId=node_id,
             proposalId=proposal_id,
@@ -487,7 +515,7 @@ class PlanningProposalService:
             type=kind,
             title=title,
             description=description,
-            businessValue=business_goals[0] if business_goals else recommendation.get("impact", {}).get("businessImpact", ""),
+            businessValue=business_value,
             acceptanceCriteria=criteria,
             businessRules=_strings(requirement.get("businessRules")),
             dependencies=_strings(requirement.get("dependencies")),
@@ -1284,24 +1312,67 @@ def _distribute_estimate(nodes: list[dict[str, Any]], estimate: dict[str, Any]) 
 
 def _task_blueprints(story: dict[str, Any], recommendation: dict[str, Any]) -> list[dict[str, Any]]:
     blueprints = []
+    scope = _task_scope(story.get("title"))
     if story.get("affectedScreens"):
-        blueprints.append(("Frontend", "Implement user experience", "Implement the approved interaction states and screen behavior."))
+        blueprints.append(("Frontend", f"Implement {scope} user experience", "Implement the approved interaction states and screen behavior."))
     if story.get("affectedApis"):
-        blueprints.append(("API", "Implement API behavior", "Implement bounded API behavior and validation for mapped acceptance criteria."))
+        blueprints.append(("API", f"Implement {scope} API behavior", "Implement bounded API behavior and validation for the mapped Acceptance Criteria."))
     if story.get("repositoryModules"):
-        blueprints.append(("Backend", "Implement domain behavior", "Implement the approved behavior in evidence-matched repository modules."))
-    blueprints.append(("Testing", "Add verification coverage", "Add functional, negative, permission, integration, and regression tests required by the Story."))
+        blueprints.append(("Backend", f"Implement {scope} domain behavior", "Implement the approved behavior in evidence-matched repository modules."))
     if not any(item[0] in {"Frontend", "API", "Backend"} for item in blueprints):
-        blueprints.insert(0, ("Architecture", "Locate implementation boundary", "Confirm the closest existing implementation before making scoped changes."))
+        blueprints.append((
+            "Repository",
+            f"Locate {scope} implementation boundary",
+            "Identify the closest existing implementation and confirm the files and modules allowed for this Story.",
+        ))
+        blueprints.append((
+            "Repository",
+            f"Implement {scope} in the confirmed boundary",
+            "Implement only the approved Story behavior after the repository boundary is confirmed.",
+        ))
+    blueprints.append((
+        "Testing",
+        f"Validate {scope} acceptance scenarios",
+        "Add focused tests mapped to the Story Acceptance Criteria and affected engineering areas.",
+    ))
     return [
         {
             "type": kind,
-            "title": f"{title}: {story['title']}",
+            "title": title,
             "description": description,
             "tests": _suggested_tests("Task", story.get("acceptanceCriteria") or [], recommendation.get("impact") or {}),
         }
         for kind, title, description in blueprints
     ]
+
+
+def _task_scope(value: Any) -> str:
+    words = _text(value).split()
+    while words and words[0].casefold() in {
+        "add", "allow", "create", "deliver", "enable", "implement", "provide", "support",
+    }:
+        words.pop(0)
+    scope = " ".join(words[:9]).strip()
+    return scope or "approved Story"
+
+
+def _looks_like_acceptance_criterion_title(value: Any) -> bool:
+    title = _text(value).casefold()
+    return title.startswith(("given ", "when ", "then ", "scenario:")) or (
+        " given " in f" {title} " and " when " in f" {title} " and " then " in f" {title} "
+    )
+
+
+def _same_meaning(left: Any, right: Any) -> bool:
+    left_text = _text(left).casefold()
+    right_text = _text(right).casefold()
+    if not left_text or not right_text:
+        return False
+    if left_text == right_text:
+        return True
+    left_words = {word for word in left_text.replace(".", " ").replace(",", " ").split() if len(word) > 2}
+    right_words = {word for word in right_text.replace(".", " ").replace(",", " ").split() if len(word) > 2}
+    return bool(left_words and right_words) and len(left_words & right_words) / len(left_words | right_words) >= .9
 
 
 def _suggested_tests(kind: str, criteria: list[str], impact: dict[str, Any]) -> list[str]:
@@ -1327,15 +1398,21 @@ def _dependency_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _implementation_order(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> list[str]:
-    dependencies = {node["nodeId"]: set() for node in nodes}
+    active = [node for node in nodes if node.get("status") != "Rejected"]
+    executable = [node for node in active if node.get("type") in {"Task", "Sub Task"}]
+    if not executable:
+        executable = [node for node in active if node.get("type") == "Story"]
+    executable_ids = {node["nodeId"] for node in executable}
+    dependencies = {node["nodeId"]: set() for node in executable}
     for edge in edges:
-        dependencies.setdefault(edge["from"], set()).add(edge["to"])
+        if edge["from"] in executable_ids and edge["to"] in executable_ids:
+            dependencies.setdefault(edge["from"], set()).add(edge["to"])
     ordered: list[str] = []
     remaining = set(dependencies)
     while remaining:
         ready = sorted(
             [node_id for node_id in remaining if not (dependencies[node_id] & remaining)],
-            key=lambda node_id: next((int(node.get("order") or 0) for node in nodes if node["nodeId"] == node_id), 0),
+            key=lambda node_id: next((int(node.get("order") or 0) for node in executable if node["nodeId"] == node_id), 0),
         )
         if not ready:
             ready = sorted(remaining)
@@ -1424,6 +1501,16 @@ def _validate(proposal: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]
                 _finding(findings, "invalid_hierarchy", "Error", node, f"{node.get('type')} requires a {parent_type} parent.")
         if node.get("type") == "Story" and not _strings(node.get("acceptanceCriteria")):
             _finding(findings, "missing_acceptance_criteria", "Error", node, "Story requires measurable Acceptance Criteria.")
+        if node.get("type") == "Story" and _looks_like_acceptance_criterion_title(node.get("title")):
+            _finding(
+                findings, "acceptance_criterion_used_as_story", "Error", node,
+                "Story title is an Acceptance Criterion. Group the criterion under an outcome-oriented Story.",
+            )
+        if _same_meaning(node.get("description"), node.get("businessValue")):
+            _finding(
+                findings, "duplicate_business_context", "Warning", node,
+                "Description and Business Value repeat the same content and require distinct wording.",
+            )
         if node.get("type") == "Story" and not any(
             item.get("type") == "Task" and item.get("parentId") == node.get("nodeId")
             and item.get("status") != "Rejected"
@@ -1490,7 +1577,22 @@ def _validate(proposal: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]
     estimate_score = round(estimated / max(1, len([node for node in nodes if node.get("type") not in {"Epic", "Feature"}])) * 100)
     repository_score = round(repository / total * 100)
     trace_score = round(traced / total * 100)
-    overall = round(coverage * .3 + estimate_score * .2 + repository_score * .2 + trace_score * .3)
+    structural_score = round(coverage * .3 + estimate_score * .2 + repository_score * .2 + trace_score * .3)
+    planning_confidence = int(_average([node.get("confidence") for node in nodes]))
+    engineering_confidence = int(proposal.get("estimate", {}).get("confidence") or 0)
+    quality_penalty = min(
+        60,
+        sum(12 if item["severity"] == "Error" else 4 for item in findings),
+    )
+    semantic_quality = max(0, 100 - quality_penalty)
+    overall = round(
+        structural_score * .45
+        + planning_confidence * .30
+        + engineering_confidence * .15
+        + semantic_quality * .10
+    )
+    if not mandatory_passed:
+        overall = min(overall, 69)
     risk = _text(proposal.get("estimate", {}).get("risk")) or "Medium"
     validation = {
         "status": "Passed" if mandatory_passed else "NeedsChanges",
@@ -1504,8 +1606,8 @@ def _validate(proposal: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]
         "estimateCompleteness": estimate_score,
         "repositoryCoverage": repository_score,
         "requirementCoverage": trace_score,
-        "engineeringConfidence": int(proposal.get("estimate", {}).get("confidence") or 0),
-        "planningConfidence": int(_average([node.get("confidence") for node in nodes])),
+        "engineeringConfidence": engineering_confidence,
+        "planningConfidence": planning_confidence,
         "risk": risk,
     }
     return validation, health
@@ -1523,7 +1625,14 @@ def _review_checklist(proposal: dict[str, Any]) -> list[dict[str, Any]]:
         ("Dependencies", not any(item.get("code") == "circular_dependency" for item in validation.get("findings") or []), True),
         ("Engineering Estimate", health.get("estimateCompleteness", 0) == 100, True),
         ("Story Points", all(node.get("storyPoints") for node in nodes if node.get("type") == "Story"), True),
-        ("Implementation Order", len(proposal.get("implementationOrder") or []) == len(nodes), True),
+        (
+            "Implementation Order",
+            len(proposal.get("implementationOrder") or []) == len([
+                node for node in nodes
+                if node.get("type") in {"Task", "Sub Task"} and node.get("status") != "Rejected"
+            ]),
+            True,
+        ),
         ("Risk", bool(proposal.get("estimate", {}).get("risk")), True),
         ("Definition of Done", bool(proposal.get("definitionOfDone")), True),
         ("Architecture Review", not any(item.get("code") == "knowledge_inconsistency" for item in validation.get("findings") or []), False),

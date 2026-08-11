@@ -12,6 +12,7 @@ from backend.reasoning import (
 )
 from backend.reasoning.services import PromptBuilder
 from backend.reasoning.models import ReasoningRequest
+from backend.reasoning.providers.phi_provider import PhiProvider
 
 
 def engineering_context() -> dict:
@@ -216,6 +217,76 @@ class ReasoningAILayerTests(unittest.TestCase):
         self.assertEqual(
             ["source:requirement"],
             [item["referenceId"] for item in built.evidenceCatalog],
+        )
+
+    def test_phi_refinement_uses_compact_prompt_and_budgeted_output(self) -> None:
+        class Provider:
+            def __init__(self) -> None:
+                self.max_tokens = 0
+
+            def is_enabled(self) -> bool:
+                return True
+
+            def probe_json(self, system_prompt, user_prompt, *, max_tokens):
+                self.max_tokens = max_tokens
+                return {
+                    "parsed_json": {
+                        "recommendation": {"refinement": {
+                            "refinedRequirement": "Enable offline firmware updates for connected devices.",
+                            "executiveSummary": "Support offline device firmware servicing.",
+                            "businessGoal": "Maintain device operability where connectivity is unavailable.",
+                            "problemStatement": "Firmware servicing currently depends on connectivity.",
+                            "userIntent": "Update device firmware while offline.",
+                            "primaryActor": "",
+                            "coreCapabilities": ["Offline Firmware Update"],
+                            "expectedOutcome": "Devices can receive firmware updates without connectivity.",
+                            "businessEntities": ["Device", "Firmware"],
+                            "engineeringConcepts": ["Offline Firmware Update"],
+                            "domainTerminology": ["firmware"],
+                            "repositorySearchHints": ["firmware update"],
+                            "markdownSearchHints": ["firmware"],
+                            "azureDevOpsSearchHints": ["offline firmware"],
+                            "clarificationCandidates": ["Which device operator initiates the update?"],
+                            "confidence": 80,
+                        }},
+                        "reasoning": ["The source explicitly requests offline firmware updates."],
+                        "alternatives": [],
+                        "evidence": [{"referenceId": "source:requirement"}],
+                        "confidence": 80,
+                    },
+                    "prompt_tokens": 500,
+                    "completion_tokens": 250,
+                }
+
+        context = {
+            "contextType": "RequirementRefinementInput",
+            "contextId": "requirement-refinement-1",
+            "contextVersion": "1.0",
+            "requirement": {
+                "title": "Offline firmware updates",
+                "normalizedRequirement": "Need offline firmware updates.",
+                "sourceType": "PasteRequirement",
+            },
+            "metadata": {"projectId": "project-1", "projectName": "LineDefender"},
+        }
+        transport = Provider()
+        provider = PhiProvider(transport, "Phi-4-mini-instruct")
+        engine = ReasoningEngine(registry=ReasoningProviderRegistry([provider]))
+
+        result = engine.refine(
+            "Requirement Refinement", context,
+            user_requirement="Need offline firmware updates.", provider="Phi",
+        )
+
+        self.assertEqual("AI", result["reasoningMode"])
+        self.assertLessEqual(transport.max_tokens, 300)
+        self.assertEqual(
+            result["diagnostics"]["promptBudget"]["reservedOutputTokens"],
+            transport.max_tokens,
+        )
+        self.assertLessEqual(
+            result["diagnostics"]["promptBudget"]["finalPromptTokens"] + transport.max_tokens,
+            result["diagnostics"]["promptBudget"]["contextLimit"],
         )
 
     def test_raw_sources_are_rejected(self) -> None:

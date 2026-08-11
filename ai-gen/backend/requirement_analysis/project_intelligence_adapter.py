@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from backend.refinement.provider import get_refiner_status
+
 
 class ProjectIntelligenceRequirementAnalyzer:
     """Translate current Requirement models to the Project Intelligence facade."""
@@ -19,6 +21,19 @@ class ProjectIntelligenceRequirementAnalyzer:
             requirement, engineering_context,
         )
         return self._reasoning_result(result, "requirement-analysis-project-intelligence-v1")
+
+    def refine(
+        self, requirement: dict[str, Any], engineering_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = self._project_intelligence.refine_requirement_intelligence(
+            requirement, engineering_context,
+        )
+        return self._reasoning_result(result, "requirement-refinement-project-intelligence-v2")
+
+    @staticmethod
+    def is_provider_available(_preference: str = "Auto") -> bool:
+        status = get_refiner_status()
+        return bool(status.get("enabled"))
 
     def generate_acceptance_criteria(
         self,

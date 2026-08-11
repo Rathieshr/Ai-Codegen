@@ -123,6 +123,37 @@ class RequirementRefinementTests(unittest.TestCase):
         self.assertNotIn("repository", context)
         self.assertNotIn("azureDevOps", context)
 
+    def test_project_intelligence_refinement_is_preferred_and_clarifications_are_persisted(self):
+        project_refiner = RefinementReasoningSpy()
+
+        class UnexpectedGenericReasoning:
+            def refine(self, *_args, **_kwargs):
+                raise AssertionError("Generic reasoning should not run after Project Intelligence succeeds.")
+
+        service = RequirementRefinementService(
+            JsonMapStore(Path(self.temp.name) / "project-refinement.json"),
+            requirement_ingestion=self.ingestion,
+            reasoning_engine=UnexpectedGenericReasoning(),
+            project_intelligence_refiner=project_refiner,
+        )
+        initial = service.refine(self.requirement["requirementId"])
+        clarified = service.answer_clarifications(
+            self.requirement["requirementId"],
+            [{"question": "Which device fields should be searchable?", "answer": "Device ID and device name."}],
+            "Product Owner",
+        )
+
+        self.assertEqual("Phi", initial["provider"])
+        self.assertEqual(2, len(project_refiner.calls))
+        self.assertEqual(
+            "Device ID and device name.",
+            project_refiner.calls[-1][1]["clarificationResponses"][0]["answer"],
+        )
+        self.assertEqual([], clarified["clarificationCandidates"])
+        self.assertEqual("Product Owner", clarified["clarifiedBy"])
+        canonical, _ = service.canonical_requirement(self.requirement["requirementId"])
+        self.assertEqual("Device ID and device name.", canonical["clarificationResponses"][0]["answer"])
+
     def test_deterministic_v2_fallback_still_improves_and_extracts_source_terms(self):
         requirement = self.ingestion.ingest({
             "sourceType": "PasteRequirement",
@@ -145,6 +176,8 @@ class RequirementRefinementTests(unittest.TestCase):
         self.assertTrue(result["coreCapabilities"])
         self.assertTrue(result["repositorySearchHints"])
         self.assertNotEqual(result["businessGoal"].casefold(), result["userIntent"].casefold())
+        self.assertIn("not configured", result["fallbackReason"].casefold())
+        self.assertEqual([], result["providerAttempts"])
 
     def test_v2_prompt_is_provider_neutral_and_requests_complete_refinement(self):
         request = ReasoningRequest(
@@ -195,6 +228,40 @@ class RequirementRefinementTests(unittest.TestCase):
         self.assertNotIn("audit", result["refinedRequirement"].lower())
         self.assertTrue(any("unsupported functionality" in warning for warning in result["warnings"]))
 
+    def test_transient_deterministic_refinement_retries_when_provider_recovers(self):
+        class RecoveringReasoning:
+            def __init__(self):
+                self.calls = 0
+
+            def is_provider_available(self, preference="Auto"):
+                return True
+
+            def refine(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "reasoningMode": "Deterministic",
+                        "provider": "Deterministic",
+                        "warnings": ["provider_error: temporary failure"],
+                        "promptVersion": "requirement-refinement-v2:test",
+                    }
+                return RefinementReasoningSpy().refine(*args, **kwargs)
+
+        root = Path(self.temp.name)
+        reasoning = RecoveringReasoning()
+        service = RequirementRefinementService(
+            JsonMapStore(root / "recovering.json"),
+            requirement_ingestion=self.ingestion,
+            reasoning_engine=reasoning,
+        )
+
+        first = service.refine(self.requirement["requirementId"])
+        second = service.refine(self.requirement["requirementId"])
+
+        self.assertEqual("Deterministic", first["provider"])
+        self.assertEqual("Phi", second["provider"])
+        self.assertEqual(2, reasoning.calls)
+
     def test_analysis_consumes_refined_requirement_and_intent(self):
         root = Path(self.temp.name)
         analysis = RequirementAnalysisService(
@@ -224,6 +291,18 @@ class RequirementRefinementTests(unittest.TestCase):
             "actor": "Owner", "refinedRequirement": "Allow users to search registered devices.",
         })
         self.assertEqual(200, edited.status_code)
+        clarified = client.post(
+            f"/requirements/{requirement_id}/refinement/clarifications",
+            json={
+                "actor": "Owner",
+                "responses": [{
+                    "question": "Which device fields should be searchable?",
+                    "answer": "Device ID and device name.",
+                }],
+            },
+        )
+        self.assertEqual(200, clarified.status_code)
+        self.assertEqual("Device ID and device name.", clarified.json()["clarificationResponses"][0]["answer"])
         self.assertEqual(200, client.post(f"/requirements/{requirement_id}/refinement/skip", json={}).status_code)
 
 

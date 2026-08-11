@@ -9,6 +9,7 @@
 - [Repository Intelligence](./Repository%20Intelligence.md)
 - [Context Intelligence](./Context%20Intelligence.md)
 - [Prompt Intelligence](./Prompt%20Intelligence.md)
+- [AI Reasoning Governance](./AI%20Reasoning%20Governance.md)
 - [Memory Architecture](./Memory%20Architecture.md)
 - [Security Architecture](./Security%20Architecture.md)
 - [Architecture Decisions](./ADR/README.md)

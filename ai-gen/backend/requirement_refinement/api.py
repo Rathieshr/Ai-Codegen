@@ -48,6 +48,17 @@ def build_requirement_refinement_router(service: RequirementRefinementService) -
         except ValueError as error:
             return JSONResponse(status_code=404, content={"error": {"code": "requirement_not_found", "message": str(error)}})
 
+    @router.post("/{requirement_id}/refinement/clarifications")
+    def clarify(requirement_id: str, request: dict[str, Any] = Body(...)):
+        try:
+            return service.answer_clarifications(
+                requirement_id,
+                list(request.get("responses") or []),
+                str(request.get("actor") or "HEI User"),
+            )
+        except ValueError as error:
+            return JSONResponse(status_code=400, content={"error": {"code": "invalid_clarification", "message": str(error)}})
+
     @router.post("/{requirement_id}/refinement/skip")
     def skip(requirement_id: str, request: dict[str, Any] = Body(default={})):
         try:

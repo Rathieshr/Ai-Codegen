@@ -139,7 +139,11 @@ def budgetProfileForProvider(
                 "previous_draft_summary": 120,
             }
         reserved = 180
-        reserved_output = 250
+        reserved_output = (
+            min(300, capabilities.max_output_tokens)
+            if operation == "reason_requirement_refinement"
+            else 250
+        )
         strategy = "aggressive"
     elif capabilities.context_limit >= 100000:
         section_budgets = {}

@@ -2,6 +2,8 @@
 
 This directory is the canonical documentation home for the HEI Engineering Platform. Documentation follows the product lifecycle from vision through architecture, platform contracts, agents, integrations, testing, and operations.
 
+Start with the [HEI Application Implementation, Scope, Architecture, and Roadmap](./HEI%20Application%20Implementation%20Architecture%20and%20Roadmap.md) for an end-to-end platform overview with visual architecture and lifecycle diagrams.
+
 ## Documentation map
 
 | Area | Purpose |

@@ -38,11 +38,13 @@ class RequirementRefinementService:
         *,
         requirement_ingestion: RequirementIngestionService,
         reasoning_engine: Any | None = None,
+        project_intelligence_refiner: Any | None = None,
         platform: Any | None = None,
     ) -> None:
         self.store = store
         self.requirement_ingestion = requirement_ingestion
         self.reasoning_engine = reasoning_engine
+        self.project_intelligence_refiner = project_intelligence_refiner
         self.platform = platform
 
     def refine(self, requirement_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -54,11 +56,13 @@ class RequirementRefinementService:
             existing and not force
             and existing.get("sourceContentHash") == requirement.get("contentHash")
             and existing.get("schemaVersion") == "RequirementRefinementV2"
+            and not self._retryable_fallback(existing)
         ):
             return existing
 
         original = _text(requirement.get("normalizedRequirement"))
-        reasoning = self._reason(requirement)
+        clarification_responses = list((existing or {}).get("clarificationResponses") or [])
+        reasoning = self._reason(requirement, clarification_responses)
         candidate = self._candidate(reasoning)
         warnings = list(reasoning.get("warnings") or [])
         if not self._safe(candidate, original):
@@ -89,6 +93,14 @@ class RequirementRefinementService:
                 "model": existing.get("model"),
                 "timestamp": existing.get("generatedAt"),
             })
+        answered_questions = {
+            _text(item.get("question")) for item in clarification_responses
+            if isinstance(item, dict) and _text(item.get("answer"))
+        }
+        clarification_candidates = [
+            item for item in _strings(value.get("clarificationCandidates"))
+            if item not in answered_questions
+        ]
         record = RequirementRefinement(
             refinement_id=str(existing.get("refinementId") or f"refinement_{uuid4().hex}") if existing else f"refinement_{uuid4().hex}",
             requirement_id=requirement_id,
@@ -122,7 +134,8 @@ class RequirementRefinementService:
             changes=_changes(value.get("changes"), original, _text(value.get("refinedRequirement")) or original),
             reasoning=_strings(value.get("reasoning")) or _strings(reasoning.get("reasoning")),
             ambiguities=_strings(value.get("ambiguities")),
-            clarification_candidates=_strings(value.get("clarificationCandidates")),
+            clarification_candidates=clarification_candidates,
+            clarification_responses=clarification_responses,
             confidence=_confidence(value.get("confidence"), reasoning.get("confidence")),
             status="PendingReview",
             provider=_text(reasoning.get("provider")) or "Deterministic",
@@ -135,6 +148,13 @@ class RequirementRefinementService:
         ).to_dict()
         record["schemaVersion"] = "RequirementRefinementV2"
         record["sourceContentHash"] = requirement.get("contentHash")
+        record["fallbackReason"] = _fallback_reason(reasoning)
+        record["providerAttempts"] = list(
+            (reasoning.get("diagnostics") or {}).get("providerAttempts") or []
+        )
+        if clarification_responses:
+            record["clarifiedBy"] = _text((existing or {}).get("clarifiedBy"))
+            record["clarifiedAt"] = _text((existing or {}).get("clarifiedAt"))
         self._save(requirement_id, record)
         self._publish("RequirementRefined", record, requirement)
         return record
@@ -194,6 +214,40 @@ class RequirementRefinementService:
         self._publish("RequirementRefinementSkipped", value, self.requirement_ingestion.get(requirement_id) or {})
         return value
 
+    def answer_clarifications(
+        self,
+        requirement_id: str,
+        responses: list[dict[str, Any]],
+        actor: str,
+    ) -> dict[str, Any]:
+        current = self.refine(requirement_id)
+        candidates = set(_strings(current.get("clarificationCandidates")))
+        normalized: list[dict[str, str]] = []
+        for item in responses:
+            if not isinstance(item, dict):
+                continue
+            question = _text(item.get("question"))
+            answer = _text(item.get("answer"))
+            if question and answer and (not candidates or question in candidates):
+                normalized.append({"question": question, "answer": answer})
+        if not normalized:
+            raise ValueError("Answer at least one clarification before regenerating the requirement.")
+        current["clarificationResponses"] = normalized
+        current["clarificationCandidates"] = [
+            item for item in _strings(current.get("clarificationCandidates"))
+            if item not in {response["question"] for response in normalized}
+        ]
+        current["clarifiedBy"] = actor or "HEI User"
+        current["clarifiedAt"] = _now()
+        self._save(requirement_id, current)
+        refined = self.refine(requirement_id, force=True)
+        self._publish(
+            "RequirementClarificationsApplied",
+            refined,
+            self.requirement_ingestion.get(requirement_id) or {},
+        )
+        return refined
+
     def canonical_requirement(self, requirement_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         requirement = self.requirement_ingestion.get(requirement_id)
         if not requirement:
@@ -207,14 +261,17 @@ class RequirementRefinementService:
             else refinement.get("refinedRequirement")
         ) or requirement.get("normalizedRequirement")
         canonical["requirementIntent"] = dict(refinement.get("requirementIntent") or {})
+        canonical["clarificationResponses"] = list(refinement.get("clarificationResponses") or [])
         canonical["refinementId"] = refinement.get("refinementId")
         canonical["refinementVersion"] = refinement.get("version")
         canonical["refinementStatus"] = refinement.get("status")
         return canonical, refinement
 
-    def _reason(self, requirement: dict[str, Any]) -> dict[str, Any]:
-        if not self.reasoning_engine:
-            return _fallback("Reasoning AI was not configured for requirement refinement.")
+    def _reason(
+        self,
+        requirement: dict[str, Any],
+        clarification_responses: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         metadata = requirement.get("metadata") or {}
         attributes = metadata.get("attributes") or {}
         context = {
@@ -234,7 +291,17 @@ class RequirementRefinementService:
                 "domain": attributes.get("domain"),
                 "terminology": attributes.get("terminology") or [],
             },
+            "clarificationResponses": list(clarification_responses or []),
         }
+        if self.project_intelligence_refiner:
+            try:
+                result = self.project_intelligence_refiner.refine(requirement, context)
+                if str(result.get("reasoningMode") or "").casefold() == "ai":
+                    return result
+            except Exception:
+                pass
+        if not self.reasoning_engine:
+            return _fallback("Reasoning AI was not configured for requirement refinement.")
         try:
             return self.reasoning_engine.refine(
                 "Requirement Refinement", context,
@@ -243,6 +310,20 @@ class RequirementRefinementService:
             )
         except Exception as error:
             return _fallback(f"Requirement refinement provider unavailable: {error}")
+
+    def _retryable_fallback(self, existing: dict[str, Any]) -> bool:
+        if _text(existing.get("provider")).casefold() != "deterministic":
+            return False
+        for engine in (self.project_intelligence_refiner, self.reasoning_engine):
+            available = getattr(engine, "is_provider_available", None)
+            if not callable(available):
+                continue
+            try:
+                if available("Auto"):
+                    return True
+            except Exception:
+                continue
+        return False
 
     @staticmethod
     def _candidate(reasoning: dict[str, Any]) -> dict[str, Any]:
@@ -517,6 +598,13 @@ def _fallback(warning: str) -> dict[str, Any]:
         "promptVersion": "requirement-refinement-v2:deterministic",
         "warnings": [warning],
     }
+
+
+def _fallback_reason(reasoning: dict[str, Any]) -> str:
+    if str(reasoning.get("reasoningMode") or "").casefold() == "ai":
+        return ""
+    warnings = [str(item).strip() for item in reasoning.get("warnings") or [] if str(item).strip()]
+    return warnings[0] if warnings else "No configured reasoning provider was available."
 
 
 def _summary(value: str) -> str:

@@ -104,6 +104,28 @@ class IntelligentPlanningEngineTests(unittest.TestCase):
         self.assertTrue(any(item["artifactType"] == "Story" for item in proposal["changes"]))
         self.assertTrue(all(item["action"] != "Create" or item["selected"] for item in proposal["changes"]))
 
+    def test_acceptance_criteria_are_grouped_under_an_outcome_story(self):
+        summary = {
+            **SUMMARY,
+            "title": "Offline IoT Device Firmware Update",
+            "functionalRequirements": ["Support offline firmware updates for IoT devices."],
+            "acceptanceCriteria": [
+                "Given a device is connected to a local server, when an update is requested, then the firmware is downloaded.",
+                "Given firmware is downloaded, when installation starts, then the update completes without internet access.",
+                "Given the update completed, when the device restarts, then the new firmware version is active.",
+            ],
+        }
+        context = self.engine.build_context(summary, REPOSITORY)
+        recommendation = self.engine.recommend(context, self.engine.analyze(context))
+
+        proposal = self.engine.build_proposal(context, recommendation, {})
+        stories = [item for item in proposal["items"] if item["type"] == "Story"]
+
+        self.assertEqual(1, len(stories))
+        self.assertEqual("Support Offline Firmware Updates For Iot Devices", stories[0]["title"])
+        self.assertFalse(stories[0]["title"].casefold().startswith(("given ", "when ", "then ")))
+        self.assertEqual(summary["acceptanceCriteria"], stories[0]["acceptanceCriteria"])
+
 
 class PlanningDiffApprovalTests(unittest.TestCase):
     def setUp(self):

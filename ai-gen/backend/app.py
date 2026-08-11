@@ -263,6 +263,7 @@ requirement_refinement_service = RequirementRefinementService(
     JsonMapStore(platform_foundation.storage_root / "requirement_refinements.json"),
     requirement_ingestion=requirement_ingestion_service,
     reasoning_engine=requirement_reasoning_engine,
+    project_intelligence_refiner=ProjectIntelligenceRequirementAnalyzer(project_intelligence_service),
     platform=platform_foundation,
 )
 app.include_router(build_requirement_refinement_router(requirement_refinement_service))
@@ -363,6 +364,8 @@ engineering_review_service = EngineeringReviewService(
     proposal_provider=planning_proposal_service.get,
     proposal_approver=planning_proposal_service._finalize_approval,
     platform=platform_foundation,
+    single_approval=os.getenv("HEI_MULTI_STAGE_ENGINEERING_REVIEW", "0").strip().lower()
+    not in {"1", "true", "yes", "on"},
 )
 planning_proposal_service.review_service = engineering_review_service
 app.include_router(build_engineering_review_router(engineering_review_service))
@@ -379,7 +382,7 @@ app.include_router(build_ado_intelligence_router(ado_work_item_intelligence))
 
 def _find_approved_planning_pack(planning_pack_id: str) -> dict[str, Any] | None:
     artifacts = project_intelligence_service.list_artifacts()["artifacts"]
-    return next(
+    artifact = next(
         (
             artifact for artifact in artifacts
             if artifact.get("artifact_id") == planning_pack_id
@@ -387,6 +390,43 @@ def _find_approved_planning_pack(planning_pack_id: str) -> dict[str, Any] | None
         ),
         None,
     )
+    if artifact:
+        return artifact
+    proposals = planning_proposal_service.store.read()
+    proposal = next((
+        value for value in proposals.values()
+        if isinstance(value, dict)
+        and planning_pack_id in {value.get("proposalId"), value.get("planningPackId")}
+        and str(value.get("status") or "").casefold() == "approved"
+    ), None)
+    if not proposal:
+        return None
+    items = []
+    for node in proposal.get("nodes") or []:
+        if not isinstance(node, dict) or node.get("status") == "Rejected":
+            continue
+        items.append({
+            "id": node.get("nodeId"),
+            "alias": node.get("nodeId"),
+            "parentAlias": node.get("parentId"),
+            "type": node.get("type"),
+            "title": node.get("title"),
+            "description": node.get("description"),
+            "acceptanceCriteria": node.get("acceptanceCriteria"),
+            "storyPoints": node.get("storyPoints"),
+            "tags": ["HEI", "Approved Planning Proposal"],
+        })
+    return {
+        "id": proposal.get("proposalId"),
+        "artifact_id": proposal.get("proposalId"),
+        "artifact_type": "PlanningPack",
+        "state": "Approved",
+        "status": "Approved",
+        "version": proposal.get("version"),
+        "approved_by": proposal.get("approvedBy"),
+        "approvedBy": proposal.get("approvedBy"),
+        "payload": {"items": items},
+    }
 
 
 ado_automation_service = register_ado_automation(
@@ -406,6 +446,43 @@ ado_agent_service = register_ado_agent(
     azure_devops=azure_devops_integration,
     planning_pack_provider=_find_approved_planning_pack,
 )
+
+
+def _prepare_approved_proposal_for_ado(proposal: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(proposal.get("projectId") or "")
+    connected = [
+        connection for connection in azure_devops_integration.connections.list()
+        if connection.get("status") == "Connected"
+    ]
+    connections = [
+        connection for connection in connected
+        if not project_id
+        or project_id.casefold() in {
+            str(connection.get("projectId") or "").casefold(),
+            str(connection.get("projectName") or "").casefold(),
+        }
+    ]
+    if not connections and len(connected) == 1:
+        connections = connected
+    if not connections:
+        raise ValueError(
+            "Connect and validate an Azure DevOps project with WorkItems.Write permission before creating work items."
+        )
+    connection = connections[0]
+    target_project = connection.get("projectId") or connection.get("projectName") or project_id
+    return ado_agent_service.prepare(
+        "PlanningPackApproved",
+        {
+            "planningPackId": proposal.get("proposalId"),
+            "connectionId": connection.get("connectionId"),
+            "projectId": target_project,
+            "sourceRevision": proposal.get("version"),
+        },
+        correlation_id=str(proposal.get("correlationId") or ""),
+    )
+
+
+planning_proposal_service.ado_action_pack_preparer = _prepare_approved_proposal_for_ado
 app.include_router(build_ado_agent_router(ado_agent_service))
 ado_hardening_harness = AzureDevOpsHardeningHarness(
     platform_foundation.storage_root / "ado_hardening",
@@ -606,6 +683,19 @@ task_generation_service = TaskGenerationService(
     ai_task_generator=project_intelligence_service.regenerate_story_tasks,
 )
 app.include_router(build_task_generation_router(task_generation_service))
+
+
+def _approve_and_apply_ado_action_pack(pack_id: str, actor: str, reason: str) -> dict[str, Any]:
+    approved = ado_agent_service.approve(pack_id, actor, reason=reason)
+    applied = ado_agent_service.apply(
+        pack_id,
+        actor,
+        reason=reason or "Approved from HEI Approval Center.",
+        idempotency_key=f"approval-center:{pack_id}",
+    )
+    return {"approval": approved, "application": applied}
+
+
 approval_center_service = ApprovalCenterService(
     planning_provider=lambda: planning_center_service.list(limit=250),
     planning_approve=planning_center_service.approve,
@@ -617,7 +707,7 @@ approval_center_service = ApprovalCenterService(
     memory_approve=memory_candidate_service.approve,
     memory_reject=memory_candidate_service.reject,
     ado_pack_provider=ado_agent_service.list_packs,
-    ado_pack_approve=lambda pack_id, actor, reason: ado_agent_service.approve(pack_id, actor, reason=reason),
+    ado_pack_approve=_approve_and_apply_ado_action_pack,
     ado_pack_reject=lambda pack_id, actor, reason: ado_agent_service.reject(pack_id, actor, reason=reason),
     pr_comment_provider=ado_work_item_intelligence.pull_requests.repository.comments.read,
     pr_comment_approve=ado_work_item_intelligence.pull_requests.approve_comment_preview,

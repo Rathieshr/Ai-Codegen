@@ -41,6 +41,7 @@ class RequirementRefinement:
     reasoning: list[str] = field(default_factory=list)
     ambiguities: list[str] = field(default_factory=list)
     clarification_candidates: list[str] = field(default_factory=list)
+    clarification_responses: list[dict[str, str]] = field(default_factory=list)
     confidence: float = 0.0
     status: str = "PendingReview"
     provider: str = "Deterministic"

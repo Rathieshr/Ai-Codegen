@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import replace
 from typing import Any
 
 from backend.prompt_budget import estimateTokens
@@ -84,6 +85,10 @@ class ReasoningEngine:
     def explain(self, workflow_type: str, engineering_context: Any, **kwargs: Any) -> dict[str, Any]:
         return self._operation("reason", workflow_type, engineering_context, kwargs)
 
+    def is_provider_available(self, preference: str = "Auto") -> bool:
+        selected, _ = self.registry.select(preference)
+        return selected is not None
+
     def _operation(
         self,
         operation: str,
@@ -123,10 +128,17 @@ class ReasoningEngine:
 
         validation: ResponseValidation | None = None
         retries = 0
+        execution_request = replace(
+            request,
+            options={
+                **request.options,
+                "_maxOutputTokens": _provider_output_budget(built.diagnostics),
+            },
+        )
         if selected is not None:
             for attempt in range(2):
                 try:
-                    response = _invoke(selected, operation, built.prompt, request)
+                    response = _invoke(selected, operation, built.prompt, execution_request)
                     validation = self.validator.validate(response, built.evidenceCatalog)
                 except Exception as error:
                     validation = ResponseValidation(False, errors=[f"provider_error: {error}"])
@@ -232,6 +244,16 @@ def _default_registry() -> ReasoningProviderRegistry:
 def _invoke(provider: Any, operation: str, prompt: str, request: ReasoningRequest) -> Any:
     method = getattr(provider, operation, None) or provider.reason
     return method(prompt, request)
+
+
+def _provider_output_budget(diagnostics: dict[str, Any]) -> int:
+    context_limit = int(diagnostics.get("contextLimit") or 0)
+    prompt_tokens = int(diagnostics.get("finalPromptTokens") or 0)
+    reserved = int(diagnostics.get("reservedOutputTokens") or 0)
+    capabilities = diagnostics.get("provider_capabilities") or {}
+    provider_limit = int(capabilities.get("max_output_tokens") or reserved or 1)
+    remaining = max(1, context_limit - prompt_tokens) if context_limit else provider_limit
+    return max(1, min(provider_limit, reserved or provider_limit, remaining))
 
 
 def _context_dict(value: Any) -> dict[str, Any]:

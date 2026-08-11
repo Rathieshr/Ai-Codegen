@@ -25,6 +25,12 @@ ReasoningEngine
 Workflow Result
 ```
 
+Requirement Intelligence applies the mandatory
+[AI Reasoning Governance](./AI%20Reasoning%20Governance.md) boundary after
+provider reasoning and before Acceptance Criteria or canonical Requirement
+Analysis finalization. Provider output is advisory until each statement has
+been classified and its provenance recorded.
+
 ## Boundary
 
 The public entry point is `backend.reasoning.ReasoningEngine`. It accepts only a

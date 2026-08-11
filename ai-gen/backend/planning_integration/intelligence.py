@@ -229,12 +229,10 @@ def _flatten_hierarchy(requirement: dict[str, Any], hierarchy: dict[str, Any]) -
             for value in (requirement.get("functionalRequirements") or [])[:8]
         ]}
     if not hierarchy.get("stories") and hierarchy.get("features"):
-        first_feature = hierarchy["features"][0]
-        first_feature_title = _text(first_feature.get("title") if isinstance(first_feature, dict) else first_feature)
-        hierarchy = {**hierarchy, "stories": [
-            {"title": _title_from_sentence(value), "description": value, "acceptanceCriteria": [value], "feature": first_feature_title}
-            for value in (requirement.get("acceptanceCriteria") or [])[:12]
-        ]}
+        hierarchy = {
+            **hierarchy,
+            "stories": _fallback_stories(requirement, list(hierarchy.get("features") or [])),
+        }
     for kind, key in (("Feature", "features"), ("Story", "stories"), ("Task", "tasks")):
         values = hierarchy.get(key) or []
         for value in values:
@@ -250,6 +248,71 @@ def _flatten_hierarchy(requirement: dict[str, Any], hierarchy: dict[str, Any]) -
             })
             aliases[title] = f"proposal-{len(result)}"
     return result
+
+
+def _fallback_stories(requirement: dict[str, Any], features: list[Any]) -> list[dict[str, Any]]:
+    """Build outcome-oriented Stories without promoting Acceptance Criteria to work items."""
+    functional = _strings(requirement.get("functionalRequirements"))
+    criteria = _strings(requirement.get("acceptanceCriteria"))
+    normalized_features = [
+        item if isinstance(item, dict) else {"title": _text(item)}
+        for item in features
+    ]
+    scopes = functional or [_text(requirement.get("title"))]
+    stories: list[dict[str, Any]] = []
+    for index, scope in enumerate(scopes[:12]):
+        if not scope:
+            continue
+        feature = _best_feature(scope, normalized_features)
+        mapped_criteria = _criteria_for_scope(scope, criteria, scopes, index)
+        stories.append({
+            "title": _story_title(scope),
+            "description": scope,
+            "acceptanceCriteria": mapped_criteria,
+            "feature": _text(feature.get("title") or feature.get("name")),
+        })
+    return stories
+
+
+def _best_feature(scope: str, features: list[dict[str, Any]]) -> dict[str, Any]:
+    if not features:
+        return {}
+    return max(
+        features,
+        key=lambda item: _similarity(
+            scope,
+            " ".join((_text(item.get("title") or item.get("name")), _text(item.get("description")))),
+        ),
+    )
+
+
+def _criteria_for_scope(scope: str, criteria: list[str], scopes: list[str], index: int) -> list[str]:
+    if not criteria:
+        return []
+    if len(scopes) == 1:
+        return criteria
+    mapped = []
+    for criterion in criteria:
+        scores = [_similarity(criterion, candidate) for candidate in scopes]
+        best_index = max(range(len(scores)), key=scores.__getitem__)
+        if best_index == index:
+            mapped.append(criterion)
+    return mapped
+
+
+def _story_title(value: Any) -> str:
+    text = _text(value)
+    text = re.sub(
+        r"^(?:as\s+an?\s+[^,]+,?\s*)?(?:operations?\s+users?\s+)?"
+        r"(?:must|should|shall|need(?:s)?\s+to|want(?:s)?\s+to|can|implement|provide|enable)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    title = _title_from_sentence(text)
+    if title.casefold().startswith(("given ", "when ", "then ")):
+        title = _title_from_sentence(value)
+    return title or "Deliver Approved Requirement Outcome"
 
 
 def _best_match(candidate: dict[str, Any], existing: list[dict[str, Any]]) -> tuple[dict[str, Any], float] | None:

@@ -109,6 +109,10 @@ def _build_requirement_intent_prompt(
     provider: str,
     model: str,
 ) -> BuiltReasoningPrompt:
+    profile = budgetProfileForProvider(
+        provider or "deterministic", model, operation=f"reason_{_key(request.workflowType)}",
+    )
+    small_model = profile.context_limit <= 2000
     sections = [
         _section("role", "Role", template.role, True, 100, False, "template"),
         _section("objective", "Objective", template.objective, True, 100, False, "template"),
@@ -121,12 +125,19 @@ def _build_requirement_intent_prompt(
             "bounded_metadata", "Bounded Project Metadata",
             context.get("metadata") or {}, False, 65, True, "project_metadata",
         ),
-        _section("instructions", "Instructions", list(template.instructions), True, 100, False, "template"),
-        _section("output_schema", "Output Schema", _output_schema(request.workflowType), True, 100, False, "schema"),
+        _section(
+            "instructions", "Instructions",
+            _compact_requirement_instructions(request.workflowType)
+            if small_model else list(template.instructions),
+            True, 100, False, "template",
+        ),
+        _section(
+            "output_schema", "Output Schema",
+            _compact_requirement_schema(request.workflowType)
+            if small_model else _output_schema(request.workflowType),
+            True, 100, False, "schema",
+        ),
     ]
-    profile = budgetProfileForProvider(
-        provider or "deterministic", model, operation=f"reason_{_key(request.workflowType)}",
-    )
     built = buildPrompt(sections, profile)
     return BuiltReasoningPrompt(
         prompt=str(built["prompt"]),
@@ -135,6 +146,53 @@ def _build_requirement_intent_prompt(
         evidenceCatalog=catalog,
         diagnostics=dict(built["diagnostics"]),
     )
+
+
+def _compact_requirement_instructions(workflow_type: str) -> list[str]:
+    if _key(workflow_type) == "requirement_refinement":
+        return [
+            "Improve clarity while preserving the exact supplied intent and scope.",
+            "Separate business outcome (why) from user intent (what).",
+            "Extract actors, capabilities, entities, concepts, and search hints only from source terms.",
+            "Do not invent features, rules, architecture, APIs, criteria, constraints, or dependencies.",
+            "Identify unresolved ambiguity as clarificationCandidates.",
+            "Use source:requirement as evidence and return only the JSON object.",
+        ]
+    return [
+        "Interpret only the supplied requirement and bounded metadata.",
+        "Separate business outcome from functional intent.",
+        "Return search hints, not repository or Azure DevOps facts.",
+        "Use source:requirement as evidence and return only the JSON object.",
+    ]
+
+
+def _compact_requirement_schema(workflow_type: str) -> dict[str, Any]:
+    if _key(workflow_type) == "requirement_refinement":
+        return {
+            "recommendation": {"refinement": {
+                "refinedRequirement": "string",
+                "executiveSummary": "string",
+                "businessGoal": "why/value, distinct from userIntent",
+                "problemStatement": "string",
+                "userIntent": "what the user needs",
+                "primaryActor": "string or empty",
+                "coreCapabilities": ["string"],
+                "expectedOutcome": "string or empty",
+                "businessEntities": ["string"],
+                "engineeringConcepts": ["string"],
+                "domainTerminology": ["string"],
+                "repositorySearchHints": ["string"],
+                "markdownSearchHints": ["string"],
+                "azureDevOpsSearchHints": ["string"],
+                "clarificationCandidates": ["string"],
+                "confidence": 0,
+            }},
+            "reasoning": ["string"],
+            "alternatives": [],
+            "evidence": [{"referenceId": "source:requirement"}],
+            "confidence": 0,
+        }
+    return _output_schema(workflow_type)
 
 
 def _section(

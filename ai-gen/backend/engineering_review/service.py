@@ -19,7 +19,11 @@ from .models import (
 )
 
 
-DEFAULT_APPROVAL_CHAIN = (
+SINGLE_APPROVAL_CHAIN = (
+    ("planning-approver", "Planning Approval", "Planning Approver"),
+)
+
+MULTI_STAGE_APPROVAL_CHAIN = (
     ("product-owner", "Product Owner", "Product Owner"),
     ("engineering-lead", "Engineering Lead", "Engineering Lead"),
     ("architect", "Architect", "Architect"),
@@ -38,11 +42,15 @@ class EngineeringReviewService:
         proposal_provider: Callable[[str], dict[str, Any]],
         proposal_approver: Callable[[str, str, str], dict[str, Any]],
         platform: Any | None = None,
+        single_approval: bool = True,
     ) -> None:
         self.store = store
         self.proposal_provider = proposal_provider
         self.proposal_approver = proposal_approver
         self.platform = platform
+        self.single_approval = single_approval
+        if self.single_approval:
+            self._migrate_pending_reviews_to_single_approval()
 
     def create(self, request: dict[str, Any]) -> dict[str, Any]:
         proposal_id = _required(request, "proposalId")
@@ -57,7 +65,10 @@ class EngineeringReviewService:
             values[current["reviewId"]] = current
 
         owner = _text(request.get("owner") or request.get("actor")) or "HEI User"
-        stages = _stages(request.get("approvalChain"))
+        stages = _stages(
+            request.get("approvalChain"),
+            single_approval=self.single_approval,
+        )
         now = _now()
         review_id = "engineering-review-" + _digest([proposal_id, proposal.get("version")])
         review = EngineeringReview(
@@ -81,6 +92,7 @@ class EngineeringReviewService:
             createdAt=now,
             updatedAt=now,
         ).__dict__
+        review["approvalMode"] = "Single" if len(stages) == 1 else "MultiStage"
         review["readiness"] = self._readiness(review, proposal)
         values[review_id] = review
         self.store.write(values)
@@ -499,12 +511,13 @@ class EngineeringReviewService:
             }
             if required - approved_stages:
                 blockers.append("All required approval stages must be completed.")
-            architecture = next((item for item in review.get("sections") or [] if item.get("name") == "Architecture Review"), {})
-            risk = next((item for item in review.get("sections") or [] if item.get("name") == "Risk Review"), {})
-            if architecture.get("status") != "Approved":
-                blockers.append("Architecture approval is required.")
-            if risk.get("status") != "Approved":
-                blockers.append("Risk acceptance is required.")
+            if len(review.get("stages") or []) > 1:
+                architecture = next((item for item in review.get("sections") or [] if item.get("name") == "Architecture Review"), {})
+                risk = next((item for item in review.get("sections") or [] if item.get("name") == "Risk Review"), {})
+                if architecture.get("status") != "Approved":
+                    blockers.append("Architecture approval is required.")
+                if risk.get("status") != "Approved":
+                    blockers.append("Risk acceptance is required.")
         return {
             "status": "Ready" if not blockers else "Blocked",
             "approvalAllowed": not blockers,
@@ -592,11 +605,32 @@ class EngineeringReviewService:
             "QA Lead": {"Testing Review"},
             "Delivery Manager": {"Deployment Review"},
         }
+        single_approval = len(review.get("stages") or []) == 1
         for section in review.get("sections") or []:
-            if section.get("name") in mappings.get(stage.get("role"), set()):
+            if single_approval or section.get("name") in mappings.get(stage.get("role"), set()):
                 section["status"] = "Approved"
                 section["approvedBy"] = actor
                 section["approvedAt"] = _now()
+
+    def _migrate_pending_reviews_to_single_approval(self) -> None:
+        values = self.store.read()
+        changed = False
+        for review_id, review in values.items():
+            if not isinstance(review, dict) or review.get("status") in TERMINAL_STATUSES:
+                continue
+            stages = review.get("stages") or []
+            if len(stages) == 1 and stages[0].get("role") == "Planning Approver":
+                continue
+            migrated = _stages(None, single_approval=True)
+            review["stages"] = migrated
+            review["currentStageId"] = migrated[0]["stageId"]
+            review["approvalMode"] = "Single"
+            review["status"] = "PendingReview"
+            review["updatedAt"] = _now()
+            values[review_id] = review
+            changed = True
+        if changed:
+            self.store.write(values)
 
     @staticmethod
     def _update_section_counts(review: dict[str, Any]) -> None:
@@ -673,10 +707,11 @@ class EngineeringReviewService:
         })
 
 
-def _stages(value: Any) -> list[dict[str, Any]]:
+def _stages(value: Any, *, single_approval: bool = True) -> list[dict[str, Any]]:
+    default_chain = SINGLE_APPROVAL_CHAIN if single_approval else MULTI_STAGE_APPROVAL_CHAIN
     source = value if isinstance(value, list) and value else [
         {"stageId": stage_id, "name": name, "role": role, "order": index + 1}
-        for index, (stage_id, name, role) in enumerate(DEFAULT_APPROVAL_CHAIN)
+        for index, (stage_id, name, role) in enumerate(default_chain)
     ]
     output = []
     for index, item in enumerate(source):

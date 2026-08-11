@@ -556,7 +556,24 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertTrue(tasks)
         self.assertTrue(all(node["acceptanceCriteria"] for node in stories))
         self.assertTrue(all(node["parentId"] in {story["nodeId"] for story in stories} for node in tasks))
+        self.assertEqual({task["nodeId"] for task in tasks}, set(proposal["implementationOrder"]))
+        self.assertTrue(all(not task["title"].startswith("Add verification coverage:") for task in tasks))
         self.assertEqual(1, len(self.artifacts))
+
+    def test_acceptance_criterion_shaped_story_cannot_report_full_health(self):
+        _, _, _, proposal = self.prepare_proposal()
+        story = next(node for node in proposal["nodes"] if node["type"] == "Story")
+        story["title"] = "Given A Device Is Offline When The User Filters Then It Appears"
+        values = self.proposal.store.read()
+        values[proposal["proposalId"]] = proposal
+        self.proposal.store.write(values)
+
+        validated = self.proposal.validate({"proposalId": proposal["proposalId"]})
+        codes = {item["code"] for item in validated["validation"]["findings"]}
+
+        self.assertIn("acceptance_criterion_used_as_story", codes)
+        self.assertFalse(validated["validation"]["mandatoryPassed"])
+        self.assertLess(validated["health"]["overallHealth"], 70)
 
     def test_planning_proposal_v2_preserves_acceptance_and_knowledge_lineage(self):
         _, context, recommendation, proposal = self.prepare_proposal()
@@ -739,8 +756,16 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
             "proposalId": proposal["proposalId"], "actor": "Product Owner", "comments": "Scope and traceability reviewed.",
         })
         self.assertEqual("Completed", reviewed["review"]["status"])
+        prepared = []
+        self.proposal.ado_action_pack_preparer = lambda value: prepared.append(value) or {
+            "packId": "ado-pack-1",
+            "approvalStatus": "PendingApproval",
+            "proposedActions": [{"operation": "ApplyPlanningPack"}],
+        }
         approved = self.proposal.approve({"proposalId": proposal["proposalId"], "actor": "Product Owner"})
         self.assertEqual("Approved", approved["status"])
+        self.assertEqual("ado-pack-1", approved["azureDevOpsAutomation"]["packId"])
+        self.assertEqual(proposal["proposalId"], prepared[0]["proposalId"])
         self.assertTrue(all(node["status"] == "Approved" for node in approved["nodes"]))
         with self.assertRaisesRegex(ValueError, "immutable"):
             self.proposal.update(approved["proposalId"], {

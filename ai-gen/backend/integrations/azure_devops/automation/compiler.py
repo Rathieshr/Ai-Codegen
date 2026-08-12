@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from html import escape
 from typing import Any
 
 from .models import (
@@ -85,8 +86,27 @@ def _allowed_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 def _item_fields(item: dict[str, Any]) -> dict[str, Any]:
     supplied = item.get("fields") if isinstance(item.get("fields"), dict) else {}
-    values = {**supplied, "title": item.get("title"), "description": item.get("description"), "acceptanceCriteria": item.get("acceptanceCriteria")}
+    item_type = str(item.get("type") or item.get("workItemType") or "")
+    criteria = item.get("acceptanceCriteria")
+    description = item.get("description")
+    if item_type in {"Epic", "Feature"}:
+        measures = criteria or item.get("successMeasures") or item.get("businessValue")
+        if not measures and item.get("title"):
+            measures = [f"The approved {item_type.lower()} outcome for {item['title']} is delivered and verified through its child work items."]
+        description = _description_with_success_measures(description, measures)
+        criteria = None
+    values = {**supplied, "title": item.get("title"), "description": description, "acceptanceCriteria": criteria}
     return {name: value for name, value in _allowed_fields(values).items() if value not in (None, "", [])}
+
+
+def _description_with_success_measures(description: Any, measures: Any) -> str:
+    values = measures if isinstance(measures, list) else [measures]
+    items = [str(value).strip() for value in values if str(value).strip()]
+    if not items:
+        return str(description or "")
+    rendered = "".join(f"<li>{escape(value)}</li>" for value in items)
+    prefix = escape(str(description or "").strip())
+    return f"{prefix}<h3>Success Measures</h3><ul>{rendered}</ul>"
 
 
 def _ado_type(value: str) -> str:

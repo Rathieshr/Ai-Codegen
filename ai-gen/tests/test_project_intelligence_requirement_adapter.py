@@ -177,6 +177,28 @@ def transformer_context():
 
 
 class ProjectIntelligenceRequirementAdapterTests(unittest.TestCase):
+    def test_requirement_analysis_and_refinement_attempt_phi_before_fallback(self):
+        class ProviderAwareFacade:
+            def __init__(self):
+                self.calls = []
+
+            def analyze_requirement_intelligence(self, requirement, engineering_context, options=None):
+                self.calls.append(("analyze", options))
+                return {"used": False, "analysis": {}, "metadata": {"fallback_reason": "test"}}
+
+            def refine_requirement_intelligence(self, requirement, engineering_context, options=None):
+                self.calls.append(("refine", options))
+                return {"used": False, "analysis": {}, "metadata": {"fallback_reason": "test"}}
+
+        facade = ProviderAwareFacade()
+        adapter = ProjectIntelligenceRequirementAnalyzer(facade)
+        adapter.analyze({}, transformer_context())
+        adapter.refine({}, transformer_context())
+
+        self.assertEqual(["analyze", "refine"], [call[0] for call in facade.calls])
+        self.assertTrue(all(call[1]["force_provider"] == "azure_phi" for call in facade.calls))
+        self.assertTrue(all(call[1]["allow_fallback"] for call in facade.calls))
+
     def test_transformer_health_criteria_are_specific_and_traceable(self):
         adapter = ProjectIntelligenceRequirementAnalyzer(ProjectIntelligenceFacadeSpy())
         context = transformer_context()

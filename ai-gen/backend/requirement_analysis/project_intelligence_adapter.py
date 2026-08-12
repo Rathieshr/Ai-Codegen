@@ -17,17 +17,33 @@ class ProjectIntelligenceRequirementAnalyzer:
     def analyze(
         self, requirement: dict[str, Any], engineering_context: dict[str, Any],
     ) -> dict[str, Any]:
-        result = self._project_intelligence.analyze_requirement_intelligence(
-            requirement, engineering_context,
-        )
+        try:
+            result = self._project_intelligence.analyze_requirement_intelligence(
+                requirement,
+                engineering_context,
+                options={"force_provider": "azure_phi", "allow_fallback": True},
+            )
+        except TypeError:
+            # Compatibility for older facade implementations and test doubles.
+            result = self._project_intelligence.analyze_requirement_intelligence(
+                requirement, engineering_context,
+            )
         return self._reasoning_result(result, "requirement-analysis-project-intelligence-v1")
 
     def refine(
         self, requirement: dict[str, Any], engineering_context: dict[str, Any],
     ) -> dict[str, Any]:
-        result = self._project_intelligence.refine_requirement_intelligence(
-            requirement, engineering_context,
-        )
+        try:
+            result = self._project_intelligence.refine_requirement_intelligence(
+                requirement,
+                engineering_context,
+                options={"force_provider": "azure_phi", "allow_fallback": True},
+            )
+        except TypeError:
+            # Compatibility for older facade implementations and test doubles.
+            result = self._project_intelligence.refine_requirement_intelligence(
+                requirement, engineering_context,
+            )
         return self._reasoning_result(result, "requirement-refinement-project-intelligence-v2")
 
     @staticmethod

@@ -612,7 +612,11 @@ class PlanningProposalService:
         if kind == "Story" and not criteria:
             criteria = _strings(requirement.get("acceptanceCriteria"))
         if kind in {"Epic", "Feature"}:
-            criteria = []
+            criteria = _strings(item.get("successMeasures")) or criteria
+            if not criteria:
+                outcome = _text(item.get("businessValue") or change.get("reason"))
+                if outcome:
+                    criteria = [f"Success measure: {outcome.rstrip('.')}."]
         business_goals = _strings(requirement.get("businessGoals"))
         functional = _strings(requirement.get("functionalRequirements"))
         modules = _strings(item.get("repositoryModules")) or _strings(impact.get("affectedModules"))
@@ -1534,6 +1538,7 @@ def _proposal_prompt_projection(
         },
         "qualityRules": [
             "Descriptions and business values must be specific to each item.",
+            "Epic and Feature require distinct, measurable successMeasures that describe their own outcome.",
             "Only Stories use approved Acceptance Criteria identifiers and Story Points.",
             "Tasks require distinct engineering scope, completion checks, task type, and engineering days.",
             "Epic and Feature must not repeat Story Acceptance Criteria.",
@@ -1569,6 +1574,7 @@ def _reasoned_work_items(
             if approved_value:
                 criteria.append(approved_value)
         criteria = _unique(criteria) if kind == "Story" else []
+        success_measures = _unique(_strings(raw.get("successMeasures"))) if kind in {"Epic", "Feature"} else []
         checks = _unique(_strings(raw.get("completionChecks")))
         modules = [
             allowed_by_name[value.casefold()]
@@ -1584,6 +1590,7 @@ def _reasoned_work_items(
             "description": _text(raw.get("description")),
             "businessValue": _text(raw.get("businessValue")),
             "acceptanceCriteria": criteria,
+            "successMeasures": success_measures,
             "completionChecks": checks,
             "storyPoints": story_points,
             "engineeringDays": round(float(raw.get("engineeringDays") or 0), 2),
@@ -1639,6 +1646,8 @@ def _reasoned_hierarchy_issues(
                 issues.append(f"{label} must map at least one approved Acceptance Criterion.")
             if item["storyPoints"] not in {1, 2, 3, 5, 8, 13}:
                 issues.append(f"{label} Story Points must be 1, 2, 3, 5, 8, or 13.")
+        if item["type"] in {"Epic", "Feature"} and not item["successMeasures"]:
+            issues.append(f"{label} requires item-specific successMeasures.")
         if item["type"] == "Task":
             if not item["completionChecks"]:
                 issues.append(f"{label} requires task-specific completion checks.")
@@ -1684,7 +1693,8 @@ def _legacy_proposal_from_reasoned_items(
             "title": item["title"],
             "description": item["description"],
             "businessValue": item["businessValue"],
-            "acceptanceCriteria": item["acceptanceCriteria"] if item["type"] == "Story" else item["completionChecks"] if item["type"] == "Task" else [],
+            "acceptanceCriteria": item["acceptanceCriteria"] if item["type"] == "Story" else item["completionChecks"] if item["type"] == "Task" else item["successMeasures"],
+            "successMeasures": item["successMeasures"],
             "storyPoints": item["storyPoints"],
             "engineeringDays": item["engineeringDays"],
             "taskType": item["taskType"],

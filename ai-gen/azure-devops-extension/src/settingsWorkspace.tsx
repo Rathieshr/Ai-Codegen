@@ -23,6 +23,7 @@ type AzureDevOpsConnection = {
   credentialConfigured?: boolean;
   lastValidatedAt?: string;
   validationMessage?: string;
+  permissions?: string[];
 };
 type AdministrationSection = 'azure-devops' | 'repositories' | 'agents' | 'integrations' | 'platform' | 'diagnostics' | 'security' | 'audit' | 'host' | 'feature-flags';
 type AgentSummary = {
@@ -77,6 +78,7 @@ export function SettingsWorkspace({
   const [connectionNotice, setConnectionNotice] = useState('');
   const [organizationUrl, setOrganizationUrl] = useState(context.organization.uri);
   const [secretReference, setSecretReference] = useState('ADO_PAT');
+  const [allowApprovedWrites, setAllowApprovedWrites] = useState(true);
   const [section, setSection] = useState<AdministrationSection>('azure-devops');
   const [agents, setAgents] = useState<AgentCenterPayload>();
   const [agentPolicies, setAgentPolicies] = useState<AgentPolicyPayload>();
@@ -91,7 +93,8 @@ export function SettingsWorkspace({
     () => repositories.find((repository) => repository.id === repositoryId),
     [repositories, repositoryId],
   );
-  const connectionCanBeCorrected = !connection || ['failed', 'rejected', 'degraded', 'pendingvalidation'].includes(String(connection.status || '').toLowerCase());
+  const connectionHasWritePermission = (connection?.permissions || []).some((permission) => permission.toLowerCase() === 'workitems.write');
+  const connectionCanBeCorrected = !connection || !connectionHasWritePermission || ['failed', 'rejected', 'degraded', 'pendingvalidation'].includes(String(connection.status || '').toLowerCase());
 
   useEffect(() => {
     setAdoProject(mapping?.ado_project || context.project.name);
@@ -151,6 +154,7 @@ export function SettingsWorkspace({
         || (items.length === 1 ? items[0] : undefined);
       setConnection(current);
       if (current?.organizationUrl) setOrganizationUrl(current.organizationUrl);
+      if (current) setAllowApprovedWrites((current.permissions || []).some((permission) => permission.toLowerCase() === 'workitems.write'));
     } catch (error) {
       onError(errorMessage(error, 'Unable to load Azure DevOps connections.'));
     }
@@ -188,6 +192,8 @@ export function SettingsWorkspace({
     if (!organizationUrl.trim()) { setConnectionNotice('Enter the Azure DevOps organization URL.'); return; }
     setConnectionBusy(true); setConnectionNotice('');
     try {
+      const permissions = ['Project.Read', 'WorkItems.Read', 'Code.Read', 'Build.Read'];
+      if (allowApprovedWrites) permissions.push('WorkItems.Write');
       let current = connection;
       if (!current) {
         current = await writeJson<AzureDevOpsConnection>(`${baseUrl}/integrations/azure-devops/connections`, {
@@ -197,7 +203,7 @@ export function SettingsWorkspace({
           projectName: context.project.name,
           authenticationMode: 'PAT',
           secretReference: secretReference.trim() || 'ADO_PAT',
-          permissions: ['Project.Read', 'WorkItems.Read', 'Code.Read', 'Build.Read'],
+          permissions,
         });
       } else if (connectionCanBeCorrected) {
         current = await writeJson<AzureDevOpsConnection>(
@@ -209,7 +215,7 @@ export function SettingsWorkspace({
             projectName: context.project.name,
             authenticationMode: 'PAT',
             secretReference: secretReference.trim() || 'ADO_PAT',
-            permissions: ['Project.Read', 'WorkItems.Read', 'Code.Read', 'Build.Read'],
+            permissions,
           },
           'PUT',
         );
@@ -301,12 +307,13 @@ export function SettingsWorkspace({
           <label><span>Project</span><input value={context.project.name} readOnly /></label>
           <label><span>Credential Reference</span><input value={secretReference} onChange={(event) => setSecretReference(event.target.value)} disabled={connectionBusy || !connectionCanBeCorrected} placeholder="ADO_PAT" /></label>
         </div>
+        <label className="hei-settings-permission"><input type="checkbox" checked={allowApprovedWrites} onChange={(event) => setAllowApprovedWrites(event.target.checked)} disabled={connectionBusy} /><span><strong>Enable approved work-item creation</strong><small>Adds the HEI WorkItems.Write capability. The secure PAT must also have Azure DevOps Work Items read and write scope.</small></span></label>
         <p className="hei-settings-help">The credential reference names a secure backend environment variable. HEI never stores or returns the PAT value.</p>
         {connection?.validationMessage ? <p className="hei-settings-validation">{connection.validationMessage}</p> : null}
-        {connection && connectionCanBeCorrected ? <p className="hei-settings-help">Update the rejected connection settings, then save and validate again.</p> : null}
+        {connection && connectionCanBeCorrected ? <p className="hei-settings-help">Update the connection capabilities or corrected settings, then save and validate again.</p> : null}
         {connectionNotice ? <p className="hei-settings-notice" role="status">{connectionNotice}</p> : null}
         <div className="hei-settings-actions">
-          <button className="planner-button primary" type="button" onClick={() => void connectAzureDevOps()} disabled={connectionBusy || connection?.status === 'Connected'}>{connectionBusy ? 'Connecting...' : connectionCanBeCorrected && connection ? 'Save & Validate Connection' : connection ? 'Validate Connection' : 'Connect Azure DevOps'}</button>
+          <button className="planner-button primary" type="button" onClick={() => void connectAzureDevOps()} disabled={connectionBusy || Boolean(connection && !connectionCanBeCorrected)}>{connectionBusy ? 'Connecting...' : connectionCanBeCorrected && connection ? 'Save & Validate Connection' : connection ? 'Validate Connection' : 'Connect Azure DevOps'}</button>
           <button className="planner-button secondary" type="button" onClick={() => void synchronizeAzureDevOps()} disabled={connectionBusy || connection?.status !== 'Connected'}>Synchronize Project</button>
           <button className="planner-button secondary" type="button" onClick={() => void loadAzureDevOpsConnection()} disabled={connectionBusy}>Refresh Connection</button>
         </div>

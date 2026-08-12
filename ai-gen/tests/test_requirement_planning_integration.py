@@ -582,6 +582,7 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
                         "title": "Device Health Operations",
                         "description": "Improve operational awareness of unhealthy field devices across the product.",
                         "businessValue": "Reduce the time required to identify unhealthy devices.",
+                        "successMeasures": ["Operations can identify unhealthy devices from one approved planning scope."],
                         "storyPoints": 0, "engineeringDays": 0,
                     },
                     {
@@ -589,6 +590,7 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
                         "title": "Health Status Filtering",
                         "description": "Provide a cohesive capability for narrowing the device inventory by current health state.",
                         "businessValue": "Help operators isolate unhealthy devices without reviewing healthy inventory.",
+                        "successMeasures": ["Operators can narrow the device inventory to the selected health state."],
                         "storyPoints": 0, "engineeringDays": 0,
                     },
                     {
@@ -640,7 +642,8 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
         self.assertTrue(all(node["storyPoints"] == 0 for node in tasks))
         self.assertTrue(all(node["estimate"]["engineeringDays"] > 0 for node in tasks))
         self.assertEqual(2, len({tuple(node["acceptanceCriteria"]) for node in tasks}))
-        self.assertTrue(all(not node["acceptanceCriteria"] for node in nodes if node["type"] in {"Epic", "Feature"}))
+        self.assertTrue(all(node["acceptanceCriteria"] for node in nodes if node["type"] in {"Epic", "Feature"}))
+        self.assertEqual(2, len({tuple(node["acceptanceCriteria"]) for node in nodes if node["type"] in {"Epic", "Feature"}}))
         self.assertEqual(len(nodes), len({node["description"] for node in nodes}))
 
     def test_acceptance_criterion_shaped_story_cannot_report_full_health(self):

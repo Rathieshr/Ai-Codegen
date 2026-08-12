@@ -133,6 +133,32 @@ class ApprovedAzureDevOpsAutomationTests(unittest.TestCase):
         self.assertEqual(4, len([call for call in self.writer.calls if call[0] == "create"]))
         self.assertEqual(3, len([call for call in self.writer.calls if call[0] == "link"]))
 
+    def test_epic_and_feature_success_measures_are_written_in_description(self):
+        self._pack([{
+            "alias": "epic", "type": "Epic", "title": "Device Health",
+            "description": "Coordinate device health planning.",
+            "acceptanceCriteria": ["Operations can track device health outcomes."],
+        }])
+
+        self.service.apply_planning_pack("pack-1", self.request, correlation_id="corr-success")
+
+        fields = self.writer.calls[0][2]
+        self.assertIn("Success Measures", fields["System.Description"])
+        self.assertIn("Operations can track device health outcomes.", fields["System.Description"])
+        self.assertNotIn("Microsoft.VSTS.Common.AcceptanceCriteria", fields)
+
+    def test_legacy_approved_pack_receives_a_success_measure_on_safe_retry(self):
+        self._pack([{
+            "alias": "epic", "type": "Epic", "title": "Device Health",
+            "description": "Coordinate device health planning.",
+        }])
+
+        self.service.apply_planning_pack("pack-1", self.request, correlation_id="corr-legacy-success")
+
+        description = self.writer.calls[0][2]["System.Description"]
+        self.assertIn("Success Measures", description)
+        self.assertIn("Device Health", description)
+
     def test_duplicate_retry_reuses_external_ids(self):
         self._pack([{"alias": "epic", "type": "Epic", "title": "Device Health"}])
         first = self.service.apply_planning_pack("pack-1", self.request, correlation_id="corr-first")

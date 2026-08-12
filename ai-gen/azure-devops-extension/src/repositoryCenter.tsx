@@ -29,6 +29,7 @@ type RepositorySnapshot = {
 
 type RepositoryDocumentation = {
   status?: string;
+  documentsDiscovered?: number;
   documentsIndexed?: number;
   sectionsIndexed?: number;
   statementsIndexed?: number;
@@ -160,7 +161,9 @@ export function RepositoryCenter({
     if (!selected) return;
     setSyncing(true);
     try {
-      const endpoint = snapshot ? 'incremental-scan' : 'scan';
+      // Remote ADO snapshots may predate recursive documentation discovery. A full
+      // synchronization repairs those snapshots and rebuilds the Markdown registry.
+      const endpoint = selected.repositoryType === 'AzureDevOps' || !snapshot ? 'scan' : 'incremental-scan';
       const response = await fetch(`${baseUrl}/repositories/${encodeURIComponent(selected.repositoryId)}/${endpoint}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: endpoint === 'scan' ? JSON.stringify({ mode: 'Full', requestedBy: actor }) : undefined,
@@ -252,6 +255,7 @@ export function RepositoryCenter({
                       <Metric label="Tests" value={health.engineeringGraph.counts?.Test || health.tests.length} />
                       <Metric label="Languages" value={Object.keys(snapshot?.languages || {}).length} />
                       <Metric label="Markdown Documents" value={health.documentation?.documentsIndexed || 0} />
+                      <Metric label="Markdown Discovered" value={health.documentation?.documentsDiscovered || health.documentation?.documentsIndexed || 0} />
                       <Metric label="Knowledge Sections" value={health.documentation?.sectionsIndexed || 0} />
                     </div>
                   </details>

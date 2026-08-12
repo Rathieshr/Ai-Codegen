@@ -25,6 +25,8 @@ class RegisterConnectionRequest(BaseModel):
 class UpdateConnectionRequest(RegisterConnectionRequest):
     """Editable connection metadata; credentials remain secure references only."""
 
+    secret_reference: str = Field(default="", alias="secretReference")
+
 
 class WIQLRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

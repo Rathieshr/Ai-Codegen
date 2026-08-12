@@ -454,6 +454,10 @@ def _prepare_approved_proposal_for_ado(proposal: dict[str, Any]) -> dict[str, An
     connected = [
         connection for connection in azure_devops_integration.connections.list()
         if connection.get("status") == "Connected"
+        and "workitems.write" in {
+            str(permission).strip().casefold()
+            for permission in connection.get("permissions") or []
+        }
     ]
     connections = [
         connection for connection in connected
@@ -467,7 +471,7 @@ def _prepare_approved_proposal_for_ado(proposal: dict[str, Any]) -> dict[str, An
         connections = connected
     if not connections:
         raise ValueError(
-            "Connect and validate an Azure DevOps project with WorkItems.Write permission before creating work items."
+            "Enable approved work-item creation in Administration, then save and validate the Azure DevOps connection."
         )
     connection = connections[0]
     target_project = connection.get("projectId") or connection.get("projectName") or project_id

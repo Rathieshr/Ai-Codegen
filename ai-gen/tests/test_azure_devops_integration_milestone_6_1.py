@@ -165,6 +165,24 @@ class AzureDevOpsIntegrationMilestone61Tests(unittest.TestCase):
         self.assertEqual(AzureDevOpsConnectionStatus.PENDING_VALIDATION.value, response.json()["status"])
         self.assertNotIn("ADO_HEI_PAT", response.text)
 
+    def test_connection_capability_update_preserves_secure_credential_reference(self):
+        repository = AzureDevOpsConnectionRepository(JsonMapStore(self.root / "connections.json"))
+        service = AzureDevOpsConnectionService(repository, FakeFactory(FakeClient()))
+        item = service.register({
+            "organizationUrl": "https://dev.azure.com/hei", "projectId": "p1",
+            "authenticationMode": "PAT", "secretReference": "CUSTOM_SECURE_PAT",
+            "permissions": ["WorkItems.Read"],
+        })
+
+        updated = service.update(item["connectionId"], {
+            "organizationUrl": "https://dev.azure.com/hei", "projectId": "p1",
+            "authenticationMode": "PAT", "permissions": ["WorkItems.Read", "WorkItems.Write"],
+        })
+
+        self.assertIn("WorkItems.Write", updated["permissions"])
+        self.assertEqual("CUSTOM_SECURE_PAT", repository.get(item["connectionId"]).secret_reference)
+        self.assertNotIn("secretReference", updated)
+
     def test_invalid_credentials_are_not_retried_by_read_client(self):
         executor = SequenceExecutor([HttpResponse(401, {}, {"message": "bad credential"})])
         client = AzureDevOpsReadClient(connection(), StaticCredentials(), executor=executor, max_attempts=3, sleeper=lambda _: None)

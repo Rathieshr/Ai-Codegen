@@ -442,7 +442,10 @@ class RepositoryIntelligenceApplicationService:
         symbols = self.parser_service.list_symbols(repository_id, snapshot_id=snapshot.snapshot_id if snapshot else "")
         snapshot_metadata = dict(snapshot.metadata or {}) if snapshot else {}
         live_documentation = self.get_markdown_registry(repository_id) or {}
-        documentation = live_documentation or dict(snapshot_metadata.get("documentationRegistry") or {})
+        documentation = {
+            **dict(snapshot_metadata.get("documentationRegistry") or {}),
+            **live_documentation,
+        }
         graph_counts: dict[str, int] = {}
         graph_items: dict[str, list[dict]] = {}
         if graph:

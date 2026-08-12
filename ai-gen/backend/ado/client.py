@@ -224,16 +224,20 @@ class AdoClient:
             if item.get("path")
         }
 
-        # Some ADO Server/proxy combinations return only the immediate children even
-        # when Full recursion is requested. Expand any tree that has no returned
-        # descendants so Repository Intelligence never silently becomes root-only.
+        # Some ADO Server/proxy combinations return a partial result even when Full
+        # recursion is requested. Always verify documentation roots because a root
+        # response containing only docs/README.md otherwise looks complete while
+        # silently omitting the rest of the engineering documentation.
         visited: set[str] = {"/"}
         while len(visited) <= 500:
             trees = sorted(
                 path for path, item in discovered.items()
                 if path not in visited
                 and (bool(item.get("isFolder")) or str(item.get("gitObjectType") or "").casefold() == "tree")
-                and not any(other != path and other.startswith(f"{path.rstrip('/')}/") for other in discovered)
+                and (
+                    path.rstrip("/").rsplit("/", 1)[-1].casefold() in {"doc", "docs", "documentation"}
+                    or not any(other != path and other.startswith(f"{path.rstrip('/')}/") for other in discovered)
+                )
             )
             if not trees:
                 break

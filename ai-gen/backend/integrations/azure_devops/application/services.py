@@ -57,7 +57,10 @@ class AzureDevOpsConnectionService:
     def update(self, connection_id: str, value: dict[str, Any], *, correlation_id: str = "") -> dict[str, Any]:
         self._reject_plaintext(value)
         existing = self.require(connection_id)
-        updated = AzureDevOpsConnection.create({**value, "connectionId": connection_id})
+        update_value = {**existing.to_storage_dict(), **value, "connectionId": connection_id}
+        if not str(value.get("secretReference") or value.get("secret_reference") or "").strip():
+            update_value["secretReference"] = existing.secret_reference
+        updated = AzureDevOpsConnection.create(update_value)
         duplicate = self._repository.find_duplicate(updated.organization_url, updated.project_id)
         if duplicate and duplicate.connection_id != connection_id:
             raise AzureDevOpsValidationError(

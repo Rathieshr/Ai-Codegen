@@ -167,6 +167,38 @@ class AdoClientTests(unittest.TestCase):
             [item["path"] for item in items],
         )
 
+    def test_repository_items_verify_partially_expanded_documentation_tree(self) -> None:
+        client = self._make_client()
+        requested_scopes: list[str] = []
+
+        def fake_get(url: str):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            scope = query.get("scopePath", [""])[0]
+            requested_scopes.append(scope)
+            if scope == "/":
+                return {"value": [
+                    {"path": "/docs", "gitObjectType": "tree", "isFolder": True},
+                    {"path": "/docs/README.md", "gitObjectType": "blob"},
+                    {"path": "/src", "gitObjectType": "tree", "isFolder": True},
+                    {"path": "/src/App.ts", "gitObjectType": "blob"},
+                ]}
+            if scope == "/docs":
+                return {"value": [
+                    {"path": "/docs/README.md", "gitObjectType": "blob"},
+                    {"path": "/docs/architecture.md", "gitObjectType": "blob"},
+                    {"path": "/docs/productvision.md", "gitObjectType": "blob"},
+                ]}
+            return {"value": []}
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            items = client.list_repository_items("TestProject", "repo-1", "main")
+
+        self.assertIn("/docs", requested_scopes)
+        self.assertEqual(
+            ["/docs", "/docs/README.md", "/docs/architecture.md", "/docs/productvision.md", "/src", "/src/App.ts"],
+            [item["path"] for item in items],
+        )
+
     def test_send_raises_ado_client_error_on_http_error(self) -> None:
         import urllib.error
         client = self._make_client()

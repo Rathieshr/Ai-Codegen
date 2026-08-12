@@ -141,6 +141,7 @@ export function ApprovalCenter({ baseUrl, actor, role, canApprove, onError }: Pr
               {selected.retryable ? <div className="approval-failure" role="alert">
                 <strong>{selected.failedOperation ? `${selected.failedOperation} failed` : 'Work items were not fully created'}</strong>
                 <p>{selected.failureReason || 'Azure DevOps returned a failure without additional details. Review diagnostics before retrying.'}</p>
+                {String(selected.failureReason || '').includes('WorkItems.Write') ? <p>Open Administration → Azure DevOps, enable approved work-item creation, then save and validate the connection before retrying.</p> : null}
                 <small>The pack remains approved. Retry resumes safely using the same idempotency key.</small>
               </div> : <p>{selected.summary || 'Review the source artifact details before making a decision.'}</p>}
             </div> : null}

@@ -293,8 +293,26 @@ class RequirementAnalysisService:
             if self._project_intelligence_shadow_mode():
                 reasoning = self._reason_about_acceptance(requirement, analysis, reasoning_context)
                 reasoning.setdefault("diagnostics", {})["projectIntelligenceShadow"] = project_reasoning
-            else:
+            elif project_reasoning.get("reasoningMode") == "AI":
                 reasoning = project_reasoning
+            else:
+                provider_reasoning = self._reason_about_acceptance(
+                    requirement, analysis, reasoning_context,
+                )
+                if provider_reasoning.get("reasoningMode") == "AI":
+                    provider_reasoning.setdefault("diagnostics", {})[
+                        "projectIntelligenceAttempt"
+                    ] = self._reasoning_projection(project_reasoning)
+                    reasoning = provider_reasoning
+                else:
+                    project_reasoning.setdefault("diagnostics", {})[
+                        "reasoningProviderAttempt"
+                    ] = self._reasoning_projection(provider_reasoning)
+                    project_reasoning["warnings"] = _unique([
+                        *_strings(project_reasoning.get("warnings")),
+                        *_strings(provider_reasoning.get("warnings")),
+                    ])
+                    reasoning = project_reasoning
         else:
             reasoning = self._reason_about_acceptance(requirement, analysis, reasoning_context)
         suggestions = self._acceptance_suggestions_from_reasoning(reasoning, analysis)

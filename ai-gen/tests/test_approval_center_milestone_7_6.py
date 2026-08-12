@@ -69,6 +69,34 @@ class ApprovalCenterMilestone76Tests(unittest.TestCase):
         with self.assertRaises(ApprovalConflictError):
             service.approve(item["id"], "Admin", "admin")
 
+    def test_failed_ado_pack_exposes_failure_and_can_be_retried(self):
+        decisions: list[tuple] = []
+        service = ApprovalCenterService(
+            ado_pack_provider=lambda: {"actionPacks": [{
+                "packId": "failed-pack",
+                "trigger": "PlanningPackApproved",
+                "approvalStatus": "Failed",
+                "approvedBy": "Owner",
+                "createdAt": "2026-08-12T00:00:00Z",
+                "applicationResults": [{
+                    "actionId": "action-1",
+                    "operation": "ApplyPlanningPack",
+                    "status": "Failed",
+                    "error": "Azure DevOps rejected the configured area path.",
+                }],
+            }]},
+            ado_pack_approve=lambda *args: decisions.append(args) or {"status": "Applied"},
+        )
+
+        item = service.get("ado-action-packs:failed-pack")
+
+        self.assertTrue(item["retryable"])
+        self.assertTrue(item["canApprove"])
+        self.assertEqual("ApplyPlanningPack", item["failedOperation"])
+        self.assertIn("area path", item["failureReason"])
+        service.approve(item["id"], "Admin", "admin", "Retry corrected configuration")
+        self.assertEqual("failed-pack", decisions[0][0])
+
     def test_viewer_cannot_make_decisions(self):
         with self.assertRaises(ApprovalPermissionError):
             self.service.approve("planning-packs:pack-1", "Reader", "viewer")

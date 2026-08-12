@@ -14,6 +14,9 @@ type Approval = {
   risk?: unknown;
   canApprove: boolean;
   canReject: boolean;
+  retryable?: boolean;
+  failureReason?: string;
+  failedOperation?: string;
   sourceData?: Record<string, unknown>;
   audit?: Array<Record<string, unknown>>;
 };
@@ -133,13 +136,20 @@ export function ApprovalCenter({ baseUrl, actor, role, canApprove, onError }: Pr
             <div className="approval-tabs">
               {(['preview', 'details', 'compare', 'audit'] as const).map((item) => <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>{title(item)}</button>)}
             </div>
-            {view === 'preview' ? <div className="approval-preview"><h4>Decision preview</h4><p>{selected.summary || 'Review the source artifact details before making a decision.'}</p></div> : null}
+            {view === 'preview' ? <div className="approval-preview">
+              <h4>{selected.retryable ? 'Azure DevOps creation failed' : 'Decision preview'}</h4>
+              {selected.retryable ? <div className="approval-failure" role="alert">
+                <strong>{selected.failedOperation ? `${selected.failedOperation} failed` : 'Work items were not fully created'}</strong>
+                <p>{selected.failureReason || 'Azure DevOps returned a failure without additional details. Review diagnostics before retrying.'}</p>
+                <small>The pack remains approved. Retry resumes safely using the same idempotency key.</small>
+              </div> : <p>{selected.summary || 'Review the source artifact details before making a decision.'}</p>}
+            </div> : null}
             {view === 'details' ? <pre className="approval-json">{JSON.stringify(selected.sourceData || {}, null, 2)}</pre> : null}
             {view === 'compare' ? <div className="approval-compare"><label>Compare with<select value={compareId} onChange={(event) => setCompareId(event.target.value)}><option value="">Select an approval</option>{approvals.filter((item) => item.id !== selected.id).map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><div><CompareCard item={selected} /><CompareCard item={comparison} /></div></div> : null}
             {view === 'audit' ? <div className="approval-audit">{selected.audit?.length ? selected.audit.map((event, index) => <div key={String(event.id || index)}><strong>{String(event.what || event.eventType || 'Approval event')}</strong><span>{String(event.who || 'HEI')} · {formatDate(String(event.when || ''))}</span><p>{String(event.why || '')}</p></div>) : <p>No audit events recorded for this artifact.</p>}</div> : null}
             <div className="approval-decision">
               <label>Decision note<input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Optional reason" /></label>
-              <div><button type="button" className="secondary" onClick={() => void decide('reject')} disabled={!canApprove || !selected.canReject || busy}>Reject</button><button type="button" className="primary" onClick={() => void decide('approve')} disabled={!canApprove || !selected.canApprove || busy}>{selected.category === 'ADO Action Packs' ? 'Approve & Create in Azure DevOps' : 'Approve'}</button></div>
+              <div><button type="button" className="secondary" onClick={() => void decide('reject')} disabled={!canApprove || !selected.canReject || busy}>{selected.retryable ? 'Close Failed Pack' : 'Reject'}</button><button type="button" className="primary" onClick={() => void decide('approve')} disabled={!canApprove || !selected.canApprove || busy}>{selected.retryable ? 'Retry Azure DevOps Creation' : selected.category === 'ADO Action Packs' ? 'Approve & Create in Azure DevOps' : 'Approve'}</button></div>
               {!canApprove ? <small>Your current role has read-only access.</small> : null}
             </div>
           </> : <div className="approval-empty"><strong>Select an approval</strong><span>Preview its evidence, comparison, and audit history.</span></div>}

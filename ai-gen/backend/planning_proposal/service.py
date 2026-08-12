@@ -218,6 +218,8 @@ class PlanningProposalService:
         if action == "rollback":
             proposal = self._rollback(proposal, request)
             changes.append(f"Rolled back to version {request.get('targetVersion')}.")
+        elif action == "generate-next-stage":
+            changes.extend(self._generate_next_stage(proposal))
         elif action in {"move", "delete", "duplicate", "merge", "split", "approve", "reject"}:
             changes.extend(self._node_operation(proposal, action, request))
         else:
@@ -234,6 +236,17 @@ class PlanningProposalService:
         self.store.write(values)
         self._publish("PlanningProposalUpdated", proposal)
         return proposal
+
+    def _generate_next_stage(self, proposal: dict[str, Any]) -> list[str]:
+        workflow = _planning_workflow(proposal)
+        target = _text(workflow.get("generationTarget"))
+        if not target:
+            raise ValueError(_text(workflow.get("blockingReason")) or "The current planning stage is not ready to advance.")
+        revealed = list((proposal.get("planningWorkflow") or {}).get("revealedTypes") or ["Epic", "Feature"])
+        if target not in revealed:
+            revealed.append(target)
+        proposal["planningWorkflow"] = {"revealedTypes": revealed}
+        return [f"Generated {target} drafts for approved parent items."]
 
     def regenerate(self, request: dict[str, Any]) -> dict[str, Any]:
         proposal_id = _required(request, "proposalId")
@@ -312,6 +325,12 @@ class PlanningProposalService:
     ) -> dict[str, Any]:
         request = {"proposalId": proposal_id}
         proposal = self.validate(request)
+        workflow = _planning_workflow(proposal)
+        if not workflow.get("canApprove"):
+            raise ValueError(
+                _text(workflow.get("blockingReason"))
+                or "Complete Feature, Story, and Task review before approving the Planning Proposal."
+            )
         if not proposal.get("validation", {}).get("mandatoryPassed"):
             raise ValueError("Planning Proposal cannot be approved until mandatory validation findings are resolved.")
         if not self.review_service and proposal.get("review", {}).get("status") != "Completed":
@@ -564,6 +583,12 @@ class PlanningProposalService:
         if existing:
             previous_history.append(_history_entry(existing, actor, "Entire proposal regenerated.", ["Regenerated proposal hierarchy."]))
         proposal["history"] = previous_history
+        proposal["planningWorkflow"] = {
+            "revealedTypes": list((existing or {}).get("planningWorkflow", {}).get("revealedTypes") or ["Epic", "Feature"]),
+        }
+        for node in proposal.get("nodes") or []:
+            if node.get("type") == "Epic":
+                node["status"] = "Approved"
         return self._recalculate(proposal)
 
     def _node(
@@ -810,6 +835,8 @@ class PlanningProposalService:
             for item in nodes:
                 if item["nodeId"] in affected:
                     item["status"] = status
+                elif action == "approve" and item.get("parentId") == node["nodeId"] and item.get("status") == "Rejected":
+                    item["status"] = "Draft"
             return [f"{status} {node['type']} {node['title']} and {len(affected) - 1} descendant(s)."]
         if action == "move":
             parent_id = _text(request.get("parentId"))
@@ -930,6 +957,7 @@ class PlanningProposalService:
         return proposal
 
     def _recalculate(self, proposal: dict[str, Any]) -> dict[str, Any]:
+        proposal["planningWorkflow"] = _planning_workflow(proposal)
         proposal["dependencies"] = _dependency_edges(proposal.get("nodes") or [])
         proposal["implementationOrder"] = _implementation_order(proposal.get("nodes") or [], proposal["dependencies"])
         proposal["acceptanceCriteria"] = _acceptance_catalog_from_nodes(
@@ -1321,11 +1349,89 @@ def _azure_devops_preview(
     )
 
 
+def _planning_workflow(proposal: dict[str, Any]) -> dict[str, Any]:
+    """Derive the persisted, single-screen planning lifecycle from artifact state."""
+    order = ["Epic", "Feature", "Story", "Task"]
+    labels = {"Epic": "Epic", "Feature": "Features", "Story": "Stories", "Task": "Tasks"}
+    stored = (proposal.get("planningWorkflow") or {}).get("revealedTypes") or ["Epic", "Feature"]
+    revealed = [kind for kind in order if kind in stored]
+    if "Epic" not in revealed:
+        revealed.insert(0, "Epic")
+    if "Feature" not in revealed:
+        revealed.append("Feature")
+    proposal_view = {**proposal, "planningWorkflow": {"revealedTypes": revealed}}
+    visible = _visible_workflow_nodes(proposal_view)
+    deepest = max((kind for kind in revealed if any(node.get("type") == kind for node in visible)), key=order.index, default="Epic")
+    review_items = [node for node in visible if node.get("type") == deepest and node.get("status") != "Rejected"]
+    pending = [node for node in review_items if node.get("status") not in {"Approved", "Rejected"}]
+    approved = [node for node in review_items if node.get("status") == "Approved"]
+    next_kind = order[order.index(deepest) + 1] if deepest != "Task" else ""
+    generation_target = ""
+    blocking_reason = ""
+    if pending:
+        next_action = f"Review {len(pending)} Remaining {labels[deepest]}"
+        blocking_reason = f"{len(pending)} {labels[deepest].lower()} still require approval or rejection."
+    elif deepest == "Task":
+        next_action = "Review & Approve Planning Proposal"
+    elif approved:
+        generation_target = next_kind
+        next_action = f"Generate {labels[next_kind]}"
+    else:
+        next_action = f"Review {labels[deepest]}"
+        blocking_reason = f"Approve at least one {deepest.lower()} before generating {labels[next_kind]}."
+
+    stages = []
+    for kind in order:
+        if kind == "Epic":
+            state = "Done"
+        elif kind not in revealed:
+            state = "Locked"
+        elif kind == deepest and pending:
+            state = "Active"
+        elif kind == deepest and not pending:
+            state = "Done"
+        else:
+            items = [node for node in visible if node.get("type") == kind and node.get("status") != "Rejected"]
+            state = "Done" if items and all(node.get("status") == "Approved" for node in items) else "Active"
+        stages.append({"type": kind, "label": f"{labels[kind]} Review" if kind != "Epic" else "Epic", "state": state})
+
+    return {
+        "revealedTypes": revealed,
+        "currentType": deepest,
+        "nextAction": next_action,
+        "blockingReason": blocking_reason,
+        "generationTarget": generation_target,
+        "pendingCount": len(pending),
+        "approvedCount": len(approved),
+        "visibleNodeIds": [node["nodeId"] for node in visible],
+        "canApprove": deepest == "Task" and not pending and bool(approved),
+        "stages": stages,
+    }
+
+
+def _visible_workflow_nodes(proposal: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes = list(proposal.get("nodes") or [])
+    revealed = set((proposal.get("planningWorkflow") or {}).get("revealedTypes") or ["Epic", "Feature"])
+    by_id = {node.get("nodeId"): node for node in nodes}
+    visible: list[dict[str, Any]] = []
+    for node in nodes:
+        kind = node.get("type")
+        if kind not in revealed:
+            continue
+        parent_id = node.get("parentId")
+        if kind in {"Story", "Task", "Sub Task"}:
+            parent = by_id.get(parent_id)
+            if not parent or parent.get("status") != "Approved":
+                continue
+        visible.append(node)
+    return visible
+
+
 def _azure_devops_preview_from_record(proposal: dict[str, Any]) -> dict[str, Any]:
     existing = proposal.get("azureDevOpsPreview") or {}
     return _build_ado_preview(
         proposal["proposalId"],
-        proposal.get("nodes") or [],
+        _visible_workflow_nodes(proposal),
         area_path=_text(existing.get("areaPath")),
         iteration_path=_text(existing.get("iterationPath")),
         project_id=_text(existing.get("projectId") or proposal.get("projectId")),

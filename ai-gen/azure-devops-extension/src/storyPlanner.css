@@ -3279,6 +3279,10 @@ button.hei-story-list-card {
 .approval-tabs button.active { border-bottom-color: var(--hei-blue); }
 .approval-preview { padding: 8px 0 18px; min-height: 120px; }
 .approval-preview h4 { margin: 0 0 8px; }
+.approval-failure { border-left: 3px solid var(--hei-danger, #c42b1c); background: color-mix(in srgb, var(--hei-danger, #c42b1c) 7%, var(--hei-surface)); padding: 12px; }
+.approval-failure strong { display: block; color: var(--hei-danger, #c42b1c); }
+.approval-failure p { margin: 6px 0; }
+.approval-failure small { color: var(--hei-muted); }
 .approval-json { max-height: 340px; overflow: auto; padding: 12px; background: var(--hei-surface-subtle); white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-compare > label { display: grid; grid-template-columns: auto minmax(180px, 300px); gap: 8px; align-items: center; }
 .approval-compare > div { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
@@ -3513,6 +3517,8 @@ button.hei-story-list-card {
 .hei-acceptance-card.missing { border-style: dashed; border-color: var(--hei-warning); }
 .hei-acceptance-description, .hei-acceptance-callout p { margin: 0; color: var(--hei-muted); }
 .hei-acceptance-callout { display: grid; gap: 3px; border-left: 3px solid var(--hei-blue); padding: 8px 10px; background: var(--hei-surface-subtle); }
+.hei-acceptance-generation-note { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--hei-border); background: var(--hei-surface-subtle); }
+.hei-acceptance-generation-note p { margin: 0; color: var(--hei-muted); }
 .hei-acceptance-suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 10px; }
 .hei-acceptance-suggestions article, .hei-acceptance-suggestions label { display: grid; align-content: start; gap: 7px; min-width: 0; border: 1px solid var(--hei-border-soft); border-radius: 5px; padding: 10px; }
 .hei-acceptance-suggestions pre { margin: 0; color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -4023,6 +4029,16 @@ button.hei-story-list-card {
 .hei-planning-proposal-header span:first-child, .hei-planning-proposal-workspace section > header span:first-child { color: var(--hei-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .hei-planning-proposal-header h2 { margin: 2px 0 3px; font-size: 24px; }
 .hei-planning-proposal-header p, .hei-planning-proposal-workspace section > header p { margin: 0; color: var(--hei-muted); }
+.hei-proposal-workflow { display: grid; gap: 8px; }
+.hei-proposal-stage-strip { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 6px; }
+.hei-proposal-stage-strip article { display: grid; gap: 3px; min-width: 0; border: 1px solid var(--hei-border); border-radius: 5px; padding: 8px 10px; background: var(--hei-surface); }
+.hei-proposal-stage-strip article.active { border-bottom: 3px solid var(--hei-yellow); background: var(--hei-surface-subtle); }
+.hei-proposal-stage-strip article.done { border-left: 3px solid var(--hei-success); }
+.hei-proposal-stage-strip article.locked { color: var(--hei-muted); }
+.hei-proposal-stage-strip span, .hei-proposal-next-action span { color: var(--hei-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.hei-proposal-next-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--hei-border); border-left: 3px solid var(--hei-yellow); border-radius: 5px; padding: 8px 10px; background: var(--hei-surface); }
+.hei-proposal-next-action > div { display: grid; gap: 2px; }
+.hei-proposal-next-action small { color: var(--hei-muted); }
 .hei-planning-proposal-metrics { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 6px; }
 .hei-planning-proposal-metrics > div, .hei-proposal-card-grid > div { display: grid; gap: 2px; min-width: 0; border: 1px solid var(--hei-border); border-radius: 5px; padding: 8px 10px; background: var(--hei-surface); }
 .hei-planning-proposal-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--hei-border); }
@@ -4122,6 +4138,8 @@ button.hei-story-list-card {
   .hei-planning-proposal-header, .hei-planning-proposal-footer { align-items: stretch; flex-direction: column; }
   .hei-planning-proposal-metrics, .hei-proposal-node-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hei-planning-proposal-layout { grid-template-columns: 1fr; }
+  .hei-proposal-stage-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hei-proposal-next-action { align-items: stretch; flex-direction: column; }
   .hei-review-stage-chain, .hei-review-sections { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
   .hei-review-compose > div { grid-template-columns: 1fr; }
   .hei-proposal-health { grid-column: auto; }

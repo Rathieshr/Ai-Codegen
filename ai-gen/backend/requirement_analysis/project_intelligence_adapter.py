@@ -41,9 +41,17 @@ class ProjectIntelligenceRequirementAnalyzer:
         analysis: dict[str, Any],
         engineering_context: dict[str, Any],
     ) -> dict[str, Any]:
-        result = self._project_intelligence.generate_requirement_acceptance_criteria(
-            requirement, engineering_context,
-        )
+        try:
+            result = self._project_intelligence.generate_requirement_acceptance_criteria(
+                requirement,
+                engineering_context,
+                options={"force_provider": "azure_phi"},
+            )
+        except TypeError:
+            # Compatibility for older facade implementations and test doubles.
+            result = self._project_intelligence.generate_requirement_acceptance_criteria(
+                requirement, engineering_context,
+            )
         metadata = dict(result.get("metadata") or {})
         criteria = self._validated_criteria(
             result.get("acceptanceCriteria") or [], analysis, engineering_context,

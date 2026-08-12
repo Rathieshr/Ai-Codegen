@@ -17,6 +17,7 @@ from backend.project_intelligence import (
     _project_phi_prompt,
     _project_phi_prompt_attempts,
     _project_phi_prompt_with_diagnostics,
+    _recover_acceptance_criteria_from_text,
 )
 from backend.project_graph import ProjectKnowledgeGraphService
 
@@ -93,6 +94,27 @@ class ParseErrorPhiProvider(HealthyPhiProvider):
         }
 
 
+class PlainTextAcceptancePhiProvider(HealthyPhiProvider):
+    def probe_json(self, *args, **kwargs) -> dict:
+        self.calls += 1
+        return {
+            "status": "parse_error",
+            "http_status": 200,
+            "elapsed_ms": 210,
+            "raw_content": (
+                "1. Given a transformer is registered\n"
+                "When an operator opens transformer health\n"
+                "Then the current health status is displayed\n\n"
+                "2. Given communication data is unavailable\n"
+                "When an operator opens transformer health\n"
+                "Then the unavailable state is shown"
+            ),
+            "parsed_json": {},
+            "failure_reason": "parse_error",
+            "failure_message": "Provider returned plain text.",
+        }
+
+
 class RecordingPhiProvider(HealthyPhiProvider):
     def __init__(self, parsed: dict | None = None) -> None:
         super().__init__(parsed)
@@ -131,6 +153,86 @@ class UnhealthyPhiProvider(HealthyPhiProvider):
 
 
 class ProjectIntelligenceTests(unittest.TestCase):
+    def test_plain_text_phi_acceptance_criteria_are_recovered_before_fallback(self) -> None:
+        raw = (
+            "1. Given a transformer is registered\n"
+            "When an operator opens transformer health\n"
+            "Then the current health status is displayed\n\n"
+            "2. Given communication data is unavailable\n"
+            "When an operator opens transformer health\n"
+            "Then the unavailable state is shown"
+        )
+
+        recovered = _recover_acceptance_criteria_from_text(raw)
+
+        self.assertEqual(2, len(recovered))
+        self.assertTrue(all("Given" in item["text"] for item in recovered))
+        self.assertTrue(all("When" in item["text"] for item in recovered))
+        self.assertTrue(all("Then" in item["text"] for item in recovered))
+
+    def test_requirement_acceptance_criteria_use_recovered_phi_text(self) -> None:
+        provider = PlainTextAcceptancePhiProvider()
+        context = {
+            "contextId": "ctx-transformer",
+            "contextVersion": "v1",
+            "requirement": {
+                "functionalRequirements": ["Display current transformer health status."],
+            },
+            "sourceVersions": {},
+        }
+        with tempfile.TemporaryDirectory() as data_dir, patch.dict(
+            os.environ, {"AI_GEN_DATA_DIR": data_dir}, clear=False,
+        ), patch(
+            "backend.project_intelligence.get_refinement_provider",
+            return_value=provider,
+        ):
+            result = ProjectIntelligenceService().generate_requirement_acceptance_criteria(
+                {
+                    "title": "Transformer Health",
+                    "normalizedRequirement": "Display current transformer health status.",
+                },
+                context,
+            )
+
+        self.assertTrue(result["used"])
+        self.assertEqual(2, len(result["acceptanceCriteria"]))
+        self.assertEqual("success_recovered", result["metadata"]["phi_status"])
+        self.assertEqual(
+            "plain_text_given_when_then",
+            result["metadata"]["response_recovery"],
+        )
+
+    def test_requirement_acceptance_criteria_accept_phi_schema_alias(self) -> None:
+        provider = HealthyPhiProvider({
+            "acceptance_criteria": [{
+                "text": (
+                    "Given a transformer is registered, when an operator opens transformer "
+                    "health, then the current health status is displayed."
+                ),
+            }],
+        })
+        context = {
+            "contextId": "ctx-transformer-alias",
+            "contextVersion": "v1",
+            "requirement": {
+                "functionalRequirements": ["Display current transformer health status."],
+            },
+            "sourceVersions": {},
+        }
+        with tempfile.TemporaryDirectory() as data_dir, patch.dict(
+            os.environ, {"AI_GEN_DATA_DIR": data_dir}, clear=False,
+        ), patch(
+            "backend.project_intelligence.get_refinement_provider",
+            return_value=provider,
+        ):
+            result = ProjectIntelligenceService().generate_requirement_acceptance_criteria(
+                {"title": "Transformer Health"}, context,
+            )
+
+        self.assertTrue(result["used"])
+        self.assertEqual(1, len(result["acceptanceCriteria"]))
+        self.assertEqual("success", result["metadata"]["phi_status"])
+
     def test_planning_node_regeneration_uses_intelligence_pipeline_and_versions_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {
             "AI_GEN_DATA_DIR": temp_dir, "AI_GEN_REFINER_ENABLED": "0",

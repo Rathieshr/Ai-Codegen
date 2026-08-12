@@ -833,6 +833,29 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
 
     def test_planning_proposal_review_approval_and_immutability(self):
         _, _, _, proposal = self.prepare_proposal()
+        for feature in [node for node in proposal["nodes"] if node["type"] == "Feature"]:
+            proposal = self.proposal.update(proposal["proposalId"], {
+                "operation": "approve", "nodeId": feature["nodeId"],
+                "expectedVersion": proposal["version"], "actor": "Product Owner",
+            })
+        proposal = self.proposal.update(proposal["proposalId"], {
+            "operation": "generate-next-stage", "expectedVersion": proposal["version"],
+            "actor": "Product Owner",
+        })
+        for story in [node for node in proposal["nodes"] if node["type"] == "Story"]:
+            proposal = self.proposal.update(proposal["proposalId"], {
+                "operation": "approve", "nodeId": story["nodeId"],
+                "expectedVersion": proposal["version"], "actor": "Product Owner",
+            })
+        proposal = self.proposal.update(proposal["proposalId"], {
+            "operation": "generate-next-stage", "expectedVersion": proposal["version"],
+            "actor": "Product Owner",
+        })
+        for task in [node for node in proposal["nodes"] if node["type"] == "Task"]:
+            proposal = self.proposal.update(proposal["proposalId"], {
+                "operation": "approve", "nodeId": task["nodeId"],
+                "expectedVersion": proposal["version"], "actor": "Product Owner",
+            })
         validated = self.proposal.validate({"proposalId": proposal["proposalId"]})
         self.assertTrue(validated["validation"]["mandatoryPassed"])
         reviewed = self.proposal.review({
@@ -854,6 +877,34 @@ class RequirementPlanningIntegrationTests(unittest.TestCase):
             self.proposal.update(approved["proposalId"], {
                 "nodeId": approved["nodes"][0]["nodeId"], "changes": {"title": "Forbidden edit"},
             })
+
+    def test_planning_proposal_reveals_children_only_after_parent_review(self):
+        _, _, _, proposal = self.prepare_proposal()
+        workflow = proposal["planningWorkflow"]
+        visible = {node["type"] for node in proposal["nodes"] if node["nodeId"] in workflow["visibleNodeIds"]}
+        self.assertEqual({"Epic", "Feature"}, visible)
+        self.assertEqual("Feature", workflow["currentType"])
+
+        feature = next(node for node in proposal["nodes"] if node["type"] == "Feature")
+        proposal = self.proposal.update(proposal["proposalId"], {
+            "operation": "approve", "nodeId": feature["nodeId"],
+            "expectedVersion": proposal["version"], "actor": "Product Owner",
+        })
+        self.assertEqual("Story", proposal["planningWorkflow"]["generationTarget"])
+        self.assertNotIn("Story", {
+            node["type"] for node in proposal["nodes"]
+            if node["nodeId"] in proposal["planningWorkflow"]["visibleNodeIds"]
+        })
+
+        proposal = self.proposal.update(proposal["proposalId"], {
+            "operation": "generate-next-stage", "expectedVersion": proposal["version"],
+            "actor": "Product Owner",
+        })
+        visible_ids = set(proposal["planningWorkflow"]["visibleNodeIds"])
+        visible_stories = [node for node in proposal["nodes"] if node["type"] == "Story" and node["nodeId"] in visible_ids]
+        self.assertTrue(visible_stories)
+        self.assertTrue(all(node["parentId"] == feature["nodeId"] for node in visible_stories))
+        self.assertFalse(any(node["type"] == "Task" and node["nodeId"] in visible_ids for node in proposal["nodes"]))
 
     def test_planning_proposal_api_contract_and_history(self):
         _, _, recommendation, _ = self.prepare_proposal()

@@ -98,6 +98,35 @@ class DegradedProjectIntelligenceFacade:
         }
 
 
+class AcceptanceReasoningFallbackSpy:
+    def __init__(self):
+        self.calls = []
+
+    def analyze(self, workflow_type, engineering_context, **kwargs):
+        self.calls.append(workflow_type)
+        functional = engineering_context["requirement"]["functionalRequirements"][0]
+        return {
+            "reasoningMode": "AI",
+            "provider": "Phi",
+            "model": "phi-fallback",
+            "promptVersion": "requirement-ac-fallback-v1",
+            "recommendation": {"acceptanceCriteria": [{
+                "text": (
+                    "Scenario: View Transformer Health\n"
+                    "Given an Operations User\n"
+                    "When the user opens transformer health\n"
+                    "Then current health and communication status are visible."
+                ),
+                "mappedFunctionalRequirement": functional,
+                "confidence": 88,
+            }]},
+            "reasoning": ["Mapped the criterion to the supplied functional requirement."],
+            "alternatives": [],
+            "warnings": [],
+            "confidence": {"overall": 88},
+        }
+
+
 class TransformerEngineeringIntelligence:
     def recommend_repository(self, requirement, analysis):
         return {"suggestedRepository": {}, "signals": {}, "source": "NoMatch"}
@@ -221,6 +250,35 @@ class ProjectIntelligenceRequirementAdapterTests(unittest.TestCase):
         self.assertEqual(3, len(generated["acceptanceCriteriaSuggestions"]))
         self.assertTrue(generated["acceptanceDiagnostics"]["projectIntelligencePrimary"])
 
+    def test_central_reasoning_provider_is_tried_before_deterministic_fallback(self):
+        with tempfile.TemporaryDirectory() as root:
+            ingestion = RequirementIngestionService(JsonMapStore(Path(root) / "requirements.json"))
+            context = ingestion.ingest({
+                "sourceType": "PasteRequirement",
+                "projectId": "linedefender",
+                "title": "Transformer Health",
+                "content": "Operations users monitor current transformer health and communication status.",
+            })
+            reasoning = AcceptanceReasoningFallbackSpy()
+            service = RequirementAnalysisService(
+                JsonMapStore(Path(root) / "analysis.json"),
+                requirement_ingestion=ingestion,
+                engineering_intelligence=TransformerEngineeringIntelligence(),
+                project_intelligence_analyzer=ProjectIntelligenceRequirementAnalyzer(
+                    DegradedProjectIntelligenceFacade()
+                ),
+                reasoning_engine=reasoning,
+            )
+
+            service.analyze(context["requirementId"])
+            generated = service.suggest_acceptance_criteria(context["requirementId"])
+
+        self.assertIn("Acceptance Criteria Generation", reasoning.calls)
+        self.assertEqual("AI", generated["acceptanceDiagnostics"]["generationMode"])
+        self.assertEqual("Phi", generated["acceptanceDiagnostics"]["provider"])
+        self.assertFalse(generated["acceptanceDiagnostics"]["degraded"])
+        self.assertTrue(generated["acceptanceCriteriaSuggestions"])
+
     def test_public_facade_uses_stabilized_project_phi_pipeline(self):
         context = transformer_context()
         with tempfile.TemporaryDirectory() as data_dir, patch.dict(
@@ -247,6 +305,7 @@ class ProjectIntelligenceRequirementAdapterTests(unittest.TestCase):
         self.assertTrue(evidence_catalog["approvedProjectKnowledge"])
         self.assertTrue(evidence_catalog["azureDevOpsWork"])
         self.assertTrue(probe.call_args.args[4]["allow_fallback"])
+        self.assertEqual("azure_phi", probe.call_args.args[4]["force_provider"])
 
 
 if __name__ == "__main__":

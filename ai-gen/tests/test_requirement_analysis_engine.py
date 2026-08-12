@@ -475,6 +475,26 @@ Assumptions:
             generated["acceptanceCriteriaSuggestions"][0]["text"],
         )
 
+    def test_governed_inferred_actor_is_not_reported_as_missing(self):
+        analysis = {
+            "functionalRequirements": ["Notify maintenance engineers when a device reports a critical condition."],
+            "actors": [],
+            "statementGovernance": {
+                "governedValues": {
+                    "primaryActor": "Maintenance Engineer",
+                    "secondaryActors": [],
+                },
+            },
+            "businessGoals": ["Reduce response time to critical device conditions."],
+        }
+        understood = self.service.acceptance_engine.understand(analysis, {})
+
+        self.assertEqual(["Maintenance Engineer"], understood["requirementFacts"]["actor"])
+        self.assertNotIn(
+            "Actor",
+            {item["field"] for item in understood["missingInformation"]},
+        )
+
     def test_missing_requirement_context_is_not_hidden_by_analysis_recovery(self):
         with self.assertRaisesRegex(ValueError, "Requirement context was not found"):
             self.service.suggest_acceptance_criteria("requirement_missing")
@@ -537,11 +557,13 @@ Assumptions:
         )
         self.service.analyze(context["requirementId"])
         generated = self.service.suggest_acceptance_criteria(context["requirementId"])
-        types = {item["type"] for item in generated["acceptanceCriteriaSuggestions"]}
+        suggestions = generated["acceptanceCriteriaSuggestions"]
+        types = {item["type"] for item in suggestions}
         self.assertEqual({"Functional", "Business Rule", "Non-Functional"}, types)
+        self.assertEqual(len(suggestions), len({item["title"] for item in suggestions}))
         evidence_text = "\n".join(
             item["evidence"][0]["requirementSentence"]
-            for item in generated["acceptanceCriteriaSuggestions"]
+            for item in suggestions
         )
         self.assertIn("Only authorized Operations Users", evidence_text)
         self.assertIn("within 2 seconds", evidence_text)
@@ -553,7 +575,8 @@ Assumptions:
         )
         analyzed = self.service.analyze(context["requirementId"])
         fields = {item["field"] for item in analyzed["missingInformation"]}
-        self.assertIn("Actor", fields)
+        self.assertNotIn("Actor", fields)
+        self.assertTrue(analyzed["statementGovernance"]["governedValues"]["primaryActor"])
         self.assertIn("Trigger", fields)
         self.assertEqual("NeedsReview", analyzed["aiAssumptions"][0]["status"])
         generated = self.service.suggest_acceptance_criteria(context["requirementId"])
@@ -751,25 +774,27 @@ Assumptions:
 
     def test_ui_runs_analysis_between_ingestion_and_planning(self):
         source = (ROOT / "azure-devops-extension/src/newRequirementWorkspace.tsx").read_text()
-        self.assertLess(source.index("/requirements/ingest"), source.index("/requirements/analyze"))
-        self.assertLess(source.index("/requirements/analyze"), source.index("/planning/context/build"))
-        self.assertLess(source.index("/planning/context/build"), source.index("/planning/recommendation"))
-        self.assertLess(source.index("/planning/recommendation"), source.index("/planning/proposal"))
+        ingest = source.index("/requirements/ingest")
+        analyze = source.index("/requirements/analyze", ingest)
+        context = source.index("/planning/context/build", analyze)
+        recommendation = source.index("/planning/recommendation", context)
+        proposal = source.index("/planning/proposal", recommendation)
+        self.assertLess(ingest, analyze)
+        self.assertLess(analyze, context)
+        self.assertLess(context, recommendation)
+        self.assertLess(recommendation, proposal)
         self.assertNotIn("/requirements/intake", source)
         self.assertIn("Requirement Analysis", source)
         for action in ("Continue to Planning", "Edit", "Cancel", "Re-analyze"):
             self.assertIn(action, source)
-        self.assertIn("Approve & Continue to Planning", source)
+        self.assertIn("Accept & Continue to Plan", source)
         self.assertIn("No Planning Pack has been created", source)
 
     def test_requirement_review_exposes_enterprise_ux_landmarks(self):
         source = (ROOT / "azure-devops-extension/src/newRequirementWorkspace.tsx").read_text()
         styles = (ROOT / "azure-devops-extension/src/storyPlanner.css").read_text()
 
-        for label in (
-            "Requirement Source", "Requirement Analysis", "Repository Detection", "Engineering Memory",
-            "Quality Review", "Planning", "Approval", "Azure DevOps",
-        ):
+        for label in ("Understand", "Plan", "Approve", "Create in Azure DevOps"):
             self.assertIn(label, source)
         for section in (
             "Requirement Health", "Repository Recommendation", "Quality Findings", "Engineering Context", "HEI Insights",

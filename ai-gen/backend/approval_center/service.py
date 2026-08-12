@@ -119,7 +119,11 @@ class ApprovalCenterService:
         item = self.get(approval_id)
         if item["expired"]:
             raise ApprovalConflictError("Approval has expired and must be regenerated.")
-        if item["status"] not in {"Pending", "NeedsReview", "Draft", "Prepared"}:
+        retryable_ado_status = (
+            item["category"] == "ADO Action Packs"
+            and item["status"] in {"Failed", "Partial"}
+        )
+        if item["status"] not in {"Pending", "NeedsReview", "Draft", "Prepared"} and not retryable_ado_status:
             raise ApprovalConflictError(f"Approval cannot be changed from status {item['status']}.")
         source_id, category = item["sourceId"], item["category"]
         if category == "Planning Packs":
@@ -224,6 +228,17 @@ class ApprovalCenterService:
         if expired and normalized_status in {"Pending", "NeedsReview", "Draft", "Prepared"}:
             normalized_status = "Expired"
         summary = _text(data.get("description") or data.get("summary") or data.get("reason") or data.get("content"))
+        failed_application = next((
+            result for result in reversed(data.get("applicationResults") or [])
+            if isinstance(result, dict) and _text(result.get("status")).casefold() == "failed"
+        ), {})
+        nested_failure = failed_application.get("result", {}).get("failure", {}) if isinstance(failed_application.get("result"), dict) else {}
+        failure_reason = _text(
+            failed_application.get("error")
+            or (nested_failure.get("message") if isinstance(nested_failure, dict) else "")
+            or data.get("failureReason")
+        )
+        retryable = category == "ADO Action Packs" and normalized_status in {"Failed", "Partial"}
         return {
             "id": f"{self._slug(category)}:{source_id}", "sourceId": source_id, "category": category,
             "title": title or category[:-1], "summary": summary[:320], "status": normalized_status,
@@ -231,8 +246,13 @@ class ApprovalCenterService:
             "requestedBy": _text(data.get("requestedBy") or data.get("createdBy") or data.get("triggeredBy")) or "HEI",
             "confidence": data.get("confidence"), "risk": data.get("risk") or data.get("risks") or [],
             "projectId": _text(data.get("projectId")), "correlationId": _text(data.get("correlationId") or (data.get("diagnostics") or {}).get("correlationId") if isinstance(data.get("diagnostics"), dict) else ""),
-            "governanceApprovalId": _text(governance_id), "canApprove": normalized_status in {"Pending", "NeedsReview", "Draft", "Prepared"},
-            "canReject": normalized_status in {"Pending", "NeedsReview", "Draft", "Prepared"}, "sourceData": deepcopy(data),
+            "governanceApprovalId": _text(governance_id),
+            "canApprove": normalized_status in {"Pending", "NeedsReview", "Draft", "Prepared"} or retryable,
+            "canReject": normalized_status in {"Pending", "NeedsReview", "Draft", "Prepared"} or retryable,
+            "retryable": retryable,
+            "failureReason": failure_reason,
+            "failedOperation": _text(failed_application.get("operation")),
+            "sourceData": deepcopy(data),
         }
 
     @staticmethod

@@ -687,14 +687,23 @@ app.include_router(build_task_generation_router(task_generation_service))
 
 
 def _approve_and_apply_ado_action_pack(pack_id: str, actor: str, reason: str) -> dict[str, Any]:
-    approved = ado_agent_service.approve(pack_id, actor, reason=reason)
+    current = ado_agent_service.get_pack(pack_id)
+    retrying = (
+        current.get("approvalStatus") in {"Failed", "Partial"}
+        and bool(current.get("approvedBy"))
+    )
+    approved = current if retrying else ado_agent_service.approve(pack_id, actor, reason=reason)
     applied = ado_agent_service.apply(
         pack_id,
         actor,
-        reason=reason or "Approved from HEI Approval Center.",
+        reason=reason or (
+            "Retried from HEI Approval Center."
+            if retrying
+            else "Approved from HEI Approval Center."
+        ),
         idempotency_key=f"approval-center:{pack_id}",
     )
-    return {"approval": approved, "application": applied}
+    return {"approval": approved, "application": applied, "retried": retrying}
 
 
 approval_center_service = ApprovalCenterService(

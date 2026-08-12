@@ -39,6 +39,11 @@ type PlanningProposalResult = {
   projectId: string; correlationId: string; title: string; executiveSummary: string; businessGoal: string;
   recommendedStrategy: { type: string; title: string; summary: string; reason: string; confidence: number };
   status: string; version: number; nodes: ProposalNode[];
+  planningWorkflow?: {
+    revealedTypes: string[]; currentType: string; nextAction: string; blockingReason: string;
+    generationTarget: string; pendingCount: number; approvedCount: number; visibleNodeIds: string[];
+    canApprove: boolean; stages: Array<{ type: string; label: string; state: string }>;
+  };
   estimate: {
     aiEngineeringDays: number; aiStoryPoints: number; engineeringDays: number; storyPoints: number;
     sprintCount: number; developersRequired: number; complexity: string; risk: string; confidence: number; overrideReason: string;
@@ -312,7 +317,7 @@ type RequirementAnalysisResult = {
   analysisMode?: 'AI' | 'Deterministic';
   acceptanceDiagnostics?: {
     generationMode?: string; reasoningMode?: string; provider?: string; model?: string;
-    promptVersion?: string; warnings?: string[]; generationStatus?: string;
+    promptVersion?: string; warnings?: string[]; generationStatus?: string; fallbackReason?: string;
   };
   analysisDocument?: RequirementAnalysisDocument;
 };
@@ -1482,17 +1487,24 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
   const advancedTabs = ['Traceability', 'Dependencies', 'Engineering Estimate', 'Validation', 'Diff', 'Azure DevOps Preview', 'History'];
   const [tab, setTab] = useState('Work Items');
   const [advancedTab, setAdvancedTab] = useState('Traceability');
-  const [selectedId, setSelectedId] = useState(value.nodes[0]?.nodeId || '');
-  const selected = value.nodes.find((node) => node.nodeId === selectedId) || value.nodes[0];
-  const nodeCounts = value.nodes.reduce<Record<string, number>>((counts, node) => ({ ...counts, [node.type]: (counts[node.type] || 0) + 1 }), {});
+  const workflow = value.planningWorkflow;
+  const visibleIds = new Set(workflow?.visibleNodeIds || value.nodes.map((node) => node.nodeId));
+  const visibleNodes = value.nodes.filter((node) => visibleIds.has(node.nodeId));
+  const [selectedId, setSelectedId] = useState(visibleNodes[0]?.nodeId || '');
+  const selected = visibleNodes.find((node) => node.nodeId === selectedId) || visibleNodes[0];
+  const nodeCounts = visibleNodes.reduce<Record<string, number>>((counts, node) => ({ ...counts, [node.type]: (counts[node.type] || 0) + 1 }), {});
   const editable = !['Approved', 'Published', 'Archived'].includes(value.status);
-  const roots = value.nodes.filter((node) => !node.parentId).sort((a, b) => a.order - b.order);
+  const roots = visibleNodes.filter((node) => !node.parentId).sort((a, b) => a.order - b.order);
+
+  useEffect(() => {
+    if (!visibleNodes.some((node) => node.nodeId === selectedId)) setSelectedId(visibleNodes[0]?.nodeId || '');
+  }, [value.version, selectedId, visibleNodes]);
 
   function renderTree(parent: ProposalNode, depth = 0): React.ReactNode {
-    const children = value.nodes.filter((node) => node.parentId === parent.nodeId).sort((a, b) => a.order - b.order);
+    const children = visibleNodes.filter((node) => node.parentId === parent.nodeId).sort((a, b) => a.order - b.order);
     return <React.Fragment key={parent.nodeId}>
       <button type="button" className={selected?.nodeId === parent.nodeId ? 'selected' : ''} style={{ paddingLeft: `${10 + depth * 16}px` }} onClick={() => setSelectedId(parent.nodeId)}>
-        <span>{parent.type}</span><strong>{parent.title}</strong><small>{parent.storyPoints} points · {parent.confidence}%</small>
+        <span>{parent.type}</span><strong>{parent.title}</strong><small>{parent.status} · {parent.storyPoints} points · {parent.confidence}%</small>
       </button>
       {children.map((child) => renderTree(child, depth + 1))}
     </React.Fragment>;
@@ -1500,12 +1512,16 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
 
   return <section className="hei-planning-proposal-workspace" aria-live="polite">
     <header className="hei-planning-proposal-header">
-      <div><span>Planning Proposal</span><h2>{value.title}</h2><p>Review the work items, approve the proposal, then create them in Azure DevOps.</p></div>
+      <div><span>Planning Proposal</span><h2>{value.title}</h2><p>The requirement is the Epic. Review each level here before generating its children.</p></div>
       <div><Status value={value.status} /><strong>v{value.version}</strong><details className="hei-proposal-header-actions"><summary>More</summary><div><button className="planner-button secondary" type="button" disabled={busy || !editable} onClick={() => onRegenerate('Entire Proposal')}>Regenerate</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onAIReview}>AI Review</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export</button></div></details></div>
     </header>
+    {workflow ? <section className="hei-proposal-workflow" aria-label="Planning workflow">
+      <div className="hei-proposal-stage-strip">{workflow.stages.map((stage) => <article key={stage.type} className={stage.state.toLowerCase()}><span>{stage.state}</span><strong>{stage.label}</strong></article>)}</div>
+      <div className="hei-proposal-next-action"><div><span>Next action</span><strong>{workflow.nextAction}</strong>{workflow.blockingReason ? <small>{workflow.blockingReason}</small> : null}</div>{workflow.generationTarget ? <button className="planner-button primary" type="button" disabled={busy} onClick={() => onUpdate({ operation: 'generate-next-stage', reason: `Generated ${workflow.generationTarget} drafts` })}>{workflow.nextAction}</button> : null}</div>
+    </section> : null}
     <div className="hei-planning-proposal-metrics">
       <Signal label="Health" value={`${value.health.overallHealth}%`} />
-      <Signal label="Scope" value={`${nodeCounts.Feature || 0} Features · ${nodeCounts.Story || 0} Stories · ${nodeCounts.Task || 0} Tasks`} />
+      <Signal label="Visible Scope" value={`${nodeCounts.Feature || 0} Features · ${nodeCounts.Story || 0} Stories · ${nodeCounts.Task || 0} Tasks`} />
       <Signal label="Estimate" value={`${value.estimate.engineeringDays} days · ${value.estimate.storyPoints} points`} />
       <Signal label="Risk" value={value.health.risk} />
     </div>
@@ -1515,10 +1531,10 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
 
     {tab === 'Work Items' ? <div className="hei-planning-proposal-layout">
       <aside className="hei-proposal-tree" aria-label="Planning hierarchy">
-        <header><strong>Planning Hierarchy</strong><span>{value.nodes.length} items</span></header>
+        <header><strong>Planning Hierarchy</strong><span>{visibleNodes.length} visible</span></header>
         <div>{roots.map((node) => renderTree(node))}</div>
       </aside>
-      <main>{selected ? <ProposalNodeEditor key={`${selected.nodeId}-${value.version}`} node={selected} nodes={value.nodes} editable={editable} busy={busy} onUpdate={onUpdate} onRegenerate={onRegenerate} /> : <p>No planning item selected.</p>}</main>
+      <main>{selected ? <ProposalNodeEditor key={`${selected.nodeId}-${value.version}`} node={selected} nodes={visibleNodes} editable={editable} busy={busy} onUpdate={onUpdate} onRegenerate={onRegenerate} /> : <p>No planning item is available at this stage.</p>}</main>
     </div> : null}
 
     {tab === 'Summary' ? <div className="hei-proposal-card-grid">
@@ -1565,7 +1581,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
 
     <footer className="hei-planning-proposal-footer">
       <div><strong>{value.status}</strong><span>Health {value.health.overallHealth}% · Repository {value.health.repositoryCoverage}% · v{value.version}</span></div>
-      <div>{value.status === 'Approved' && engineeringReview?.synchronization.authorized ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Create in Azure DevOps</button> : engineeringReview ? <button className="planner-button primary" type="button" onClick={() => setTab('Approval')}>Continue Approval</button> : <button className="planner-button primary" type="button" disabled={busy || !value.validation.mandatoryPassed} onClick={onStartReview}>Review &amp; Approve</button>}<button className="planner-button secondary" type="button" onClick={onStartAnother}>Start Another</button></div>
+      <div>{value.status === 'Approved' && engineeringReview?.synchronization.authorized ? <button className="planner-button primary" type="button" onClick={onOpenApprovals}>Create in Azure DevOps</button> : engineeringReview ? <button className="planner-button primary" type="button" onClick={() => setTab('Approval')}>Continue Approval</button> : <button className="planner-button primary" type="button" disabled={busy || !workflow?.canApprove || !value.validation.mandatoryPassed} onClick={onStartReview}>Review &amp; Approve</button>}<button className="planner-button secondary" type="button" onClick={onStartAnother}>Start Another</button></div>
     </footer>
   </section>;
 }
@@ -2508,6 +2524,11 @@ function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate,
       <footer><button className="planner-button secondary" type="button" disabled={busy} onClick={onEditRequirement}>Edit Requirement</button></footer>
     </> : activeView === 'criteria' && aiSuggested ? <>
       <div className="hei-acceptance-callout"><strong>{approvedSuggestions ? 'Approved for Planning' : 'Review before approval'}</strong><p>{state.description}</p></div>
+      {analysis.acceptanceDiagnostics?.generationMode === 'DeterministicFallback' ? <div className="hei-acceptance-generation-note">
+        <strong>AI generation was requested before fallback.</strong>
+        <p>{analysis.acceptanceDiagnostics.fallbackReason || analysis.acceptanceDiagnostics.warnings?.[0] || 'The configured provider did not return usable Acceptance Criteria.'}</p>
+        <small>Regenerate retries the configured AI provider.</small>
+      </div> : null}
       <div className="hei-acceptance-suggestions">
         {visibleSuggestions.map((criterion, index) => editing
           ? <label key={criterion.criterionId}><span>Criterion {index + 1}</span><textarea rows={5} value={criterion.text} onChange={(event) => setDrafts((current) => current.map((item) => item.criterionId === criterion.criterionId ? { ...item, text: event.target.value, origin: 'User Edited' } : item))} /></label>

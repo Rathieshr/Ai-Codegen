@@ -167,13 +167,15 @@ class IntelligentAcceptanceCriteriaEngine:
             outcome = self._observable_outcome(behavior, action)
             if criterion_type == "Business Rule" and re.search(r"\bonly authorized\b", statement, re.I):
                 target = re.sub(rf"^{re.escape(action)}\s+", "", matched_phrase, flags=re.I)
+                criterion_title = f"Block Unauthorized {self._title(target)}"
                 text = (
-                    f"Scenario: {self._title(statement)}\n"
+                    f"Scenario: {criterion_title}\n"
                     "Given a user is not authorized by the stated business rule\n"
                     f"When the user attempts to {action} {target}\n"
                     f"Then {target} is not available to that user."
                 )
             elif criterion_type == "Non-Functional":
+                criterion_title = self._title(statement)
                 limit = re.search(
                     r"\bwithin\s+\d+(?:\.\d+)?\s*(?:ms|milliseconds?|seconds?|minutes?)\b",
                     statement,
@@ -186,6 +188,7 @@ class IntelligentAcceptanceCriteriaEngine:
                     f"Then the outcome completes {limit.group(0) if limit else 'within the stated limit'}."
                 )
             else:
+                criterion_title = self._title(behavior)
                 given = (
                     f"Given {self._actor_context(actor)}" if actor
                     else f"Given the stated {criterion_type.lower()} context"
@@ -208,6 +211,7 @@ class IntelligentAcceptanceCriteriaEngine:
                 ).to_dict()],
                 order=len(suggestions) + 1,
                 criterion_type=criterion_type,
+                title=criterion_title,
             ))
         return suggestions
 
@@ -309,6 +313,13 @@ class IntelligentAcceptanceCriteriaEngine:
     @staticmethod
     def _facts(analysis: dict[str, Any]) -> RequirementFacts:
         functional = [str(item).strip() for item in analysis.get("functionalRequirements") or [] if str(item).strip()]
+        governance = analysis.get("statementGovernance") if isinstance(analysis.get("statementGovernance"), dict) else {}
+        governed = governance.get("governedValues") if isinstance(governance.get("governedValues"), dict) else {}
+        actors = _unique([
+            *[str(item).strip() for item in analysis.get("actors") or [] if str(item).strip()],
+            str(governed.get("primaryActor") or "").strip(),
+            *[str(item).strip() for item in governed.get("secondaryActors") or [] if str(item).strip()],
+        ])
         actions = _unique(
             match.group(1).lower()
             for text in functional
@@ -331,7 +342,7 @@ class IntelligentAcceptanceCriteriaEngine:
         return RequirementFacts(
             business_goal=list(analysis.get("businessGoals") or []),
             functional_goal=functional,
-            actor=list(analysis.get("actors") or []),
+            actor=actors,
             primary_capability=actions[0].title() if actions else "",
             entities=entities,
             actions=actions,
@@ -394,10 +405,11 @@ class IntelligentAcceptanceCriteriaEngine:
         order: int,
         criterion_id: str = "",
         criterion_type: str = "Functional",
+        title: str = "",
     ) -> dict[str, Any]:
         return {
             "criterionId": criterion_id or f"ac_{uuid4().hex}",
-            "title": IntelligentAcceptanceCriteriaEngine._title(text),
+            "title": title or IntelligentAcceptanceCriteriaEngine._title(text),
             "text": text.strip(),
             "type": criterion_type,
             "origin": origin,

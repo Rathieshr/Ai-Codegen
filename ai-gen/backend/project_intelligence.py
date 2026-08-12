@@ -1140,7 +1140,7 @@ class ProjectIntelligenceService:
             profile,
             item,
             deterministic,
-            {"allow_fallback": True, **(options or {})},
+            {"allow_fallback": True, "force_provider": "azure_phi", **(options or {})},
             ["acceptanceCriteria"],
         )
         parsed = phi.get("parsed") if isinstance(phi.get("parsed"), dict) else {}
@@ -7949,6 +7949,47 @@ def _reject_generic_acceptance_criteria(criteria: list[str]) -> tuple[list[str],
     return accepted, rejected
 
 
+def _recover_acceptance_criteria_from_text(raw_content: str) -> list[dict[str, Any]]:
+    """Recover Phi's useful GWT output when the small model ignores JSON mode."""
+
+    text = str(raw_content or "").strip()
+    if not text:
+        return []
+    lines = [line.strip() for line in text.replace("\r", "\n").split("\n")]
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in lines:
+        cleaned = re.sub(r"^(?:[-*]\s+|\d+[.)]\s*)", "", line).strip()
+        if not cleaned:
+            continue
+        if re.match(r"(?i)^given\b", cleaned) and current:
+            blocks.append(" ".join(current))
+            current = []
+        if current or re.match(r"(?i)^given\b", cleaned):
+            current.append(cleaned)
+    if current:
+        blocks.append(" ".join(current))
+
+    criteria: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for block in blocks:
+        normalized = re.sub(r"\s+", " ", block).strip()
+        lowered = normalized.casefold()
+        if not all(re.search(rf"\b{token}\b", lowered) for token in ("given", "when", "then")):
+            continue
+        key = re.sub(r"\W+", " ", lowered).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        criteria.append({
+            "text": normalized,
+            "confidence": 0.72,
+            "confidenceBasis": "Recovered from the Azure Phi response and subject to evidence validation.",
+            "evidence": [],
+        })
+    return criteria[:7]
+
+
 def _story_quality_score(story: dict[str, Any]) -> int:
     score = 0
     user_action = str(story.get("user_action") or "").strip()
@@ -9415,7 +9456,21 @@ def _project_phi_probe(
         )
         last_probe = probe
         parsed = probe.get("parsed_json") if isinstance(probe.get("parsed_json"), dict) else {}
+        if expected_keys == ["acceptanceCriteria"] and "acceptanceCriteria" not in parsed:
+            for alias in ("acceptance_criteria", "criteria", "suggestedAcceptanceCriteria"):
+                if isinstance(parsed.get(alias), list):
+                    parsed = {**parsed, "acceptanceCriteria": parsed[alias]}
+                    break
         has_expected = bool(parsed) and (not expected_keys or any(key in parsed for key in expected_keys))
+        recovery_mode = ""
+        if not has_expected and expected_keys == ["acceptanceCriteria"]:
+            recovered_criteria = _recover_acceptance_criteria_from_text(
+                str(probe.get("raw_content") or "")
+            )
+            if recovered_criteria:
+                parsed = {"acceptanceCriteria": recovered_criteria}
+                has_expected = True
+                recovery_mode = "plain_text_given_when_then"
         metadata = _with_context_diagnostics(_provider_status_metadata(provider, probe, health), context_diagnostics)
         if has_expected:
             metadata.update(
@@ -9427,6 +9482,12 @@ def _project_phi_probe(
                     "fallback_reason": "",
                 }
             )
+            if recovery_mode:
+                metadata.update({
+                    "phi_status": "success_recovered",
+                    "response_recovery": recovery_mode,
+                    "response_recovery_applied": True,
+                })
             return {"used": True, "blocked": False, "parsed": parsed, "metadata": metadata}
         if _should_persist_feature_generation_failure(context_diagnostics, probe):
             last_failure_diagnostics = _persist_feature_generation_failure(

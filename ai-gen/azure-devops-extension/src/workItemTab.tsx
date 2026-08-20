@@ -132,7 +132,9 @@ function WorkItemTab() {
   const [promptsLoading, setPromptsLoading] = useState(false);
 
   useEffect(() => {
-    SDK.init({ loaded: false, applyTheme: true });
+    document.documentElement.dataset.heiTheme = 'light';
+    document.documentElement.style.colorScheme = 'light';
+    SDK.init({ loaded: false, applyTheme: false });
     SDK.ready().then(() => {
       SDK.notifyLoadSucceeded();
       void refresh();

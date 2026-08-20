@@ -233,11 +233,20 @@ class RequirementRefinementService:
                 continue
             question = _text(item.get("question"))
             answer = _text(item.get("answer"))
-            if question and answer and (not candidates or question in candidates):
+            if question and answer:
                 normalized.append({"question": question, "answer": answer})
         if not normalized:
             raise ValueError("Answer at least one clarification before regenerating the requirement.")
-        current["clarificationResponses"] = normalized
+        existing = {
+            _text(item.get("question")): _text(item.get("answer"))
+            for item in current.get("clarificationResponses") or []
+            if isinstance(item, dict) and _text(item.get("question")) and _text(item.get("answer"))
+        }
+        existing.update({item["question"]: item["answer"] for item in normalized})
+        current["clarificationResponses"] = [
+            {"question": question, "answer": answer}
+            for question, answer in existing.items()
+        ]
         current["clarificationCandidates"] = [
             item for item in _strings(current.get("clarificationCandidates"))
             if item not in {response["question"] for response in normalized}
@@ -307,14 +316,30 @@ class RequirementRefinementService:
                 pass
         if not self.reasoning_engine:
             return _fallback("Reasoning AI was not configured for requirement refinement.")
-        try:
-            return self.reasoning_engine.refine(
-                "Requirement Refinement", context,
-                user_requirement=_text(requirement.get("normalizedRequirement")),
-                provider="Auto", correlation_id=_text(requirement.get("correlationId")),
-            )
-        except Exception as error:
-            return _fallback(f"Requirement refinement provider unavailable: {error}")
+        attempts: list[str] = []
+        last_result: dict[str, Any] | None = None
+        for attempt in range(2):
+            try:
+                result = self.reasoning_engine.refine(
+                    "Requirement Refinement", context,
+                    user_requirement=_text(requirement.get("normalizedRequirement")),
+                    provider="Auto", correlation_id=_text(requirement.get("correlationId")),
+                )
+                last_result = result
+                attempts.append(
+                    f"attempt {attempt + 1}: {str(result.get('reasoningMode') or 'unknown').lower()}"
+                )
+                if str(result.get("reasoningMode") or "").casefold() == "ai":
+                    result.setdefault("diagnostics", {})["providerAttempts"] = attempts
+                    return result
+                if not _transient_reasoning_failure(result):
+                    break
+            except Exception as error:
+                attempts.append(f"attempt {attempt + 1}: {type(error).__name__}")
+                last_result = _fallback(f"Requirement refinement provider unavailable: {error}")
+        result = last_result or _fallback("Requirement refinement provider did not return a usable result.")
+        result.setdefault("diagnostics", {})["providerAttempts"] = attempts
+        return result
 
     def _retryable_fallback(self, existing: dict[str, Any]) -> bool:
         if _text(existing.get("provider")).casefold() != "deterministic":
@@ -634,6 +659,16 @@ def _fallback_reason(reasoning: dict[str, Any]) -> str:
         return ""
     warnings = [str(item).strip() for item in reasoning.get("warnings") or [] if str(item).strip()]
     return warnings[0] if warnings else "No configured reasoning provider was available."
+
+
+def _transient_reasoning_failure(reasoning: dict[str, Any]) -> bool:
+    if str(reasoning.get("reasoningMode") or "").casefold() == "ai":
+        return False
+    warning = " ".join(_strings(reasoning.get("warnings"))).casefold()
+    return any(token in warning for token in (
+        "429", "rate limit", "temporarily", "timeout", "timed out",
+        "connection", "provider_error", "provider unavailable", "circuit",
+    ))
 
 
 def _summary(value: str) -> str:

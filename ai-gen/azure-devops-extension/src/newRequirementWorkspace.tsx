@@ -2134,9 +2134,11 @@ function RequirementRefinementCard({ value, busy, onAction }: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value.refinedRequirement);
   const [clarifications, setClarifications] = useState<Record<string, string>>(() => Object.fromEntries((value.clarificationResponses || []).map((item) => [item.question, item.answer])));
+  const [additionalClarification, setAdditionalClarification] = useState('');
   useEffect(() => {
     setDraft(value.refinedRequirement);
     setClarifications(Object.fromEntries((value.clarificationResponses || []).map((item) => [item.question, item.answer])));
+    setAdditionalClarification('');
   }, [value.version, value.refinedRequirement]);
   const accepted = value.status === 'Accepted';
   const normalizedOriginal = value.originalRequirement.trim().replace(/\s+/g, ' ');
@@ -2171,7 +2173,7 @@ function RequirementRefinementCard({ value, busy, onAction }: {
       <div><strong>{wordingChanged ? 'Changes Made' : 'Wording Review'}</strong>{value.changes.length ? <ul>{value.changes.map((item, index) => <li key={`${index}-${item.change}`}><b>{item.change}</b><small>{item.reason}</small></li>)}</ul> : <p>{wordingChanged ? 'No change summary was provided.' : 'The source wording is suitable for analysis.'}</p>}</div>
       <div><strong>Reasoning</strong>{value.reasoning.length ? <ul>{value.reasoning.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No additional reasoning was provided.</p>}</div>
       <div><strong>Ambiguities</strong>{value.ambiguities.length ? <ul>{value.ambiguities.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No explicit ambiguity identified.</p>}</div>
-      <div className="hei-requirement-clarifications"><strong>Clarification Candidates</strong>{value.clarificationCandidates.length ? <>{value.clarificationCandidates.map((item) => <label key={item}><span>{item}</span><textarea rows={2} value={clarifications[item] || ''} onChange={(event) => setClarifications((current) => ({ ...current, [item]: event.target.value }))} placeholder="Add the business answer HEI should use" /></label>)}<button className="planner-button secondary" type="button" disabled={busy || !value.clarificationCandidates.some((item) => (clarifications[item] || '').trim())} onClick={() => onAction('clarify', value.clarificationCandidates.filter((item) => (clarifications[item] || '').trim()).map((question) => ({ question, answer: clarifications[question].trim() })))}>Apply Answers &amp; Regenerate</button></> : <p>No clarification required before analysis.</p>}</div>
+      <div className="hei-requirement-clarifications"><strong>Clarifications</strong>{value.clarificationCandidates.length ? value.clarificationCandidates.map((item) => <label key={item}><span>{item}</span><textarea rows={2} value={clarifications[item] || ''} onChange={(event) => setClarifications((current) => ({ ...current, [item]: event.target.value }))} placeholder="Add the business answer HEI should use" /></label>) : <p>No specific question was generated. Add any missing business context below.</p>}<label><span>Additional clarification</span><textarea rows={3} value={additionalClarification} onChange={(event) => setAdditionalClarification(event.target.value)} placeholder="Add actors, expected outcomes, business rules, limits, or other context HEI should use" /></label><button className="planner-button secondary" type="button" disabled={busy || (!additionalClarification.trim() && !value.clarificationCandidates.some((item) => (clarifications[item] || '').trim()))} onClick={() => onAction('clarify', [...value.clarificationCandidates.filter((item) => (clarifications[item] || '').trim()).map((question) => ({ question, answer: clarifications[question].trim() })), ...(additionalClarification.trim() ? [{ question: 'Additional requirement clarification', answer: additionalClarification.trim() }] : [])])}>Apply Clarification &amp; Retry AI</button></div>
     </div>
     {value.provider === 'Deterministic' && value.fallbackReason ? <div className="hei-requirement-refinement-fallback" role="status"><strong>AI refinement fallback</strong><p>{value.fallbackReason}</p></div> : null}
     <details><summary>Refinement lineage and search hints</summary><div className="hei-requirement-refinement-lineage"><Signal label="Provider" value={value.provider || 'Deterministic'} /><Signal label="Model" value={value.model || 'Not applicable'} /><Signal label="Prompt" value={value.promptVersion} /><Signal label="Version" value={String(value.version)} /></div><ContextTags title="Repository search hints" values={repositoryHints} empty="No repository hints inferred." /><ContextTags title="Markdown search hints" values={markdownHints} empty="No Markdown hints inferred." /><ContextTags title="Azure DevOps search hints" values={adoHints} empty="No Azure DevOps hints inferred." /><ContextTags title="Possible modules" values={value.possibleModuleNames || []} empty="No possible module names inferred." /><ContextTags title="Possible features" values={value.possibleFeatureNames || []} empty="No possible feature names inferred." /></details>
@@ -2237,10 +2239,8 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
         <Signal label="Requirement Context" value={analysis.contextVersion} />
         <Signal label="Document Type" value={review.documentType || 'Not Applicable'} />
         <Signal label="Review Status" value={analysis.reviewStatus} />
-        <Signal
-          label="Analysis Mode"
-          value={requirementAnalysisModeLabel(analysis, refinement)}
-        />
+        {refinement ? <Signal label="Refinement Mode" value={requirementRefinementModeLabel(refinement)} /> : null}
+        <Signal label="Analysis Mode" value={requirementReasoningModeLabel(analysis)} />
       </div></details>
       {refinement ? refinement.status === 'Accepted' ? <details className="hei-requirement-accepted-refinement"><summary><span>AI refinement accepted</span><strong>{refinement.executiveSummary || refinement.requirementSummary}</strong></summary><RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /></details> : <RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /> : null}
       <RequirementHealth analysis={analysis} ingestion={ingestion} />
@@ -2470,26 +2470,34 @@ function readinessLabel(value: RequirementAnalysisResult['planningReadiness']['s
   return value;
 }
 
-function reasoningFallbackLabel(warnings: string[]) {
-  const value = warnings.join(' ').toLowerCase();
-  if (value.includes('budget') || value.includes('required_sections_exceed_budget')) return 'Deterministic fallback · prompt budget guard';
-  if (value.includes('parse_error') || value.includes('missing_field') || value.includes('missing_valid_evidence')) return 'Deterministic fallback · provider response rejected';
-  if (value.includes('provider_error') || value.includes('no configured reasoning provider')) return 'Deterministic fallback · provider unavailable';
-  return warnings.length ? 'Deterministic fallback · see diagnostics' : 'Deterministic baseline';
+function reasoningFallbackCause(warnings: string[], fallbackReason = '') {
+  const value = [...warnings, fallbackReason].join(' ').toLowerCase();
+  if (value.includes('429') || value.includes('rate limit')) return 'provider rate limited';
+  if (value.includes('timeout') || value.includes('timed out')) return 'provider timed out';
+  if (value.includes('budget') || value.includes('required_sections_exceed_budget')) return 'prompt budget guard';
+  if (value.includes('parse_error') || value.includes('missing_field') || value.includes('missing_valid_evidence')) return 'provider response rejected';
+  if (value.includes('provider_error') || value.includes('provider unavailable') || value.includes('no configured reasoning provider')) return 'provider unavailable';
+  return value ? 'provider attempt failed' : 'provider not used';
 }
 
-function requirementAnalysisModeLabel(
-  analysis: RequirementAnalysisResult,
-  refinement?: RequirementRefinementResult,
-) {
-  const analysisLabel = analysis.aiAnalysis?.reasoningMode === 'AI'
-    ? `${analysis.aiAnalysis.provider}${analysis.aiAnalysis.model ? ` · ${analysis.aiAnalysis.model}` : ''}`
-    : reasoningFallbackLabel(analysis.aiAnalysis?.warnings || []);
-  if (!refinement) return analysisLabel;
-  if (refinement.provider === 'Deterministic' && analysis.aiAnalysis?.reasoningMode === 'AI') {
-    return `Mixed · ${analysisLabel} analysis · deterministic refinement`;
+function reasoningFallbackLabel(warnings: string[], fallbackReason = '') {
+  return `Deterministic fallback · ${reasoningFallbackCause(warnings, fallbackReason)}`;
+}
+
+function requirementRefinementModeLabel(refinement: RequirementRefinementResult) {
+  const refinementUsedAI = Boolean(refinement.provider && refinement.provider !== 'Deterministic');
+  if (refinementUsedAI) {
+    return `AI · ${refinement.provider}${refinement.model ? ` · ${refinement.model}` : ''}`;
   }
-  return analysisLabel;
+  return `Fallback · ${reasoningFallbackCause(refinement.warnings || [], refinement.fallbackReason || '')}`;
+}
+
+function requirementReasoningModeLabel(analysis: RequirementAnalysisResult) {
+  const analysisUsedAI = analysis.aiAnalysis?.reasoningMode === 'AI';
+  const analysisProvider = `${analysis.aiAnalysis?.provider || 'AI'}${analysis.aiAnalysis?.model ? ` · ${analysis.aiAnalysis.model}` : ''}`;
+  return analysisUsedAI
+    ? `AI · ${analysisProvider}`
+    : reasoningFallbackLabel(analysis.aiAnalysis?.warnings || []);
 }
 
 function AcceptanceCriteriaCard({ analysis, busy, onEditRequirement, onGenerate, onApprove, onDiscard, onSkip, onUpdate }: {

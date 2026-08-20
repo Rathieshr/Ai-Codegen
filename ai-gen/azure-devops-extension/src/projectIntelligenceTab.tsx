@@ -398,7 +398,9 @@ function ensureAzureDevOpsSdkInitialized() {
     return;
   }
   sdkInitializationStarted = true;
-  SDK.init({ loaded: false, applyTheme: true });
+  document.documentElement.dataset.heiTheme = 'light';
+  document.documentElement.style.colorScheme = 'light';
+  SDK.init({ loaded: false, applyTheme: false });
 }
 
 ensureAzureDevOpsSdkInitialized();
@@ -6769,15 +6771,13 @@ function AIPlannerWorkspace({
             </button>
           ))}
         </div>
-        <div className="hei-planning-grid">
-          <section className="hei-planning-list" aria-label={`${planningModel.listTitle} list`}>
-            <div className="planner-label">{planningModel.listTitle}</div>
-            <PlanningItemList
-              items={planningModel.items}
-              selectedId={planningModel.selectedId}
-              onSelect={planningModel.setSelectedId}
-            />
-          </section>
+        <PlanningItemPicker
+          label={planningModel.listTitle}
+          items={planningModel.items}
+          selectedId={planningModel.selectedId}
+          onSelect={planningModel.setSelectedId}
+        />
+        <div className="hei-planning-grid without-list">
           <section className="hei-planning-detail">
             {planningType === 'Epic' ? (
               <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
@@ -7156,31 +7156,12 @@ function PlanningProgressSummary({ metrics }: { metrics: PlanningProgressMetric[
   );
 }
 
-function PlanningItemList({ items, selectedId, onSelect }: { items: PlanningReviewItem[]; selectedId: string; onSelect: (value: string) => void }) {
+function PlanningItemPicker({ label, items, selectedId, onSelect }: { label: string; items: PlanningReviewItem[]; selectedId: string; onSelect: (value: string) => void }) {
   if (!items.length) {
-    return (
-      <div className="hei-queue-empty">
-        <strong>No review items yet.</strong>
-        <span>Run the current planning action to populate this queue.</span>
-      </div>
-    );
+    return <div className="hei-planning-item-picker empty"><strong>No {label.toLowerCase()} yet.</strong><span>Run the current planning action to populate this workspace.</span></div>;
   }
-  return (
-    <div className="hei-review-list">
-      {items.map((item) => (
-        <button className={`hei-review-list-item ${item.id === selectedId ? 'active' : ''}`} key={item.id} onClick={() => onSelect(item.id)} type="button">
-          <div>
-            <strong>{item.title}</strong>
-            <small>
-              <b className={`hei-dot ${statusTone(item.status)}`} />
-              {item.status || 'Pending'} · {item.confidence ? `${Math.round(item.confidence * 100)}%` : 'Not scored'}
-            </small>
-          </div>
-          <span>{item.validation || item.priority || item.kind} · {repositoryReadinessLabel(item)}</span>
-        </button>
-      ))}
-    </div>
-  );
+  const selected = items.find((item) => item.id === selectedId) || items[0];
+  return <label className="hei-planning-item-picker"><span>{label}</span><select value={selected?.id || ''} onChange={(event) => onSelect(event.target.value)}>{items.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.status || 'Pending'} · {item.confidence ? `${Math.round(item.confidence * 100)}%` : 'Not scored'}</option>)}</select><small>{selected ? `${selected.validation || selected.priority || selected.kind} · ${repositoryReadinessLabel(selected)}` : 'Select an item to review.'}</small></label>;
 }
 
 function statusTone(status?: string): 'success' | 'warning' | 'neutral' {
@@ -10323,25 +10304,7 @@ function StoryPlanningWorkspace({
         </div>
       </div>
 
-      <div className="hei-story-grid">
-        <aside className="hei-story-queue">
-          <div className="planner-label">Story Queue</div>
-          <button className="hei-story-list-card active" type="button">
-            <strong>{title}</strong>
-            <span>{confidence >= 75 ? 'Ready For Review' : 'Needs Review'}</span>
-            <span>{priority}</span>
-            <span>{acceptanceItems.length ? `${acceptanceItems.length} Acceptance Criteria` : 'Acceptance Criteria Pending'}</span>
-            <span>{repositoryState}</span>
-          </button>
-          {taskDrafts.slice(0, 4).map((task) => (
-            <div className="hei-story-list-card muted" key={task.id}>
-              <strong>{normalizeStoryTitle(task.title)}</strong>
-              <span>{task.status || 'Draft'}</span>
-              <span>{task.acceptanceCriteria?.length || 0} mapped criteria</span>
-            </div>
-          ))}
-        </aside>
-
+      <div className="hei-story-grid without-queue">
         <article className="hei-story-detail">
           <StoryPlanningTabs selected={activeTab} onSelect={onTabChange} />
           {activeTab === 'overview' ? <StoryOverviewPanel result={result} title={title} /> : null}

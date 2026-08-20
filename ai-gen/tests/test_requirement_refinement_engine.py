@@ -270,7 +270,7 @@ class RequirementRefinementTests(unittest.TestCase):
         self.assertNotIn("audit", result["refinedRequirement"].lower())
         self.assertTrue(any("unsupported functionality" in warning for warning in result["warnings"]))
 
-    def test_transient_deterministic_refinement_retries_when_provider_recovers(self):
+    def test_transient_deterministic_refinement_retries_immediately_when_provider_recovers(self):
         class RecoveringReasoning:
             def __init__(self):
                 self.calls = 0
@@ -297,12 +297,38 @@ class RequirementRefinementTests(unittest.TestCase):
             reasoning_engine=reasoning,
         )
 
-        first = service.refine(self.requirement["requirementId"])
-        second = service.refine(self.requirement["requirementId"])
+        result = service.refine(self.requirement["requirementId"])
 
-        self.assertEqual("Deterministic", first["provider"])
-        self.assertEqual("Phi", second["provider"])
+        self.assertEqual("Phi", result["provider"])
         self.assertEqual(2, reasoning.calls)
+        self.assertEqual(
+            ["attempt 1: deterministic", "attempt 2: ai"],
+            result["providerAttempts"],
+        )
+
+    def test_user_can_add_freeform_clarification_without_generated_question(self):
+        service = RequirementRefinementService(
+            JsonMapStore(Path(self.temp.name) / "freeform-clarification.json"),
+            requirement_ingestion=self.ingestion,
+            reasoning_engine=self.reasoning,
+        )
+        initial = service.refine(self.requirement["requirementId"])
+        initial["clarificationCandidates"] = []
+        service._save(self.requirement["requirementId"], initial)
+
+        clarified = service.answer_clarifications(
+            self.requirement["requirementId"],
+            [{
+                "question": "Additional requirement clarification",
+                "answer": "Maintenance Engineers use device ID and device name.",
+            }],
+            "Product Owner",
+        )
+
+        self.assertEqual(
+            "Maintenance Engineers use device ID and device name.",
+            clarified["clarificationResponses"][0]["answer"],
+        )
 
     def test_analysis_consumes_refined_requirement_and_intent(self):
         root = Path(self.temp.name)

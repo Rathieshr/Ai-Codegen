@@ -2566,6 +2566,43 @@ body {
   min-height: 520px;
 }
 
+.hei-planning-grid.without-list {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 25%);
+}
+
+.hei-planning-item-picker {
+  display: grid;
+  grid-template-columns: auto minmax(240px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--hei-border);
+  border-radius: 6px;
+  background: var(--hei-surface);
+}
+
+.hei-planning-item-picker > span {
+  color: var(--hei-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.hei-planning-item-picker select {
+  width: 100%;
+  min-width: 0;
+}
+
+.hei-planning-item-picker small {
+  color: var(--hei-muted);
+  white-space: nowrap;
+}
+
+.hei-planning-item-picker.empty {
+  grid-template-columns: auto 1fr;
+}
+
 .hei-planning-list,
 .hei-planning-detail,
 .hei-planning-insights {
@@ -2826,6 +2863,10 @@ body {
   grid-template-columns: minmax(170px, 0.75fr) minmax(0, 2fr) minmax(220px, 0.9fr);
   gap: 12px;
   align-items: start;
+}
+
+.hei-story-grid.without-queue {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.32fr);
 }
 
 .hei-story-queue,
@@ -3200,6 +3241,14 @@ button.hei-story-list-card {
   .hei-planning-primary small {
     max-width: none;
     text-align: left;
+  }
+
+  .hei-planning-item-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .hei-planning-item-picker small {
+    white-space: normal;
   }
 
   .planner-header,

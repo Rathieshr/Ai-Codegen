@@ -1,6 +1,7 @@
 """Public service contracts for Engineering Intelligence."""
 
 from .services import (
+    IAcceptanceCriteriaProvider,
     IArchitectureService,
     IAzureDevOpsService,
     IContextBuilder,
@@ -8,11 +9,15 @@ from .services import (
     IEngineeringMemoryService,
     IIntelligenceOrchestrator,
     IMarkdownService,
+    IProjectIntelligenceProvider,
     IRepositoryService,
+    ISharedEngineeringIntelligenceOrchestrator,
     ISimilarityService,
+    IWorkItemIntelligenceProvider,
 )
 
 __all__ = [
+    "IAcceptanceCriteriaProvider",
     "IArchitectureService",
     "IAzureDevOpsService",
     "IContextBuilder",
@@ -20,6 +25,9 @@ __all__ = [
     "IEngineeringMemoryService",
     "IIntelligenceOrchestrator",
     "IMarkdownService",
+    "IProjectIntelligenceProvider",
     "IRepositoryService",
+    "ISharedEngineeringIntelligenceOrchestrator",
     "ISimilarityService",
+    "IWorkItemIntelligenceProvider",
 ]

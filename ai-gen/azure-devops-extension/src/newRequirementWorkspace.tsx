@@ -807,6 +807,33 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
       setRequirementAnalysis(analyzedRequirement);
       setReviewTitle(ingested.title);
       setReviewContent(analyzedRequirement.planningRequirement);
+      void fetch(`${baseUrl}/engineering-intelligence/context`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id, 'X-Correlation-ID': context.correlationId },
+        body: JSON.stringify({
+          entryMode: 'PROJECT_HUB',
+          projectId: context.project.id || context.project.name,
+          projectName: context.project.name,
+          repositoryId: context.repository.id,
+          requirement: {
+            requirementId: ingested.requirementId,
+            title: ingested.title,
+            planningRequirement: analyzedRequirement.planningRequirement,
+            businessGoals: analyzedRequirement.businessGoals,
+            functionalRequirements: analyzedRequirement.functionalRequirements,
+            nonFunctionalRequirements: analyzedRequirement.nonFunctionalRequirements,
+            acceptanceCriteria: analyzedRequirement.acceptanceCriteria,
+            actors: analyzedRequirement.actors,
+            businessRules: analyzedRequirement.businessRules,
+            constraints: analyzedRequirement.constraints,
+            dependencies: analyzedRequirement.dependencies,
+            risks: analyzedRequirement.risks,
+            openQuestions: analyzedRequirement.openQuestions,
+            analysisId: analyzedRequirement.analysisId,
+            contextVersion: analyzedRequirement.contextVersion,
+          },
+        }),
+      }).catch(() => undefined);
       if (analyzedRequirement.planningReadiness.status === 'Blocked') {
         throw new Error(analyzedRequirement.planningReadiness.blockers[0] || 'Resolve the requirement conflicts before Planning.');
       }

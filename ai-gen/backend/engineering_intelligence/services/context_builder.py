@@ -21,6 +21,8 @@ class ContextBuilder:
         azure_devops["existingPlanning"] = list(azure_devops.get("existingPlanning") or [])[:30]
         memory = dict(value.get("engineeringMemory") or {})
         memory["matches"] = list(memory.get("matches") or [])[:20]
+        project_intelligence = dict(value.get("projectIntelligence") or {})
+        project_intelligence.pop("rejectedContext", None)
         return {
             "contextId": value.get("contextId"),
             "contextVersion": value.get("contextVersion"),
@@ -31,7 +33,7 @@ class ContextBuilder:
             "dependencies": value.get("dependencies") or {},
             "similarWork": value.get("similarWork") or {},
             "engineeringMemory": memory,
-            "projectIntelligence": value.get("projectIntelligence") or {},
+            "projectIntelligence": project_intelligence,
             "requirement_context": value.get("requirement_context") or value.get("requirement") or {},
             "repository_code_context": _bounded_code_context(
                 value.get("repository_code_context") or repository
@@ -39,8 +41,9 @@ class ContextBuilder:
             "repository_markdown_context": _bounded_markdown_context(
                 value.get("repository_markdown_context") or {}
             ),
-            "project_intelligence_context": value.get("project_intelligence_context")
-            or value.get("projectIntelligence") or {},
+            "project_intelligence_context": _without_rejected(
+                value.get("project_intelligence_context") or project_intelligence
+            ),
             "azure_devops_context": value.get("azure_devops_context") or azure_devops,
             "engineering_memory_context": value.get("engineering_memory_context") or memory,
             "knowledge_synthesis": value.get("knowledge_synthesis") or {},
@@ -68,5 +71,16 @@ def _bounded_markdown_context(value: dict[str, Any]) -> dict[str, Any]:
         "selected": list(value.get("selected") or [])[:12],
         "conflicts": list(value.get("conflicts") or [])[:20],
         "diagnostics": diagnostics,
-        "rejected": list(value.get("rejected") or [])[:40],
+    }
+
+
+def _without_rejected(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_without_rejected(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _without_rejected(item)
+        for key, item in value.items()
+        if key not in {"rejected", "rejectedContext", "rawContext"}
     }

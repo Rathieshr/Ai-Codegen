@@ -20,7 +20,15 @@ from backend.auth import ApiKeyMiddleware, get_api_key_status, validate_approver
 from backend.guardrails import guard_stage_output, has_blocking_violation
 from backend.ado import AdoAutomation, AdoClient
 from backend.engineering_memory import EngineeringMemoryEngine
-from backend.engineering_intelligence import EngineeringIntelligenceService
+from backend.engineering_intelligence import (
+    EngineeringIntelligenceService,
+    HEIIntelligenceOrchestrator,
+    build_engineering_intelligence_router,
+)
+from backend.engineering_intelligence.providers import (
+    AcceptanceCriteriaProvider,
+    WorkItemIntelligenceProvider,
+)
 from backend.context_orchestration import (
     ContextOrchestrator,
     EngineeringMemoryContextSource,
@@ -379,6 +387,13 @@ ado_work_item_intelligence = register_ado_work_item_intelligence(
     platform=platform_foundation,
 )
 app.include_router(build_ado_intelligence_router(ado_work_item_intelligence))
+shared_engineering_intelligence = HEIIntelligenceOrchestrator(
+    JsonMapStore(platform_foundation.storage_root / "engineering_contexts.json"),
+    engineering_intelligence=engineering_intelligence_service,
+    work_item_intelligence=WorkItemIntelligenceProvider(ado_work_item_intelligence),
+    acceptance_criteria=AcceptanceCriteriaProvider(project_intelligence_service),
+)
+app.include_router(build_engineering_intelligence_router(shared_engineering_intelligence))
 
 
 def _find_approved_planning_pack(planning_pack_id: str) -> dict[str, Any] | None:

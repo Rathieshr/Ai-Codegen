@@ -17,6 +17,32 @@ class ProjectIntelligenceProvider:
     def __init__(self, service: Any) -> None:
         self._service = service
 
+    def get_project_profile(self) -> dict[str, Any]:
+        return dict(self._service.get_profile() or {})
+
+    def get_approved_knowledge(self, requirement: dict[str, Any] | None = None) -> dict[str, Any]:
+        return dict(self.build_context(requirement or {}).get("knowledge") or {})
+
+    def find_relevant_knowledge(self, requirement: dict[str, Any]) -> dict[str, Any]:
+        context = self.build_context(requirement)
+        return {
+            "knowledge": dict(context.get("knowledge") or {}),
+            "approvedArtifacts": list(context.get("approvedArtifacts") or []),
+            "rejectedContext": list(context.get("rejectedContext") or []),
+        }
+
+    def find_architecture_knowledge(self, requirement: dict[str, Any]) -> list[str]:
+        return list(self.get_approved_knowledge(requirement).get("architectureNotes") or [])
+
+    def find_planning_history(self, requirement: dict[str, Any]) -> list[dict[str, Any]]:
+        return list(self.build_context(requirement).get("approvedArtifacts") or [])
+
+    def find_relevant_artifacts(self, requirement: dict[str, Any]) -> list[dict[str, Any]]:
+        return self.find_planning_history(requirement)
+
+    def build_project_context(self, requirement: dict[str, Any]) -> dict[str, Any]:
+        return self.build_context(requirement)
+
     def build_context(self, requirement: dict[str, Any]) -> dict[str, Any]:
         profile = self._service.get_profile() or {}
         cache_result = self._service.get_knowledge_cache() or {}

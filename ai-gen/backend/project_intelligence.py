@@ -9555,6 +9555,17 @@ def _project_phi_probe(
             metadata.get("model_context_limit"),
             metadata.get("fallback_reason"),
         )
+    if metadata.get("phi_status") == "http_429_rate_limited":
+        metadata.update(
+            {
+                "provider_used": "domain_fallback",
+                "source": "domain_fallback",
+                "fallback_used": True,
+                "fallback_reason": "Azure Phi is temporarily busy. HEI continued with deterministic engineering intelligence.",
+                "retry_recommended": True,
+            }
+        )
+        return {"used": False, "blocked": False, "parsed": {}, "metadata": metadata}
     return _fallback_or_block(metadata, force_provider, allow_fallback)
 
 

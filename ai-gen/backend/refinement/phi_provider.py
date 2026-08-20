@@ -10,6 +10,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.ai.provider import ProviderParseError, parse_provider_response_json
@@ -51,6 +53,8 @@ class AzurePhiProvider:
         else:
             self.include_model_field = include_model_env.strip().lower() not in {"0", "false", "no"}
         self.response_format_enabled = os.getenv("AI_GEN_REFINER_RESPONSE_FORMAT_ENABLED", "1") != "0"
+        self.rate_limit_retries = _nonnegative_int_env("AI_GEN_REFINER_RATE_LIMIT_RETRIES", 2)
+        self.rate_limit_max_delay = max(0.0, _float_env("AI_GEN_REFINER_RATE_LIMIT_MAX_DELAY_SECONDS", 3.0))
 
     def is_enabled(self) -> bool:
         return bool(self.enabled and self.endpoint and self.api_key and self.model)
@@ -118,6 +122,30 @@ class AzurePhiProvider:
         attempts.append(first_attempt)
         final_attempt = first_attempt
         retried = False
+        rate_limit_retries = 0
+
+        # Azure commonly returns Retry-After with 429 responses. Honor it within a
+        # small bound so interactive workflows recover without becoming unresponsive.
+        while (
+            final_attempt.get("failure_reason") == "http_429_rate_limited"
+            and rate_limit_retries < self.rate_limit_retries
+        ):
+            delay = self._rate_limit_delay(final_attempt, rate_limit_retries)
+            if delay > 0:
+                time.sleep(delay)
+            rate_limit_retries += 1
+            retry_attempt = self._attempt_request(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=effective_max_tokens,
+                timeout_seconds=request_timeout,
+                include_response_format=use_response_format,
+                attempt_number=len(attempts) + 1,
+                include_model_field=include_model_field,
+                api_version_override=api_version_override,
+            )
+            attempts.append(retry_attempt)
+            final_attempt = retry_attempt
 
         # Attempt 2: retry without response_format on eligible failures
         if use_response_format and allow_retry_without_response_format and self._should_retry_without_response_format(first_attempt):
@@ -129,7 +157,7 @@ class AzurePhiProvider:
                 max_tokens=effective_max_tokens,
                 timeout_seconds=request_timeout,
                 include_response_format=False,
-                attempt_number=2,
+                attempt_number=len(attempts) + 1,
                 include_model_field=include_model_field,
                 api_version_override=api_version_override,
             )
@@ -179,6 +207,8 @@ class AzurePhiProvider:
             "response_format_enabled": bool(final_attempt.get("response_format_enabled")),
             "json_mode_attempted": bool(use_response_format),
             "json_mode_retry_without_response_format": retried,
+            "rate_limit_retries": rate_limit_retries,
+            "rate_limit_retry_exhausted": final_attempt.get("failure_reason") == "http_429_rate_limited",
             "failure_reason": final_attempt.get("failure_reason", ""),
             "failure_message": final_attempt.get("failure_message", ""),
             "attempts": attempts,
@@ -356,10 +386,15 @@ class AzurePhiProvider:
             )
         except urllib.error.HTTPError as error:
             body_preview = ""
+            headers: dict[str, Any] = {}
             try:
                 body_preview = error.read().decode("utf-8")
             except Exception:
                 body_preview = ""
+            try:
+                headers = dict(error.headers.items())
+            except Exception:
+                headers = {}
             return self._error_attempt(
                 attempt_number=attempt_number,
                 url=url,
@@ -371,6 +406,7 @@ class AzurePhiProvider:
                 raw_preview=body_preview[:1500],
                 error_type=type(error).__name__,
                 error_message=str(error),
+                response_headers=headers,
             )
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, ValueError) as error:
             return self._error_attempt(
@@ -589,6 +625,7 @@ class AzurePhiProvider:
         raw_preview: str,
         error_type: str,
         error_message: str,
+        response_headers: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         elapsed_ms = int((time.time() - started) * 1000)
         failure_reason = self._classify_failure(http_status, error_type, url)
@@ -599,7 +636,7 @@ class AzurePhiProvider:
             "ai-gen phi probe "
             f"http_status={http_status or 'error'} error={error_type} elapsed_ms={elapsed_ms} failure_reason={failure_reason} deployment={self.deployment}"
         )
-        return self._structured_attempt(
+        attempt = self._structured_attempt(
             attempt_number=attempt_number,
             url=url,
             include_response_format=include_response_format,
@@ -616,6 +653,14 @@ class AzurePhiProvider:
             error_type=error_type,
             error_message=error_message[:500],
         )
+        attempt["response_headers"] = dict(response_headers or {})
+        attempt["retry_after_seconds"] = _retry_after_seconds(response_headers or {})
+        return attempt
+
+    def _rate_limit_delay(self, attempt: dict[str, Any], retry_index: int) -> float:
+        requested = float(attempt.get("retry_after_seconds") or 0)
+        fallback = min(0.5 * (2 ** retry_index), self.rate_limit_max_delay)
+        return min(requested if requested > 0 else fallback, self.rate_limit_max_delay)
 
     def _structured_attempt(
         self,
@@ -757,7 +802,7 @@ class AzurePhiProvider:
             "http_403_forbidden": "Azure Phi access is forbidden for this endpoint or model.",
             "http_404_wrong_endpoint_or_model": "Azure Phi endpoint or model path was not found.",
             "http_405_wrong_method_or_path": "Azure Phi endpoint rejected the HTTP method or path.",
-            "http_429_rate_limited": "Azure Phi request was rate limited.",
+            "http_429_rate_limited": "Azure Phi is temporarily busy. The request was rate limited after bounded retries.",
             "connection_error": "Azure Phi endpoint could not be reached from the backend.",
             "parse_error": "Azure Phi returned a response that could not be parsed.",
         }
@@ -954,6 +999,39 @@ def _int_env(name: str, default: int) -> int:
         return max(1, int(os.getenv(name, str(default))))
     except ValueError:
         return default
+
+
+def _nonnegative_int_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _retry_after_seconds(headers: dict[str, Any]) -> float:
+    value = next(
+        (str(item).strip() for key, item in headers.items() if str(key).casefold() == "retry-after"),
+        "",
+    )
+    if not value:
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
 
 
 def _provider_response_metadata(response_body: str) -> dict[str, Any]:

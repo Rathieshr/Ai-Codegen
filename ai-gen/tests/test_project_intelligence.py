@@ -94,6 +94,22 @@ class ParseErrorPhiProvider(HealthyPhiProvider):
         }
 
 
+class RateLimitedPhiProvider(HealthyPhiProvider):
+    def probe_json(self, *args, **kwargs) -> dict:
+        self.calls += 1
+        return {
+            "status": "error",
+            "http_status": 429,
+            "elapsed_ms": 500,
+            "raw_content": "",
+            "parsed_json": {},
+            "failure_reason": "http_429_rate_limited",
+            "failure_message": "Azure Phi is temporarily busy.",
+            "rate_limit_retries": 2,
+            "rate_limit_retry_exhausted": True,
+        }
+
+
 class PlainTextAcceptancePhiProvider(HealthyPhiProvider):
     def probe_json(self, *args, **kwargs) -> dict:
         self.calls += 1
@@ -1922,6 +1938,25 @@ Smart meter operations platform for mobile field work, backend APIs, and analyti
         self.assertIn("error", refined)
         self.assertEqual(refined["phi_status"], "provider_timeout")
         self.assertIn("Azure Phi request timed out", refined["fallback_reason"])
+
+    def test_phi_rate_limit_continues_with_deterministic_intelligence(self) -> None:
+        provider = RateLimitedPhiProvider()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"AI_GEN_DATA_DIR": temp_dir, "AI_GEN_PROJECT_INTELLIGENCE_USE_PHI": "1"},
+            clear=False,
+        ), patch("backend.project_intelligence.get_refinement_provider", return_value=provider):
+            refined = ProjectIntelligenceService().refine_epic(
+                {"title": "Improve Device Monitoring"},
+                {"project_description": "Fault monitoring platform."},
+            )
+
+        self.assertEqual(1, provider.calls)
+        self.assertNotIn("error", refined)
+        self.assertEqual("domain_fallback", refined["provider_used"])
+        self.assertEqual("http_429_rate_limited", refined["phi_status"])
+        self.assertTrue(refined["fallback_used"])
+        self.assertTrue(refined["retry_recommended"])
 
     def test_provider_metadata_is_present_on_phi_error_and_deterministic_impact(self) -> None:
         provider = FailingPhiProvider()

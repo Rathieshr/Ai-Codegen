@@ -9,6 +9,7 @@ from .models import (
     EngineeringAnalysisResult,
     EngineeringContext,
     EngineeringDiscoveryReport,
+    EngineeringEntryMode,
     EngineeringMemorySummary,
     EngineeringSummary,
     ImpactSummary,
@@ -17,6 +18,8 @@ from .models import (
     ReuseSummary,
     SimilaritySummary,
 )
+from .api import build_engineering_intelligence_router
+from .shared_orchestrator import HEIIntelligenceOrchestrator
 from .service import EngineeringIntelligenceService
 from .providers import ProjectIntelligenceProvider
 from .services import (
@@ -45,8 +48,10 @@ __all__ = [
     "EngineeringContext",
     "EngineeringContextBuilder",
     "EngineeringDiscoveryReport",
+    "EngineeringEntryMode",
     "EngineeringDiscoveryService",
     "EngineeringIntelligenceService",
+    "HEIIntelligenceOrchestrator",
     "EngineeringMemorySummary",
     "EngineeringSummary",
     "ImpactSummary",
@@ -60,4 +65,5 @@ __all__ = [
     "ReuseSummary",
     "SimilaritySummary",
     "SimilarityService",
+    "build_engineering_intelligence_router",
 ]

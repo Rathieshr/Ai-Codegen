@@ -223,6 +223,56 @@ class PhiProviderTests(unittest.TestCase):
         self.assertEqual(len(result["attempts"]), 1)
         self.assertEqual(result["attempts"][0]["status"], "timeout")
 
+    def test_rate_limit_honors_retry_after_and_recovers(self) -> None:
+        attempts: list[int] = []
+
+        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number, **kwargs):
+            attempts.append(attempt_number)
+            if attempt_number == 1:
+                return {
+                    "attempt_number": 1, "status": "error", "http_status": 429,
+                    "failure_reason": "http_429_rate_limited", "failure_message": "rate limited",
+                    "parsed_json": {}, "raw_content": "", "retry_after_seconds": 0.25,
+                    "response_format_enabled": include_response_format,
+                }
+            return {
+                "attempt_number": attempt_number, "status": "success", "http_status": 200,
+                "failure_reason": "", "failure_message": "", "parsed_json": {"status": "ok"},
+                "raw_content": '{"status":"ok"}', "response_format_enabled": include_response_format,
+            }
+
+        with patch.dict(os.environ, {
+            "AI_GEN_REFINER_ENABLED": "1", "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+            "AI_GEN_REFINER_API_KEY": "secret", "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+            "AI_GEN_REFINER_RATE_LIMIT_RETRIES": "2", "AI_GEN_REFINER_RATE_LIMIT_MAX_DELAY_SECONDS": "1",
+        }, clear=False), patch.object(AzurePhiProvider, "_attempt_request", fake_attempt), patch("backend.refinement.phi_provider.time.sleep") as sleep:
+            result = AzurePhiProvider().probe_json("Return JSON", "{}", max_tokens=50)
+
+        self.assertEqual([1, 2], attempts)
+        sleep.assert_called_once_with(0.25)
+        self.assertEqual({"status": "ok"}, result["parsed_json"])
+        self.assertEqual(1, result["rate_limit_retries"])
+        self.assertFalse(result["rate_limit_retry_exhausted"])
+
+    def test_rate_limit_can_fall_back_without_retry(self) -> None:
+        def fake_attempt(self, system_prompt, user_prompt, max_tokens, timeout_seconds, include_response_format, attempt_number, **kwargs):
+            return {
+                "attempt_number": attempt_number, "status": "error", "http_status": 429,
+                "failure_reason": "http_429_rate_limited", "failure_message": "rate limited",
+                "parsed_json": {}, "raw_content": "", "response_format_enabled": include_response_format,
+            }
+
+        with patch.dict(os.environ, {
+            "AI_GEN_REFINER_ENABLED": "1", "AI_GEN_REFINER_ENDPOINT": "https://phi.example/models",
+            "AI_GEN_REFINER_API_KEY": "secret", "AI_GEN_REFINER_MODEL": "Phi-4-mini-instruct",
+            "AI_GEN_REFINER_RATE_LIMIT_RETRIES": "0",
+        }, clear=False), patch.object(AzurePhiProvider, "_attempt_request", fake_attempt):
+            result = AzurePhiProvider().probe_json("Return JSON", "{}", max_tokens=50)
+
+        self.assertEqual("http_429_rate_limited", result["failure_reason"])
+        self.assertEqual(0, result["rate_limit_retries"])
+        self.assertTrue(result["rate_limit_retry_exhausted"])
+
     def test_parse_success_response_accepts_fenced_json_content(self) -> None:
         with patch.dict(
             os.environ,

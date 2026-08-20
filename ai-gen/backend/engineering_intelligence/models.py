@@ -6,6 +6,38 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
+class EngineeringEntryMode:
+    PROJECT_HUB = "PROJECT_HUB"
+    WORK_ITEM = "WORK_ITEM"
+    REQUIREMENT = "REQUIREMENT"
+    PLANNING = "PLANNING"
+    EXECUTION = "EXECUTION"
+    VALIDATION = "VALIDATION"
+
+    ALL = {
+        PROJECT_HUB, WORK_ITEM, REQUIREMENT, PLANNING, EXECUTION, VALIDATION,
+    }
+
+
+@dataclass
+class ContextProvenance:
+    classification: str
+    sourceType: str
+    sourceId: str = ""
+    projectId: str = ""
+    repositoryId: str = ""
+    workItemId: str = ""
+    filePath: str = ""
+    section: str = ""
+    provider: str = ""
+    model: str = ""
+    promptVersion: str = ""
+    confidence: float = 0
+    repositoryRevision: str = ""
+    knowledgeVersion: str = ""
+    timestamp: str = ""
+
+
 @dataclass
 class RepositorySummary:
     repositoryId: str = ""
@@ -212,6 +244,15 @@ class EngineeringContext:
     correlationId: str = ""
     generatedAt: str = ""
     sourceVersions: dict[str, Any] = field(default_factory=dict)
+    entryMode: str = EngineeringEntryMode.REQUIREMENT
+    project: dict[str, Any] = field(default_factory=dict)
+    workItem: dict[str, Any] = field(default_factory=dict)
+    relatedWorkItems: list[dict[str, Any]] = field(default_factory=list)
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
+    unknowns: list[dict[str, Any]] = field(default_factory=list)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    provenance: list[dict[str, Any]] = field(default_factory=list)
+    lineage: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

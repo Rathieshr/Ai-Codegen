@@ -1774,6 +1774,18 @@ function ProjectIntelligenceTab() {
         const workItem = await loadCurrentWorkItem();
         if (workItem) {
           setCurrentWorkItem(workItem);
+          void fetch(`${PLATFORM_BASE_URL}/engineering-intelligence/context`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entryMode: 'WORK_ITEM',
+              projectId: seeded.project_id || workItem.project || '',
+              projectName: seeded.project_name || workItem.project || '',
+              repositoryId: seeded.repository_connection?.repository_id || '',
+              workItemId: String(workItem.id),
+              analyzeWorkItem: false,
+            }),
+          }).catch(() => undefined);
           seedPlannerFromWorkItem(workItem, effectiveSession?.auto_route_by_work_item_type !== false);
           restorePlanningArtifactForWorkItem(workItem, lifecycleArtifacts.artifacts || []);
           restoreGeneratedChildArtifactForWorkItem(workItem, lifecycleArtifacts.artifacts || []);

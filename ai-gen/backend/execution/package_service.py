@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 from typing import Any
 
 from backend.platform.shared import JsonMapStore
@@ -56,6 +57,35 @@ class ExecutionPackageService:
         except Exception as exc:
             self._event("ExecutionPackageFailed", correlation_id, {"failureReason": str(exc)[:300]})
             raise
+
+    def register(self, package: dict[str, Any], correlation_id: str = "") -> dict[str, Any]:
+        """Persist a package produced by a compatibility workflow.
+
+        Project Intelligence still builds the package used by its existing UI.
+        Registering that same package keeps the canonical Execution Center in
+        sync without rebuilding or reinterpreting the artifact.
+        """
+        value = deepcopy(package) if isinstance(package, dict) else {}
+        metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+        package_id = str(value.get("packageId") or metadata.get("packageId") or "").strip()
+        if not package_id:
+            raise ValueError("A generated Execution Package requires packageId before registration.")
+        value["packageId"] = package_id
+        metadata = {**metadata, "packageId": package_id}
+        value["metadata"] = metadata
+        packages = self.store.read()
+        existing = packages.get(package_id)
+        if isinstance(existing, dict) and existing == value:
+            return deepcopy(existing)
+        packages[package_id] = value
+        self.store.write(packages)
+        readiness = value.get("readiness") if isinstance(value.get("readiness"), dict) else {}
+        self._event("ExecutionPackageRegistered", correlation_id, {
+            "packageId": package_id,
+            "status": metadata.get("status") or readiness.get("status") or "Ready",
+            "source": "ProjectIntelligenceCompatibility",
+        })
+        return deepcopy(value)
 
     def get(self, package_id: str) -> dict[str, Any] | None: return self.store.read().get(package_id)
 

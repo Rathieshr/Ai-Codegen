@@ -117,7 +117,7 @@ from backend.planning_center import (
     build_story_detail_router,
     build_task_generation_router,
 )
-from backend.execution_center import ExecutionCenterService, build_execution_center_router
+from backend.execution_center import ExecutionCenterService, build_execution_center_router, merge_compatibility_packages
 from backend.approval_center import ApprovalCenterService, build_approval_center_router
 from backend.ado_center import AzureDevOpsCenterService, build_ado_center_router
 from backend.agent_center import AgentCenterService, build_agent_center_router
@@ -640,8 +640,16 @@ pr_candidate_service = PRCandidateService(
     platform=platform_foundation,
 )
 app.include_router(build_pr_candidate_router(pr_candidate_service))
+
+
+def _execution_center_packages() -> dict[str, dict[str, Any]]:
+    """Join canonical packages with packages saved by the legacy HEI workspace."""
+    artifacts = project_intelligence_service.list_artifacts(artifact_type="Execution Package").get("artifacts", [])
+    return merge_compatibility_packages(execution_package_service.store.read(), artifacts)
+
+
 execution_center_service = ExecutionCenterService(
-    package_provider=execution_package_service.store.read,
+    package_provider=_execution_center_packages,
     plan_provider=execution_manifest_service.store.read,
     prompt_provider=prompt_compiler_service.store.read,
     runtime_provider=execution_runtime_repository.store.read,
@@ -2037,13 +2045,20 @@ def analyze_project_epic_impact(request: ProjectIntelligenceRefinementRequest) -
 
 @app.post("/project-intelligence/build-execution-context", deprecated=True)
 def build_project_execution_context(request: ProjectIntelligenceExecutionRequest) -> dict:
-    return project_intelligence_service.build_execution_context(
+    result = project_intelligence_service.build_execution_context(
         request.story,
         request.profile,
         request.knowledge_profile,
         request.impact_analysis,
         _project_intelligence_options(request),
     )
+    package = (result.get("execution_package_v2") or result.get("executionPackageV2")) if isinstance(result, dict) else None
+    if isinstance(package, dict) and package:
+        diagnostics = package.get("diagnostics") if isinstance(package.get("diagnostics"), dict) else {}
+        correlation_id = str(diagnostics.get("correlationId") or result.get("correlation_id") or "")
+        registered = execution_package_service.register(package, correlation_id)
+        execution_manifest_service.build(registered, correlation_id)
+    return result
 
 
 @app.post("/project-intelligence/build-dev-prompt", deprecated=True)

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.execution_center import ExecutionCenterService, build_execution_center_router
+from backend.execution_center import ExecutionCenterService, build_execution_center_router, merge_compatibility_packages
+from backend.execution.package_service import ExecutionPackageService
+from backend.platform.shared import JsonMapStore
 
 
 def package(package_id: str = "pkg_1") -> dict:
@@ -44,6 +47,33 @@ def service(runtime_status: str = "Completed", retry=None) -> ExecutionCenterSer
 
 
 class ExecutionCenterTests(unittest.TestCase):
+    def test_legacy_project_intelligence_packages_are_projected_without_rebuild(self):
+        legacy = [{
+            "artifact_type": "Execution Package",
+            "payload": {"context": {"execution_package_v2": package("pkg_existing")}},
+        }]
+
+        result = merge_compatibility_packages({}, legacy)
+
+        self.assertEqual("pkg_existing", result["pkg_existing"]["packageId"])
+
+    def test_registered_compatibility_package_is_visible_before_runtime_starts(self):
+        with TemporaryDirectory() as directory:
+            packages = ExecutionPackageService(JsonMapStore(Path(directory) / "execution_packages.json"))
+            packages.register(package("pkg_compat"), "corr_compat")
+            center = ExecutionCenterService(
+                package_provider=packages.store.read,
+                plan_provider=lambda: {},
+                prompt_provider=lambda: {},
+                runtime_provider=lambda: {},
+            )
+
+            result = center.list()
+
+            self.assertEqual(1, result["summary"]["total"])
+            self.assertEqual("pkg_compat", result["items"][0]["id"])
+            self.assertEqual("Prompt Generation", result["items"][0]["currentStage"])
+
     def test_successful_execution_is_fully_traceable(self):
         result = service().get("pkg_1")
         self.assertEqual("Completed", result["status"])

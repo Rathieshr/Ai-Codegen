@@ -70,6 +70,24 @@ def _values(provider: Callable[[], Any]) -> list[dict[str, Any]]:
     return [deepcopy(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
+def merge_compatibility_packages(canonical: Any, artifacts: Any) -> dict[str, dict[str, Any]]:
+    """Project legacy package artifacts into the canonical package collection."""
+    packages = dict(canonical) if isinstance(canonical, dict) else {}
+    for artifact in artifacts if isinstance(artifacts, list) else []:
+        if not isinstance(artifact, dict):
+            continue
+        payload = artifact.get("payload") if isinstance(artifact.get("payload"), dict) else {}
+        context = payload.get("context") if isinstance(payload.get("context"), dict) else payload
+        package = context.get("execution_package_v2") or context.get("executionPackageV2")
+        if not isinstance(package, dict):
+            continue
+        metadata = package.get("metadata") if isinstance(package.get("metadata"), dict) else {}
+        package_id = _text(package.get("packageId") or metadata.get("packageId"))
+        if package_id:
+            packages.setdefault(package_id, deepcopy(package))
+    return packages
+
+
 class ExecutionCenterService:
     """Joins persisted execution artifacts without becoming a lifecycle owner."""
 

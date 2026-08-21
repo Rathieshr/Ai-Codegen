@@ -2954,6 +2954,8 @@ function ProjectIntelligenceTab() {
         });
       } else if (currentItemType === 'Feature') {
         setPlanningFocusRequest({ target: 'stories', nonce: Date.now() });
+      } else if (currentItemType === 'Story') {
+        setPlanningFocusRequest({ target: 'tasks', nonce: Date.now() });
       }
       changeWorkspace('planning');
     } else if (action === 'open_execution') {
@@ -3346,12 +3348,18 @@ function approveFeatures() {
   }
 
   function approveTasks() {
-    if (!childDrafts.some((draft) => draft.type === 'Task')) {
+    const taskDrafts = childDrafts.filter((draft) => draft.type === 'Task');
+    if (!taskDrafts.length) {
       setError('Generate tasks before approving them.');
       return;
     }
     approveArtifact('tasks');
-    setChildDrafts((drafts) => drafts.map((draft) => draft.type === 'Task' ? { ...draft, status: draft.status === 'created' ? draft.status : 'approved' } : draft));
+    const nextDrafts = childDrafts.map((draft) => {
+      if (draft.type !== 'Task' || ['created', 'failed', 'skipped'].includes(draft.status)) return draft;
+      return { ...draft, status: 'approved' as const };
+    });
+    setChildDrafts(nextDrafts);
+    void persistChildDraftReviewArtifact('Task', nextDrafts.filter((draft) => draft.type === 'Task'), 'approved');
   }
 
   function approveTestSuite() {
@@ -3419,9 +3427,15 @@ function approveFeatures() {
       : currentItemType === 'Feature'
         ? mergeFeatureStoryDraftsFromReviewState(featureResult, childDrafts)
         : childDrafts.filter((draft) => draft.type === 'Task');
-    const selected = sourceDrafts.filter((draft) => draft.selected && draft.status !== 'created');
+    const selected = sourceDrafts.filter((draft) => (
+      draft.selected
+      && draft.status !== 'created'
+      && (currentItemType !== 'Story' || draft.status === 'approved')
+    ));
     if (!selected.length) {
-      setError('Select at least one generated child work item to create.');
+      setError(currentItemType === 'Story'
+        ? 'Approve and select at least one generated Task before creating it.'
+        : 'Select at least one generated child work item to create.');
       return;
     }
     const confirmed = window.confirm(`Create ${selected.length} Azure DevOps work item(s) under ${currentWorkItem.type} #${currentWorkItem.id}?`);
@@ -6691,10 +6705,33 @@ function AIPlannerWorkspace({
       setSelectedPlanningDetailTab('overview');
     }
   }
+  function reviewSelectedDraft(kind: 'feature' | 'story', status: 'approved' | 'failed') {
+    const selected = planningModel.selectedItem;
+    if (!selected || selected.kind !== kind) return;
+    updateChildDraftReview(selected.id, kind === 'feature' ? 'Feature' : 'Story', { status });
+    const nextPending = planningModel.items.find((item) => (
+      item.kind === kind
+      && item.id !== selected.id
+      && !isPlanningReviewResolved(item)
+    ));
+    if (nextPending) {
+      setSelectedPlanningItemId(nextPending.id);
+      setSelectedPlanningDetailTab('overview');
+    }
+  }
   const showCapabilityQueue = planningType === 'Epic'
     && planningModel.items.some((item) => item.kind === 'capability');
+  const showStoryQueue = planningType === 'Feature'
+    && hasGeneratedStories
+    && planningModel.items.some((item) => item.kind === 'story');
+  const showReviewQueue = showCapabilityQueue || showStoryQueue;
+  const reviewQueueLabel = showCapabilityQueue ? 'Capabilities' : 'Stories';
+  const reviewQueuePending = planningModel.items.filter((item) => !isPlanningReviewResolved(item)).length;
   if (itemType === 'Story' && currentWorkItem) {
     const generatedTasks = childDrafts.filter((draft) => draft.type === 'Task');
+    const tasksReviewed = areAllDraftsReviewed(generatedTasks);
+    const tasksReadyToCreate = generatedTasks.filter((draft) => draft.status === 'approved' && draft.selected).length;
+    const taskCreationComplete = tasksReviewed && tasksReadyToCreate === 0;
     return (
       <>
         <section className="planner-card hei-planning-workspace">
@@ -6705,24 +6742,26 @@ function AIPlannerWorkspace({
               <p>Review the story, confirm acceptance criteria, approve generated tasks, then continue into execution.</p>
             </div>
             <div className="hei-planning-primary">
-              <span>{hasGeneratedTasks ? 'Task Approval' : storyResult ? 'Generate Tasks' : 'Story Analysis'}</span>
+              <span>{hasGeneratedTasks ? (tasksReviewed ? (tasksReadyToCreate ? 'Create Selected Tasks' : 'Open Execution') : 'Task Review') : storyResult ? 'Generate Tasks' : 'Story Analysis'}</span>
               <small>Use the sticky header action to continue.</small>
             </div>
           </div>
         <PlanningProgressBar
             stages={buildSingleCurrentStages(
-              ['Story Analysis', 'Task Review', 'Execution'],
-              !storyResult ? 'Story Analysis' : !hasGeneratedTasks || isApprovalPending(approvalWorkflow.tasks) ? 'Task Review' : 'Execution',
+              ['Story Analysis', 'Task Review', 'Task Creation', 'Execution'],
+              !storyResult ? 'Story Analysis' : !hasGeneratedTasks || !tasksReviewed ? 'Task Review' : tasksReadyToCreate ? 'Task Creation' : 'Execution',
               {
                 'Story Analysis': Boolean(storyResult),
-                'Task Review': hasGeneratedTasks && approvalWorkflow.tasks === 'approved',
+                'Task Review': hasGeneratedTasks && tasksReviewed,
+                'Task Creation': taskCreationComplete,
                 Execution: false,
               }
             )}
             metrics={[
               { label: 'Story Analysis', percent: storyResult ? 100 : 0 },
-              { label: 'Task Review', status: hasGeneratedTasks ? approvalStatusLabel(approvalWorkflow.tasks) : 'Pending' },
-              { label: 'Execution', status: approvalWorkflow.tasks === 'approved' ? 'Ready' : 'Locked' },
+              { label: 'Task Review', status: hasGeneratedTasks ? (tasksReviewed ? 'Reviewed' : 'Pending') : 'Pending' },
+              { label: 'Task Creation', status: tasksReviewed ? (tasksReadyToCreate ? 'Ready To Create' : 'Complete') : 'Locked' },
+              { label: 'Execution', status: taskCreationComplete ? 'Ready' : 'Locked' },
             ]}
         />
         {readOnly ? <div className="planner-error">This work item is Closed. Story planning is read-only.</div> : null}
@@ -6737,7 +6776,12 @@ function AIPlannerWorkspace({
             onGenerateTasks={() => generateChildren(false)}
             loading={loading}
             readOnly={readOnly}
-            taskApprovalStatus={approvalWorkflow.tasks}
+            creationLog={creationLog}
+            providerMetadata={providerMetadata}
+            onTaskReview={(taskId, status) => updateChildDraftReview(taskId, 'Task', { status })}
+            onTaskSelection={updateDraftSelection}
+            onCreateSelected={createSelectedChildren}
+            focusRequest={planningFocusRequest}
           />
         ) : (
           <section className="planner-card">
@@ -6800,17 +6844,17 @@ function AIPlannerWorkspace({
             </button>
           ))}
         </div>
-        {!showCapabilityQueue ? <PlanningItemPicker
+        {!showReviewQueue ? <PlanningItemPicker
           label={planningModel.listTitle}
           items={planningModel.items}
           selectedId={planningModel.selectedId}
           onSelect={planningModel.setSelectedId}
         /> : null}
-        <div className={`hei-planning-grid ${showCapabilityQueue ? '' : 'without-list'}`}>
-          {showCapabilityQueue ? <aside className="hei-planning-list" aria-label="Capability review queue">
+        <div className={`hei-planning-grid ${showReviewQueue ? '' : 'without-list'}`}>
+          {showReviewQueue ? <aside className="hei-planning-list" aria-label={`${reviewQueueLabel} review queue`}>
             <div className="hei-review-queue-header">
-              <div><span>Capabilities</span><strong>{planningModel.items.length} total</strong></div>
-              <small>{planningModel.items.filter((item) => !['approved', 'rejected'].includes((item.status || '').toLowerCase())).length} pending</small>
+              <div><span>{reviewQueueLabel}</span><strong>{planningModel.items.length} total</strong></div>
+              <small>{reviewQueuePending} pending</small>
             </div>
             <PlanningReviewQueue
               items={planningModel.items}
@@ -6833,16 +6877,16 @@ function AIPlannerWorkspace({
               onApprove={planningModel.selectedItem?.kind === 'capability'
                 ? () => reviewSelectedCapability('Approved')
                 : planningModel.selectedItem?.kind === 'feature'
-                  ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Feature', { status: 'approved' })
+                  ? () => reviewSelectedDraft('feature', 'approved')
                   : planningModel.selectedItem?.kind === 'story'
-                    ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Story', { status: 'approved' })
+                    ? () => reviewSelectedDraft('story', 'approved')
                     : undefined}
               onReject={planningModel.selectedItem?.kind === 'capability'
                 ? () => reviewSelectedCapability('Rejected')
                 : planningModel.selectedItem?.kind === 'feature'
-                  ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Feature', { status: 'failed' })
+                  ? () => reviewSelectedDraft('feature', 'failed')
                   : planningModel.selectedItem?.kind === 'story'
-                    ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Story', { status: 'failed' })
+                    ? () => reviewSelectedDraft('story', 'failed')
                     : undefined}
               onEdit={planningModel.selectedItem?.kind === 'capability'
                 ? () => {
@@ -6886,7 +6930,7 @@ function AIPlannerWorkspace({
             />
           </aside>
         </div>
-        {planningDrafts.length ? (
+        {planningDrafts.length && !(showStoryQueue && reviewQueuePending > 0) ? (
           <GeneratedChildWorkItems
             drafts={planningDrafts}
             creationLog={creationLog}
@@ -6945,11 +6989,11 @@ type PlanningStageStatus = 'complete' | 'current' | 'locked';
 type PlanningStage = { label: string; status: PlanningStageStatus };
 type PlanningDetailTab = 'overview' | 'responsibilities' | 'scope' | 'repository' | 'knowledge' | 'history';
 type StoryPlanningTab = 'overview' | 'acceptance' | 'implementation' | 'repository' | 'knowledge' | 'history';
-type PlanningFocusTarget = 'capabilities' | 'features' | 'stories' | null;
+type PlanningFocusTarget = 'capabilities' | 'features' | 'stories' | 'tasks' | null;
 type PlanningProgressMetric = { label: string; percent?: number; status?: string };
 type PlanningReviewItem = {
   id: string;
-  kind: 'capability' | 'feature' | 'story';
+  kind: 'capability' | 'feature' | 'story' | 'task';
   title: string;
   subtitle: string;
   status?: string;
@@ -7223,6 +7267,13 @@ function PlanningReviewQueue({ items, selectedId, onSelect }: {
       <small>{item.validation || repositoryReadinessLabel(item)}</small>
     </button>;
   })}</div>;
+}
+
+function isPlanningReviewResolved(item: PlanningReviewItem): boolean {
+  const status = (item.status || '').toLowerCase();
+  return item.kind === 'capability'
+    ? ['approved', 'rejected'].includes(status)
+    : ['approved', 'created', 'failed', 'skipped'].includes(status);
 }
 
 function statusTone(status?: string): 'success' | 'warning' | 'neutral' {
@@ -7648,7 +7699,7 @@ function draftToReviewItem(draft: ChildDraft): PlanningReviewItem {
   const subtitle = meaningfulText(draft.businessGoal, draft.businessValue, draft.description || 'Generated child work item');
   return {
     id: draft.id,
-    kind: draft.type === 'Feature' ? 'feature' : 'story',
+    kind: draft.type === 'Feature' ? 'feature' : draft.type === 'Task' ? 'task' : 'story',
     title: draft.title,
     subtitle,
     status: draft.status,
@@ -10317,7 +10368,12 @@ function StoryPlanningWorkspace({
   onGenerateTasks,
   loading,
   readOnly,
-  taskApprovalStatus,
+  creationLog,
+  providerMetadata,
+  onTaskReview,
+  onTaskSelection,
+  onCreateSelected,
+  focusRequest,
 }: {
   result: StoryRefinement;
   currentWorkItem?: AdoWorkItem;
@@ -10328,7 +10384,12 @@ function StoryPlanningWorkspace({
   onGenerateTasks: () => void;
   loading: boolean;
   readOnly: boolean;
-  taskApprovalStatus: ApprovalStatus;
+  creationLog: string[];
+  providerMetadata?: ProviderMetadata;
+  onTaskReview: (taskId: string, status: 'approved' | 'failed') => void;
+  onTaskSelection: (taskId: string, selected: boolean) => void;
+  onCreateSelected: () => void;
+  focusRequest: { target: PlanningFocusTarget; nonce: number };
 }) {
   const title = normalizeStoryTitle(currentWorkItem?.title || result.story_summary || 'Story');
   const confidence = qualityScoreForStory(result) || 0;
@@ -10338,14 +10399,47 @@ function StoryPlanningWorkspace({
   const validationState = confidence >= 75 && acceptanceItems.length ? 'PASS' : 'Validation Pending';
   const storyId = currentWorkItem?.id ? `Story #${currentWorkItem.id}` : 'Story ID Pending';
   const taskCount = taskDrafts.length || result.proposed_tasks?.length || 0;
+  const taskItems = React.useMemo(() => taskDrafts.map(draftToReviewItem), [taskDrafts]);
+  const [selectedTaskId, setSelectedTaskId] = React.useState(taskItems[0]?.id || '');
+  const [taskDetailTab, setTaskDetailTab] = React.useState<PlanningDetailTab>('overview');
+  const selectedTask = taskItems.find((item) => item.id === selectedTaskId) || taskItems[0];
+  const pendingTaskCount = taskItems.filter((item) => !isPlanningReviewResolved(item)).length;
+  const approvedTaskDrafts = taskDrafts.filter((task) => task.status === 'approved');
+  const selectableTaskCount = approvedTaskDrafts.filter((task) => task.selected).length;
+
+  React.useEffect(() => {
+    if (taskItems.length && !taskItems.some((item) => item.id === selectedTaskId)) {
+      setSelectedTaskId(taskItems[0].id);
+      setTaskDetailTab('overview');
+    }
+  }, [taskItems, selectedTaskId]);
+
+  React.useEffect(() => {
+    if (focusRequest.target !== 'tasks' || !taskItems.length) return;
+    const nextPending = taskItems.find((item) => !isPlanningReviewResolved(item)) || taskItems[0];
+    setSelectedTaskId(nextPending.id);
+    setTaskDetailTab('overview');
+  }, [focusRequest.nonce, focusRequest.target, taskItems]);
+
+  function reviewSelectedTask(status: 'approved' | 'failed') {
+    if (!selectedTask) return;
+    onTaskReview(selectedTask.id, status);
+    const nextPending = taskItems.find((item) => item.id !== selectedTask.id && !isPlanningReviewResolved(item));
+    if (nextPending) {
+      setSelectedTaskId(nextPending.id);
+      setTaskDetailTab('overview');
+    }
+  }
   const nextAction =
     !acceptanceItems.length
       ? 'Review Acceptance Criteria'
       : !taskDrafts.length
         ? 'Generate Tasks'
-        : taskApprovalStatus === 'approved'
-          ? 'Open Execution'
-          : 'Approve Tasks';
+        : pendingTaskCount
+          ? `Review ${pendingTaskCount} Remaining Task${pendingTaskCount === 1 ? '' : 's'}`
+          : selectableTaskCount
+            ? 'Create Selected Tasks'
+            : 'Open Execution';
   return (
     <section className="planner-card hei-story-workspace">
       <div className="hei-story-header">
@@ -10365,15 +10459,38 @@ function StoryPlanningWorkspace({
         </div>
       </div>
 
-      <div className="hei-story-grid without-queue">
+      <div className={`hei-story-grid ${taskItems.length ? '' : 'without-queue'}`}>
+        {taskItems.length ? (
+          <aside className="hei-story-queue">
+            <div className="planner-label">Tasks</div>
+            <div className="planner-subtle">{pendingTaskCount ? `${pendingTaskCount} task${pendingTaskCount === 1 ? '' : 's'} require review.` : 'All generated tasks reviewed.'}</div>
+            <PlanningReviewQueue items={taskItems} selectedId={selectedTask?.id || ''} onSelect={setSelectedTaskId} />
+          </aside>
+        ) : null}
         <article className="hei-story-detail">
-          <StoryPlanningTabs selected={activeTab} onSelect={onTabChange} />
-          {activeTab === 'overview' ? <StoryOverviewPanel result={result} title={title} /> : null}
-          {activeTab === 'acceptance' ? <StoryAcceptancePanel result={result} taskDrafts={taskDrafts} /> : null}
-          {activeTab === 'implementation' ? <StoryImplementationPanel result={result} /> : null}
-          {activeTab === 'repository' ? <StoryRepositoryPanel result={result} /> : null}
-          {activeTab === 'knowledge' ? <StoryKnowledgePanel result={result} /> : null}
-          {activeTab === 'history' ? <StoryHistoryPanel result={result} taskCount={taskCount} hasExecutionPackage={hasExecutionPackage} /> : null}
+          {taskItems.length ? (
+            <PlanningSelectedDetail
+              item={selectedTask}
+              emptyTitle="No generated tasks yet."
+              emptyText="Generate Tasks to begin implementation planning."
+              loading={loading}
+              readOnly={readOnly}
+              onApprove={() => reviewSelectedTask('approved')}
+              onReject={() => reviewSelectedTask('failed')}
+              selectedTab={taskDetailTab}
+              onTabChange={setTaskDetailTab}
+            />
+          ) : (
+            <>
+              <StoryPlanningTabs selected={activeTab} onSelect={onTabChange} />
+              {activeTab === 'overview' ? <StoryOverviewPanel result={result} title={title} /> : null}
+              {activeTab === 'acceptance' ? <StoryAcceptancePanel result={result} taskDrafts={taskDrafts} /> : null}
+              {activeTab === 'implementation' ? <StoryImplementationPanel result={result} /> : null}
+              {activeTab === 'repository' ? <StoryRepositoryPanel result={result} /> : null}
+              {activeTab === 'knowledge' ? <StoryKnowledgePanel result={result} /> : null}
+              {activeTab === 'history' ? <StoryHistoryPanel result={result} taskCount={taskCount} hasExecutionPackage={hasExecutionPackage} /> : null}
+            </>
+          )}
         </article>
 
         <aside className="hei-story-insights">
@@ -10397,8 +10514,8 @@ function StoryPlanningWorkspace({
               <Row label="Knowledge" value={(result.affected_modules?.length || result.affected_flows?.length) ? 'PASS' : 'Knowledge Not Loaded'} />
               <Row label="Repository" value={repositoryState} />
               <Row label="Acceptance" value={acceptanceItems.length ? `${acceptanceItems.length} Mapped` : 'Validation Pending'} />
-              <Row label="Task Approval" value={taskDrafts.length ? approvalStatusLabel(taskApprovalStatus) : 'Not Generated'} />
-              <Row label="Execution" value={hasExecutionPackage ? 'Ready' : (taskApprovalStatus === 'approved' ? 'Ready' : 'Waiting')} />
+              <Row label="Task Review" value={taskDrafts.length ? (pendingTaskCount ? `${pendingTaskCount} Pending` : 'Complete') : 'Not Generated'} />
+              <Row label="Execution" value={hasExecutionPackage ? 'Ready' : (!pendingTaskCount && taskDrafts.length ? 'Ready' : 'Waiting')} />
             </div>
             {!taskDrafts.length ? (
               <button className="planner-button" onClick={onGenerateTasks} disabled={loading || readOnly || !acceptanceItems.length}>
@@ -10408,6 +10525,18 @@ function StoryPlanningWorkspace({
           </div>
         </aside>
       </div>
+      {taskItems.length && pendingTaskCount === 0 ? (
+        <GeneratedChildWorkItems
+          drafts={approvedTaskDrafts}
+          creationLog={creationLog}
+          currentWorkItem={currentWorkItem}
+          providerMetadata={providerMetadata}
+          readOnly={readOnly}
+          loading={loading}
+          onSelectionChange={onTaskSelection}
+          onCreateSelected={onCreateSelected}
+        />
+      ) : null}
     </section>
   );
 }
@@ -12896,7 +13025,8 @@ function buildWorkflowOrchestration({
   const selectableFeatureDrafts = featureCandidates.filter((draft) => draft.selected && draft.status !== 'created');
   const storiesApproved = approvalWorkflow.stories === 'approved' || areAllDraftsReviewed(storyCandidates);
   const selectableStoryDrafts = mergeFeatureStoryDraftsFromReviewState(featureResult, childDrafts).filter((draft) => draft.selected && draft.status !== 'created');
-  const tasksApproved = approvalWorkflow.tasks === 'approved' || areAllDraftsApproved(taskCandidates);
+  const tasksApproved = approvalWorkflow.tasks === 'approved' || areAllDraftsReviewed(taskCandidates);
+  const selectableTaskDrafts = taskCandidates.filter((draft) => draft.selected && draft.status === 'approved');
   const blockers = [
     !hasKnowledge ? 'Project knowledge is missing. Repository analysis will improve recommendations.' : '',
     !standardsReady ? 'Development or UI standards are missing.' : '',
@@ -12969,11 +13099,15 @@ function buildWorkflowOrchestration({
     } else if (!taskCandidates.length) {
       nextAction = { label: 'Generate Tasks', action: 'generate_tasks', workspace: 'planning', reason: 'The story analysis is ready. Generate implementation tasks next.' };
       currentStage = 'Task Generation';
-    } else if (!tasksApproved || isApprovalPending(approvalWorkflow.tasks)) {
-      nextAction = { label: 'Approve Tasks', action: 'approve_tasks', workspace: 'planning', reason: 'Generated Tasks are waiting for approval.' };
-      currentStage = 'Task Approval';
+    } else if (!tasksApproved) {
+      const remainingTasks = taskCandidates.filter((draft) => !['approved', 'created', 'failed', 'skipped'].includes(draft.status)).length;
+      nextAction = { label: 'Review Remaining Tasks', action: 'open_planning', workspace: 'planning', reason: `${remainingTasks} generated Task${remainingTasks === 1 ? '' : 's'} still require approval or rejection.` };
+      currentStage = 'Task Review';
+    } else if (selectableTaskDrafts.length) {
+      nextAction = { label: 'Create Selected Tasks', action: 'create_children', workspace: 'planning', reason: 'Approved selected Tasks are ready to be created in Azure DevOps.' };
+      currentStage = 'Task Creation';
     } else if (!hasExecution) {
-      nextAction = { label: 'Open Execution Workspace', action: 'open_execution', workspace: 'execution', reason: 'Tasks are approved. Open Execution to build the implementation package from the selected Task.' };
+      nextAction = { label: 'Open Execution Workspace', action: 'open_execution', workspace: 'execution', reason: 'Task review and creation are complete. Open Execution to build the implementation package.' };
       currentStage = 'Implementation Package';
     } else {
       nextAction = { label: 'Open VS Code', action: 'open_vscode', workspace: 'execution', reason: 'Execution package is ready for implementation.' };

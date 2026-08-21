@@ -177,6 +177,44 @@ def transformer_context():
 
 
 class ProjectIntelligenceRequirementAdapterTests(unittest.TestCase):
+    def test_acceptance_titles_follow_distinct_outcomes_not_shared_precondition(self):
+        functional = "Implement offline firmware updates and report status after reconnecting."
+        raw = [
+            {"text": "Given the device is offline and an update is available, when connectivity returns, then the firmware update is automatically downloaded and applied."},
+            {"text": "Given the device is offline and an update is available, when update status is checked, then device status reflects the successfully applied firmware version."},
+            {"text": "Given the device is offline and an update is available, when connectivity returns, then the user is notified that the firmware update succeeded."},
+        ]
+
+        criteria = ProjectIntelligenceRequirementAnalyzer._validated_criteria(
+            raw,
+            {"functionalRequirements": [functional]},
+            transformer_context(),
+        )
+
+        titles = [item["title"] for item in criteria]
+        self.assertEqual(3, len(criteria))
+        self.assertEqual(3, len(set(titles)))
+        self.assertTrue(any("Downloaded" in title for title in titles))
+        self.assertTrue(any("Status" in title for title in titles))
+        self.assertTrue(any("Notified" in title for title in titles))
+        self.assertTrue(all(not title.startswith("Given") for title in titles))
+
+    def test_semantically_repeated_acceptance_behavior_is_removed(self):
+        functional = "Notify the user when an offline firmware update succeeds."
+        raw = [
+            {"title": "Notify Update Success", "text": "Given an update is pending, when connectivity returns, then the user is notified that the update succeeded."},
+            {"title": "Successful Update Notification", "text": "Given the device was offline, when connectivity returns, then the user is notified that the update succeeded."},
+        ]
+
+        criteria = ProjectIntelligenceRequirementAnalyzer._validated_criteria(
+            raw,
+            {"functionalRequirements": [functional]},
+            transformer_context(),
+        )
+
+        self.assertEqual(1, len(criteria))
+        self.assertEqual("Notify Update Success", criteria[0]["title"])
+
     def test_requirement_analysis_and_refinement_attempt_phi_before_fallback(self):
         class ProviderAwareFacade:
             def __init__(self):

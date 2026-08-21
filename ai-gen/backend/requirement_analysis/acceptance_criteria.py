@@ -306,6 +306,8 @@ class IntelligentAcceptanceCriteriaEngine:
                 evidence=evidence,
                 order=order,
                 criterion_id=str(value.get("criterionId") or ""),
+                criterion_type=str(value.get("type") or "Functional"),
+                title=str(value.get("title") or "").strip(),
             ),
             "editedFrom": str(value.get("origin") or "AI Inferred"),
         }

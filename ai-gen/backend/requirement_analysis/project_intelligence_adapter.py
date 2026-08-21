@@ -139,12 +139,21 @@ class ProjectIntelligenceRequirementAnalyzer:
         ]).casefold()
         source_versions = engineering_context.get("sourceVersions") if isinstance(engineering_context.get("sourceVersions"), dict) else {}
         criteria: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        seen_text: set[str] = set()
+        seen_behaviors: set[tuple[str, str]] = set()
+        seen_titles: set[str] = set()
         for index, candidate in enumerate(raw):
             value = dict(candidate) if isinstance(candidate, dict) else {"text": str(candidate)}
             text = str(value.get("text") or "").strip()
             normalized = re.sub(r"\s+", " ", text).casefold()
-            if not text or normalized in seen or not _is_testable(text) or _is_circular(text):
+            behavior = _criterion_behavior(text)
+            if (
+                not text
+                or normalized in seen_text
+                or behavior in seen_behaviors
+                or not _is_testable(text)
+                or _is_circular(text)
+            ):
                 continue
             if _unsupported_without_evidence(text, evidence_text):
                 continue
@@ -162,8 +171,14 @@ class ProjectIntelligenceRequirementAnalyzer:
                     "confidence": confidence,
                     "source": "Engineering Context",
                 }]
+            title = _criterion_title(value, text)
+            if title.casefold() in seen_titles:
+                title = _criterion_title(value, text, include_trigger=True)
+            if title.casefold() in seen_titles:
+                continue
             criteria.append({
                 **value,
+                "title": title,
                 "text": text,
                 "mappedFunctionalRequirement": mapped,
                 "evidence": evidence,
@@ -179,8 +194,51 @@ class ProjectIntelligenceRequirementAnalyzer:
                     else None
                 ) or source_versions.get("repositorySnapshotVersion"),
             })
-            seen.add(normalized)
+            seen_text.add(normalized)
+            seen_behaviors.add(behavior)
+            seen_titles.add(title.casefold())
         return criteria
+
+
+def _criterion_behavior(text: str) -> tuple[str, str]:
+    """Identify the behavior under test independently of a shared precondition."""
+    compact = re.sub(r"\s+", " ", text).strip()
+    when = re.search(r"\bwhen\b\s+(.+?)(?=\bthen\b|$)", compact, re.I)
+    then = re.search(r"\bthen\b\s+(.+)$", compact, re.I)
+    return (_normalize_clause(when.group(1) if when else ""), _normalize_clause(then.group(1) if then else compact))
+
+
+def _criterion_title(value: dict[str, Any], text: str, *, include_trigger: bool = False) -> str:
+    supplied = str(value.get("title") or "").strip()
+    if supplied and not re.match(r"^(?:given|when|then)\b", supplied, re.I):
+        return _trim_title(supplied)
+    scenario = re.search(r"^\s*Scenario:\s*(.+)$", text, re.I | re.M)
+    if scenario:
+        return _trim_title(scenario.group(1))
+    compact = re.sub(r"\s+", " ", text).strip()
+    then = re.search(r"\bthen\b\s+(.+)$", compact, re.I)
+    when = re.search(r"\bwhen\b\s+(.+?)(?=\bthen\b|$)", compact, re.I)
+    outcome = _display_clause(then.group(1) if then else compact)
+    if include_trigger and when:
+        outcome = f"{_display_clause(when.group(1))}: {outcome}"
+    return _trim_title(outcome or "Acceptance Criterion")
+
+
+def _normalize_clause(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+
+def _display_clause(value: str) -> str:
+    text = value.strip().strip(". ")
+    text = re.sub(r"^(?:the|a|an)\s+", "", text, flags=re.I)
+    text = re.sub(r"\bshould\s+be\b", "is", text, flags=re.I)
+    text = re.sub(r"\bshould\b", "", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _trim_title(value: str) -> str:
+    words = value.split()
+    return " ".join(words[:14]).strip(" .:").title() or "Acceptance Criterion"
 
 
 def _unsupported_without_evidence(text: str, evidence: str) -> bool:

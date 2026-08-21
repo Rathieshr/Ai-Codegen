@@ -9926,8 +9926,11 @@ def _project_phi_instruction(operation: str) -> str:
     if operation == "generate_requirement_acceptance_criteria":
         return (
             "Generate three to seven specific, testable, business-observable Acceptance Criteria "
-            "when supported. Each item must contain text, mappedFunctionalRequirement, evidence, "
-            "confidence, and confidenceBasis. Use Given/When/Then. Do not invent authentication, "
+            "when supported. Each item must contain a unique concise title, text, "
+            "mappedFunctionalRequirement, evidence, confidence, and confidenceBasis. Use "
+            "Given/When/Then and make each criterion verify one distinct observable outcome. "
+            "Do not return paraphrased duplicates or derive every title from a shared Given clause. "
+            "Do not invent authentication, "
             "authorization, permissions, validation, CRUD, audit, APIs, or error behavior unless "
             "explicit evidence supports it. Return acceptanceCriteria as a JSON array. "
             + PROJECT_PHI_INSTRUCTION

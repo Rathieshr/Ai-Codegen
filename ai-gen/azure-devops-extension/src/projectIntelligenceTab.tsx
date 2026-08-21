@@ -2948,7 +2948,10 @@ function ProjectIntelligenceTab() {
       openVsCodeExecutionPackage();
     } else if (action === 'open_planning') {
       if (currentItemType === 'Epic') {
-        setPlanningFocusRequest({ target: 'features', nonce: Date.now() });
+        setPlanningFocusRequest({
+          target: workflowOrchestration.currentStage === 'Capability Review' ? 'capabilities' : 'features',
+          nonce: Date.now(),
+        });
       } else if (currentItemType === 'Feature') {
         setPlanningFocusRequest({ target: 'stories', nonce: Date.now() });
       }
@@ -6651,6 +6654,13 @@ function AIPlannerWorkspace({
     : mergeFeatureStoryDraftsFromReviewState(featureResult, childDrafts);
   const firstPlanningItemId = planningModel.items[0]?.id || '';
   useEffect(() => {
+    if (planningFocusRequest.target === 'capabilities' && planningType === 'Epic') {
+      const pendingCapability = epicResult?.capability_review?.find((capability) => !isCapabilityReviewed(capability));
+      if (pendingCapability) {
+        setSelectedPlanningItemId(pendingCapability.capabilityId);
+        setSelectedPlanningDetailTab('overview');
+      }
+    }
     if (planningFocusRequest.target === 'features' && planningType === 'Epic') {
       const targetId = firstPlanningItemId;
       if (targetId) {
@@ -6665,7 +6675,24 @@ function AIPlannerWorkspace({
         setSelectedPlanningDetailTab('overview');
       }
     }
-  }, [planningFocusRequest.nonce, planningFocusRequest.target, planningType, firstPlanningItemId]);
+  }, [planningFocusRequest.nonce, planningFocusRequest.target, planningType, firstPlanningItemId, epicResult?.capability_review]);
+
+  function reviewSelectedCapability(status: 'Approved' | 'Rejected') {
+    const selected = planningModel.selectedItem;
+    if (!selected || selected.kind !== 'capability') return;
+    updateCapabilityReview(selected.id, { status });
+    const nextPending = planningModel.items.find((item) => (
+      item.kind === 'capability'
+      && item.id !== selected.id
+      && !['approved', 'rejected'].includes((item.status || '').toLowerCase())
+    ));
+    if (nextPending) {
+      setSelectedPlanningItemId(nextPending.id);
+      setSelectedPlanningDetailTab('overview');
+    }
+  }
+  const showCapabilityQueue = planningType === 'Epic'
+    && planningModel.items.some((item) => item.kind === 'capability');
   if (itemType === 'Story' && currentWorkItem) {
     const generatedTasks = childDrafts.filter((draft) => draft.type === 'Task');
     return (
@@ -6773,13 +6800,24 @@ function AIPlannerWorkspace({
             </button>
           ))}
         </div>
-        <PlanningItemPicker
+        {!showCapabilityQueue ? <PlanningItemPicker
           label={planningModel.listTitle}
           items={planningModel.items}
           selectedId={planningModel.selectedId}
           onSelect={planningModel.setSelectedId}
-        />
-        <div className="hei-planning-grid without-list">
+        /> : null}
+        <div className={`hei-planning-grid ${showCapabilityQueue ? '' : 'without-list'}`}>
+          {showCapabilityQueue ? <aside className="hei-planning-list" aria-label="Capability review queue">
+            <div className="hei-review-queue-header">
+              <div><span>Capabilities</span><strong>{planningModel.items.length} total</strong></div>
+              <small>{planningModel.items.filter((item) => !['approved', 'rejected'].includes((item.status || '').toLowerCase())).length} pending</small>
+            </div>
+            <PlanningReviewQueue
+              items={planningModel.items}
+              selectedId={planningModel.selectedId}
+              onSelect={planningModel.setSelectedId}
+            />
+          </aside> : null}
           <section className="hei-planning-detail">
             {planningType === 'Epic' ? (
               <RefinementInput input={epicInput} setInput={setEpicInput} titlePlaceholder="Launch mobile commerce platform" descriptionPlaceholder="Describe the epic goal, users, rollout intent, and business context." />
@@ -6793,14 +6831,14 @@ function AIPlannerWorkspace({
               loading={loading}
               readOnly={readOnly}
               onApprove={planningModel.selectedItem?.kind === 'capability'
-                ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Approved' })
+                ? () => reviewSelectedCapability('Approved')
                 : planningModel.selectedItem?.kind === 'feature'
                   ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Feature', { status: 'approved' })
                   : planningModel.selectedItem?.kind === 'story'
                     ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Story', { status: 'approved' })
                     : undefined}
               onReject={planningModel.selectedItem?.kind === 'capability'
-                ? () => updateCapabilityReview(planningModel.selectedItem!.id, { status: 'Rejected' })
+                ? () => reviewSelectedCapability('Rejected')
                 : planningModel.selectedItem?.kind === 'feature'
                   ? () => updateChildDraftReview(planningModel.selectedItem!.id, 'Feature', { status: 'failed' })
                   : planningModel.selectedItem?.kind === 'story'
@@ -6907,7 +6945,7 @@ type PlanningStageStatus = 'complete' | 'current' | 'locked';
 type PlanningStage = { label: string; status: PlanningStageStatus };
 type PlanningDetailTab = 'overview' | 'responsibilities' | 'scope' | 'repository' | 'knowledge' | 'history';
 type StoryPlanningTab = 'overview' | 'acceptance' | 'implementation' | 'repository' | 'knowledge' | 'history';
-type PlanningFocusTarget = 'features' | 'stories' | null;
+type PlanningFocusTarget = 'capabilities' | 'features' | 'stories' | null;
 type PlanningProgressMetric = { label: string; percent?: number; status?: string };
 type PlanningReviewItem = {
   id: string;
@@ -7166,6 +7204,27 @@ function PlanningItemPicker({ label, items, selectedId, onSelect }: { label: str
   return <label className="hei-planning-item-picker"><span>{label}</span><select value={selected?.id || ''} onChange={(event) => onSelect(event.target.value)}>{items.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.status || 'Pending'} · {item.confidence ? `${Math.round(item.confidence * 100)}%` : 'Not scored'}</option>)}</select><small>{selected ? `${selected.validation || selected.priority || selected.kind} · ${repositoryReadinessLabel(selected)}` : 'Select an item to review.'}</small></label>;
 }
 
+function PlanningReviewQueue({ items, selectedId, onSelect }: {
+  items: PlanningReviewItem[];
+  selectedId: string;
+  onSelect: (value: string) => void;
+}) {
+  return <div className="hei-review-list">{items.map((item) => {
+    const status = item.status || 'Pending';
+    return <button
+      type="button"
+      key={item.id}
+      className={`hei-review-list-item ${item.id === selectedId ? 'active' : ''}`}
+      onClick={() => onSelect(item.id)}
+      aria-current={item.id === selectedId ? 'true' : undefined}
+    >
+      <div><strong>{item.title}</strong><span>{item.subtitle}</span></div>
+      <small><i className={`hei-dot ${statusTone(status)}`} />{status} · {item.confidence ? `${Math.round(item.confidence * 100)}%` : 'Not scored'}</small>
+      <small>{item.validation || repositoryReadinessLabel(item)}</small>
+    </button>;
+  })}</div>;
+}
+
 function statusTone(status?: string): 'success' | 'warning' | 'neutral' {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'approved' || normalized === 'created' || normalized === 'pass') {
@@ -7224,6 +7283,15 @@ function PlanningSelectedDetail({
         <span className="hei-status-badge neutral">{item.status || 'Draft'}</span>
       </div>
       <PlanningDetailTabs selected={selectedTab} onSelect={onTabChange} />
+      {onApprove || onReject || onEdit ? (
+        <div className="planner-actions hei-review-actions" aria-label={`${item.title} review actions`}>
+          {onApprove ? <button className="planner-button" onClick={onApprove} disabled={loading || readOnly}>Approve</button> : null}
+          {onReject ? <button className="planner-button secondary" onClick={onReject} disabled={loading || readOnly}>Reject</button> : null}
+          {onEdit ? <button className="planner-button secondary" onClick={onEdit} disabled={loading || readOnly}>Edit</button> : null}
+          {onMoveUp ? <button className="planner-button secondary" onClick={onMoveUp} disabled={loading || readOnly}>Move Up</button> : null}
+          {onMoveDown ? <button className="planner-button secondary" onClick={onMoveDown} disabled={loading || readOnly}>Move Down</button> : null}
+        </div>
+      ) : null}
       {selectedTab === 'overview' ? (
         <>
           <div className="hei-business-grid">
@@ -7257,15 +7325,6 @@ function PlanningSelectedDetail({
       ) : null}
       {selectedTab === 'history' ? (
         <InfoBlock title="Review History" items={item.comments || []} empty="No review history yet. Approve, reject, or edit to record history." />
-      ) : null}
-      {onApprove || onReject || onEdit ? (
-        <div className="planner-actions">
-          {onApprove ? <button className="planner-button" onClick={onApprove} disabled={loading || readOnly}>Approve</button> : null}
-          {onReject ? <button className="planner-button secondary" onClick={onReject} disabled={loading || readOnly}>Reject</button> : null}
-          {onEdit ? <button className="planner-button secondary" onClick={onEdit} disabled={loading || readOnly}>Edit</button> : null}
-          {onMoveUp ? <button className="planner-button secondary" onClick={onMoveUp} disabled={loading || readOnly}>Move Up</button> : null}
-          {onMoveDown ? <button className="planner-button secondary" onClick={onMoveDown} disabled={loading || readOnly}>Move Down</button> : null}
-        </div>
       ) : null}
       <details className="planner-nested">
         <summary>Engineering Details</summary>

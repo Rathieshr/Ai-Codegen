@@ -2644,6 +2644,31 @@ body {
   padding-right: 2px;
 }
 
+.hei-review-queue-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+
+.hei-review-queue-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.hei-review-queue-header span,
+.hei-review-queue-header small {
+  color: var(--hei-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.hei-review-queue-header strong {
+  font-size: 13px;
+}
+
 .hei-review-list-item {
   width: 100%;
   border: 1px solid var(--hei-border);

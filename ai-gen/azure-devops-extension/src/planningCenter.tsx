@@ -633,11 +633,23 @@ export function PlanningCenter({
 
   const canSaveDraft = Boolean(selected && selected.source === 'planning_artifact' && ['Draft', 'Review'].includes(selected.status));
   const repositoryName = selected ? planningRepository(selected) : '';
+  const readinessStatus = (overviewData?.planningReadiness.status || selected?.readiness || '').toLowerCase().replace(/[^a-z]/g, '');
+  const hasApprovalReadiness = ['ready', 'readywithrecommendations'].includes(readinessStatus);
+  const hasPlanningScope = Boolean(
+    overviewData
+    && overviewData.metrics.features > 0
+    && overviewData.metrics.stories > 0
+    && overviewData.cards.requirementQuality.acceptanceCriteria > 0
+    && overviewData.requirement.confidence > 0
+  );
+  const approvalReady = hasApprovalReadiness
+    && hasPlanningScope
+    && !overviewData?.planningReadiness.blockers.length;
   const workspaceActions = selected ? {
     status: selected.status,
     canGenerate: selected.type !== 'Recommendation',
     canSave: canSaveDraft,
-    canApprove: canContribute && (selected.canPublish || (selected.canApprove && Boolean(selectedEstimate))),
+    canApprove: canContribute && (selected.canPublish || (selected.canApprove && Boolean(selectedEstimate) && approvalReady)),
     primaryLabel: selected.canPublish ? 'Publish' : 'Approve',
     busy: Boolean(actionId || estimationBusy),
     onGenerate: () => selected.canGenerateExecutionPackage ? generate(selected) : void estimate(selected, true),

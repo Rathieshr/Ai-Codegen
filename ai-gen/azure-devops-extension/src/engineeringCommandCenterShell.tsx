@@ -44,6 +44,8 @@ type Props = {
   logoDarkSrc?: string;
   busy?: boolean;
   headerActions?: ReactNode;
+  hideSidebar?: boolean;
+  forcedTheme?: WorkspacePreferences['theme'];
   children: ReactNode;
   onNavigate: (item: WorkspaceNavigationItem) => void;
   onPreferencesChange: (changes: Partial<WorkspacePreferences>) => void;
@@ -87,13 +89,16 @@ export function EngineeringCommandCenterShell({
   logoDarkSrc = 'static/hei-icon-dark.png',
   busy,
   headerActions,
+  hideSidebar = false,
+  forcedTheme,
   children,
   onNavigate,
   onPreferencesChange,
   onSearch = EMPTY_SEARCH,
   onCommand = NOOP_COMMAND,
 }: Props) {
-  const preferences = workspace?.preferences || FALLBACK_PREFERENCES;
+  const storedPreferences = workspace?.preferences || FALLBACK_PREFERENCES;
+  const preferences = forcedTheme ? { ...storedPreferences, theme: forcedTheme } : storedPreferences;
   const navigation = workspace?.navigation?.length ? workspace.navigation : fallbackNavigation(roleLabel);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
@@ -177,7 +182,7 @@ export function EngineeringCommandCenterShell({
   }
 
   return (
-    <div className={`hei-command-shell ${preferences.sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`hei-command-shell ${preferences.sidebarCollapsed ? 'sidebar-collapsed' : ''}${hideSidebar ? ' without-sidebar' : ''}`}>
       <header className="hei-command-header">
         <div className="hei-command-brand">
           <span className="hei-command-brand-icon">
@@ -211,11 +216,11 @@ export function EngineeringCommandCenterShell({
             <div>
               <strong>{userName || 'HEI User'}</strong>
               <small>{roleLabel}</small>
-              <label>Theme
+              {!forcedTheme ? <label>Theme
                 <select value={preferences.theme} onChange={(event) => onPreferencesChange({ theme: event.target.value as WorkspacePreferences['theme'] })}>
                   <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option><option value="high-contrast">High Contrast</option>
                 </select>
-              </label>
+              </label> : null}
               <label>Density
                 <select value={preferences.density} onChange={(event) => onPreferencesChange({ density: event.target.value as WorkspacePreferences['density'] })}>
                   <option value="comfortable">Comfortable</option><option value="compact">Compact</option>
@@ -241,7 +246,7 @@ export function EngineeringCommandCenterShell({
         ) : null}
       </header>
 
-      <aside className="hei-command-sidebar" aria-label="HEI workspace navigation">
+      {!hideSidebar ? <aside className="hei-command-sidebar" aria-label="HEI workspace navigation">
         <button
           type="button"
           className="hei-sidebar-toggle"
@@ -267,7 +272,7 @@ export function EngineeringCommandCenterShell({
             </button>
           ))}
         </nav>
-      </aside>
+      </aside> : null}
 
       <section className="hei-command-content" aria-label={`${activeItem?.label || 'HEI'} workspace`} aria-busy={busy}>
         <div className="hei-content-heading">

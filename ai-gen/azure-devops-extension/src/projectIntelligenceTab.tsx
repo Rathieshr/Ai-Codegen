@@ -3871,6 +3871,8 @@ function approveFeatures() {
       userName={permissionState.user_display_name || permissionState.user_name || 'HEI User'}
       roleLabel={roleLabel(permissionState.role)}
       busy={loading}
+      hideSidebar
+      forcedTheme="light"
       onNavigate={navigateCommandCenter}
       onPreferencesChange={(changes) => void updateWorkspacePreferences(changes)}
       headerActions={canAdmin ? (
@@ -3953,18 +3955,7 @@ function approveFeatures() {
 
       {activeTab === 'planning' ? (
         <>
-        <PlanningCenter
-          baseUrl={PLATFORM_BASE_URL}
-          projectId={profile.project_id || ''}
-          actor={permissionState.user_display_name || permissionState.user_name || 'HEI User'}
-          currentWorkItemId={currentWorkItem?.id ? String(currentWorkItem.id) : undefined}
-          canContribute={canContribute}
-          onGenerateExecutionPackage={() => void buildExecutionPackage(true)}
-          onError={setError}
-        />
-        <details className="hei-planning-intelligence-workspace">
-          <summary>Planning Intelligence Workspace</summary>
-          <AIPlannerWorkspace
+        <AIPlannerWorkspace
           profile={profile}
           loading={loading}
           currentWorkItem={currentWorkItem}
@@ -4012,6 +4003,17 @@ function approveFeatures() {
           artifactReuseStatus={artifactReuseStatus}
           workflow={workflowOrchestration}
           planningFocusRequest={planningFocusRequest}
+          />
+        <details className="hei-planning-intelligence-workspace">
+          <summary>Planning Pack Workspace</summary>
+          <PlanningCenter
+            baseUrl={PLATFORM_BASE_URL}
+            projectId={profile.project_id || ''}
+            actor={permissionState.user_display_name || permissionState.user_name || 'HEI User'}
+            currentWorkItemId={currentWorkItem?.id ? String(currentWorkItem.id) : undefined}
+            canContribute={canContribute}
+            onGenerateExecutionPackage={() => void buildExecutionPackage(true)}
+            onError={setError}
           />
         </details>
         </>

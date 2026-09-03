@@ -11,6 +11,10 @@ const SOURCES: Array<{ id: SourceType; label: string; description: string }> = [
 ];
 
 const FUTURE_SOURCES = ['Confluence', 'SharePoint', 'Notion', 'Email', 'REST API'];
+const REQUIREMENT_INGEST_PATH = '/requirements/ingest';
+const PLANNING_CONTEXT_BUILD_PATH = '/planning/context/build';
+const PLANNING_RECOMMENDATION_PATH = '/planning/recommendation';
+const PLANNING_PROPOSAL_PATH = '/planning/proposal';
 
 type ProposalNode = {
   nodeId: string; parentId: string; type: string; title: string; description: string; businessValue: string;
@@ -626,7 +630,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
         const projectId = context.project.id || context.project.name;
         const params = new URLSearchParams({ limit: '1' });
         if (projectId) params.set('projectId', projectId);
-        const response = await fetch(`${baseUrl}/planning/proposal?${params.toString()}`, { headers: { 'X-HEI-User': context.user.id } });
+        const response = await fetch(`${baseUrl}${PLANNING_PROPOSAL_PATH}?${params.toString()}`, { headers: { 'X-HEI-User': context.user.id } });
         const payload = await response.json() as { proposals?: PlanningProposalResult[]; error?: { message?: string } };
         if (!response.ok) throw new Error(payload.error?.message || 'Unable to restore the current Planning Proposal.');
         const proposal = payload.proposals?.[0];
@@ -776,7 +780,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
         actor: context.user.name,
         correlationId: context.correlationId,
       };
-      const ingestResponse = await fetch(`${baseUrl}/requirements/ingest`, {
+      const ingestResponse = await fetch(`${baseUrl}${REQUIREMENT_INGEST_PATH}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
         body: JSON.stringify(common),
@@ -856,7 +860,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
       const approved = await approvalResponse.json() as RequirementAnalysisResult & { error?: { message?: string } };
       if (!approvalResponse.ok) throw new Error(approved.error?.message || `Requirement Approval returned HTTP ${approvalResponse.status}.`);
       setRequirementAnalysis(approved);
-      const planningResponse = await fetch(`${baseUrl}/planning/context/build`, {
+      const planningResponse = await fetch(`${baseUrl}${PLANNING_CONTEXT_BUILD_PATH}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
         body: JSON.stringify({ requirementId: ingestion.requirementId, actor: context.user.name, correlationId: context.correlationId }),
@@ -864,6 +868,40 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
       const landscape = await planningResponse.json() as PlanningContextResult & { error?: { message?: string } };
       if (!planningResponse.ok) throw new Error(landscape.error?.message || `Planning Context returned HTTP ${planningResponse.status}.`);
       setPlanningContext(landscape);
+      setBusyStage('planning');
+      const reviewResponse = await fetch(`${baseUrl}/planning/context/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ contextId: landscape.contextId, decision: 'Accept', actor: context.user.name }),
+      });
+      const reviewed = await reviewResponse.json() as PlanningContextResult & { error?: { message?: string } };
+      if (!reviewResponse.ok) throw new Error(reviewed.error?.message || `Planning Context Review returned HTTP ${reviewResponse.status}.`);
+      setPlanningContext(reviewed);
+      const recommendationResponse = await fetch(`${baseUrl}${PLANNING_RECOMMENDATION_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ contextId: reviewed.contextId, actor: context.user.name }),
+      });
+      const recommendation = await recommendationResponse.json() as PlanningRecommendationResult & { error?: { message?: string } };
+      if (!recommendationResponse.ok) throw new Error(recommendation.error?.message || `Planning Recommendation returned HTTP ${recommendationResponse.status}.`);
+      setPlanningRecommendation(recommendation);
+      const recommendationApprovalResponse = await fetch(`${baseUrl}/planning/recommendation/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ recommendationId: recommendation.recommendationId, actor: context.user.name }),
+      });
+      const approvedRecommendation = await recommendationApprovalResponse.json() as PlanningRecommendationResult & { error?: { message?: string } };
+      if (!recommendationApprovalResponse.ok) throw new Error(approvedRecommendation.error?.message || `Planning Recommendation Approval returned HTTP ${recommendationApprovalResponse.status}.`);
+      setPlanningRecommendation(approvedRecommendation);
+      const proposalResponse = await fetch(`${baseUrl}${PLANNING_PROPOSAL_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-HEI-User': context.user.id },
+        body: JSON.stringify({ recommendationId: approvedRecommendation.recommendationId, actor: context.user.name }),
+      });
+      const proposal = await proposalResponse.json() as PlanningProposalResult & { error?: { message?: string } };
+      if (!proposalResponse.ok) throw new Error(proposal.error?.message || `Implementation Plan returned HTTP ${proposalResponse.status}.`);
+      setResult(proposal);
+      setEngineeringReview(undefined);
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Unable to continue to Planning.');
     } finally {
@@ -1373,7 +1411,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
   return (
     <section className="hei-requirement-workspace" aria-label="New Requirement">
       <header>
-        <div><span>Requirement Intelligence</span><h2>New Requirement</h2><p>Choose a source. HEI will create a normalized Requirement Context before Planning begins.</p></div>
+        <div><span>Requirements</span><h2>{ingestion || result ? 'Review Requirement' : 'What do you want to build?'}</h2><p>{ingestion || result ? 'Review what HEI understood, resolve any open questions, then create an implementation plan.' : 'Describe the outcome in your own words. HEI will understand the request and find relevant project knowledge.'}</p></div>
         {result ? <Status value={result.status} /> : requirementAnalysis ? <Status value={`${requirementAnalysis.reviewStatus} Review`} /> : ingestion ? <Status value={ingestion.status} /> : null}
       </header>
       <RequirementProgressTimeline
@@ -1453,7 +1491,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
       ) : (
         <form className="hei-requirement-form" onSubmit={submit}>
           <fieldset className="hei-requirement-source-picker">
-            <legend>Choose Source</legend>
+            <legend>Start from</legend>
             {SOURCES.map((source) => (
               <label key={source.id} className={sourceType === source.id ? 'selected' : ''}>
                 <input type="radio" name="requirement-source" value={source.id} checked={sourceType === source.id} onChange={() => { setSourceType(source.id); setContent(''); setDocumentName(''); setDocumentMediaType('text/plain'); setDocumentContentBase64(''); setDocumentResult(undefined); setTranscriptResult(undefined); setAdoImportResult(undefined); }} />
@@ -1466,7 +1504,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
             {sourceType === 'AzureDevOpsWorkItem' ? (
               <label><span>Work item ID</span><input inputMode="numeric" value={workItemId} onChange={(event) => setWorkItemId(event.target.value)} placeholder="245" required /></label>
             ) : (
-              <label><span>{sourceType === 'MeetingTranscript' ? 'Meeting title' : 'Requirement title'}</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What engineering outcome is needed?" maxLength={180} required /></label>
+              <label><span>{sourceType === 'MeetingTranscript' ? 'Meeting title' : 'Short title'}</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Name this requirement" maxLength={180} required /></label>
             )}
             {sourceType === 'UploadDocument' ? (
               <label className="wide hei-document-upload"><span>Requirement document</span><input type="file" accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={readDocument} required={!documentContentBase64} /><small>{documentName ? `${documentName} ready to upload` : 'PDF, DOCX, TXT, and Markdown documents up to 25 MB.'}</small></label>
@@ -1478,7 +1516,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
               </>
             ) : null}
             {requiresText && sourceType !== 'UploadDocument' ? (
-              <label className="wide"><span>{sourceType === 'MeetingTranscript' ? 'Transcript' : 'Requirement content'}</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder={sourceType === 'MeetingTranscript' ? 'Paste the meeting transcript. HEI will remove greetings, repetition, and conversational noise.' : 'Describe the business goal, users, expected outcome, constraints, and known acceptance criteria.'} rows={10} required={sourceType !== 'MeetingTranscript' || !documentContentBase64} /></label>
+              <label className="wide hei-requirement-big-input"><span>{sourceType === 'MeetingTranscript' ? 'Transcript' : 'Describe what you need'}</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder={sourceType === 'MeetingTranscript' ? 'Paste the meeting transcript. HEI will remove greetings, repetition, and conversational noise.' : 'Example: Operations teams need to see unhealthy devices early so they can act before service is interrupted.'} rows={12} required={sourceType !== 'MeetingTranscript' || !documentContentBase64} /></label>
             ) : null}
           </div>
 
@@ -1487,7 +1525,7 @@ export function NewRequirementWorkspace({ baseUrl, context, resumeLatestProposal
           {adoImportResult ? <AdoWorkItemSummary result={adoImportResult} /> : null}
           <div className="hei-intake-context"><strong>Planning context</strong><span>{context.project.name || 'Project required'}</span><span>{context.team.name || 'Team unavailable'}</span><span>{context.repository.name || 'Repository will be resolved by HEI'}</span></div>
           <details className="hei-future-sources"><summary>Future sources</summary><div>{FUTURE_SOURCES.map((source) => <span key={source}>{source} · Coming later</span>)}</div></details>
-          <button className="planner-button primary" type="submit" disabled={Boolean(busyStage) || !canSubmit}>{busyStage === 'uploading' ? `Uploading ${sourceType === 'MeetingTranscript' ? 'Transcript' : 'Document'}...` : busyStage === 'parsing' ? 'Parsing Document...' : busyStage === 'analyzing' ? 'Analyzing Requirement...' : busyStage === 'ingesting' ? 'Ingesting Requirement...' : busyStage === 'context' ? 'Building Planning Context...' : busyStage === 'planning' ? 'Preparing Planning Recommendation...' : 'Ingest & Analyze'}</button>
+          <button className="planner-button primary" type="submit" disabled={Boolean(busyStage) || !canSubmit}>{busyStage ? 'HEI is understanding your request...' : 'Analyze with HEI'}</button>
         </form>
       )}
     </section>
@@ -1539,7 +1577,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
 
   return <section className="hei-planning-proposal-workspace" aria-live="polite">
     <header className="hei-planning-proposal-header">
-      <div><span>Planning Proposal</span><h2>{value.title}</h2><p>The requirement is the Epic. Review each level here before generating its children.</p></div>
+      <div><span>Implementation Plan</span><h2>{value.title}</h2><p>Review the proposed work, make any needed changes, then approve it for Azure DevOps.</p></div>
       <div><Status value={value.status} /><strong>v{value.version}</strong><details className="hei-proposal-header-actions"><summary>More</summary><div><button className="planner-button secondary" type="button" disabled={busy || !editable} onClick={() => onRegenerate('Entire Proposal')}>Regenerate</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onAIReview}>AI Review</button><button className="planner-button secondary" type="button" disabled={busy} onClick={onExport}>Export</button></div></details></div>
     </header>
     {workflow ? <section className="hei-proposal-workflow" aria-label="Planning workflow">
@@ -1552,7 +1590,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
       <Signal label="Estimate" value={`${value.estimate.engineeringDays} days · ${value.estimate.storyPoints} points`} />
       <Signal label="Risk" value={value.health.risk} />
     </div>
-    <nav className="hei-planning-proposal-tabs" aria-label="Planning Proposal sections">
+    <nav className="hei-planning-proposal-tabs" aria-label="Implementation Plan sections">
       {tabs.map((item) => <button key={item} type="button" className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}
     </nav>
 
@@ -1601,7 +1639,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
     </section> : null}
 
     {advancedTab === 'History' ? <section className="hei-proposal-review-panel"><header><div><span>Version History</span><h3>{value.history.length + 1} versions</h3></div></header>
-      {value.history.length ? [...value.history].reverse().map((entry) => <article key={`${entry.version}-${entry.timestamp}`}><Status value={`v${entry.version}`} /><div><strong>{entry.reason}</strong><p>{entry.author} · {new Date(entry.timestamp).toLocaleString()}</p><small>{entry.changes.join(' ')}</small></div>{editable ? <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onUpdate({ operation: 'rollback', targetVersion: entry.version, reason: `Rollback to version ${entry.version}` })}>Restore</button> : null}</article>) : <p>This is the first Planning Proposal version.</p>}
+      {value.history.length ? [...value.history].reverse().map((entry) => <article key={`${entry.version}-${entry.timestamp}`}><Status value={`v${entry.version}`} /><div><strong>{entry.reason}</strong><p>{entry.author} · {new Date(entry.timestamp).toLocaleString()}</p><small>{entry.changes.join(' ')}</small></div>{editable ? <button className="planner-button secondary" type="button" disabled={busy} onClick={() => onUpdate({ operation: 'rollback', targetVersion: entry.version, reason: `Rollback to version ${entry.version}` })}>Restore</button> : null}</article>) : <p>This is the first Implementation Plan version.</p>}
     </section> : null}</details>
 
     {tab === 'Approval' ? <EngineeringReviewPanel value={value} review={engineeringReview} busy={busy} onStart={onStartReview} onAction={onReviewAction} onExport={onExportReview} onOpenApprovals={onOpenApprovals} /> : null}
@@ -1768,10 +1806,11 @@ function RequirementProgressTimeline({ hasSource, hasRefinement, hasAnalysis, ha
   planningApproved: boolean;
 }) {
   const stages = [
-    { label: 'Understand', done: hasAnalysis && hasRepository, active: !hasAnalysis || !hasRepository },
-    { label: 'Plan', done: planningCreated, active: hasAnalysis && hasRepository && !planningCreated },
-    { label: 'Approve', done: planningApproved, active: planningCreated && !planningApproved },
-    { label: 'Create in Azure DevOps', done: false, active: planningApproved },
+    { label: 'Describe', done: hasSource, active: !hasSource },
+    { label: 'Understand', done: hasAnalysis && hasRepository, active: hasSource && (!hasAnalysis || !hasRepository) },
+    { label: 'Review', done: contextCreated, active: hasAnalysis && hasRepository && !contextCreated },
+    { label: 'Plan', done: planningCreated, active: contextCreated && !planningCreated },
+    { label: 'Create', done: planningApproved, active: planningCreated && !planningApproved },
   ];
   return <nav className="hei-requirement-progress" aria-label="Requirement progress">
     {stages.map((stage, index) => {
@@ -1801,14 +1840,14 @@ function PlanningContextWorkspace({ value, busy, onContinue, onRefresh, onEditRe
   const markdownConflicts = markdown.conflicts || [];
   const blocked = value.readiness.status === 'Blocked';
   const classifications = ['NEW_INITIATIVE', 'NEW_FEATURE', 'EXTEND_FEATURE', 'MODIFY_EXISTING', 'BUG', 'ENHANCEMENT', 'AI_RECOMMENDED'];
-  return <section className="hei-planning-context-workspace" aria-label="Planning Context">
+  return <section className="hei-planning-context-workspace" aria-label="Plan preparation">
     <header>
       <div><span>Plan Preparation</span><h2>Engineering Context</h2><p>HEI checked existing work, repository evidence, and reusable engineering knowledge.</p></div>
       <Status value={planningContextReadiness(value.readiness.status)} />
     </header>
 
     <section className="hei-planning-context-summary">
-      <header><div><span>Planning Context Summary</span><h3>{value.summary.recommendedStrategy || 'Review the current engineering landscape.'}</h3></div><Status value={`${value.summary.planningConfidence}% confidence`} /></header>
+      <header><div><span>Project Findings</span><h3>{value.summary.recommendedStrategy || 'Review the current engineering landscape.'}</h3></div><Status value={planningContextReadiness(value.readiness.status)} /></header>
       <div>
         <Signal label="Current Project" value={value.summary.currentProject || 'Current Azure DevOps project'} />
         <Signal label="Repository" value={value.summary.repository} />
@@ -1947,7 +1986,7 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
   const [overrideStrategy, setOverrideStrategy] = useState(value.strategy);
   const [overrideReason, setOverrideReason] = useState('');
   const diffSymbols: Record<string, string> = { Create: '+', Modify: '~', Reuse: '=', Ignore: '-', Merge: 'M', Split: 'S', Delete: 'D', Move: '>' };
-  return <section className="hei-planning-recommendation-workspace" aria-label="Planning Recommendation" aria-live="polite">
+  return <section className="hei-planning-recommendation-workspace" aria-label="Recommended plan" aria-live="polite">
     <header>
       <div><span>Plan Decision</span><h2>Recommended Plan</h2><p>Confirm HEI's recommended approach before generating editable work items.</p></div>
       <Status value={approved ? 'Approved' : 'Needs Review'} />
@@ -1956,7 +1995,7 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
     <section className="hei-planning-recommendation-hero">
       <header>
         <div><span>Recommended Strategy</span><h3>{value.title}</h3><p>{value.engineeringReasoning[0]}</p></div>
-        <strong>{value.confidence.overall}%</strong>
+        <Status value={approved ? 'Confirmed' : 'Review'} />
       </header>
       <div className="hei-planning-context-metrics">
         <Signal label="Expected Scope" value={`${value.summary.expectedStoryCount} Stories · ${value.summary.expectedTaskCount} Tasks`} />
@@ -1966,7 +2005,7 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
         <Signal label="Risk" value={value.impact.riskLevel} />
       </div>
       <div className="hei-planning-recommendation-actions-list">
-        {value.actions.map((action) => <article key={action.action}><div><strong>{action.action}</strong><p>{action.reason}</p></div><Status value={`${action.confidence}% confidence`} /></article>)}
+        {value.actions.map((action) => <article key={action.action}><div><strong>{action.action}</strong><p>{action.reason}</p></div><Status value="Recommended" /></article>)}
       </div>
     </section>
 
@@ -2018,7 +2057,7 @@ function PlanningRecommendationWorkspace({ value, contextValue, busy, onApprove,
     </div>
 
     <section className="hei-planning-recommendation-diff">
-      <header><div><span>HEI Planning Diff</span><h3>Proposed changes before Planning Proposal</h3><p>This is the intended planning change set. No work item has been created or modified.</p></div><Status value={`${value.diff.operations.length} changes`} /></header>
+      <header><div><span>Plan Changes</span><h3>Proposed work before approval</h3><p>This is the intended change set. No Azure DevOps work item has been created or modified.</p></div><Status value={`${value.diff.operations.length} changes`} /></header>
       <div className="hei-planning-diff-summary">
         {Object.entries(value.diff.summary).filter(([, count]) => count > 0).map(([action, count]) => <Signal key={action} label={action} value={String(count)} />)}
       </div>
@@ -2151,7 +2190,7 @@ function RequirementRefinementCard({ value, busy, onAction }: {
   return <section className="hei-requirement-refinement" aria-label="AI Requirement Refinement">
     <header>
       <div><span>AI Requirement Refinement</span><h3>{wordingChanged ? 'Engineering-ready wording' : 'Ready as written'}</h3><p>{wordingChanged ? 'HEI improved clarity before repository or Azure DevOps discovery. Your original requirement remains unchanged.' : 'HEI found the source requirement clear enough for engineering analysis. No rewritten copy is needed.'}</p></div>
-      <Status value={`${value.status} · ${Math.round(value.confidence * 100)}%`} />
+      <Status value={value.status === 'Accepted' ? 'Confirmed' : 'Review'} />
     </header>
     <div className={`hei-requirement-refinement-comparison${wordingChanged ? '' : ' single'}`}>
       {wordingChanged ? <article><span>Original Requirement</span><p>{value.originalRequirement}</p></article> : null}
@@ -2186,6 +2225,39 @@ function RequirementRefinementCard({ value, busy, onAction }: {
       </>}
     </footer>
   </section>;
+}
+
+function HEIUnderstanding({ analysis, refinement }: { analysis: RequirementAnalysisResult; refinement?: RequirementRefinementResult }) {
+  const document = analysis.analysisDocument;
+  const title = document?.title || refinement?.executiveSummary || analysis.requirementSummary;
+  const summary = document?.executiveSummary || refinement?.refinedRequirement || analysis.planningRequirement;
+  const understood = [
+    ...(document?.businessGoal ? [`Goal: ${document.businessGoal}`] : analysis.businessGoals.slice(0, 1).map((item) => `Goal: ${item}`)),
+    ...(document?.primaryActor ? [`User: ${document.primaryActor}`] : analysis.actors.slice(0, 1).map((item) => `User: ${item}`)),
+    ...((document?.capabilities || refinement?.coreCapabilities || []).slice(0, 3).map((item) => `Capability: ${item}`)),
+  ];
+  const found = [
+    ...(analysis.repositorySuggestion?.suggestedRepository?.name ? [`Project: ${analysis.repositorySuggestion.suggestedRepository.name}`] : []),
+    ...((document?.affectedModules || []).slice(0, 3).map((item) => `Module: ${item}`)),
+    ...((document?.reusableComponents || []).slice(0, 2).map((item) => `Reusable: ${item.title}`)),
+  ];
+  const needsInput = [
+    ...(document?.openQuestions || analysis.openQuestions || []),
+    ...(analysis.acceptanceCriteriaState?.state === 'Missing' ? ['Review or generate acceptance criteria.'] : []),
+    ...(analysis.planningReadiness.blockers || []),
+  ].filter(Boolean).slice(0, 5);
+  return <section className="hei-understanding-hero" aria-label="HEI Understanding summary">
+    <header><span>HEI Understanding</span><h3>{title || 'Requirement understood'}</h3><p>{summary || 'HEI has prepared an engineering interpretation for review.'}</p></header>
+    <div>
+      <UnderstandingGroup title="Understood" items={understood} empty="The main outcome is understood." />
+      <UnderstandingGroup title="Found in your project" items={found} empty="No relevant project knowledge was found yet." />
+      <UnderstandingGroup title="Needs your input" items={needsInput} empty="No blocking clarification is needed." warning={needsInput.length > 0} />
+    </div>
+  </section>;
+}
+
+function UnderstandingGroup({ title, items, empty, warning = false }: { title: string; items: string[]; empty: string; warning?: boolean }) {
+  return <article className={warning ? 'warning' : ''}><h4>{title}</h4>{items.length ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{empty}</p>}</article>;
 }
 
 function RequirementReviewScreen({ analysis, refinement, ingestion, editing, title, content, busy, onTitleChange, onContentChange, onEdit, onDiscardEdit, onSaveEdit, onContinue, onCancel, onReanalyze, onRefinementAction, onSuggestAcceptanceCriteria, onApproveAcceptanceCriteria, onDiscardAcceptanceCriteria, onSkipAcceptanceCriteria, onUpdateAcceptanceCriteria, onOverrideRepository, projectName }: {
@@ -2226,7 +2298,7 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
   const [repositorySearch, setRepositorySearch] = useState('');
   const visibleRepositories = repositoryOptions.filter((repository) => (repository.name || '').toLowerCase().includes(repositorySearch.trim().toLowerCase()));
   return <section className="hei-requirement-review" aria-label="Requirement Summary" aria-live="polite">
-    <header><div><span>Mandatory Review</span><h2>Requirement Summary</h2><p>Validate HEI's understanding before Planning begins. No Planning Pack has been created.</p></div><Status value={readinessLabel(analysis.planningReadiness.status)} /></header>
+    <header><div><span>Review</span><h2>HEI Understanding</h2><p>Confirm what HEI understood, what it found in the project, and what still needs your input.</p></div><Status value={readinessLabel(analysis.planningReadiness.status)} /></header>
     {editing ? <div className="hei-requirement-review-editor">
       <label><span>Requirement title</span><input value={title} onChange={(event) => onTitleChange(event.target.value)} maxLength={180} /></label>
       <label><span>Analyzed requirement</span><textarea value={content} onChange={(event) => onContentChange(event.target.value)} rows={18} /></label>
@@ -2234,7 +2306,8 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
     </div> : <>
       <div className="hei-requirement-review-layout">
       <div className="hei-requirement-review-main">
-      <details className="hei-requirement-advanced"><summary>Source and analysis details</summary><div className="hei-requirement-review-meta">
+      <HEIUnderstanding analysis={analysis} refinement={refinement} />
+      <details className="hei-requirement-advanced"><summary>Advanced details</summary><div className="hei-requirement-review-meta">
         <Signal label="Source" value={review.source || ingestion.sourceType} />
         <Signal label="Requirement Context" value={analysis.contextVersion} />
         <Signal label="Document Type" value={review.documentType || 'Not Applicable'} />
@@ -2243,8 +2316,7 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
         <Signal label="Analysis Mode" value={requirementReasoningModeLabel(analysis)} />
       </div></details>
       {refinement ? refinement.status === 'Accepted' ? <details className="hei-requirement-accepted-refinement"><summary><span>AI refinement accepted</span><strong>{refinement.executiveSummary || refinement.requirementSummary}</strong></summary><RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /></details> : <RequirementRefinementCard value={refinement} busy={busy} onAction={onRefinementAction} /> : null}
-      <RequirementHealth analysis={analysis} ingestion={ingestion} />
-      <section className="hei-repository-recommendation" aria-label="Suggested Repository">
+      <details className="hei-requirement-advanced"><summary>Project knowledge used</summary><section className="hei-repository-recommendation" aria-label="Suggested Repository">
         <header>
           <div><span>Repository Recommendation</span><h3>{recommendedRepository?.name || 'No repository detected'}</h3><p>{suggestion?.reason || 'Register a repository to enable engineering workspace detection.'}</p></div>
           <Status value={recommendedRepository ? `${Math.round((suggestion?.confidence || 0) * 100)}% confidence` : 'Not Available'} />
@@ -2274,8 +2346,8 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
           </div>
           {(suggestion?.alternativeRepositories || []).length ? <small>Alternatives: {(suggestion?.alternativeRepositories || []).map((repository) => `${repository.name || 'Unnamed repository'} (${Math.round((repository.confidence || 0) * 100)}%)`).join(', ')}</small> : null}
         </> : null}
-      </section>
-      <details className="hei-requirement-advanced"><summary>Engineering analysis details</summary><RequirementAnalysisViewBoundary key={analysis.analysisDocument?.documentId || analysis.analysisId} analysis={analysis}>
+      </section></details>
+      <details className="hei-requirement-advanced"><summary>View Detailed Analysis</summary><RequirementAnalysisViewBoundary key={analysis.analysisDocument?.documentId || analysis.analysisId} analysis={analysis}>
         <RequirementAnalysisDocumentView analysis={analysis} />
       </RequirementAnalysisViewBoundary></details>
       <AcceptanceCriteriaCard analysis={analysis} busy={busy} onEditRequirement={onEdit} onGenerate={onSuggestAcceptanceCriteria} onApprove={onApproveAcceptanceCriteria} onDiscard={onDiscardAcceptanceCriteria} onSkip={onSkipAcceptanceCriteria} onUpdate={onUpdateAcceptanceCriteria} />
@@ -2284,11 +2356,11 @@ function RequirementReviewScreen({ analysis, refinement, ingestion, editing, tit
       <HEIInsights analysis={analysis} memoryStatus={review.engineeringMemory.status} busy={busy} blocked={blocked || acceptancePending} onEdit={onEdit} onGenerateAcceptanceCriteria={onSuggestAcceptanceCriteria} onContinue={onContinue} />
       </div>
       <div className="hei-requirement-sticky-actions">
-        <div className="hei-requirement-sticky-status"><Signal label="Requirement Status" value={readinessLabel(analysis.planningReadiness.status)} /><Signal label="Confidence" value={`${Math.round(analysis.confidence * 100)}%`} /><Signal label="Repository" value={recommendedRepository?.name || 'Not selected'} /></div>
+        <div className="hei-requirement-sticky-status"><Signal label="Requirement" value={readinessLabel(analysis.planningReadiness.status)} /><Signal label="Project Knowledge" value={recommendedRepository?.name ? 'Ready' : 'Needs review'} /><Signal label="Acceptance Criteria" value={acceptancePending ? 'Review needed' : analysis.acceptanceCriteria.length ? 'Ready' : 'Not provided'} /></div>
         <div className="hei-requirement-actions">
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Requirement</button>
           <button className="planner-button secondary" type="button" disabled={busy} onClick={onReanalyze}>Re-analyze</button>
-          <button className="planner-button primary" type="button" disabled={busy || blocked || acceptancePending} onClick={onContinue}>{busy ? 'Preparing Plan...' : needsReview ? 'Accept & Continue to Plan' : 'Continue to Plan'}</button>
+          <button className="planner-button primary" type="button" disabled={busy || blocked || acceptancePending} onClick={onContinue}>{busy ? 'Preparing...' : 'Create Implementation Plan'}</button>
         </div>
       </div>
       {blocked ? <p className="hei-requirement-review-blocker">Resolve blocking findings with Edit before continuing to Planning.</p> : acceptancePending ? <p className="hei-requirement-review-guidance">Approve, edit, or discard the generated Acceptance Criteria before Planning approval.</p> : needsReview ? <p className="hei-requirement-review-guidance">Recommendations are visible and Planning may continue with the reviewed interpretation.</p> : null}
@@ -2461,7 +2533,13 @@ function RequirementList({ icon, title, items, origin, empty, action, onAction }
 }
 
 function OriginBadge({ value }: { value: ArtifactOrigin }) {
-  return <span className={`hei-origin-badge ${value.toLowerCase().replace(/\s+/g, '-')}`}>{value}</span>;
+  const labels: Record<ArtifactOrigin, string> = {
+    'Source': 'Provided by you', 'Source Derived': 'Provided by you', 'Imported': 'Provided by you',
+    'Project Intelligence Generated': 'Verified from project', 'AI Enhanced': 'HEI interpretation',
+    'AI Inferred': 'HEI interpretation', 'AI Suggested': 'HEI suggestion',
+    'Deterministic Fallback': 'HEI suggestion', 'User Edited': 'Edited by you', 'User Added': 'Added by you',
+  };
+  return <span className={`hei-origin-badge ${value.toLowerCase().replace(/\s+/g, '-')}`}>{labels[value]}</span>;
 }
 
 function readinessLabel(value: RequirementAnalysisResult['planningReadiness']['status']) {
@@ -2763,7 +2841,7 @@ function HEIInsights({ analysis, memoryStatus, busy, blocked, onEdit, onGenerate
   ];
   return <aside className="hei-insights" aria-label="HEI Insights"><details open><summary><span aria-hidden="true">💡</span><strong>HEI Insights</strong><small>{insights.length}</small></summary><div>
     <ul>{insights.map((insight) => <li key={insight}>{insight}</li>)}</ul>
-    <section><span>Recommended Next Action</span><strong>{analysis.acceptanceCriteria.length ? 'Continue to Planning Context' : analysis.acceptanceCriteriaSuggestions.length ? 'Review suggested Acceptance Criteria' : 'Generate Acceptance Criteria suggestions'}</strong></section>
+    <section><span>Recommended Next Action</span><strong>{analysis.acceptanceCriteria.length ? 'Create Implementation Plan' : analysis.acceptanceCriteriaSuggestions.length ? 'Review suggested Acceptance Criteria' : 'Generate Acceptance Criteria suggestions'}</strong></section>
     <div className="hei-insights-actions">
       {!analysis.acceptanceCriteria.length && !analysis.acceptanceCriteriaSuggestions.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onGenerateAcceptanceCriteria}>Generate Acceptance Criteria</button> : null}
       {!analysis.acceptanceCriteria.length ? <button className="planner-button secondary" type="button" disabled={busy} onClick={onEdit}>Edit Requirement</button> : null}

@@ -259,10 +259,10 @@ function navigationFor(role: string): WorkspaceNavigationItem[] {
   const canContribute = role === 'admin' || role === 'contributor';
   const canAdmin = role === 'admin';
   return [
-    item('overview', 'Overview', 'home'),
-    ...(canContribute ? [item('new-requirement', 'New Requirement', 'new')] : []),
-    item('planning', 'Planning', 'plan'),
-    item('repository', 'Repository', 'repo'),
+    item('overview', 'Home', 'home'),
+    ...(canContribute ? [item('new-requirement', 'Requirements', 'new')] : []),
+    item('planning', 'Plans', 'plan'),
+    item('repository', 'Project Knowledge', 'repo'),
     item('execution', 'Execution', 'exec'),
     ...(canContribute ? [item('approvals', 'Approvals', 'approve')] : []),
     item('azure-devops', 'Azure DevOps', 'ado'),

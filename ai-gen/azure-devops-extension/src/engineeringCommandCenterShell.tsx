@@ -59,9 +59,10 @@ const EMPTY_SEARCH = async (): Promise<CommandPaletteResult[]> => [];
 const NOOP_COMMAND = () => undefined;
 
 const FALLBACK_NAVIGATION: WorkspaceNavigationItem[] = [
-  { id: 'overview', label: 'Overview', target: 'overview', icon: 'O', enabled: true },
-  { id: 'planning', label: 'Planning', target: 'planning', icon: 'P', enabled: true, lazy: true },
-  { id: 'repository', label: 'Repository', target: 'admin', icon: 'R', enabled: true, lazy: true },
+  { id: 'overview', label: 'Home', target: 'overview', icon: 'H', enabled: true },
+  { id: 'new-requirement', label: 'Requirements', target: 'new-requirement', icon: 'R', enabled: true, lazy: true },
+  { id: 'planning', label: 'Plans', target: 'planning', icon: 'P', enabled: true, lazy: true },
+  { id: 'repository', label: 'Project Knowledge', target: 'admin', icon: 'K', enabled: true, lazy: true },
   { id: 'execution', label: 'Execution', target: 'execution', icon: 'E', enabled: true, lazy: true },
   { id: 'approvals', label: 'Approvals', target: 'governance', icon: 'A', enabled: true, lazy: true },
   { id: 'azure-devops', label: 'Azure DevOps', target: 'admin', icon: 'D', enabled: true, lazy: true },
@@ -111,6 +112,8 @@ export function EngineeringCommandCenterShell({
   const searchRef = useRef<HTMLInputElement>(null);
   const activeItem = navigation.find((item) => item.id === activeNavigationId) || navigation[0];
   const availableItems = useMemo(() => navigation.filter((item) => item.enabled), [navigation]);
+  const primaryNavigation = navigation.filter((item) => ['overview', 'new-requirement', 'planning', 'repository'].includes(item.id));
+  const advancedNavigation = navigation.filter((item) => !['overview', 'new-requirement', 'planning', 'repository'].includes(item.id));
   const commands = useMemo(() => buildCommands(navigation, activeNavigationId), [navigation, activeNavigationId]);
   const paletteResults = useMemo(() => {
     const query = paletteQuery.trim();
@@ -256,7 +259,7 @@ export function EngineeringCommandCenterShell({
           {preferences.sidebarCollapsed ? 'Expand' : 'Collapse'}
         </button>
         <nav>
-          {navigation.map((item) => (
+          {primaryNavigation.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -271,6 +274,14 @@ export function EngineeringCommandCenterShell({
               {item.future ? <small>Future</small> : null}
             </button>
           ))}
+          {advancedNavigation.length ? <details className="hei-advanced-navigation" open={advancedNavigation.some((item) => item.id === activeNavigationId)}>
+            <summary><span className="hei-nav-icon" aria-hidden="true">+</span><span className="hei-nav-label">Advanced</span></summary>
+            <div>{advancedNavigation.map((item) => (
+              <button key={item.id} type="button" className={activeNavigationId === item.id ? 'active' : ''} onClick={() => select(item)} disabled={!item.enabled} aria-current={activeNavigationId === item.id ? 'page' : undefined} title={preferences.sidebarCollapsed ? item.label : undefined}>
+                <span className="hei-nav-icon" aria-hidden="true">{item.icon.slice(0, 1).toUpperCase()}</span><span className="hei-nav-label">{item.label}</span>{item.future ? <small>Future</small> : null}
+              </button>
+            ))}</div>
+          </details> : null}
         </nav>
       </aside> : null}
 

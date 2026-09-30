@@ -42,7 +42,8 @@ class EngineeringCommandCenterTests(unittest.TestCase):
     def test_navigation_is_role_aware(self):
         viewer = {item["id"] for item in self.service.get_navigation("viewer")["items"]}
         contributor = {item["id"] for item in self.service.get_navigation("contributor")["items"]}
-        self.assertFalse({"repository", "settings", "administration"} & viewer)
+        self.assertFalse({"planning", "execution", "approvals", "agents", "settings", "administration"} & viewer)
+        self.assertIn("repository", viewer)
         self.assertIn("azure-devops", viewer)
         self.assertNotIn("agents", viewer)
         self.assertIn("approvals", contributor)

@@ -43,6 +43,7 @@ class ADOPermissionPrecedenceTests(unittest.TestCase):
     def test_project_groups_are_scoped_to_the_current_project(self):
         self.assertIn("scopedToCurrentProject", self.permissions)
         self.assertIn("candidate.scope === normalize(projectName)", self.permissions)
+        self.assertIn("projectName && isUnscoped && !isHeiGroup && !isCollectionAdmin", self.permissions)
         self.assertIn("ignored_groups", self.permissions)
 
     def test_lookup_failure_is_read_only_not_admin(self):
@@ -55,6 +56,8 @@ class ADOPermissionPrecedenceTests(unittest.TestCase):
         self.assertIn("function canAccessPlannerTab", self.project_tab)
         self.assertIn("function canAccessRoute", self.hub)
         self.assertIn("if (route === 'settings') return role === 'admin'", self.hub)
+        self.assertIn("route === 'planning' || route === 'execution'", self.hub)
+        self.assertIn("function filterNavigationForRole", (EXTENSION / "engineeringCommandCenterShell.tsx").read_text())
         self.assertIn("tab === 'governance' || tab === 'agents' || tab === 'skills'", self.project_tab)
 
     def test_permission_diagnostics_explain_the_mapping(self):

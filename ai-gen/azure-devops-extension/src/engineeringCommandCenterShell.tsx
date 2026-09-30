@@ -100,7 +100,10 @@ export function EngineeringCommandCenterShell({
 }: Props) {
   const storedPreferences = workspace?.preferences || FALLBACK_PREFERENCES;
   const preferences = forcedTheme ? { ...storedPreferences, theme: forcedTheme } : storedPreferences;
-  const navigation = workspace?.navigation?.length ? workspace.navigation : fallbackNavigation(roleLabel);
+  const navigation = filterNavigationForRole(
+    workspace?.navigation?.length ? workspace.navigation : fallbackNavigation(roleLabel),
+    roleLabel,
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [remoteResults, setRemoteResults] = useState<CommandPaletteResult[]>([]);
@@ -338,12 +341,17 @@ function initials(value: string): string {
 }
 
 function fallbackNavigation(roleLabel: string): WorkspaceNavigationItem[] {
+  return filterNavigationForRole(FALLBACK_NAVIGATION, roleLabel);
+}
+
+function filterNavigationForRole(items: WorkspaceNavigationItem[], roleLabel: string): WorkspaceNavigationItem[] {
   const normalized = roleLabel.toLowerCase();
   const isAdmin = normalized.includes('admin');
   const isContributor = isAdmin || normalized.includes('contributor');
-  return FALLBACK_NAVIGATION.filter((item) => {
-    if (['repository', 'settings', 'administration'].includes(item.id)) return isAdmin;
-    if (['approvals', 'agents'].includes(item.id)) return isContributor;
+  return items.filter((item) => {
+    if (['settings', 'administration'].includes(item.id)) return isAdmin;
+    if (['new-requirement', 'planning', 'execution', 'approvals', 'agents'].includes(item.id)) return isContributor;
+    if (!isContributor && !['overview', 'repository', 'azure-devops', 'activity'].includes(item.id)) return false;
     return true;
   });
 }
@@ -356,8 +364,8 @@ function buildCommands(navigation: WorkspaceNavigationItem[], activeId: string, 
   const quick: PaletteEntry[] = [
     ...(canContribute ? [{ id: 'command:new-requirement', category: 'Commands', title: 'New Requirement', subtitle: 'Start an engineering requirement', route: 'new-requirement', commandId: 'open:new-requirement' }] : []),
     ...(canAdmin ? [{ id: 'command:sync-repository', category: 'Commands', title: 'Sync Repository', subtitle: 'Run repository synchronization', route: 'repository', commandId: 'sync-repository' }] : []),
-    { id: 'command:open-planning', category: 'Commands', title: 'Open Planning', subtitle: 'Requirements, recommendations, and approvals', route: 'planning', commandId: 'open:planning' },
-    { id: 'command:open-execution', category: 'Commands', title: 'Open Execution', subtitle: 'Implementation packages and runtime', route: 'execution', commandId: 'open:execution' },
+    ...(canContribute ? [{ id: 'command:open-planning', category: 'Commands', title: 'Open Planning', subtitle: 'Requirements, recommendations, and approvals', route: 'planning', commandId: 'open:planning' }] : []),
+    ...(canContribute ? [{ id: 'command:open-execution', category: 'Commands', title: 'Open Execution', subtitle: 'Implementation packages and runtime', route: 'execution', commandId: 'open:execution' }] : []),
     { id: 'command:open-activity', category: 'Commands', title: 'Open Activity', subtitle: 'Engineering activity and correlation traces', route: 'activity', commandId: 'open:activity' },
     { id: 'command:refresh-dashboard', category: 'Commands', title: 'Refresh Dashboard', subtitle: 'Reload operational engineering state', route: 'overview', commandId: 'refresh-dashboard' },
     ...(canContribute ? [{ id: 'command:generate-planning-pack', category: 'Commands', title: 'Generate Planning Pack', subtitle: 'Open requirement intake', route: 'new-requirement', commandId: 'open:new-requirement' }] : []),

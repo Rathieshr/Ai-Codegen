@@ -10,9 +10,9 @@ from .models import normalize_role
 
 NAVIGATION: tuple[dict[str, Any], ...] = (
     {"id": "overview", "label": "Overview", "target": "overview", "icon": "home", "roles": ["admin", "contributor", "viewer"]},
-    {"id": "planning", "label": "Planning", "target": "planning", "icon": "plan", "roles": ["admin", "contributor", "viewer"]},
-    {"id": "repository", "label": "Repository", "target": "admin", "icon": "repository", "roles": ["admin"]},
-    {"id": "execution", "label": "Execution", "target": "execution", "icon": "execute", "roles": ["admin", "contributor", "viewer"]},
+    {"id": "planning", "label": "Planning", "target": "planning", "icon": "plan", "roles": ["admin", "contributor"]},
+    {"id": "repository", "label": "Repository", "target": "admin", "icon": "repository", "roles": ["admin", "contributor", "viewer"]},
+    {"id": "execution", "label": "Execution", "target": "execution", "icon": "execute", "roles": ["admin", "contributor"]},
     {"id": "approvals", "label": "Approvals", "target": "governance", "icon": "approval", "roles": ["admin", "contributor"]},
     {"id": "azure-devops", "label": "Azure DevOps", "target": "admin", "icon": "azure", "roles": ["admin", "contributor", "viewer"]},
     {"id": "agents", "label": "Agents", "target": "agents", "icon": "agents", "roles": ["admin", "contributor"]},

@@ -274,9 +274,9 @@ function navigationFor(role: string): WorkspaceNavigationItem[] {
   return [
     item('overview', 'Home', 'home'),
     ...(canContribute ? [item('new-requirement', 'Requirements', 'new')] : []),
-    item('planning', 'Plans', 'plan'),
+    ...(canContribute ? [item('planning', 'Plans', 'plan')] : []),
     item('repository', 'Project Knowledge', 'repo'),
-    item('execution', 'Execution', 'exec'),
+    ...(canContribute ? [item('execution', 'Execution', 'exec')] : []),
     ...(canContribute ? [item('approvals', 'Approvals', 'approve')] : []),
     item('azure-devops', 'Azure DevOps', 'ado'),
     ...(canContribute ? [item('agents', 'Agents', 'agent')] : []),
@@ -288,7 +288,9 @@ function navigationFor(role: string): WorkspaceNavigationItem[] {
 function item(id: HEIRoute, label: string, icon: string): WorkspaceNavigationItem { return { id, label, icon, target: id, enabled: true, lazy: id !== 'overview' }; }
 function canAccessRoute(route: HEIRoute, role: string): boolean {
   if (route === 'settings') return role === 'admin';
-  if (route === 'new-requirement' || route === 'approvals' || route === 'agents') return role === 'admin' || role === 'contributor';
+  if (route === 'new-requirement' || route === 'planning' || route === 'execution' || route === 'approvals' || route === 'agents') {
+    return role === 'admin' || role === 'contributor';
+  }
   return true;
 }
 function normalizeRoute(value: string): HEIRoute { return ROUTES.includes(value as HEIRoute) ? value as HEIRoute : 'overview'; }

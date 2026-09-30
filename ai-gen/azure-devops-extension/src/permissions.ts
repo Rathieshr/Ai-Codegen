@@ -134,6 +134,7 @@ function roleForGroup(candidate: GroupCandidate, projectName: string): HEIRole |
   const isCollectionAdmin = COLLECTION_ADMIN_GROUPS.has(candidate.name);
   const scopedToCurrentProject = Boolean(projectName) && candidate.scope === normalize(projectName);
   const isUnscoped = !candidate.scope;
+  if (projectName && isUnscoped && !isHeiGroup && !isCollectionAdmin) return undefined;
   if (!isHeiGroup && !isCollectionAdmin && !isUnscoped && !scopedToCurrentProject) return undefined;
   if (ADMIN_GROUPS.has(candidate.name)) return 'admin';
   if (CONTRIBUTOR_GROUPS.has(candidate.name)) return 'contributor';

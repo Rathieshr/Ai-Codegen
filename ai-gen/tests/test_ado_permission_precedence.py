@@ -57,6 +57,12 @@ class ADOPermissionPrecedenceTests(unittest.TestCase):
         self.assertNotIn("organization_owner_fallback", self.permissions)
         self.assertNotIn("normalizeHostRole(route.role, 'admin')", self.host)
 
+    def test_permission_lookup_cannot_block_hub_startup(self):
+        self.assertIn("resolveAzureDevOpsPermission", self.host)
+        self.assertIn("4000", self.host)
+        self.assertIn("Azure DevOps permission lookup timed out", self.host)
+        self.assertIn("defaultPermissionState", self.host)
+
     def test_restricted_routes_are_hidden_and_guarded(self):
         self.assertIn("function canAccessPlannerTab", self.project_tab)
         self.assertIn("function canAccessRoute", self.hub)

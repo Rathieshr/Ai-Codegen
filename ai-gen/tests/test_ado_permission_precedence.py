@@ -27,6 +27,11 @@ class ADOPermissionPrecedenceTests(unittest.TestCase):
         self.assertIn("admin_takes_precedence", self.permissions)
         self.assertIn("contributor_takes_precedence_over_viewer", self.permissions)
 
+    def test_explicit_hei_group_overrides_builtin_membership(self):
+        self.assertIn("const explicitHeiMatches", self.permissions)
+        self.assertIn("explicitHeiMatches.size ? explicitHeiMatches : matched", self.permissions)
+        self.assertIn("explicit_hei_${selectedRole}_override", self.permissions)
+
     def test_builtin_and_hei_groups_are_mapped(self):
         for group in (
             "hei administrators",

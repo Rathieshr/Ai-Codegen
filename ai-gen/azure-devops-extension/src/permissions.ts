@@ -92,6 +92,7 @@ export function mapAzureDevOpsGroupsToRole(
   projectName: string,
 ): { role: HEIRole; group: string; diagnostics: PermissionState['diagnostics'] } {
   const matched = new Map<HEIRole, string[]>();
+  const explicitHeiMatches = new Map<HEIRole, string[]>();
   const ignored: string[] = [];
 
   unique(groupNames).forEach((original) => {
@@ -102,19 +103,25 @@ export function mapAzureDevOpsGroupsToRole(
       return;
     }
     matched.set(role, [...(matched.get(role) || []), original]);
+    if (candidate.name.startsWith('hei ')) {
+      explicitHeiMatches.set(role, [...(explicitHeiMatches.get(role) || []), original]);
+    }
   });
 
-  const selectedRole = ROLE_PRECEDENCE.find((role) => matched.has(role)) || 'viewer';
-  const selectedGroups = matched.get(selectedRole) || [];
+  const selectionPool = explicitHeiMatches.size ? explicitHeiMatches : matched;
+  const selectedRole = ROLE_PRECEDENCE.find((role) => selectionPool.has(role)) || 'viewer';
+  const selectedGroups = selectionPool.get(selectedRole) || [];
   const selectedGroup = selectedGroups[0] || 'Readers';
   const matchedRoles = ROLE_PRECEDENCE.filter((role) => matched.has(role));
-  const precedenceRule = selectedRole === 'admin'
-    ? 'admin_takes_precedence'
-    : selectedRole === 'contributor'
-      ? 'contributor_takes_precedence_over_viewer'
-      : matched.has('viewer')
-        ? 'viewer_group_matched'
-        : 'fail_closed_viewer';
+  const precedenceRule = explicitHeiMatches.size
+    ? `explicit_hei_${selectedRole}_override`
+    : selectedRole === 'admin'
+      ? 'admin_takes_precedence'
+      : selectedRole === 'contributor'
+        ? 'contributor_takes_precedence_over_viewer'
+        : matched.has('viewer')
+          ? 'viewer_group_matched'
+          : 'fail_closed_viewer';
 
   return {
     role: selectedRole,

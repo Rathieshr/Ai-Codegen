@@ -17,6 +17,7 @@ export type HEIHostContext = {
 export interface HEIHostAdapter {
   readonly kind: HEIHostContext['hostType'];
   initialize(): Promise<HEIHostContext>;
+  resolveUserRole?(projectName: string): Promise<string>;
   getAccessToken(): Promise<string | undefined>;
   onThemeChanged(callback: (theme: HEITheme) => void): () => void;
   navigate(route: Record<string, string>): void;

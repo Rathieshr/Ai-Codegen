@@ -13,6 +13,7 @@ type WebContext = {
 export class AzureDevOpsHostAdapter implements HEIHostAdapter {
   readonly kind = 'azure-devops' as const;
   private initialization?: Promise<void>;
+  private permissionResolution?: ReturnType<typeof resolveAzureDevOpsPermission>;
 
   async initialize(): Promise<HEIHostContext> {
     const started = performance.now();
@@ -36,7 +37,7 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
     const route = routeParameters();
     const organization = web.account || web.collection || {};
     const permission = await withTimeout(
-      resolveAzureDevOpsPermission(String(web.project?.name || '')),
+      this.permissionFor(String(web.project?.name || '')),
       4000,
       'Azure DevOps permission lookup timed out.',
     ).catch(() => defaultPermissionState({
@@ -67,6 +68,10 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
     return context;
   }
 
+  async resolveUserRole(projectName: string): Promise<string> {
+    return (await this.permissionFor(projectName)).role;
+  }
+
   async getAccessToken(): Promise<string | undefined> {
     try { return await SDK.getAccessToken(); } catch { return undefined; }
   }
@@ -83,6 +88,13 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
     Object.entries(route).forEach(([key, value]) => value ? url.searchParams.set(key, value) : url.searchParams.delete(key));
     window.history.pushState(route, '', url.toString());
     window.dispatchEvent(new PopStateEvent('popstate', { state: route }));
+  }
+
+  private permissionFor(projectName: string) {
+    if (!this.permissionResolution) {
+      this.permissionResolution = resolveAzureDevOpsPermission(projectName);
+    }
+    return this.permissionResolution;
   }
 }
 

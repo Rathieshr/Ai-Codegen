@@ -108,12 +108,13 @@ export function mapAzureDevOpsGroupsToRole(
     }
   });
 
-  const selectionPool = explicitHeiMatches.size ? explicitHeiMatches : matched;
+  const explicitOverrideApplied = !matched.has('admin') && explicitHeiMatches.size > 0;
+  const selectionPool = explicitOverrideApplied ? explicitHeiMatches : matched;
   const selectedRole = ROLE_PRECEDENCE.find((role) => selectionPool.has(role)) || 'viewer';
   const selectedGroups = selectionPool.get(selectedRole) || [];
   const selectedGroup = selectedGroups[0] || 'Readers';
   const matchedRoles = ROLE_PRECEDENCE.filter((role) => matched.has(role));
-  const precedenceRule = explicitHeiMatches.size
+  const precedenceRule = explicitOverrideApplied
     ? `explicit_hei_${selectedRole}_override`
     : selectedRole === 'admin'
       ? 'admin_takes_precedence'

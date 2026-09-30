@@ -41,6 +41,7 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
     setError('');
     hostAdapter.initialize().then((hostContext) => {
       if (!active) return;
+      let effectiveRole = hostContext.user.role;
       setContext(hostContext);
       setRoute(normalizeRoute(hostContext.route.view));
       document.documentElement.dataset.heiTheme = hostContext.theme;
@@ -53,9 +54,27 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
         setContext((current) => current ? { ...current, repository: { id: loaded.repository_id, name: loaded.repository_name, branch: loaded.branch } } : current);
       }).catch((reason) => void recordDiagnostic(hostContext, 'RepositoryMappingFallback', { reason: message(reason) }));
       void recordDiagnostic(hostContext, 'HubLoaded', { startupMs: Math.round(performance.now() - started), theme: hostContext.theme, hostType: hostContext.hostType });
+      if (hostAdapter.resolveUserRole) {
+        void hostAdapter.resolveUserRole(hostContext.project.name).then((resolvedRole) => {
+          if (!active || resolvedRole === effectiveRole) return;
+          effectiveRole = resolvedRole;
+          setContext((current) => current ? { ...current, user: { ...current.user, role: resolvedRole } } : current);
+          setWorkspace((current) => current ? {
+            ...current,
+            currentUser: { ...current.currentUser, role: resolvedRole },
+            navigation: navigationFor(resolvedRole),
+          } : current);
+          void recordDiagnostic(hostContext, 'PermissionRoleResolved', { role: resolvedRole });
+        }).catch((reason) => void recordDiagnostic(hostContext, 'PermissionRoleFallback', { reason: message(reason) }));
+      }
       void requestWorkspace(hostContext).then((loaded) => {
         if (!active) return;
-        setWorkspace({ ...loaded, preferences: { ...loaded.preferences, theme: hostContext.theme }, navigation: navigationFor(hostContext.user.role) });
+        setWorkspace({
+          ...loaded,
+          currentUser: { ...loaded.currentUser, role: effectiveRole },
+          preferences: { ...loaded.preferences, theme: hostContext.theme },
+          navigation: navigationFor(effectiveRole),
+        });
         void recordDiagnostic(hostContext, 'WorkspaceLoaded', { workspaceId: loaded.workspaceId, projectId: hostContext.project.id, userId: hostContext.user.id });
       }).catch((reason) => {
         void recordDiagnostic(hostContext, 'WorkspaceFallback', { reason: message(reason) });

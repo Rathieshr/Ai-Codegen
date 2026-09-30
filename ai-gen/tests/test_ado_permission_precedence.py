@@ -29,7 +29,7 @@ class ADOPermissionPrecedenceTests(unittest.TestCase):
 
     def test_explicit_hei_group_overrides_builtin_membership(self):
         self.assertIn("const explicitHeiMatches", self.permissions)
-        self.assertIn("explicitHeiMatches.size ? explicitHeiMatches : matched", self.permissions)
+        self.assertIn("!matched.has('admin') && explicitHeiMatches.size > 0", self.permissions)
         self.assertIn("explicit_hei_${selectedRole}_override", self.permissions)
 
     def test_builtin_and_hei_groups_are_mapped(self):
@@ -62,6 +62,12 @@ class ADOPermissionPrecedenceTests(unittest.TestCase):
         self.assertIn("4000", self.host)
         self.assertIn("Azure DevOps permission lookup timed out", self.host)
         self.assertIn("defaultPermissionState", self.host)
+
+    def test_late_permission_result_updates_the_live_hub_role(self):
+        contract = (EXTENSION / "host" / "HostAdapter.ts").read_text()
+        self.assertIn("resolveUserRole?", contract)
+        self.assertIn("PermissionRoleResolved", self.hub)
+        self.assertIn("navigation: navigationFor(resolvedRole)", self.hub)
 
     def test_restricted_routes_are_hidden_and_guarded(self):
         self.assertIn("function canAccessPlannerTab", self.project_tab)

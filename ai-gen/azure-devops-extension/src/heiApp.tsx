@@ -85,9 +85,21 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
   const actor = context?.user.name || 'HEI User';
   const activeNavigation = useMemo(() => workspace?.navigation.find((item) => item.id === route)?.id || 'overview', [workspace, route]);
 
+  useEffect(() => {
+    if (context && !canAccessRoute(route, context.user.role)) {
+      hostAdapter.navigate({ view: 'overview', workItemId: context.route.workItemId, repositoryId: context.route.repositoryId });
+      setRoute('overview');
+      setError(`${roleLabel(context.user.role)} does not have permission to open ${routeLabel(route)}.`);
+    }
+  }, [context?.user.role, route, hostAdapter]);
+
   function navigate(next: HEIRoute, options?: { resumePlanningProposal?: boolean }) {
     setResumePlanningProposal(next === 'new-requirement' && Boolean(options?.resumePlanningProposal));
     if (!context || next === route) return;
+    if (!canAccessRoute(next, context.user.role)) {
+      setError(`${roleLabel(context.user.role)} does not have permission to open ${routeLabel(next)}.`);
+      return;
+    }
     hostAdapter.navigate({ view: next, workItemId: context.route.workItemId, repositoryId: context.route.repositoryId });
     setRoute(next);
     void recordDiagnostic(context, 'Navigation', { from: route, to: next });
@@ -152,6 +164,7 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
       return;
     }
     if (commandId === 'sync-repository') {
+      if (!canAdmin) throw new Error('HEI Administrator permission is required to synchronize repository knowledge.');
       navigate('repository');
       const repositoryId = repositoryMapping?.intelligenceRepositoryId;
       if (!repositoryId) throw new Error('Configure and register a repository before synchronization.');
@@ -213,7 +226,7 @@ export function HEIApplication({ hostAdapter = adapter }: { hostAdapter?: HEIHos
         {route === 'new-requirement' ? <NewRequirementWorkspace baseUrl={BASE_URL} context={context} resumeLatestProposal={resumePlanningProposal} onOpenApprovals={() => navigate('approvals')} onError={reportError} /> : null}
         {route === 'planning' ? <PlanningCenter baseUrl={BASE_URL} projectId={projectId} actor={actor} currentWorkItemId={context.route.workItemId} canContribute={canContribute} onGenerateExecutionPackage={() => navigate('execution')} onContinueRequirementPlanning={() => navigate('new-requirement', { resumePlanningProposal: true })} onError={reportError} /> : null}
         {route === 'repository' ? <RepositoryCenter baseUrl={BASE_URL} preferredRepositoryId={repositoryMapping?.intelligenceRepositoryId || context.repository.id} actor={actor} canManage={canAdmin} onError={reportError} /> : null}
-        {route === 'execution' ? <ExecutionCenter baseUrl={BASE_URL} onError={reportError} /> : null}
+        {route === 'execution' ? <ExecutionCenter baseUrl={BASE_URL} canContribute={canContribute} onError={reportError} /> : null}
         {route === 'approvals' ? <ApprovalCenter baseUrl={BASE_URL} actor={actor} role={role} canApprove={canContribute} onError={reportError} /> : null}
         {route === 'azure-devops' ? <AzureDevOpsCenter baseUrl={BASE_URL} projectId={projectId} canApprove={canContribute} onOpenApprovals={() => navigate('approvals')} onError={reportError} /> : null}
         {route === 'agents' ? <AgentCenter baseUrl={BASE_URL} canRetry={canContribute} onOpenActivity={() => navigate('activity')} onError={reportError} /> : null}
@@ -273,6 +286,11 @@ function navigationFor(role: string): WorkspaceNavigationItem[] {
 }
 
 function item(id: HEIRoute, label: string, icon: string): WorkspaceNavigationItem { return { id, label, icon, target: id, enabled: true, lazy: id !== 'overview' }; }
+function canAccessRoute(route: HEIRoute, role: string): boolean {
+  if (route === 'settings') return role === 'admin';
+  if (route === 'new-requirement' || route === 'approvals' || route === 'agents') return role === 'admin' || role === 'contributor';
+  return true;
+}
 function normalizeRoute(value: string): HEIRoute { return ROUTES.includes(value as HEIRoute) ? value as HEIRoute : 'overview'; }
 function routeLabel(value: HEIRoute): string { return value.split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join(' '); }
 function roleLabel(value: string): string { return value === 'admin' ? 'HEI Administrator' : value === 'contributor' ? 'HEI Contributor' : 'HEI Viewer'; }

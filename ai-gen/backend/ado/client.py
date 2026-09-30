@@ -225,23 +225,24 @@ class AdoClient:
         }
 
         # Some ADO Server/proxy combinations return a partial result even when Full
-        # recursion is requested. Always verify documentation roots because a root
-        # response containing only docs/README.md otherwise looks complete while
-        # silently omitting the rest of the engineering documentation.
+        # recursion is requested. Verify every discovered tree independently. A
+        # response containing one child under docs/src otherwise looks complete and
+        # silently omits sibling files that Repository Intelligence must index.
         visited: set[str] = {"/"}
-        while len(visited) <= 500:
+        while True:
             trees = sorted(
                 path for path, item in discovered.items()
                 if path not in visited
                 and (bool(item.get("isFolder")) or str(item.get("gitObjectType") or "").casefold() == "tree")
-                and (
-                    path.rstrip("/").rsplit("/", 1)[-1].casefold() in {"doc", "docs", "documentation"}
-                    or not any(other != path and other.startswith(f"{path.rstrip('/')}/") for other in discovered)
-                )
             )
             if not trees:
                 break
             for scope_path in trees:
+                if len(visited) >= 2_000:
+                    raise AdoClientError(
+                        "Azure DevOps repository traversal exceeded 2,000 folders; "
+                        "the synchronization was stopped to avoid persisting a partial snapshot."
+                    )
                 visited.add(scope_path)
                 for item in self._list_repository_scope(project, repo_id, branch, scope_path):
                     path = str(item.get("path") or "")

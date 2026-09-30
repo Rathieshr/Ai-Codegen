@@ -199,6 +199,62 @@ class AdoClientTests(unittest.TestCase):
             [item["path"] for item in items],
         )
 
+    def test_repository_items_verify_every_partially_expanded_tree(self) -> None:
+        client = self._make_client()
+        requested_scopes: list[str] = []
+
+        def fake_get(url: str):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            scope = query.get("scopePath", [""])[0]
+            requested_scopes.append(scope)
+            if scope == "/":
+                return {"value": [
+                    {"path": "/docs", "gitObjectType": "tree", "isFolder": True},
+                    {"path": "/docs/README.md", "gitObjectType": "blob"},
+                    {"path": "/src", "gitObjectType": "tree", "isFolder": True},
+                    {"path": "/src/App.ts", "gitObjectType": "blob"},
+                ]}
+            if scope == "/docs":
+                return {"value": [
+                    {"path": "/docs/README.md", "gitObjectType": "blob"},
+                    {"path": "/docs/architecture", "gitObjectType": "tree", "isFolder": True},
+                    {"path": "/docs/product-vision.md", "gitObjectType": "blob"},
+                ]}
+            if scope == "/docs/architecture":
+                return {"value": [
+                    {"path": "/docs/architecture/platform.md", "gitObjectType": "blob"},
+                ]}
+            if scope == "/src":
+                return {"value": [
+                    {"path": "/src/App.ts", "gitObjectType": "blob"},
+                    {"path": "/src/services", "gitObjectType": "tree", "isFolder": True},
+                ]}
+            return {"value": [
+                {"path": "/src/services/health.ts", "gitObjectType": "blob"},
+            ]}
+
+        with patch.object(client, "_get", side_effect=fake_get):
+            items = client.list_repository_items("TestProject", "repo-1", "main")
+
+        self.assertEqual(
+            ["/", "/docs", "/src", "/docs/architecture", "/src/services"],
+            requested_scopes,
+        )
+        self.assertEqual(
+            [
+                "/docs",
+                "/docs/README.md",
+                "/docs/architecture",
+                "/docs/architecture/platform.md",
+                "/docs/product-vision.md",
+                "/src",
+                "/src/App.ts",
+                "/src/services",
+                "/src/services/health.ts",
+            ],
+            [item["path"] for item in items],
+        )
+
     def test_send_raises_ado_client_error_on_http_error(self) -> None:
         import urllib.error
         client = self._make_client()

@@ -7,6 +7,7 @@ import { PlanningOverview, PlanningOverviewData } from './planningOverview';
 import { PlanningHierarchy } from './planningHierarchy';
 import { DependencyView, PlanningDependencies, PlanningDependenciesData } from './planningDependencies';
 import { PlanningDiff, PlanningDiffData } from './planningDiff';
+import { formatEngineeringEffort } from './engineeringEffort';
 
 export type PlanningCenterItem = {
   id: string;
@@ -733,7 +734,7 @@ function EstimationReport({ estimate, loading, onRecalculate, onEdit }: { estima
   return <section className="hei-estimation-report" aria-label="Engineering Estimation Report">
     <header><div><span>Planning Summary</span><h4>Engineering Estimation Report</h4><p>Standard Engineering Estimation · Version {estimate.version}{estimate.status === 'Overridden' ? ' · Human override applied' : ''}</p></div><StatusBadge value={estimate.status} /></header>
     <div className="hei-estimation-metrics">
-      <Detail label="Engineering Days" value={value.engineeringDays} />
+      <Detail label="Engineering Effort" value={formatEngineeringEffort(value.engineeringDays)} />
       <Detail label="Story Points" value={report.storyPoints} />
       <Detail label="Hours" value={value.engineeringHours} />
       <Detail label="Sprint Count" value={value.estimatedSprintCount} />
@@ -757,7 +758,7 @@ function EstimationReport({ estimate, loading, onRecalculate, onEdit }: { estima
 }
 
 function EstimateSnapshot({ title, value, empty }: { title: string; value?: EstimateValues; empty?: string }) {
-  return <section><span>{title}</span>{value ? <><strong>{value.engineeringDays || 0} days · {value.storyPoints || 0} points</strong><small>{value.engineeringHours || 0} hours · {value.estimatedSprintCount || 0} sprints · {value.developersNeeded || value.suggestedTeamSize || 1} developers</small></> : <strong>{empty || 'Not available'}</strong>}</section>;
+  return <section><span>{title}</span>{value ? <><strong>{formatEngineeringEffort(value.engineeringDays || 0)} · {value.storyPoints || 0} points</strong><small>{value.estimatedSprintCount || 0} sprints · {value.developersNeeded || value.suggestedTeamSize || 1} developers</small></> : <strong>{empty || 'Not available'}</strong>}</section>;
 }
 
 function buildTree(items: PlanningCenterItem[]): PlanningTreeNode[] {

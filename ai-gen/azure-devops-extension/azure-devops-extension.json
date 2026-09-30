@@ -65,6 +65,7 @@
     }
   ],
   "scopes": [
-    "vso.work_write"
+    "vso.work_write",
+    "vso.graph"
   ]
 }

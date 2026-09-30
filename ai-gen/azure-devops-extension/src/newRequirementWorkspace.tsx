@@ -1,5 +1,6 @@
 import React, { ChangeEvent, FormEvent, useEffect, useState } from 'react';
 import { HEIHostContext } from './host';
+import { formatEngineeringEffort } from './engineeringEffort';
 
 type SourceType = 'PasteRequirement' | 'UploadDocument' | 'AzureDevOpsWorkItem' | 'MeetingTranscript';
 
@@ -1587,7 +1588,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
     <div className="hei-planning-proposal-metrics">
       <Signal label="Health" value={`${value.health.overallHealth}%`} />
       <Signal label="Visible Scope" value={`${nodeCounts.Feature || 0} Features · ${nodeCounts.Story || 0} Stories · ${nodeCounts.Task || 0} Tasks`} />
-      <Signal label="Estimate" value={`${value.estimate.engineeringDays} days · ${value.estimate.storyPoints} points`} />
+      <Signal label="Estimate" value={`${formatEngineeringEffort(value.estimate.engineeringDays)} · ${value.estimate.storyPoints} points`} />
       <Signal label="Risk" value={value.health.risk} />
     </div>
     <nav className="hei-planning-proposal-tabs" aria-label="Implementation Plan sections">
@@ -1607,7 +1608,7 @@ function PlanningProposalWorkspace({ value, busy, onUpdate, onRegenerate, onVali
       <ProposalSummaryCard title="Business Goal" items={[value.businessGoal || 'Business goal requires review.']} />
       <ProposalSummaryCard title="Recommended Strategy" items={[value.recommendedStrategy.title || value.recommendedStrategy.type.replace(/_/g, ' '), value.recommendedStrategy.reason || value.recommendedStrategy.summary, `${value.recommendedStrategy.confidence}% confidence`]} />
       <ProposalSummaryCard title="Planning Scope" items={[`${nodeCounts.Epic || 0} Epic`, `${nodeCounts.Feature || 0} Features`, `${nodeCounts.Story || 0} Stories`, `${nodeCounts.Task || 0} Tasks`]} />
-      <ProposalSummaryCard title="Engineering Estimate" items={[`${value.estimate.engineeringDays} engineering days`, `${value.estimate.storyPoints} story points`, `${value.estimate.sprintCount} sprints`, `${value.estimate.developersRequired} developers`]} />
+      <ProposalSummaryCard title="Engineering Estimate" items={[formatEngineeringEffort(value.estimate.engineeringDays), `${value.estimate.storyPoints} story points`, `${value.estimate.sprintCount} sprints`, `${value.estimate.developersRequired} developers`]} />
       <ProposalSummaryCard title="Planning Quality" items={[`${value.health.overallHealth}% overall health`, `${value.health.planningConfidence}% planning confidence`, `${value.health.engineeringConfidence}% engineering confidence`, `${value.validation.findings.length} validation findings`]} />
       <ProposalSummaryCard title="Definition of Done" items={value.definitionOfDone.length ? value.definitionOfDone : ['Definition of Done pending.']} />
       <ProposalSummaryCard title="Source Lineage" items={[`Requirement ${value.requirementId}`, `Recommendation ${value.recommendationId}`, `Context ${value.contextId}`, `Knowledge ${value.knowledgeVersion || 'Not versioned'}`, `Correlation ${value.correlationId}`]} />
@@ -1669,7 +1670,7 @@ function ProposalNodeEditor({ node, nodes, editable, busy, onUpdate, onRegenerat
     <label><span>Description</span><textarea rows={5} value={description} disabled={!editable} onChange={(event) => setDescription(event.target.value)} /></label>
     <label><span>Business Value</span><textarea rows={3} value={businessValue} disabled={!editable} onChange={(event) => setBusinessValue(event.target.value)} /></label>
     <label><span>{criteriaLabel}</span><textarea rows={6} value={acceptance} disabled={!editable} onChange={(event) => setAcceptance(event.target.value)} /></label>
-    <div className="hei-proposal-node-meta">{node.type === 'Story' ? <Signal label="Story Points" value={String(node.storyPoints)} /> : node.type === 'Task' ? <Signal label="Engineering Effort" value={`${node.estimate?.engineeringDays || 0} days`} /> : <Signal label="Estimate" value="Calculated from children" />}<Signal label="Risk" value={node.risk} /><Signal label="Priority" value={node.priority} /><Signal label="Repository" value={node.repositoryMapping.repositoryName || 'Mapping pending'} />{node.storyType ? <Signal label="Story Type" value={node.storyType} /> : null}</div>
+    <div className="hei-proposal-node-meta">{node.type === 'Story' ? <Signal label="Story Points" value={String(node.storyPoints)} /> : node.type === 'Task' ? <Signal label="Engineering Effort" value={formatEngineeringEffort(node.estimate?.engineeringDays || 0)} /> : <Signal label="Estimate" value="Calculated from children" />}<Signal label="Risk" value={node.risk} /><Signal label="Priority" value={node.priority} /><Signal label="Repository" value={node.repositoryMapping.repositoryName || 'Mapping pending'} />{node.storyType ? <Signal label="Story Type" value={node.storyType} /> : null}</div>
     <details><summary>Engineering context</summary><p>{node.repositoryMapping.reason || 'Repository mapping requires review.'}</p><ContextTags title="Repository Modules" values={node.repositoryModules} empty="Repository mapping pending." /><ContextTags title="Services, APIs and Screens" values={[...node.affectedServices, ...node.affectedApis, ...node.affectedScreens]} empty="No service, API, or screen impact identified." /><ContextTags title="Database and Integrations" values={[...node.affectedDatabaseObjects, ...node.externalIntegrations]} empty="No database or external integration impact identified." /><ContextTags title="Technical Notes" values={node.technicalNotes} empty="No technical notes." /><ContextTags title="Generated Tests" values={node.generatedTests} empty="No generated tests." /><ContextTags title="Definition of Done" values={node.definitionOfDone} empty="Definition of Done pending." /></details>
     <div className="hei-proposal-node-actions">
       <button className="planner-button primary" type="button" disabled={!editable || busy || !title.trim()} onClick={() => onUpdate({ nodeId: node.nodeId, changes: { title: title.trim(), description: description.trim(), businessValue: businessValue.trim(), acceptanceCriteria: acceptance.split('\n').map((item) => item.trim()).filter(Boolean) }, reason: `Edited ${node.type} ${node.title}` })}>Save Changes</button>
@@ -1695,7 +1696,7 @@ function ProposalEstimateEditor({ value, editable, busy, onUpdate, onRegenerate 
   const [points, setPoints] = useState(String(value.estimate.storyPoints));
   const [reason, setReason] = useState(value.estimate.overrideReason);
   return <section className="hei-proposal-estimate-panel">
-    <header><div><span>Engineering Estimate</span><h3>{value.estimate.engineeringDays} days · {value.estimate.storyPoints} points</h3><p>AI estimate remains visible beside any human override.</p></div><Status value={`${value.estimate.confidence}% confidence`} /></header>
+    <header><div><span>Engineering Estimate</span><h3>{formatEngineeringEffort(value.estimate.engineeringDays)} · {value.estimate.storyPoints} points</h3><p>AI estimate remains visible beside any human override.</p></div><Status value={`${value.estimate.confidence}% confidence`} /></header>
     <div className="hei-proposal-card-grid"><Signal label="AI Engineering Days" value={String(value.estimate.aiEngineeringDays)} /><Signal label="AI Story Points" value={String(value.estimate.aiStoryPoints)} /><Signal label="Sprint Count" value={String(value.estimate.sprintCount)} /><Signal label="Developers" value={String(value.estimate.developersRequired)} /><Signal label="Complexity" value={value.estimate.complexity} /><Signal label="Risk" value={value.estimate.risk} /></div>
     <div className="hei-proposal-estimate-form"><label><span>Engineering Days</span><input type="number" value={days} disabled={!editable} onChange={(event) => setDays(event.target.value)} /></label><label><span>Story Points</span><input type="number" value={points} disabled={!editable} onChange={(event) => setPoints(event.target.value)} /></label><label><span>Override Reason</span><input value={reason} disabled={!editable} onChange={(event) => setReason(event.target.value)} /></label></div>
     <div><button className="planner-button primary" type="button" disabled={!editable || busy || !reason.trim()} onClick={() => onUpdate({ estimate: { engineeringDays: Number(days), storyPoints: Number(points), overrideReason: reason }, reason })}>Save Override</button> <button className="planner-button secondary" type="button" disabled={!editable || busy} onClick={() => onRegenerate('Engineering Estimate')}>Restore AI Estimate</button></div>
@@ -1724,7 +1725,7 @@ function EngineeringReviewPanel({ value, review, busy, onStart, onAction, onExpo
     <header><div><span>Planning Approval</span><h3>{review.status === 'Approved' ? 'Proposal approved' : 'Ready for one approval'}</h3><p>{review.status === 'Approved' ? 'The approved proposal can now be created in Azure DevOps.' : 'Confirm the scope, validation, estimate, and repository mapping.'}</p></div><Status value={review.readiness.status} /></header>
     <div className="hei-single-approval-summary">
       <Signal label="Work Items" value={String(value.nodes.filter((item) => item.status !== 'Rejected').length)} />
-      <Signal label="Estimate" value={`${value.estimate.engineeringDays} days · ${value.estimate.storyPoints} points`} />
+      <Signal label="Estimate" value={`${formatEngineeringEffort(value.estimate.engineeringDays)} · ${value.estimate.storyPoints} points`} />
       <Signal label="Validation" value={review.proposalSummary.validationStatus} />
       <Signal label="Risk" value={review.proposalSummary.riskScore || 'Not rated'} />
     </div>

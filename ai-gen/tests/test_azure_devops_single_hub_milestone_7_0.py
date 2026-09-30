@@ -148,14 +148,17 @@ class AzureDevOpsSingleHubTests(unittest.TestCase):
         azure = (EXTENSION / "src/host/AzureDevOpsHostAdapter.ts").read_text()
         standalone = (EXTENSION / "src/host/StandaloneHostAdapter.ts").read_text()
         self.assertIn("String(value || '')", contract)
-        self.assertIn("normalizeHostRole(route.role, 'admin')", azure)
+        self.assertIn("resolveAzureDevOpsPermission", azure)
+        self.assertIn("role: permission.role", azure)
+        self.assertNotIn("normalizeHostRole(route.role, 'admin')", azure)
         self.assertIn("normalizeHostRole(route.role, 'viewer')", standalone)
         self.assertNotIn("route.role.toLowerCase", azure + standalone)
 
-    def test_azure_host_admin_fallback_exposes_administration(self):
+    def test_azure_host_exposes_administration_only_for_mapped_admins(self):
         app = (EXTENSION / "src/heiApp.tsx").read_text()
         host = (EXTENSION / "src/host/AzureDevOpsHostAdapter.ts").read_text()
-        self.assertIn("normalizeHostRole(route.role, 'admin')", host)
+        self.assertIn("resolveAzureDevOpsPermission", host)
+        self.assertIn("if (route === 'settings') return role === 'admin'", app)
         self.assertIn("item('settings', 'Administration', 'settings')", app)
 
     def test_settings_restores_user_configurable_repository_mapping(self):

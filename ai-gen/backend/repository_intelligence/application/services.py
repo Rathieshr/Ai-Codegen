@@ -123,16 +123,18 @@ class RepositoryIntelligenceApplicationService:
             if isinstance(item, dict)
             and str(item.get("path") or "").casefold().endswith((".md", ".markdown", ".mdx"))
         ]
-        root = Path(str(repository.metadata.get("localPath") or "")).expanduser()
+        root_value = str(repository.metadata.get("localPath") or "")
+        root = Path(root_value).expanduser()
+        root_resolved = root.resolve() if root_value and root.is_dir() else None
         documents = []
         for item in files:
             path = str(item.get("path") or "").strip().lstrip("/")
             if not path:
                 continue
             try:
-                if root.is_dir():
-                    candidate = (root / path).resolve()
-                    if root.resolve() not in candidate.parents and candidate != root.resolve():
+                if root_resolved:
+                    candidate = (root_resolved / path).resolve()
+                    if root_resolved not in candidate.parents and candidate != root_resolved:
                         continue
                     content = candidate.read_text(encoding="utf-8", errors="replace")
                 elif self.repository_content_provider:

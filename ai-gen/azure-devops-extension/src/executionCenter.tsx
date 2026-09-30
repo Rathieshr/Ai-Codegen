@@ -37,7 +37,7 @@ type ExecutionResponse = {
   filters: { statuses: string[]; providers: string[] };
 };
 
-export function ExecutionCenter({ baseUrl, onError }: { baseUrl: string; onError: (message: string) => void }) {
+export function ExecutionCenter({ baseUrl, canContribute, onError }: { baseUrl: string; canContribute: boolean; onError: (message: string) => void }) {
   const [data, setData] = useState<ExecutionResponse>();
   const [selectedId, setSelectedId] = useState('');
   const [compareId, setCompareId] = useState('');
@@ -86,7 +86,7 @@ export function ExecutionCenter({ baseUrl, onError }: { baseUrl: string; onError
   }
 
   async function retry() {
-    if (!selected) return;
+    if (!selected || !canContribute) return;
     setRetrying(true);
     try {
       const response = await fetch(`${baseUrl}/execution/${encodeURIComponent(selected.id)}/retry`, {
@@ -144,18 +144,19 @@ export function ExecutionCenter({ baseUrl, onError }: { baseUrl: string; onError
             <div className="hei-execution-heading"><div><span>{selected.sourceArtifact.type} {selected.sourceArtifact.id}</span><h3>{selected.title}</h3><p>{selected.id} · {selected.correlationId || 'Correlation pending'}</p></div><Status value={selected.executionStatus} /></div>
             <section className="hei-execution-lifecycle" aria-label="Execution lifecycle timeline">
               <div className="hei-execution-section-heading"><div><span>Execution Timeline</span><h4>Planning to PR Intelligence</h4></div><small>{selected.timeline.filter((stage) => stage.status === 'Completed').length} of {selected.timeline.length} stages complete</small></div>
-              {selected.timeline.map((stage, index) => <StagePanel key={stage.stage} stage={stage} index={index + 1} onRetry={stage.retryable ? () => void retry() : undefined} retrying={retrying} />)}
+              {selected.timeline.map((stage, index) => <StagePanel key={stage.stage} stage={stage} index={index + 1} onRetry={stage.retryable && canContribute ? () => void retry() : undefined} retrying={retrying} />)}
             </section>
 
             <ExecutionDetails item={selected} />
             {selected.warnings.length ? <div className="hei-execution-warnings"><strong>Warnings</strong>{selected.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div> : null}
             <div className="hei-execution-actions">
               <button className="planner-button primary" type="button" onClick={() => setPanel('none')}>Open</button>
-              <button className="planner-button secondary" type="button" onClick={() => void retry()} disabled={!selected.runtime.recoverable || retrying}>{retrying ? 'Retrying...' : 'Retry'}</button>
+              <button className="planner-button secondary" type="button" onClick={() => void retry()} disabled={!canContribute || !selected.runtime.recoverable || retrying}>{retrying ? 'Retrying...' : 'Retry'}</button>
               <button className="planner-button secondary" type="button" onClick={compare} disabled={data.items.length < 2}>Compare</button>
               <button className="planner-button secondary" type="button" onClick={() => void showDiagnostics()}>View Diagnostics</button>
               <button className="planner-button secondary" type="button" onClick={() => setPanel('runtime')} disabled={!selected.runtime.sessionId}>View Runtime</button>
             </div>
+            {!canContribute ? <small>Your current role has read-only access.</small> : null}
             {panel === 'runtime' ? <RuntimePanel item={selected} /> : null}
             {panel === 'diagnostics' && diagnostics ? <JsonPanel title="Execution Diagnostics" value={diagnostics} /> : null}
             {panel === 'compare' ? <ComparePanel current={selected} comparison={comparison} choices={data.items.filter((item) => item.id !== selected.id)} onChange={setCompareId} /> : null}

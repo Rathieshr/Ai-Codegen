@@ -114,7 +114,7 @@ export function EngineeringCommandCenterShell({
   const availableItems = useMemo(() => navigation.filter((item) => item.enabled), [navigation]);
   const primaryNavigation = navigation.filter((item) => ['overview', 'new-requirement', 'planning', 'repository'].includes(item.id));
   const advancedNavigation = navigation.filter((item) => !['overview', 'new-requirement', 'planning', 'repository'].includes(item.id));
-  const commands = useMemo(() => buildCommands(navigation, activeNavigationId), [navigation, activeNavigationId]);
+  const commands = useMemo(() => buildCommands(navigation, activeNavigationId, roleLabel), [navigation, activeNavigationId, roleLabel]);
   const paletteResults = useMemo(() => {
     const query = paletteQuery.trim();
     const local = query ? commands.filter((item) => fuzzyMatch(query, `${item.title} ${item.subtitle}`)) : suggestedCommands(commands, pinnedIds, recentIds, activeNavigationId);
@@ -348,19 +348,22 @@ function fallbackNavigation(roleLabel: string): WorkspaceNavigationItem[] {
   });
 }
 
-function buildCommands(navigation: WorkspaceNavigationItem[], activeId: string): PaletteEntry[] {
+function buildCommands(navigation: WorkspaceNavigationItem[], activeId: string, roleLabel: string): PaletteEntry[] {
+  const normalizedRole = roleLabel.toLowerCase();
+  const canAdmin = normalizedRole.includes('admin');
+  const canContribute = canAdmin || normalizedRole.includes('contributor');
   const routes = navigation.filter((item) => item.enabled).map((item) => ({ id: `command:open-${item.id}`, category: item.id === 'settings' ? 'Settings' : 'Commands', title: item.id === 'agents' ? 'Open Agent Center' : `Open ${item.label}`, subtitle: item.id === activeId ? 'Current workspace' : 'Navigate workspace', route: item.id, commandId: `open:${item.id}` }));
   const quick: PaletteEntry[] = [
-    { id: 'command:new-requirement', category: 'Commands', title: 'New Requirement', subtitle: 'Start an engineering requirement', route: 'new-requirement', commandId: 'open:new-requirement' },
-    { id: 'command:sync-repository', category: 'Commands', title: 'Sync Repository', subtitle: 'Run repository synchronization', route: 'repository', commandId: 'sync-repository' },
+    ...(canContribute ? [{ id: 'command:new-requirement', category: 'Commands', title: 'New Requirement', subtitle: 'Start an engineering requirement', route: 'new-requirement', commandId: 'open:new-requirement' }] : []),
+    ...(canAdmin ? [{ id: 'command:sync-repository', category: 'Commands', title: 'Sync Repository', subtitle: 'Run repository synchronization', route: 'repository', commandId: 'sync-repository' }] : []),
     { id: 'command:open-planning', category: 'Commands', title: 'Open Planning', subtitle: 'Requirements, recommendations, and approvals', route: 'planning', commandId: 'open:planning' },
     { id: 'command:open-execution', category: 'Commands', title: 'Open Execution', subtitle: 'Implementation packages and runtime', route: 'execution', commandId: 'open:execution' },
     { id: 'command:open-activity', category: 'Commands', title: 'Open Activity', subtitle: 'Engineering activity and correlation traces', route: 'activity', commandId: 'open:activity' },
     { id: 'command:refresh-dashboard', category: 'Commands', title: 'Refresh Dashboard', subtitle: 'Reload operational engineering state', route: 'overview', commandId: 'refresh-dashboard' },
-    { id: 'command:generate-planning-pack', category: 'Commands', title: 'Generate Planning Pack', subtitle: 'Open requirement intake', route: 'new-requirement', commandId: 'open:new-requirement' },
+    ...(canContribute ? [{ id: 'command:generate-planning-pack', category: 'Commands', title: 'Generate Planning Pack', subtitle: 'Open requirement intake', route: 'new-requirement', commandId: 'open:new-requirement' }] : []),
     { id: 'command:open-repository', category: 'Commands', title: 'Open Repository', subtitle: 'Repository snapshots and engineering graph', route: 'repository', commandId: 'open:repository' },
     { id: 'command:current-sprint', category: 'Commands', title: 'Open Current Sprint', subtitle: 'Azure DevOps sprint intelligence', route: 'azure-devops', commandId: 'open:azure-devops' },
-    { id: 'command:open-agents', category: 'Commands', title: 'Open Agent Center', subtitle: 'Agent jobs, health, and failures', route: 'agents', commandId: 'open:agents' },
+    ...(canContribute ? [{ id: 'command:open-agents', category: 'Commands', title: 'Open Agent Center', subtitle: 'Agent jobs, health, and failures', route: 'agents', commandId: 'open:agents' }] : []),
   ];
   return dedupeEntries([...quick, ...routes]);
 }

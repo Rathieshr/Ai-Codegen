@@ -1,75 +1,75 @@
-"""Tests for Azure DevOps permission precedence and role mapping."""
+"""Contract tests for Azure DevOps permission mapping in the HEI extension."""
 
+from pathlib import Path
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+
+
+ROOT = Path(__file__).resolve().parents[1]
+EXTENSION = ROOT / "azure-devops-extension" / "src"
 
 
 class ADOPermissionPrecedenceTests(unittest.TestCase):
-    """Test role precedence: Admin > Contributor > Viewer."""
+    @classmethod
+    def setUpClass(cls):
+        cls.permissions = (EXTENSION / "permissions.ts").read_text()
+        cls.project_tab = (EXTENSION / "projectIntelligenceTab.tsx").read_text()
+        cls.host = (EXTENSION / "host" / "AzureDevOpsHostAdapter.ts").read_text()
+        cls.hub = (EXTENSION / "heiApp.tsx").read_text()
 
-    def test_admin_takes_precedence_over_reader(self):
-        """When user is in both Admin and Reader groups, should get Admin role."""
-        # This would be tested in TypeScript, simulating:
-        # mapGroupsToAIGenRole(['Project Administrators', 'Readers'], 'MyProject')
-        # Should return: { role: 'admin', group: 'Project Administrators', diagnostics: {...} }
-        pass
+    def test_one_resolver_is_used_by_hub_and_project_intelligence(self):
+        self.assertIn("resolveAzureDevOpsPermission", self.host)
+        self.assertIn("resolveAzureDevOpsPermission", self.project_tab)
+        self.assertNotIn("AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED", self.project_tab)
+        self.assertNotIn("Permission Mapping Paused", self.project_tab)
 
-    def test_contributor_takes_precedence_over_reader(self):
-        """When user is in both Contributor and Reader groups, should get Contributor role."""
-        # mapGroupsToAIGenRole(['Contributors', 'Readers'], 'MyProject')
-        # Should return: { role: 'contributor', group: 'Contributors', diagnostics: {...} }
-        pass
+    def test_role_precedence_is_admin_then_contributor_then_viewer(self):
+        self.assertIn("const ROLE_PRECEDENCE: HEIRole[] = ['admin', 'contributor', 'viewer']", self.permissions)
+        self.assertIn("admin_takes_precedence", self.permissions)
+        self.assertIn("contributor_takes_precedence_over_viewer", self.permissions)
 
-    def test_reader_only_gets_viewer(self):
-        """When user is only in Reader group, should get Viewer role."""
-        # mapGroupsToAIGenRole(['Readers'], 'MyProject')
-        # Should return: { role: 'viewer', group: 'Readers', diagnostics: {...} }
-        pass
+    def test_builtin_and_hei_groups_are_mapped(self):
+        for group in (
+            "hei administrators",
+            "project administrators",
+            "project collection administrators",
+            "hei contributors",
+            "contributors",
+            "hei readers",
+            "readers",
+            "stakeholders",
+        ):
+            self.assertIn(f"'{group}'", self.permissions)
 
-    def test_no_match_in_dev_defaults_to_admin(self):
-        """When no groups match ADO patterns in dev environment, default to Admin."""
-        # This is environment-specific behavior that would be tested at API level
-        pass
+    def test_project_groups_are_scoped_to_the_current_project(self):
+        self.assertIn("scopedToCurrentProject", self.permissions)
+        self.assertIn("candidate.scope === normalize(projectName)", self.permissions)
+        self.assertIn("ignored_groups", self.permissions)
 
-    def test_no_match_in_prod_defaults_to_viewer(self):
-        """When no groups match ADO patterns in prod environment, default to Viewer."""
-        # This is environment-specific behavior that would be tested at API level
-        pass
+    def test_lookup_failure_is_read_only_not_admin(self):
+        self.assertIn("fail_closed_viewer", self.permissions)
+        self.assertIn("Viewer access is applied", self.permissions)
+        self.assertNotIn("organization_owner_fallback", self.permissions)
+        self.assertNotIn("normalizeHostRole(route.role, 'admin')", self.host)
 
-    def test_diagnostics_contain_matched_groups(self):
-        """Diagnostics should include all matched groups."""
-        # mapGroupsToAIGenRole(['Project Administrators', 'Readers'], 'MyProject')
-        # Should have:
-        # diagnostics.matched_groups = ['Project Administrators', 'Readers']
-        # diagnostics.matched_roles = ['admin', 'viewer']
-        # diagnostics.selected_role = 'admin'
-        # diagnostics.precedence_rule = 'admin_takes_precedence'
-        pass
+    def test_restricted_routes_are_hidden_and_guarded(self):
+        self.assertIn("function canAccessPlannerTab", self.project_tab)
+        self.assertIn("function canAccessRoute", self.hub)
+        self.assertIn("if (route === 'settings') return role === 'admin'", self.hub)
+        self.assertIn("tab === 'governance' || tab === 'agents' || tab === 'skills'", self.project_tab)
 
-    def test_diagnostics_contain_precedence_rule(self):
-        """Diagnostics should include which precedence rule was applied."""
-        # For admin case: precedence_rule = 'admin_takes_precedence'
-        # For contributor case: precedence_rule = 'contributor_takes_precedence_over_viewer'
-        # For viewer case: precedence_rule = 'default_viewer'
-        pass
+    def test_permission_diagnostics_explain_the_mapping(self):
+        for field in ("matched_groups", "ignored_groups", "matched_roles", "selected_role", "precedence_rule"):
+            self.assertIn(field, self.permissions)
 
-    def test_multiple_admin_groups(self):
-        """When user is in multiple admin groups, still returns admin."""
-        # mapGroupsToAIGenRole(['Project Administrators', '[MyProject]\\Project Administrators'], 'MyProject')
-        # Should return: { role: 'admin', ... }
-        pass
-
-    def test_case_insensitive_group_matching(self):
-        """Group matching should be case-insensitive."""
-        # mapGroupsToAIGenRole(['PROJECT ADMINISTRATORS', 'readers'], 'MyProject')
-        # Should return: { role: 'admin', ... }
-        pass
-
-    def test_group_name_normalization_with_project(self):
-        """Group names with project prefix should be normalized correctly."""
-        # mapGroupsToAIGenRole(['[MyProject]\\Contributors', 'Contributors'], 'MyProject')
-        # Should match both and return contributor
-        pass
+    def test_installable_manifests_request_graph_membership_access(self):
+        manifests = (
+            ROOT / "azure-devops-extension" / "azure-devops-extension.json",
+            ROOT / "azure-devops-extension" / "azure-devops-extension.hei.json",
+            ROOT / "azure-devops-extension" / "azure-devops-extension.project-intelligence-preview.json",
+        )
+        for manifest in manifests:
+            with self.subTest(manifest=manifest.name):
+                self.assertIn('"vso.graph"', manifest.read_text())
 
 
 if __name__ == '__main__':

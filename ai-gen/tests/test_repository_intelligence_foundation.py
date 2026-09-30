@@ -126,15 +126,22 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
             {"path": "/src/DeviceHealthService.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-1", "contentMetadata": {"fileLength": 128}},
             {"path": "/src/DeviceHealthController.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-3", "contentMetadata": {"fileLength": 196}},
             {"path": "/src/DeviceHealthController.test.ts", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-4", "contentMetadata": {"fileLength": 96}},
+            {"path": "/docs", "isFolder": True, "gitObjectType": "tree", "objectId": "tree-2"},
+            {"path": "/docs/architecture.md", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-5", "contentMetadata": {"fileLength": 80}},
+            {"path": "/docs/product-vision.md", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-6", "contentMetadata": {"fileLength": 72}},
             {"path": "/README.md", "isFolder": False, "gitObjectType": "blob", "objectId": "blob-2", "contentMetadata": {"fileLength": 64}},
         ]
         remote_content = {
             "src/DeviceHealthService.ts": "export class DeviceHealthService { getHealth() { return []; } }",
             "src/DeviceHealthController.ts": 'router.get("/device-health", () => []); export class DeviceHealthController { constructor(private service: DeviceHealthService) {} }',
             "src/DeviceHealthController.test.ts": "describe('DeviceHealthController', () => { it('returns health', () => {}); });",
-            "README.md": "# GridHub",
+            "docs/architecture.md": "# Architecture\nDevice health uses service and repository boundaries.",
+            "docs/product-vision.md": "# Product Vision\nOperators can understand device health at a glance.",
+            "README.md": "# GridHub\nRepository overview for the operations platform.",
         }
         self.module.parser_service._remote_content_provider = lambda repository, path: remote_content[path]
+        handler = self.module.agent.runner.registry.resolve("RepositoryIntelligenceScan")
+        handler.repository_content_provider = lambda repository, path: remote_content[path]
         created = self.module.application.create_repository(
             {
                 "name": "GridHub",
@@ -149,17 +156,22 @@ class RepositoryIntelligenceFoundationTests(unittest.TestCase):
         result = self.module.application.scan_repository(created["repositoryId"], mode="Full")
 
         self.assertEqual("Completed", result["scan"]["status"])
-        self.assertEqual(4, result["snapshot"]["totalFiles"])
+        self.assertEqual(6, result["snapshot"]["totalFiles"])
         self.assertEqual("main", result["snapshot"]["branch"])
-        self.assertEqual(["src"], result["snapshot"]["modules"])
-        self.assertEqual(["src"], result["snapshot"]["metadata"]["sourceRoots"])
+        self.assertEqual(["docs", "src"], result["snapshot"]["modules"])
+        self.assertEqual(["docs", "src"], result["snapshot"]["metadata"]["sourceRoots"])
         self.assertEqual(["README.md"], result["snapshot"]["metadata"]["rootFiles"])
         self.assertEqual("blob-1", result["snapshot"]["metadata"]["filesByPath"]["src/DeviceHealthService.ts"]["contentHash"])
         self.assertGreater(result["parsedSymbolCount"], 0)
+        self.assertEqual(
+            ["README.md", "docs/architecture.md", "docs/product-vision.md"],
+            self.module.application.get_markdown_registry(created["repositoryId"])["sourceFiles"],
+        )
 
         health = self.module.application.get_repository_health(created["repositoryId"])
-        self.assertEqual(["src"], health["sourceRoots"])
+        self.assertEqual(["docs", "src"], health["sourceRoots"])
         self.assertIn("src/DeviceHealthController.ts", health["files"])
+        self.assertEqual(3, health["documentation"]["documentsIndexed"])
         self.assertGreater(health["symbolsIndexed"], 0)
         self.assertTrue(any(item["name"] == "DeviceHealthService" for item in health["services"]))
         self.assertTrue(any(item["name"] == "/device-health" for item in health["apis"]))

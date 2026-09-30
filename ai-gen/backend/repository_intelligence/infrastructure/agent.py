@@ -136,7 +136,10 @@ class RepositoryIntelligenceJobHandler:
         ]
         root_value = str(scan.root_path or repository.metadata.get("localPath") or "")
         root = Path(root_value).expanduser()
-        root_resolved = root.resolve() if root.is_dir() else None
+        # Path("") resolves to the backend working directory. Remote repositories
+        # must use their content provider instead of accidentally indexing HEI's
+        # own local README and ignoring remote nested documentation.
+        root_resolved = root.resolve() if root_value and root.is_dir() else None
         documents: list[dict[str, Any]] = []
         unreadable = 0
         for item in files:

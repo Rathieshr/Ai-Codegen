@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatEngineeringEffort } from './engineeringEffort';
 
 export type PlanningOverviewData = {
   schemaVersion: string;
@@ -51,7 +52,7 @@ export function PlanningOverview({ data, loading, error, canApprove, onHierarchy
     <section className="hei-planning-executive-summary">
       <div><span>Requirement</span><strong>{requirement.name}</strong><small>{requirement.status} | {requirement.repository}</small></div>
       <OverviewMetric label="Confidence" value={`${requirement.confidence}%`} />
-      <OverviewMetric label="Engineering Days" value={formatNumber(metrics.engineeringDays)} />
+      <OverviewMetric label="Engineering Effort" value={formatEngineeringEffort(metrics.engineeringDays)} />
       <OverviewMetric label="Sprint Count" value={formatNumber(metrics.sprintCount)} />
       <OverviewMetric label="Features" value={metrics.features} />
       <OverviewMetric label="Stories" value={metrics.stories} />
@@ -65,7 +66,7 @@ export function PlanningOverview({ data, loading, error, canApprove, onHierarchy
     <section className="hei-planning-overview-cards" aria-label="Planning overview cards">
       <OverviewCard title="Planning Metrics"><Fact label="Features" value={cards.planningMetrics.features} /><Fact label="Stories" value={cards.planningMetrics.stories} /><Fact label="Tasks" value={cards.planningMetrics.tasks} /><Fact label="Dependencies" value={cards.planningMetrics.dependencies} /></OverviewCard>
       <OverviewCard title="Repository Summary"><Fact label="Repository" value={cards.repositorySummary.name} /><Fact label="Branch" value={cards.repositorySummary.branch || 'Branch Pending'} /><Fact label="Context" value={cards.repositorySummary.mode} /><Fact label="Reuse" value={`${cards.repositorySummary.reuse}%`} /></OverviewCard>
-      <OverviewCard title="Engineering Estimate"><Fact label="Engineering Days" value={formatNumber(cards.engineeringEstimate.days)} /><Fact label="Sprint Count" value={formatNumber(cards.engineeringEstimate.sprints)} /><Fact label="Story Points" value={cards.engineeringEstimate.storyPoints} /><Fact label="Risk" value={cards.engineeringEstimate.risk} /></OverviewCard>
+      <OverviewCard title="Engineering Estimate"><Fact label="Engineering Effort" value={formatEngineeringEffort(cards.engineeringEstimate.days)} /><Fact label="Sprint Count" value={formatNumber(cards.engineeringEstimate.sprints)} /><Fact label="Story Points" value={cards.engineeringEstimate.storyPoints} /><Fact label="Risk" value={cards.engineeringEstimate.risk} /></OverviewCard>
       <OverviewCard title="Requirement Quality"><Score value={cards.requirementQuality.score} /><Fact label="Acceptance Criteria" value={cards.requirementQuality.acceptanceCriteria} /><Fact label="Open Questions" value={cards.requirementQuality.openQuestions.length} /></OverviewCard>
       <OverviewCard title="AI Confidence"><Score value={cards.aiConfidence.score} /><Fact label="Assessment" value={cards.aiConfidence.status} /><Fact label="Warnings" value={cards.aiConfidence.warnings.length} /></OverviewCard>
       <OverviewCard title="Recent Changes">{cards.recentChanges.length ? <ol className="hei-planning-change-list">{cards.recentChanges.slice(0, 4).map((change, index) => <li key={`${change.version}-${change.changedAt}-${index}`}><strong>v{change.version} | {change.status}</strong><span>{change.actor} | {formatDate(change.changedAt)}</span></li>)}</ol> : <p className="hei-planning-card-empty">No version changes recorded yet.</p>}</OverviewCard>

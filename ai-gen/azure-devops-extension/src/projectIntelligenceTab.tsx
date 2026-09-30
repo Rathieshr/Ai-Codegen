@@ -1,8 +1,5 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import { CommonServiceIds, IProjectPageService } from 'azure-devops-extension-api/Common/CommonServices';
-import { getClient } from 'azure-devops-extension-api/Common/Client';
-import { GraphRestClient } from 'azure-devops-extension-api/Graph/GraphClient';
-import { GraphTraversalDirection } from 'azure-devops-extension-api/Graph/Graph';
 import { GitRepository } from 'azure-devops-extension-api/Git/Git';
 import { IWorkItemFormService, WorkItemTrackingServiceIds } from 'azure-devops-extension-api/WorkItemTracking';
 import React, { useEffect, useRef, useState } from 'react';
@@ -20,6 +17,7 @@ import { ExecutionCenter } from './executionCenter';
 import { ApprovalCenter } from './approvalCenter';
 import { AzureDevOpsCenter } from './azureDevOpsCenter';
 import { AgentCenter } from './agentCenter';
+import { defaultPermissionState, HEIRole as AIGenRole, PermissionState, resolveAzureDevOpsPermission } from './permissions';
 import './storyPlanner.css';
 
 const ActivityCenter = React.lazy(() => import('./activityCenter').then((module) => ({ default: module.ActivityCenter })));
@@ -70,10 +68,8 @@ const REPOSITORY_DOCUMENTS = [
   'docs/coding-standards.md',
 ];
 const PROJECT_SESSION_STORAGE_KEY = 'ai-gen-project-intelligence:last-session';
-const AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED = false;
 
 type PlannerTab = 'overview' | 'planning' | 'execution' | 'qa' | 'memory' | 'governance' | 'agents' | 'skills' | 'admin' | 'diagnostics';
-type AIGenRole = 'admin' | 'contributor' | 'viewer';
 type WorkItemKind = 'Epic' | 'Feature' | 'Story' | 'Task' | 'Bug' | 'Test Case';
 type RoutedWorkspace = Extract<PlannerTab, 'planning' | 'execution' | 'qa'>;
 type ApprovalStatus = 'locked' | 'draft' | 'ready_for_approval' | 'approved';
@@ -381,16 +377,6 @@ type MemoryContextPayload = {
   excludedMemory?: Array<{ title?: string; reasons?: string[] }>;
   diagnostics?: Record<string, unknown>;
 };
-type AzureDevOpsUserIdentity = {
-  id?: string;
-  descriptor?: string;
-  subjectId?: string;
-  displayName?: string;
-  name?: string;
-  uniqueName?: string;
-  email?: string;
-};
-
 let sdkInitializationStarted = false;
 
 function ensureAzureDevOpsSdkInitialized() {
@@ -816,21 +802,6 @@ type KnowledgeGovernance = {
   last_refreshed_on: string;
 };
 
-type PermissionState = {
-  role: AIGenRole;
-  user_display_name: string;
-  user_name: string;
-  mapped_group: string;
-  azure_groups: string[];
-  status: 'resolved' | 'fallback';
-  warning?: string;
-  diagnostics?: {
-    matched_groups: string[];
-    matched_roles: AIGenRole[];
-    selected_role: AIGenRole;
-    precedence_rule: string;
-  };
-};
 
 type PromptResult = ProviderMetadata & {
   ui_prompt: string;
@@ -1642,6 +1613,13 @@ function ProjectIntelligenceTab() {
   const recommendedWorkspace = routedWorkspaceForWorkflow(currentItemType, workflowOrchestration);
 
   useEffect(() => {
+    if (!canAccessPlannerTab(activeTab, permissionState.role)) {
+      setActiveTab('overview');
+      setActiveNavigationId('overview');
+    }
+  }, [activeTab, permissionState.role]);
+
+  useEffect(() => {
     SDK.ready().then(async () => {
       SDK.notifyLoadSucceeded();
       try {
@@ -1765,7 +1743,9 @@ function ProjectIntelligenceTab() {
           lastSavedProfileRef.current = JSON.stringify(seeded);
         }
         if (effectiveSession?.last_active_tab) {
-          const restoredTab = effectiveSession.last_active_tab === 'admin' && permissions.role !== 'admin' ? 'overview' : effectiveSession.last_active_tab;
+          const restoredTab = canAccessPlannerTab(effectiveSession.last_active_tab, permissions.role)
+            ? effectiveSession.last_active_tab
+            : 'overview';
           setActiveTab(restoredTab);
           setActiveNavigationId(navigationIdForPlannerTab(restoredTab));
           setShowResumePanel(true);
@@ -3814,6 +3794,10 @@ function approveFeatures() {
   }
 
   function changeWorkspace(tab: PlannerTab, navigationId?: string) {
+    if (!canAccessPlannerTab(tab, permissionState.role)) {
+      setError(`${roleLabel(permissionState.role)} does not have permission to open ${plannerTabLabel(tab)}.`);
+      return;
+    }
     setActiveTab(tab);
     setActiveNavigationId(navigationId || navigationIdForPlannerTab(tab));
     if (tab !== recommendedWorkspace && tab !== 'admin' && tab !== 'overview') {
@@ -3921,6 +3905,12 @@ function approveFeatures() {
       {loading ? <div className="planner-banner">{message || 'Working...'}</div> : null}
       {error ? <div className="planner-error">{error}</div> : null}
       {isViewer ? <div className="planner-banner">Viewer access: Project Intelligence is read-only for your Azure DevOps group.</div> : null}
+
+      <WorkflowTabs
+        activeTab={activeTab}
+        onChange={(tab) => changeWorkspace(tab)}
+        role={permissionState.role}
+      />
 
       <StickyContextBar
         workItem={currentWorkItem}
@@ -4038,7 +4028,7 @@ function approveFeatures() {
 
       {activeTab === 'execution' ? (
         <>
-        <ExecutionCenter baseUrl={PLATFORM_BASE_URL} onError={setError} />
+        <ExecutionCenter baseUrl={PLATFORM_BASE_URL} canContribute={canContribute} onError={setError} />
         <details className="hei-execution-intelligence-workspace">
           <summary>Execution Intelligence Workspace</summary>
           <DeveloperWorkspace
@@ -4919,11 +4909,11 @@ function SkillCard({ skill, compact = false }: { skill: EngineeringSkill; compac
 function WorkflowTabs({
   activeTab,
   onChange,
-  canAdmin,
+  role,
 }: {
   activeTab: PlannerTab;
   onChange: (tab: PlannerTab) => void;
-  canAdmin: boolean;
+  role: AIGenRole;
 }) {
   const tabs: Array<{ id: PlannerTab; label: string; subtitle: string }> = [
     { id: 'overview', label: 'Command Center', subtitle: 'Current work and next action' },
@@ -4932,13 +4922,14 @@ function WorkflowTabs({
     { id: 'qa', label: 'QA & Release', subtitle: 'Readiness and release review' },
     { id: 'memory', label: 'Memory', subtitle: 'Reusable approved knowledge' },
   ];
-  const advancedTabs: Array<{ id: PlannerTab; label: string; subtitle: string }> = [
+  const allAdvancedTabs: Array<{ id: PlannerTab; label: string; subtitle: string }> = [
     { id: 'governance', label: 'Governance', subtitle: 'Policies and observability' },
     { id: 'agents', label: 'Agents', subtitle: 'Workflow orchestration' },
     { id: 'skills', label: 'Skills', subtitle: 'Reusable capabilities' },
     { id: 'diagnostics', label: 'Diagnostics', subtitle: 'Provider and workflow internals' },
-    ...(canAdmin ? [{ id: 'admin' as PlannerTab, label: 'Administration', subtitle: 'Repository and setup' }] : []),
+    { id: 'admin', label: 'Administration', subtitle: 'Repository and setup' },
   ];
+  const advancedTabs = allAdvancedTabs.filter((tab) => canAccessPlannerTab(tab.id, role));
   const advancedActive = advancedTabs.some((tab) => tab.id === activeTab);
   return (
     <div className="planner-tab-shell">
@@ -4949,6 +4940,7 @@ function WorkflowTabs({
             className={`planner-tab ${activeTab === tab.id ? 'active' : ''}`}
             onClick={() => onChange(tab.id)}
             type="button"
+            aria-current={activeTab === tab.id ? 'page' : undefined}
           >
             <span>{tab.label}</span>
             <small>{tab.subtitle}</small>
@@ -4967,6 +4959,7 @@ function WorkflowTabs({
               className={`planner-tab planner-tab-advanced ${activeTab === tab.id ? 'active' : ''}`}
               onClick={() => onChange(tab.id)}
               type="button"
+              aria-current={activeTab === tab.id ? 'page' : undefined}
             >
               <span>{tab.label}</span>
               <small>{tab.subtitle}</small>
@@ -12270,479 +12263,30 @@ function navigationIdForPlannerTab(tab: PlannerTab): string {
   return mapping[tab];
 }
 
-function defaultPermissionState(): PermissionState {
-  return {
-    role: 'admin',
-    user_display_name: '',
-    user_name: '',
-    mapped_group: 'Permission Mapping Paused',
-    azure_groups: [],
-    status: 'fallback',
-    warning: 'Azure DevOps permission mapping is paused. Project Intelligence access is temporarily open while group resolution is stabilized.',
-    diagnostics: {
-      matched_groups: [],
-      matched_roles: ['admin'],
-      selected_role: 'admin',
-      precedence_rule: 'permission_mapping_paused',
-    },
+function canAccessPlannerTab(tab: PlannerTab, role: AIGenRole): boolean {
+  if (tab === 'admin') return role === 'admin';
+  if (tab === 'governance' || tab === 'agents' || tab === 'skills') return role !== 'viewer';
+  return true;
+}
+
+function plannerTabLabel(tab: PlannerTab): string {
+  const labels: Record<PlannerTab, string> = {
+    overview: 'Command Center',
+    planning: 'Planning',
+    execution: 'Execution',
+    qa: 'QA & Release',
+    memory: 'Memory',
+    governance: 'Governance',
+    agents: 'Agents',
+    skills: 'Skills',
+    admin: 'Administration',
+    diagnostics: 'Diagnostics',
   };
+  return labels[tab];
 }
 
-async function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
-  const user = getCurrentAzureDevOpsUserIdentity();
-  if (!AZURE_DEVOPS_PERMISSION_MAPPING_ENABLED) {
-    return {
-      role: 'admin',
-      user_display_name: user.displayName || user.name || '',
-      user_name: user.uniqueName || user.email || user.name || '',
-      mapped_group: 'Permission Mapping Paused',
-      azure_groups: [],
-      status: 'fallback',
-      warning: 'Azure DevOps permission mapping is paused. Project Intelligence access is temporarily open while group resolution is stabilized.',
-      diagnostics: {
-        matched_groups: [],
-        matched_roles: ['admin'],
-        selected_role: 'admin',
-        precedence_rule: 'permission_mapping_paused',
-      },
-    };
-  }
-  try {
-    const graphClient = getClient(GraphRestClient);
-    const descriptor = await resolveUserGraphDescriptor(graphClient, user);
-    let groupNames: string[] = [];
-    if (descriptor) {
-      groupNames = await collectAzureDevOpsGroupNames(graphClient, descriptor);
-      if (!groupNames.length) {
-        groupNames = await collectGroupsViaRestApi(descriptor);
-      }
-    }
-    if (groupNames.length) {
-      const mapping = mapGroupsToAIGenRole(groupNames, projectContext?.name || '');
-      const ownerFallback = inferProjectOwnerPermission(user);
-      if (mapping.role === 'viewer' && ownerFallback) {
-        return {
-          ...ownerFallback,
-          azure_groups: uniqueStrings([...groupNames, ...ownerFallback.azure_groups]),
-          status: 'resolved',
-          warning: 'Azure DevOps only exposed a Readers mapping, so organization owner context was used for AI Gen Admin access.',
-          diagnostics: {
-            matched_groups: uniqueStrings([...groupNames, ...ownerFallback.azure_groups]),
-            matched_roles: uniqueStrings([...(mapping.diagnostics?.matched_roles || []), 'admin']) as AIGenRole[],
-            selected_role: 'admin',
-            precedence_rule: 'organization_owner_over_readers',
-          },
-        };
-      }
-      return {
-        role: mapping.role,
-        user_display_name: user.displayName || user.name || '',
-        user_name: user.uniqueName || user.email || user.name || '',
-        mapped_group: mapping.group,
-        azure_groups: groupNames,
-        status: 'resolved',
-        warning: undefined,
-        diagnostics: mapping.diagnostics,
-      };
-    }
-    const ownerFallback = inferProjectOwnerPermission(user);
-    if (ownerFallback) {
-      return ownerFallback;
-    }
-    return {
-      role: 'viewer',
-      user_display_name: user.displayName || user.name || '',
-      user_name: user.uniqueName || user.email || user.name || '',
-      mapped_group: 'Readers',
-      azure_groups: [],
-      status: 'fallback',
-      warning: descriptor
-        ? 'Azure DevOps group membership returned no visible groups. Viewer access is applied.'
-        : 'Azure DevOps user descriptor could not be resolved. Viewer access is applied.',
-    };
-  } catch (error) {
-    const ownerFallback = inferProjectOwnerPermission(user);
-    if (ownerFallback) {
-      return {
-        ...ownerFallback,
-        warning: `${ownerFallback.warning} Graph lookup failed: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    return {
-      role: 'viewer',
-      user_display_name: user.displayName || user.name || '',
-      user_name: user.uniqueName || user.email || user.name || '',
-      mapped_group: 'Readers',
-      azure_groups: [],
-      status: 'fallback',
-      warning: `Could not resolve Azure DevOps group membership. Viewer access is applied. ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-}
-
-function getCurrentAzureDevOpsUserIdentity(): AzureDevOpsUserIdentity {
-  const sdkUser = SDK.getUser() as AzureDevOpsUserIdentity;
-  const webUser = (SDK.getWebContext() as unknown as { user?: AzureDevOpsUserIdentity }).user || {};
-  return {
-    ...webUser,
-    ...sdkUser,
-    id: sdkUser.id || webUser.id,
-    descriptor: sdkUser.descriptor || webUser.descriptor,
-    subjectId: sdkUser.subjectId || webUser.subjectId,
-    displayName: sdkUser.displayName || webUser.displayName || sdkUser.name || webUser.name,
-    name: sdkUser.name || webUser.name || sdkUser.displayName || webUser.displayName,
-    uniqueName: sdkUser.uniqueName || webUser.uniqueName || webUser.email || sdkUser.email,
-    email: sdkUser.email || webUser.email || webUser.uniqueName || sdkUser.uniqueName,
-  };
-}
-
-async function resolveUserGraphDescriptor(
-  graphClient: GraphRestClient,
-  user: AzureDevOpsUserIdentity,
-): Promise<string> {
-  if (user.descriptor) {
-    return user.descriptor;
-  }
-  const candidates = uniqueStrings([
-    user.id || '',
-    user.subjectId || '',
-  ]);
-  for (const storageKey of candidates) {
-    try {
-      const descriptor = await graphClient.getDescriptor(storageKey);
-      if (descriptor?.value) {
-        return descriptor.value;
-      }
-    } catch {
-      // Try the next candidate.
-    }
-    try {
-      const descriptor = await getDescriptorViaRestApi(storageKey);
-      if (descriptor) {
-        return descriptor;
-      }
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return '';
-}
-
-async function getDescriptorViaRestApi(storageKey: string): Promise<string> {
-  const token = await SDK.getAccessToken();
-  const collectionUri = trimTrailingSlash(getCollectionUri());
-  const response = await fetch(`${collectionUri}/_apis/graph/descriptors/${encodeURIComponent(storageKey)}?api-version=7.1-preview.1`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
-    },
-  });
-  if (!response.ok) {
-    return '';
-  }
-  const payload = await response.json();
-  return String(payload.value || '');
-}
-
-async function collectGroupsViaRestApi(userDescriptor: string): Promise<string[]> {
-  try {
-    const token = await SDK.getAccessToken();
-    const collectionUri = trimTrailingSlash(getCollectionUri());
-    const url = `${collectionUri}/_apis/graph/memberships/${encodeURIComponent(userDescriptor)}?direction=Up&depth=1&api-version=7.1-preview.1`;
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-    });
-    if (!response.ok) {
-      return [];
-    }
-    const data = await response.json();
-    const descriptors = uniqueStrings((data.value || []).map((item: { containerDescriptor?: string }) => item.containerDescriptor || '').filter(Boolean));
-    const subjects = await Promise.all(descriptors.map((descriptor) => getGraphSubjectViaRestApi(descriptor)));
-    return uniqueStrings(subjects.map((subject) => subject.displayName || '').filter(Boolean));
-  } catch (error) {
-    return [];
-  }
-}
-
-async function getGraphSubjectViaRestApi(descriptor: string): Promise<{ displayName?: string }> {
-  try {
-    const token = await SDK.getAccessToken();
-    const collectionUri = trimTrailingSlash(getCollectionUri());
-    const response = await fetch(`${collectionUri}/_apis/graph/subjects/${encodeURIComponent(descriptor)}?api-version=7.1-preview.1`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-    });
-    if (!response.ok) {
-      return {};
-    }
-    return await response.json();
-  } catch {
-    return {};
-  }
-}
-
-function inferProjectOwnerPermission(user: { name?: string; uniqueName?: string; email?: string }): PermissionState | undefined {
-  const accountNames = getAzureDevOpsAccountNames();
-  const identifiers = [user.uniqueName, user.email, user.name].map((value) => String(value || '').toLowerCase());
-  const identifierPrefixes = identifiers
-    .map((identifier) => identifier.split('@')[0])
-    .filter(Boolean);
-  const ownsOrganization = accountNames.some((accountName) => (
-    accountName && (
-      identifiers.some((identifier) => identifier.startsWith(`${accountName}@`) || identifier === accountName)
-      || identifierPrefixes.includes(accountName)
-    )
-  ));
-  if (!ownsOrganization) {
-    return undefined;
-  }
-  return {
-    role: 'admin',
-    user_display_name: user.name || user.uniqueName || '',
-    user_name: user.uniqueName || user.email || user.name || '',
-    mapped_group: 'Project Administrators',
-    azure_groups: ['Project Administrators'],
-    status: 'fallback',
-    warning: 'Azure DevOps Graph group lookup was unavailable, so organization owner context was mapped to AI Gen Admin.',
-    diagnostics: {
-      matched_groups: uniqueStrings(['Project Administrators', ...accountNames.map((name) => `account:${name}`)]),
-      matched_roles: ['admin'],
-      selected_role: 'admin',
-      precedence_rule: 'organization_owner_fallback',
-    },
-  };
-}
-
-function getAzureDevOpsAccountNames(): string[] {
-  const names: string[] = [];
-  const addName = (value?: string) => {
-    const cleaned = String(value || '').trim();
-    if (cleaned) {
-      names.push(cleaned);
-    }
-  };
-  const addUrl = (value?: string) => {
-    const org = extractAzureDevOpsOrgName(value || '');
-    if (org) {
-      names.push(org);
-    }
-  };
-  try {
-    const host = SDK.getHost() as unknown as { name?: string };
-    addName(host?.name);
-  } catch {
-    // Continue with web/page context.
-  }
-  try {
-    const context = SDK.getWebContext() as unknown as {
-      account?: { name?: string; uri?: string };
-      host?: { name?: string; uri?: string };
-      collection?: { name?: string; uri?: string };
-    };
-    [context.account?.name, context.host?.name, context.collection?.name].forEach(addName);
-    [context.account?.uri, context.host?.uri, context.collection?.uri].forEach(addUrl);
-  } catch {
-    // Continue with page context.
-  }
-  try {
-    const pageContext = SDK.getPageContext() as unknown as {
-      webContext?: {
-        account?: { name?: string; uri?: string };
-        host?: { name?: string; uri?: string };
-        collection?: { name?: string; uri?: string };
-      };
-    };
-    [pageContext.webContext?.account?.name, pageContext.webContext?.host?.name, pageContext.webContext?.collection?.name].forEach(addName);
-    [pageContext.webContext?.account?.uri, pageContext.webContext?.host?.uri, pageContext.webContext?.collection?.uri].forEach(addUrl);
-    collectAzureDevOpsNamesFromObject(pageContext).forEach(addName);
-  } catch {
-    // Ignore missing host context.
-  }
-  try {
-    addUrl(getCollectionUri());
-  } catch {
-    // Ignore missing collection URI.
-  }
-  [window.location.href, document.referrer].forEach(addUrl);
-  return uniqueStrings(names.map((name) => String(name).toLowerCase()).filter(Boolean));
-}
-
-function collectAzureDevOpsNamesFromObject(value: unknown): string[] {
-  const names: string[] = [];
-  const seen = new Set<unknown>();
-  const visit = (node: unknown, depth: number) => {
-    if (!node || depth > 5 || seen.has(node)) {
-      return;
-    }
-    if (typeof node === 'string') {
-      const org = extractAzureDevOpsOrgName(node);
-      if (org) {
-        names.push(org);
-      }
-      return;
-    }
-    if (typeof node !== 'object') {
-      return;
-    }
-    seen.add(node);
-    Object.entries(node as Record<string, unknown>).forEach(([key, item]) => {
-      if ((key === 'uri' || key === 'relativeUri') && typeof item === 'string') {
-        const org = extractAzureDevOpsOrgName(item);
-        if (org) {
-          names.push(org);
-        }
-      }
-      if (key === 'name' && typeof item === 'string') {
-        names.push(item);
-      }
-      visit(item, depth + 1);
-    });
-  };
-  visit(value, 0);
-  return uniqueStrings(names);
-}
-
-function extractAzureDevOpsOrgName(value: string): string {
-  const text = String(value || '').trim();
-  if (!text) {
-    return '';
-  }
-  try {
-    const parsed = new URL(text, window.location.origin);
-    if (parsed.hostname.toLowerCase() === 'dev.azure.com') {
-      return parsed.pathname.split('/').filter(Boolean)[0] || '';
-    }
-    if (parsed.hostname.toLowerCase().endsWith('.visualstudio.com')) {
-      return parsed.hostname.split('.')[0] || '';
-    }
-  } catch {
-    // Try simple path parsing below.
-  }
-  const devAzureMatch = text.match(/dev\.azure\.com\/([^/?#]+)/i);
-  if (devAzureMatch?.[1]) {
-    return devAzureMatch[1];
-  }
-  const relativeMatch = text.match(/^\/([^/?#]+)(?:\/|$)/);
-  return relativeMatch?.[1] || '';
-}
-
-
-
-async function collectAzureDevOpsGroupNames(graphClient: GraphRestClient, userDescriptor: string): Promise<string[]> {
-  const visited = new Set<string>([userDescriptor]);
-  let frontier = [userDescriptor];
-  const groupNames: string[] = [];
-  for (let depth = 0; depth < 4 && frontier.length; depth += 1) {
-    const memberships = (await Promise.all(frontier.map(async (descriptor) => {
-      try {
-        return await graphClient.listMemberships(descriptor, GraphTraversalDirection.Up, 1);
-      } catch {
-        return [];
-      }
-    }))).flat();
-    const nextDescriptors = uniqueStrings(memberships.map((membership) => membership.containerDescriptor).filter(Boolean))
-      .filter((descriptor) => !visited.has(descriptor));
-    if (!nextDescriptors.length) {
-      break;
-    }
-    nextDescriptors.forEach((descriptor) => visited.add(descriptor));
-    const subjects = await Promise.all(nextDescriptors.map(async (descriptor) => {
-      try {
-        return await graphClient.getSubject(descriptor);
-      } catch {
-        return undefined;
-      }
-    }));
-    subjects.forEach((subject) => {
-      if (subject?.displayName) {
-        groupNames.push(subject.displayName);
-      }
-    });
-    frontier = nextDescriptors;
-  }
-  return uniqueStrings(groupNames);
-}
-
-function mapGroupsToAIGenRole(groupNames: string[], projectName: string): { role: AIGenRole; group: string; diagnostics: PermissionState['diagnostics'] } {
-  const normalized = groupNames.map((group) => normalizeGroupName(group, projectName));
-
-  // Collect all matched roles instead of returning on first match
-  const matchedRoles: { role: AIGenRole; groups: string[] }[] = [];
-
-  const adminGroups = normalized
-    .map((group, i) => ({ group, index: i, normalized: group }))
-    .filter(({ normalized }) => {
-      const match = normalized.includes('project administrators')
-        || normalized.includes('project collection administrators')
-        || normalized.includes('collection administrators')
-        || normalized.includes('team foundation administrators');
-      return match;
-    })
-    .map(({ index }) => groupNames[index]);
-
-  const contributorGroups = normalized
-    .map((group, i) => ({ group, index: i, normalized: group }))
-    .filter(({ normalized }) => {
-      const match = normalized.includes('contributors');
-      return match;
-    })
-    .map(({ index }) => groupNames[index]);
-
-  const readerGroups = normalized
-    .map((group, i) => ({ group, index: i, normalized: group }))
-    .filter(({ normalized }) => {
-      const match = normalized.includes('readers');
-      return match;
-    })
-    .map(({ index }) => groupNames[index]);
-
-  if (adminGroups.length > 0) {
-    matchedRoles.push({ role: 'admin', groups: adminGroups });
-  }
-  if (contributorGroups.length > 0) {
-    matchedRoles.push({ role: 'contributor', groups: contributorGroups });
-  }
-  if (readerGroups.length > 0) {
-    matchedRoles.push({ role: 'viewer', groups: readerGroups });
-  }
-
-  // Determine highest role by precedence: admin > contributor > viewer
-  let selectedRole: AIGenRole = 'viewer';
-  let selectedGroup = 'Readers';
-  let precedenceRule = 'default_viewer';
-
-  if (matchedRoles.some(m => m.role === 'admin')) {
-    selectedRole = 'admin';
-    selectedGroup = 'Project Administrators';
-    precedenceRule = 'admin_takes_precedence';
-  } else if (matchedRoles.some(m => m.role === 'contributor')) {
-    selectedRole = 'contributor';
-    selectedGroup = 'Contributors';
-    precedenceRule = 'contributor_takes_precedence_over_viewer';
-  }
-
-  const diagnostics = {
-    matched_groups: groupNames,
-    matched_roles: matchedRoles.map(m => m.role),
-    selected_role: selectedRole,
-    precedence_rule: precedenceRule,
-  };
-
-  return { role: selectedRole, group: selectedGroup, diagnostics };
-}
-
-function normalizeGroupName(groupName: string, projectName: string): string {
-  return groupName
-    .toLowerCase()
-    .replace(projectName.toLowerCase(), '')
-    .replace(/[\[\]\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+function resolveCurrentUserPermission(projectContext?: AzureProjectContext): Promise<PermissionState> {
+  return resolveAzureDevOpsPermission(projectContext?.name || '');
 }
 
 function roleLabel(role: AIGenRole): string {

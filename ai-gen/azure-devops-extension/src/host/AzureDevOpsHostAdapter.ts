@@ -1,5 +1,6 @@
 import * as SDK from 'azure-devops-extension-sdk';
-import { HEIHostAdapter, HEIHostContext, HEITheme, correlationId, detectTheme, normalizeHostRole, routeParameters } from './HostAdapter';
+import { HEIHostAdapter, HEIHostContext, HEITheme, correlationId, detectTheme, routeParameters } from './HostAdapter';
+import { resolveAzureDevOpsPermission } from '../permissions';
 
 type WebContext = {
   account?: { id?: string; name?: string; uri?: string };
@@ -34,6 +35,7 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
     const extension = SDK.getExtensionContext();
     const route = routeParameters();
     const organization = web.account || web.collection || {};
+    const permission = await resolveAzureDevOpsPermission(String(web.project?.name || ''));
     const context: HEIHostContext = {
       hostType: this.kind,
       organization: { id: String(organization.id || ''), name: String(organization.name || ''), uri: String(organization.uri || '') },
@@ -44,9 +46,7 @@ export class AzureDevOpsHostAdapter implements HEIHostAdapter {
         id: String(user?.id || web.user?.id || ''),
         name: String(user?.displayName || user?.name || web.user?.displayName || web.user?.name || 'HEI User'),
         email: String(user?.email || user?.uniqueName || web.user?.email || web.user?.uniqueName || ''),
-        // Keep the single HEI hub aligned with Project Intelligence while ADO
-        // group mapping is paused. An explicit routed role still wins.
-        role: normalizeHostRole(route.role, 'admin'),
+        role: permission.role,
       },
       repository: { id: route.repositoryId || '', name: route.repository || '', branch: route.branch || '' },
       extension: { id: String(extension.id || ''), publisherId: String(extension.publisherId || ''), version: String(extension.version || '') },

@@ -1,0 +1,605 @@
+"""Skill registry and default HEI engineering skills."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from .types import EngineeringSkill
+
+
+class SkillRegistry:
+    def __init__(self, storage_path: Path | None = None) -> None:
+        data_dir = Path(os.getenv("AI_GEN_DATA_DIR", str(Path(__file__).parent.parent.parent / "data")))
+        self._storage_path = storage_path or data_dir / "project_intelligence" / "engineering_skills.json"
+        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def list_skills(self) -> list[EngineeringSkill]:
+        stored = self._read()
+        if not stored:
+            skills = self.default_skills()
+            self._write([skill.to_dict() for skill in skills], [])
+            return skills
+        return [EngineeringSkill.from_dict(item) for item in stored.get("skills", []) if item.get("id")]
+
+    def save_skill(self, skill: EngineeringSkill) -> EngineeringSkill:
+        stored = self._read()
+        skills = [EngineeringSkill.from_dict(item) for item in stored.get("skills", []) if item.get("id")]
+        replaced = False
+        next_skills: list[EngineeringSkill] = []
+        for existing in skills:
+            if existing.id == skill.id:
+                next_skills.append(skill)
+                replaced = True
+            else:
+                next_skills.append(existing)
+        if not replaced:
+            next_skills.append(skill)
+        self._write([item.to_dict() for item in next_skills], stored.get("usageHistory", []))
+        return skill
+
+    def usage_history(self) -> list[dict[str, Any]]:
+        return self._read().get("usageHistory", [])
+
+    def record_usage(self, skill_ids: list[str], artifact: dict[str, Any]) -> None:
+        stored = self._read()
+        skills = [EngineeringSkill.from_dict(item) for item in stored.get("skills", []) if item.get("id")]
+        now = artifact.get("usedAt") or artifact.get("generatedAt") or ""
+        next_skills: list[EngineeringSkill] = []
+        for skill in skills:
+            if skill.id in skill_ids:
+                skill.usage_count += 1
+                skill.last_used_at = str(now)
+            next_skills.append(skill)
+        history = stored.get("usageHistory", [])
+        history.append({"skillIds": skill_ids, "artifact": artifact})
+        self._write([skill.to_dict() for skill in next_skills], history[-100:])
+
+    def _read(self) -> dict[str, Any]:
+        if not self._storage_path.exists():
+            return {}
+        try:
+            return json.loads(self._storage_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _write(self, skills: list[dict[str, Any]], usage_history: list[dict[str, Any]]) -> None:
+        self._storage_path.write_text(
+            json.dumps({"skills": skills, "usageHistory": usage_history}, indent=2),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def default_skills() -> list[EngineeringSkill]:
+        skills = [
+            EngineeringSkill(
+                id="skill_rest_api",
+                name="REST API",
+                category="Backend",
+                group="Execution",
+                description="Design and implement resource-oriented backend endpoints with validation, authorization, and tests.",
+                input_schema={"artifact": "Task|Story|Execution Package", "acceptanceCriteria": "list"},
+                output_schema={"implementationGuidance": "list", "testTemplates": "list"},
+                supported_artifacts=["Task", "Story", "Execution Package"],
+                required_context=["API boundary", "acceptance criteria", "authorization expectations"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution"],
+                implementation_pattern="Define endpoint contract, validate inputs, call service/repository boundary, return explicit success and error states.",
+                repository_hints=["Controller", "Route", "Service", "DTO", "API"],
+                architecture_rules=["Keep transport, business logic, and persistence separated.", "Do not bypass authorization middleware."],
+                acceptance_templates=["Endpoint returns expected payload for valid request.", "Invalid input returns actionable validation error."],
+                test_templates=["API integration test for valid request.", "Negative test for invalid request.", "Permission test for restricted access."],
+                validation_rules=["Endpoint maps to acceptance criteria.", "Authorization and input validation are covered."],
+                match_keywords=["api", "endpoint", "controller", "route", "backend", "service", "server", "http"],
+            ),
+            EngineeringSkill(
+                id="skill_repository_pattern",
+                name="Repository Pattern",
+                category="Architecture",
+                group="Execution",
+                description="Keep data access behind repository boundaries and avoid persistence leakage into UI or controller code.",
+                input_schema={"repositoryContext": "dict"},
+                output_schema={"repositoryHints": "list"},
+                supported_artifacts=["Task", "Execution Package"],
+                required_context=["data entity", "persistence boundary"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution", "review"],
+                implementation_pattern="Route reads and writes through a repository abstraction with explicit query methods and testable data mapping.",
+                repository_hints=["Repository", "DAO", "DataSource", "Entity", "Model"],
+                architecture_rules=["Do not query persistence directly from presentation code.", "Keep entity mapping close to the repository boundary."],
+                acceptance_templates=["Data is read and written through the approved repository path."],
+                test_templates=["Repository unit test for mapping.", "Integration test for persistence behavior."],
+                validation_rules=["Changed files stay within repository/data access boundary."],
+                match_keywords=["repository", "data", "persistence", "database", "entity", "query", "dao"],
+            ),
+            EngineeringSkill(
+                id="skill_react_grid",
+                name="React Grid",
+                category="Frontend",
+                group="Execution",
+                description="Build sortable, filterable, accessible grid/list experiences with stable loading and empty states.",
+                input_schema={"uiScope": "dict"},
+                output_schema={"uiGuidance": "list"},
+                supported_artifacts=["Story", "Task", "Execution Package"],
+                required_context=["screen", "data fields", "empty state", "filtering rules"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution"],
+                implementation_pattern="Render a stable grid with loading, empty, error, filter, and refresh states backed by typed data.",
+                repository_hints=["Grid", "Table", "List", "Component", "View"],
+                architecture_rules=["Keep view state local and data fetching behind existing hooks/services.", "Preserve accessibility labels and keyboard navigation."],
+                acceptance_templates=["User can view relevant rows with required columns.", "Empty and error states are visible and recoverable."],
+                test_templates=["UI test for populated grid.", "Empty state test.", "Filter interaction test."],
+                validation_rules=["Grid supports required columns and state transitions."],
+                match_keywords=["grid", "table", "list", "dashboard", "screen", "view", "row", "column"],
+            ),
+            EngineeringSkill(
+                id="skill_telemetry_dashboard",
+                name="Telemetry Dashboard",
+                category="Telemetry",
+                group="Execution",
+                description="Present telemetry health, freshness, and operational status without hiding unavailable data.",
+                input_schema={"telemetryContext": "dict"},
+                output_schema={"telemetryChecks": "list"},
+                supported_artifacts=["Feature", "Story", "Task", "Execution Package"],
+                required_context=["telemetry fields", "freshness expectations", "device context"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution", "qa"],
+                implementation_pattern="Surface telemetry status, freshness, missing data, and device context with clear operational states.",
+                repository_hints=["Telemetry", "DeviceHealth", "Dashboard", "Status"],
+                architecture_rules=["Show unavailable telemetry explicitly.", "Avoid stale data without freshness indicators."],
+                acceptance_templates=["Telemetry freshness is visible.", "Missing telemetry displays a clear unavailable state."],
+                test_templates=["Telemetry available test.", "Telemetry timeout test.", "Missing data test."],
+                validation_rules=["Telemetry paths include timeout and missing data handling."],
+                match_keywords=["telemetry", "device health", "freshness", "status", "sensor", "fault event", "device"],
+            ),
+            EngineeringSkill(
+                id="skill_permission_matrix",
+                name="Permission Matrix",
+                category="Authentication",
+                group="Execution",
+                description="Validate role-based access and blocked paths for sensitive workflows.",
+                input_schema={"personas": "list", "roles": "list"},
+                output_schema={"permissionRules": "list", "tests": "list"},
+                supported_artifacts=["Story", "Task", "Execution Package", "QA"],
+                required_context=["personas", "roles", "restricted action"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution", "qa", "review"],
+                implementation_pattern="Map every user action to allowed and denied roles, then enforce through existing authorization paths.",
+                repository_hints=["Auth", "Authorization", "Role", "Permission", "Policy"],
+                architecture_rules=["Do not bypass existing authentication flow.", "Denied access must be tested and auditable."],
+                acceptance_templates=["Authorized role can perform the action.", "Unauthorized role receives access denied."],
+                test_templates=["Permission test for allowed role.", "Permission test for restricted role."],
+                validation_rules=["Role behavior is covered by tests."],
+                match_keywords=["permission", "role", "authorization", "auth", "access", "restricted", "operator", "field technician"],
+            ),
+            EngineeringSkill(
+                id="skill_audit_logging",
+                name="Audit Logging",
+                category="Architecture",
+                group="Execution",
+                description="Capture security and operational decisions with traceable audit events.",
+                input_schema={"auditedActions": "list"},
+                output_schema={"auditGuidance": "list"},
+                supported_artifacts=["Task", "Execution Package"],
+                required_context=["audited action", "actor", "result"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution", "review"],
+                implementation_pattern="Emit structured audit events for sensitive state changes and access decisions using existing logging facilities.",
+                repository_hints=["Audit", "Logger", "Event", "Activity"],
+                architecture_rules=["Avoid logging secrets.", "Include actor, action, target, result, and correlation id where available."],
+                acceptance_templates=["Audit event is recorded for the approved action."],
+                test_templates=["Audit event emitted test.", "No secret logging test."],
+                validation_rules=["Sensitive actions include audit evidence."],
+                match_keywords=["audit", "logging", "trace", "activity", "compliance", "security"],
+            ),
+            EngineeringSkill(
+                id="skill_search_filtering",
+                name="Search and Filtering",
+                category="Frontend",
+                group="Execution",
+                description="Support user-driven narrowing of operational records with clear no-result states.",
+                input_schema={"searchFields": "list", "filters": "list"},
+                output_schema={"filterGuidance": "list", "tests": "list"},
+                supported_artifacts=["Story", "Task", "Execution Package"],
+                required_context=["search fields", "filter criteria", "result list"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution", "qa"],
+                implementation_pattern="Add search and filter controls that preserve selected criteria, loading states, and no-result guidance.",
+                repository_hints=["Search", "Filter", "Query", "List"],
+                architecture_rules=["Keep query criteria explicit.", "Avoid duplicate results after refresh."],
+                acceptance_templates=["User can search by approved terms.", "User can filter by approved criteria."],
+                test_templates=["Search result test.", "Filter result test.", "No-result test.", "Refresh without duplicates test."],
+                validation_rules=["Search/filter behavior maps to acceptance criteria."],
+                match_keywords=["search", "filter", "query", "sort", "find", "severity", "status"],
+            ),
+            EngineeringSkill(
+                id="skill_pagination",
+                name="Pagination",
+                category="Backend",
+                group="Execution",
+                description="Constrain result sets and preserve stable page navigation for list-style workflows.",
+                input_schema={"resultSet": "dict"},
+                output_schema={"paginationGuidance": "list"},
+                supported_artifacts=["Task", "Execution Package"],
+                required_context=["result set", "sort order", "page size"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution", "review"],
+                implementation_pattern="Use deterministic paging with stable ordering, limit validation, and boundary handling.",
+                repository_hints=["Pagination", "Page", "Limit", "Cursor"],
+                architecture_rules=["Do not return unbounded lists.", "Validate page size and cursor inputs."],
+                acceptance_templates=["First and last page boundaries behave correctly."],
+                test_templates=["First page test.", "Last page test.", "Maximum page size test."],
+                validation_rules=["Large result sets are bounded."],
+                match_keywords=["pagination", "page", "limit", "cursor", "large result", "maximum results"],
+            ),
+            EngineeringSkill(
+                id="skill_regression_tests",
+                name="Regression Tests",
+                category="Testing",
+                group="QA",
+                description="Protect related modules and flows from behavior drift after implementation.",
+                input_schema={"affectedModules": "list", "affectedFlows": "list"},
+                output_schema={"regressionTests": "list"},
+                supported_artifacts=["Task", "Execution Package", "QA"],
+                required_context=["affected modules", "affected flows", "risk areas"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["qa", "review"],
+                implementation_pattern="Add focused regression checks for impacted modules, flows, permission paths, and negative states.",
+                repository_hints=["Test", "Spec", "Regression", "QA"],
+                architecture_rules=["Tests should verify behavior, not implementation trivia."],
+                acceptance_templates=["Existing related flow remains unchanged."],
+                test_templates=["Regression test for affected flow.", "Negative regression test.", "Permission regression test."],
+                validation_rules=["Required regression paths are represented by tests."],
+                match_keywords=["test", "qa", "regression", "risk", "validation", "negative", "boundary"],
+            ),
+            EngineeringSkill(
+                id="skill_export_import",
+                name="Export and Import",
+                category="Backend",
+                group="Execution",
+                description="Move structured data safely across file or integration boundaries with validation and recovery states.",
+                input_schema={"dataShape": "dict"},
+                output_schema={"boundaryChecks": "list"},
+                supported_artifacts=["Feature", "Story", "Task", "Execution Package"],
+                required_context=["data shape", "file format", "validation rules"],
+                required_permissions=["execute_skills"],
+                compatible_agents=["execution", "review"],
+                implementation_pattern="Validate input/output shape, protect permissions, and report partial success or failure clearly.",
+                repository_hints=["Export", "Import", "Serializer", "Parser"],
+                architecture_rules=["Validate all external data.", "Do not expose restricted data in exports."],
+                acceptance_templates=["Valid export/import completes successfully.", "Invalid input returns actionable errors."],
+                test_templates=["Valid import/export test.", "Invalid format test.", "Permission test."],
+                validation_rules=["External data boundary is validated and permission-aware."],
+                match_keywords=["export", "import", "csv", "file", "download", "upload"],
+            ),
+        ]
+        skills.extend(
+            [
+                _skill(
+                    "skill_analyze_epic",
+                    "Analyze Epic",
+                    "Planning",
+                    "Planning Agent",
+                    "Build a capability-oriented epic analysis using planning context, knowledge, and repository evidence.",
+                    ["Epic"],
+                    ["planningContext", "knowledgeRegistry"],
+                    ["planning", "review"],
+                    ["execute_skills"],
+                    ["Analyze business goal", "Recommend feature themes", "Surface dependencies and risks"],
+                ),
+                _skill(
+                    "skill_analyze_feature",
+                    "Analyze Feature",
+                    "Planning",
+                    "Planning Agent",
+                    "Prepare feature-level responsibilities, story themes, and repository-aligned scope.",
+                    ["Feature"],
+                    ["planningContext", "repositoryIntelligence"],
+                    ["planning"],
+                    ["execute_skills"],
+                    ["Break feature into user-capability themes", "Align stories to repository context"],
+                ),
+                _skill(
+                    "skill_analyze_story",
+                    "Analyze Story",
+                    "Planning",
+                    "Planning Agent",
+                    "Prepare story readiness, acceptance themes, and implementation scope before task generation.",
+                    ["Story"],
+                    ["planningContext", "knowledgeRegistry"],
+                    ["planning"],
+                    ["execute_skills"],
+                    ["Clarify story intent", "Map acceptance to implementation areas"],
+                ),
+                _skill(
+                    "skill_generate_tasks",
+                    "Generate Tasks",
+                    "Planning",
+                    "Planning Agent",
+                    "Generate implementation-ready tasks from approved story context.",
+                    ["Story"],
+                    ["planningContext", "executionContext"],
+                    ["planning"],
+                    ["execute_skills"],
+                    ["Create UI, backend, data, QA tasks", "Map tasks to acceptance criteria"],
+                ),
+                _skill(
+                    "skill_build_execution_package",
+                    "Build Execution Package",
+                    "Execution",
+                    "Execution Agent",
+                    "Assemble deterministic business, repository, testing, and boundary context for implementation.",
+                    ["Task", "Story"],
+                    ["executionContext", "repositoryIntelligence", "knowledgeRegistry"],
+                    ["execution"],
+                    ["execute_skills"],
+                    ["Assemble business context", "Map repository evidence", "Prepare readiness summary"],
+                ),
+                _skill(
+                    "skill_generate_execution_plan",
+                    "Generate Execution Plan",
+                    "Execution",
+                    "Execution Agent",
+                    "Turn an execution package into scoped implementation guidance for the current execution mode.",
+                    ["Execution Package"],
+                    ["executionContext"],
+                    ["execution"],
+                    ["execute_skills"],
+                    ["Create step-by-step execution plan", "Preserve in-scope and out-of-scope boundaries"],
+                ),
+                _skill(
+                    "skill_generate_context_capsule",
+                    "Generate Context Capsule",
+                    "Execution",
+                    "Execution Agent",
+                    "Compress approved planning and repository context into a reusable capsule for implementation.",
+                    ["Task", "Story"],
+                    ["executionContext", "knowledgeRegistry", "engineeringGraph"],
+                    ["execution"],
+                    ["execute_skills"],
+                    ["Select relevant modules and flows", "Compress context for developer use"],
+                ),
+                _skill(
+                    "skill_find_related_files",
+                    "Find Related Files",
+                    "Repository",
+                    "Repository Agent",
+                    "Locate likely implementation files for the current task or story using repository intelligence.",
+                    ["Task", "Story", "Execution Package"],
+                    ["repositoryIntelligence"],
+                    ["repository", "execution", "review"],
+                    ["execute_skills"],
+                    ["Rank relevant files", "Explain why files were selected"],
+                ),
+                _skill(
+                    "skill_locate_apis",
+                    "Locate APIs",
+                    "Repository",
+                    "Repository Agent",
+                    "Find likely APIs and transport boundaries relevant to the current artifact.",
+                    ["Feature", "Story", "Task"],
+                    ["repositoryIntelligence"],
+                    ["repository", "execution"],
+                    ["execute_skills"],
+                    ["Locate endpoints", "Locate controllers and DTO boundaries"],
+                ),
+                _skill(
+                    "skill_locate_services",
+                    "Locate Services",
+                    "Repository",
+                    "Repository Agent",
+                    "Identify relevant service-layer logic and orchestration points.",
+                    ["Feature", "Story", "Task"],
+                    ["repositoryIntelligence"],
+                    ["repository", "execution", "review"],
+                    ["execute_skills"],
+                    ["Locate service boundaries", "Locate domain orchestration"],
+                ),
+                _skill(
+                    "skill_locate_tests",
+                    "Locate Tests",
+                    "Repository",
+                    "Repository Agent",
+                    "Locate related tests and validation points for the current artifact.",
+                    ["Task", "Execution Package", "QA"],
+                    ["repositoryIntelligence"],
+                    ["repository", "qa", "review"],
+                    ["execute_skills"],
+                    ["Locate unit tests", "Locate integration tests", "Locate regression anchors"],
+                ),
+                _skill(
+                    "skill_locate_similar_features",
+                    "Locate Similar Features",
+                    "Repository",
+                    "Repository Agent",
+                    "Find similar repository features and implementation references.",
+                    ["Epic", "Feature", "Story"],
+                    ["repositoryIntelligence", "engineeringMemory"],
+                    ["repository", "planning"],
+                    ["execute_skills"],
+                    ["Find similar repository areas", "Surface reusable implementation examples"],
+                ),
+                _skill(
+                    "skill_find_similar_stories",
+                    "Find Similar Stories",
+                    "Knowledge",
+                    "Planning Agent",
+                    "Retrieve similar approved stories from Engineering Memory.",
+                    ["Epic", "Feature", "Story"],
+                    ["engineeringMemory"],
+                    ["planning", "memory"],
+                    ["execute_skills"],
+                    ["Find similar stories", "Surface reusable story patterns"],
+                ),
+                _skill(
+                    "skill_retrieve_architecture_decisions",
+                    "Retrieve Architecture Decisions",
+                    "Knowledge",
+                    "Repository Agent",
+                    "Retrieve prior architecture decisions relevant to the artifact.",
+                    ["Feature", "Story", "Task", "Execution Package"],
+                    ["engineeringMemory", "knowledgeRegistry"],
+                    ["planning", "execution", "review"],
+                    ["execute_skills"],
+                    ["Retrieve approved architecture decisions", "Surface constraints and standards"],
+                ),
+                _skill(
+                    "skill_retrieve_engineering_patterns",
+                    "Retrieve Engineering Patterns",
+                    "Knowledge",
+                    "Memory Agent",
+                    "Retrieve reusable implementation patterns and lessons learned.",
+                    ["Story", "Task", "Execution Package", "QA"],
+                    ["engineeringMemory"],
+                    ["planning", "execution", "qa", "memory"],
+                    ["execute_skills"],
+                    ["Find reusable patterns", "Surface prior validation issues"],
+                ),
+                _skill(
+                    "skill_generate_tests",
+                    "Generate Tests",
+                    "QA",
+                    "QA Agent",
+                    "Generate structured functional, negative, permission, and regression tests from execution context.",
+                    ["Story", "Task", "Execution Package"],
+                    ["executionContext", "knowledgeRegistry"],
+                    ["qa"],
+                    ["execute_skills"],
+                    ["Generate functional tests", "Generate negative and permission tests"],
+                ),
+                _skill(
+                    "skill_acceptance_mapping",
+                    "Acceptance Mapping",
+                    "QA",
+                    "QA Agent",
+                    "Map acceptance criteria to tests, tasks, and validation outcomes.",
+                    ["Story", "Execution Package", "QA"],
+                    ["executionContext", "planningContext"],
+                    ["qa", "review"],
+                    ["execute_skills"],
+                    ["Map acceptance criteria", "Surface missing coverage"],
+                ),
+                _skill(
+                    "skill_regression_analysis",
+                    "Regression Analysis",
+                    "QA",
+                    "QA Agent",
+                    "Determine regression scope from repository context and changed behavior.",
+                    ["Task", "Execution Package", "QA"],
+                    ["repositoryIntelligence", "engineeringGraph"],
+                    ["qa", "review"],
+                    ["execute_skills"],
+                    ["Identify impacted modules", "Recommend regression focus"],
+                ),
+                _skill(
+                    "skill_release_readiness",
+                    "Release Readiness",
+                    "QA",
+                    "QA Agent",
+                    "Summarize release readiness from validation, coverage, and regression risk.",
+                    ["QA", "Execution Package"],
+                    ["executionContext", "engineeringMemory"],
+                    ["qa"],
+                    ["execute_skills"],
+                    ["Score readiness", "List blockers and warnings"],
+                ),
+                _skill(
+                    "skill_validate_implementation",
+                    "Validate Implementation",
+                    "Review",
+                    "Review Agent",
+                    "Validate implementation changes against scope, repository alignment, standards, and tests.",
+                    ["Task", "Execution Package", "PR Review"],
+                    ["executionContext", "repositoryIntelligence"],
+                    ["review", "execution"],
+                    ["execute_skills"],
+                    ["Check scope compliance", "Check test and standards alignment"],
+                ),
+                _skill(
+                    "skill_run_pr_review",
+                    "Run PR Review",
+                    "Review",
+                    "Review Agent",
+                    "Review pull requests against execution package and acceptance coverage.",
+                    ["PR Review", "Task", "Execution Package"],
+                    ["executionContext", "repositoryIntelligence", "engineeringMemory"],
+                    ["review"],
+                    ["execute_skills"],
+                    ["Compare PR against approved execution", "Summarize findings and gaps"],
+                ),
+                _skill(
+                    "skill_store_engineering_memory",
+                    "Store Engineering Memory",
+                    "Memory",
+                    "Memory Agent",
+                    "Persist validated engineering knowledge for future planning, execution, and QA reuse.",
+                    ["Story", "Execution Package", "QA"],
+                    ["engineeringMemory"],
+                    ["memory"],
+                    ["execute_skills"],
+                    ["Store validated outcome", "Tag reusable evidence"],
+                ),
+                _skill(
+                    "skill_retrieve_engineering_memory",
+                    "Retrieve Engineering Memory",
+                    "Memory",
+                    "Memory Agent",
+                    "Retrieve approved engineering memory relevant to the current artifact.",
+                    ["Epic", "Feature", "Story", "Task", "Execution Package", "QA"],
+                    ["engineeringMemory"],
+                    ["planning", "execution", "qa", "memory"],
+                    ["execute_skills"],
+                    ["Retrieve prior validated work", "Rank relevant engineering memory"],
+                ),
+                _skill(
+                    "skill_update_pattern_library",
+                    "Update Pattern Library",
+                    "Memory",
+                    "Memory Agent",
+                    "Update reusable pattern references from validated delivery outcomes.",
+                    ["Execution Package", "QA", "Release"],
+                    ["engineeringMemory", "knowledgeRegistry"],
+                    ["memory"],
+                    ["execute_skills"],
+                    ["Merge repeated patterns", "Archive obsolete patterns"],
+                ),
+            ]
+        )
+        return skills
+
+
+def _skill(
+    skill_id: str,
+    name: str,
+    group: str,
+    category: str,
+    description: str,
+    artifacts: list[str],
+    required_context: list[str],
+    compatible_agents: list[str],
+    required_permissions: list[str],
+    implementation_steps: list[str],
+) -> EngineeringSkill:
+    return EngineeringSkill(
+        id=skill_id,
+        name=name,
+        category=category,
+        group=group,
+        description=description,
+        input_schema={"artifact": artifacts[0] if artifacts else "Artifact", "context": "dict"},
+        output_schema={"summary": "string", "guidance": "list"},
+        supported_artifacts=artifacts,
+        required_context=required_context,
+        required_permissions=required_permissions,
+        compatible_agents=compatible_agents,
+        dependencies=[],
+        implementation_pattern="; ".join(implementation_steps),
+        repository_hints=[],
+        architecture_rules=[],
+        acceptance_templates=[],
+        test_templates=[],
+        validation_rules=[],
+        match_keywords=[name.lower(), *[item.lower() for item in artifacts[:2]], *[item.lower() for item in compatible_agents]],
+    )

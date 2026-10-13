@@ -1,0 +1,61 @@
+"""Repository Intelligence domain exports."""
+
+from .engineering_graph import (
+    EngineeringGraph,
+    EngineeringNode,
+    EngineeringNodeType,
+    EngineeringRelationship,
+    RelationshipType,
+)
+from .entities import (
+    RepositoryContextCapsule,
+    Repository,
+    RepositoryAuthenticationType,
+    RepositoryFile,
+    RepositoryFileRanking,
+    RepositoryLanguage,
+    RepositoryModule,
+    RepositoryParsedSymbol,
+    RepositoryScan,
+    RepositorySnapshot,
+    RepositorySymbolKind,
+    RepositoryStatus,
+    RepositoryType,
+)
+from .interfaces import (
+    IContextCapsuleBuilder,
+    IFileRankingService,
+    IEngineeringGraphService,
+    IRepositoryParserService,
+    IRepositoryScanner,
+    IRepositoryService,
+    ISnapshotService,
+)
+
+__all__ = [
+    "IEngineeringGraphService",
+    "IContextCapsuleBuilder",
+    "IFileRankingService",
+    "IRepositoryParserService",
+    "IRepositoryScanner",
+    "IRepositoryService",
+    "ISnapshotService",
+    "EngineeringGraph",
+    "EngineeringNode",
+    "EngineeringNodeType",
+    "EngineeringRelationship",
+    "Repository",
+    "RepositoryAuthenticationType",
+    "RepositoryContextCapsule",
+    "RepositoryFile",
+    "RepositoryFileRanking",
+    "RepositoryLanguage",
+    "RepositoryModule",
+    "RepositoryParsedSymbol",
+    "RepositoryScan",
+    "RepositorySnapshot",
+    "RepositorySymbolKind",
+    "RepositoryStatus",
+    "RepositoryType",
+    "RelationshipType",
+]

@@ -1,0 +1,701 @@
+"""Evidence-driven Acceptance Criteria intelligence."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+import re
+from typing import Any
+from uuid import uuid4
+
+
+_ACTION_PATTERN = re.compile(
+    r"\b(view|show|display|search|filter|create|update|delete|submit|review|"
+    r"approve|reject|notify|calculate|export|import|open|select|identify|"
+    r"detect|monitor|receive|access|manage|configure|generate|compare|load|respond|"
+    r"provide|enable|allow|recommend|surface|list|present|deliver|use|add|adding|act)\b",
+    re.I,
+)
+_TRIGGER_PATTERN = re.compile(r"\b(when|after|before|upon|once|if)\b", re.I)
+_GENERIC_RULES = {
+    "authorization": re.compile(r"\b(authoriz(?:e|ed|ation)|permission|access restriction|restricted access)\b", re.I),
+    "authentication": re.compile(r"\b(authenticat(?:e|ed|ion)|login|sign[ -]?in|identity)\b", re.I),
+    "validation": re.compile(r"\b(validat(?:e|ion)|invalid|required input|mandatory field)\b", re.I),
+    "role management": re.compile(r"\b(role management|assign role|manage roles?)\b", re.I),
+    "crud": re.compile(r"\b(create|read|update|delete|crud)\b", re.I),
+    "audit trail": re.compile(r"\b(audit|traceab(?:le|ility)|recorded action)\b", re.I),
+    "session management": re.compile(r"\b(session|token refresh|session expiry)\b", re.I),
+    "error messages": re.compile(r"\b(error message|failure message|validation message)\b", re.I),
+}
+
+ACCEPTANCE_CRITERIA_PROMPT_RULES = (
+    "Act as an experienced Product Owner and Business Analyst. Derive Acceptance Criteria "
+    "only from supplied evidence. Never invent functionality or generic enterprise scenarios. "
+    "Do not assume authentication, authorization, validation, CRUD, audit, permissions, session "
+    "management, or error handling unless explicitly supported. Attach evidence to every "
+    "criterion. Represent unavailable evidence as Missing Information and low-confidence "
+    "inference as an AI Assumption. Generate only specific, business-observable, "
+    "implementation-independent behavior."
+)
+
+
+@dataclass(frozen=True)
+class RequirementEvidence:
+    requirement_sentence: str
+    matched_phrase: str
+    confidence: float
+    source: str = "Requirement"
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        return {
+            "requirementSentence": value["requirement_sentence"],
+            "matchedPhrase": value["matched_phrase"],
+            "confidence": round(value["confidence"], 2),
+            "source": value["source"],
+        }
+
+
+@dataclass(frozen=True)
+class RequirementFacts:
+    business_goal: list[str] = field(default_factory=list)
+    functional_goal: list[str] = field(default_factory=list)
+    actor: list[str] = field(default_factory=list)
+    primary_capability: str = ""
+    entities: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    business_rules: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        return {
+            key.split("_")[0] + "".join(part.capitalize() for part in key.split("_")[1:]): item
+            for key, item in value.items()
+        }
+
+
+class IntelligentAcceptanceCriteriaEngine:
+    """Builds traceable criteria without inventing unsupported enterprise behavior."""
+
+    def understand(
+        self,
+        analysis: dict[str, Any],
+        requirement: dict[str, Any],
+    ) -> dict[str, Any]:
+        facts = self._facts(analysis)
+        source_criteria = [
+            self._criterion(
+                text=str(text),
+                origin="Imported" if requirement.get("sourceType") == "AzureDevOpsWorkItem" else "Source Derived",
+                status="Approved",
+                functional=self._best_functional_match(str(text), facts.functional_goal),
+                evidence=self._source_evidence(str(text), requirement),
+                order=index + 1,
+            )
+            for index, text in enumerate(analysis.get("acceptanceCriteria") or [])
+            if str(text).strip()
+        ]
+        missing = self._missing_information(
+            facts,
+            bool(source_criteria),
+            bool(analysis.get("nonFunctionalRequirements")),
+        )
+        coverage = self.validate_coverage(facts.functional_goal, source_criteria, analysis)
+        return {
+            "requirementFacts": facts.to_dict(),
+            "acceptanceCriteriaRecords": source_criteria,
+            "missingInformation": missing,
+            "aiAssumptions": self._assumptions(facts),
+            "acceptanceCoverage": coverage,
+            "acceptanceEvidence": [
+                evidence
+                for criterion in source_criteria
+                for evidence in criterion.get("evidence") or []
+            ],
+            "acceptanceDiagnostics": {
+                "engine": "IntelligentAcceptanceCriteriaV1",
+                "genericTemplateGuard": "Enabled",
+                "promptRulesVersion": "EvidenceOnlyV1",
+                "functionalRequirementCount": len(facts.functional_goal),
+                "sourceCriterionCount": len(source_criteria),
+            },
+        }
+
+    def generate(
+        self,
+        analysis: dict[str, Any],
+        requirement: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        facts = self._facts(analysis)
+        evidence_corpus = self._evidence_corpus(analysis, requirement)
+        suggestions: list[dict[str, Any]] = []
+        candidates = [
+            (functional, "Functional", functional)
+            for functional in facts.functional_goal
+        ]
+        candidates.extend(
+            (rule, "Business Rule", self._best_functional_match(rule, facts.functional_goal))
+            for rule in facts.business_rules
+        )
+        candidates.extend(
+            (quality, "Non-Functional", self._best_functional_match(quality, facts.functional_goal))
+            for quality in analysis.get("nonFunctionalRequirements") or []
+            if re.search(r"\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|seconds?|minutes?|%|percent)\b", str(quality), re.I)
+        )
+        expanded_candidates = [
+            (statement, criterion_type, functional, behavior)
+            for statement, criterion_type, functional in candidates
+            for behavior in (
+                self._atomic_behaviors(self._behavior_phrase(statement))
+                if criterion_type == "Functional"
+                else [self._behavior_phrase(statement)]
+            )
+        ]
+        for statement, criterion_type, functional, behavior in expanded_candidates:
+            actor = self._matching_actor(statement, facts.actor)
+            action = self._action(behavior)
+            if not action:
+                continue
+            generic_category = self._unsupported_generic_category(statement, evidence_corpus)
+            if generic_category:
+                continue
+            matched_phrase = self._matched_phrase(behavior, action)
+            outcome = self._observable_outcome(behavior, action)
+            if criterion_type == "Business Rule" and re.search(r"\bonly authorized\b", statement, re.I):
+                target = re.sub(rf"^{re.escape(action)}\s+", "", matched_phrase, flags=re.I)
+                criterion_title = f"Block Unauthorized {self._title(target)}"
+                text = (
+                    f"Scenario: {criterion_title}\n"
+                    "Given a user is not authorized by the stated business rule\n"
+                    f"When the user attempts to {action} {target}\n"
+                    f"Then {target} is not available to that user."
+                )
+            elif criterion_type == "Non-Functional":
+                criterion_title = self._title(statement)
+                limit = re.search(
+                    r"\bwithin\s+\d+(?:\.\d+)?\s*(?:ms|milliseconds?|seconds?|minutes?)\b",
+                    statement,
+                    re.I,
+                )
+                text = (
+                    f"Scenario: {self._title(statement)}\n"
+                    "Given the stated operating conditions\n"
+                    f"When {matched_phrase}\n"
+                    f"Then the outcome completes {limit.group(0) if limit else 'within the stated limit'}."
+                )
+            else:
+                criterion_title = self._title(behavior)
+                given = (
+                    f"Given {self._actor_context(actor)}" if actor
+                    else f"Given the stated {criterion_type.lower()} context"
+                )
+                text = (
+                    f"Scenario: {self._title(behavior)}\n"
+                    f"{given}\n"
+                    f"When the user {self._user_action_phrase(matched_phrase)}\n"
+                    f"Then {outcome}."
+                )
+            suggestions.append(self._criterion(
+                text=text,
+                origin="AI Inferred",
+                status="PendingReview",
+                functional=functional,
+                evidence=[RequirementEvidence(
+                    requirement_sentence=statement,
+                    matched_phrase=matched_phrase,
+                    confidence=0.93,
+                ).to_dict()],
+                order=len(suggestions) + 1,
+                criterion_type=criterion_type,
+                title=criterion_title,
+            ))
+        return suggestions
+
+    def validate_coverage(
+        self,
+        functional_requirements: list[str],
+        criteria: list[dict[str, Any]],
+        analysis: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        mappings = []
+        covered = 0
+        for index, requirement in enumerate(functional_requirements):
+            matches = [
+                str(item.get("criterionId") or "")
+                for item in criteria
+                if self._same_requirement(requirement, str(item.get("mappedFunctionalRequirement") or ""))
+            ]
+            status = "Covered" if matches else "Uncovered"
+            covered += int(bool(matches))
+            mappings.append({
+                "functionalRequirementId": f"fr_{index + 1}",
+                "functionalRequirement": requirement,
+                "criterionIds": matches,
+                "status": status,
+            })
+        total = len(functional_requirements)
+        analysis = analysis or {}
+        areas = [
+            self._coverage_area("Business Goals", len(analysis.get("businessGoals") or [])),
+            {
+                "area": "Functional Requirements",
+                "count": total,
+                "coveredCount": covered,
+                "status": "Covered" if total and covered == total else "Uncovered",
+            },
+            self._coverage_area("Acceptance Criteria", len(criteria)),
+            self._coverage_area("Business Rules", len(analysis.get("businessRules") or []), required=False),
+            self._coverage_area("Dependencies", len(analysis.get("dependencies") or []), required=False),
+            self._coverage_area("Non-Functional Requirements", len(analysis.get("nonFunctionalRequirements") or []), required=False),
+            {
+                "area": "Open Questions",
+                "count": len(analysis.get("openQuestions") or []),
+                "coveredCount": 0,
+                "status": "Open" if analysis.get("openQuestions") else "None",
+            },
+        ]
+        return {
+            "functionalRequirementCount": total,
+            "coveredFunctionalRequirementCount": covered,
+            "coveragePercent": round((covered / total) * 100) if total else 0,
+            "status": "Complete" if total and covered == total else "Incomplete",
+            "mappings": mappings,
+            "uncoveredFunctionalRequirements": [
+                item["functionalRequirement"] for item in mappings if item["status"] == "Uncovered"
+            ],
+            "areas": areas,
+            "uncoveredAreas": [
+                item["area"] for item in areas if item["status"] == "Uncovered"
+            ],
+        }
+
+    def refresh_projection(self, analysis: dict[str, Any]) -> None:
+        records = list(analysis.get("acceptanceCriteriaRecords") or [])
+        suggestions = list(analysis.get("acceptanceCriteriaSuggestions") or [])
+        active = records or suggestions
+        analysis["acceptanceCoverage"] = self.validate_coverage(
+            list(analysis.get("functionalRequirements") or []),
+            active,
+            analysis,
+        )
+        analysis["acceptanceEvidence"] = [
+            evidence
+            for criterion in active
+            for evidence in criterion.get("evidence") or []
+        ]
+
+    def normalize_edited(
+        self,
+        value: dict[str, Any],
+        *,
+        text: str,
+        order: int,
+    ) -> dict[str, Any]:
+        functional = str(value.get("mappedFunctionalRequirement") or "")
+        evidence = list(value.get("evidence") or [])
+        return {
+            **self._criterion(
+                text=text,
+                origin="User Added",
+                status="PendingReview",
+                functional=functional,
+                evidence=evidence,
+                order=order,
+                criterion_id=str(value.get("criterionId") or ""),
+                criterion_type=str(value.get("type") or "Functional"),
+                title=str(value.get("title") or "").strip(),
+            ),
+            "editedFrom": str(value.get("origin") or "AI Inferred"),
+        }
+
+    @staticmethod
+    def _facts(analysis: dict[str, Any]) -> RequirementFacts:
+        functional = [str(item).strip() for item in analysis.get("functionalRequirements") or [] if str(item).strip()]
+        governance = analysis.get("statementGovernance") if isinstance(analysis.get("statementGovernance"), dict) else {}
+        governed = governance.get("governedValues") if isinstance(governance.get("governedValues"), dict) else {}
+        actors = _unique([
+            *[str(item).strip() for item in analysis.get("actors") or [] if str(item).strip()],
+            str(governed.get("primaryActor") or "").strip(),
+            *[str(item).strip() for item in governed.get("secondaryActors") or [] if str(item).strip()],
+        ])
+        actions = _unique(
+            match.group(1).lower()
+            for text in functional
+            for match in _ACTION_PATTERN.finditer(text)
+        )
+        entities = _unique(
+            phrase.strip(" .")
+            for text in functional
+            for phrase in re.findall(
+                r"\b(?:view|show|display|search|filter|review|identify|detect|monitor|receive|access|manage)\s+"
+                r"(?:the |a |an )?([A-Za-z][A-Za-z0-9 -]{2,45})",
+                text,
+                re.I,
+            )
+        )
+        outputs = _unique(
+            text for text in functional
+            if re.search(r"\b(show|display|return|provide|notify|generate|calculate|export)\b", text, re.I)
+        )
+        return RequirementFacts(
+            business_goal=list(analysis.get("businessGoals") or []),
+            functional_goal=functional,
+            actor=actors,
+            primary_capability=actions[0].title() if actions else "",
+            entities=entities,
+            actions=actions,
+            outputs=outputs,
+            constraints=list(analysis.get("constraints") or []),
+            business_rules=list(analysis.get("businessRules") or []),
+            dependencies=list(analysis.get("dependencies") or []),
+            assumptions=list(analysis.get("assumptions") or []),
+            open_questions=list(analysis.get("openQuestions") or []),
+        )
+
+    @staticmethod
+    def _missing_information(
+        facts: RequirementFacts,
+        has_criteria: bool,
+        has_non_functional: bool,
+    ) -> list[dict[str, Any]]:
+        checks = [
+            ("Actor", facts.actor, "Identify who performs or receives the capability."),
+            ("Trigger", [item for item in facts.functional_goal if _TRIGGER_PATTERN.search(item)], "Define when the behavior starts."),
+            ("Observable Output", facts.outputs, "Define the business-visible result."),
+            ("Business Rules", facts.business_rules, "Confirm whether business rules constrain the outcome."),
+            ("Constraints", facts.constraints, "Confirm applicable limits or operating constraints."),
+            ("Acceptance Criteria", ["present"] if has_criteria else [], "Review evidence-driven suggested criteria."),
+            ("Non-Functional Requirements", ["present"] if has_non_functional else [], "Confirm performance, reliability, security, or accessibility expectations."),
+        ]
+        return [
+            {
+                "field": name,
+                "status": "Missing",
+                "reason": reason,
+                "blocksGeneration": name in {"Actor", "Observable Output"} and not facts.functional_goal,
+            }
+            for name, value, reason in checks
+            if not value
+        ]
+
+    @staticmethod
+    def _assumptions(facts: RequirementFacts) -> list[dict[str, Any]]:
+        return [
+            {
+                "assumptionId": f"assumption_{index + 1}",
+                "text": text,
+                "reason": "The source labels this statement as an assumption; it is not Acceptance Criteria.",
+                "confidence": 0.9,
+                "status": "NeedsReview",
+                "origin": "Source Derived",
+            }
+            for index, text in enumerate(facts.assumptions)
+        ]
+
+    @staticmethod
+    def _criterion(
+        *,
+        text: str,
+        origin: str,
+        status: str,
+        functional: str,
+        evidence: list[dict[str, Any]],
+        order: int,
+        criterion_id: str = "",
+        criterion_type: str = "Functional",
+        title: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "criterionId": criterion_id or f"ac_{uuid4().hex}",
+            "title": title or IntelligentAcceptanceCriteriaEngine._title(text),
+            "text": text.strip(),
+            "type": criterion_type,
+            "origin": origin,
+            "status": status,
+            "confidence": round(min((item.get("confidence", 0.8) for item in evidence), default=0.75), 2),
+            "mappedFunctionalRequirement": functional,
+            "requirementCoverage": "Mapped" if functional else "Unmapped",
+            "evidence": evidence,
+            "quality": {
+                "atomic": True,
+                "independent": True,
+                "verifiable": True,
+                "implementationIndependent": not bool(re.search(r"\b(class|method|database table|framework|library)\b", text, re.I)),
+                "traceable": bool(evidence),
+            },
+            "order": order,
+        }
+
+    @staticmethod
+    def _source_evidence(text: str, requirement: dict[str, Any]) -> list[dict[str, Any]]:
+        return [RequirementEvidence(
+            requirement_sentence=text,
+            matched_phrase=text,
+            confidence=1.0,
+            source=str(requirement.get("sourceType") or "Requirement"),
+        ).to_dict()]
+
+    @staticmethod
+    def _best_functional_match(text: str, functional: list[str]) -> str:
+        ranked = sorted(functional, key=lambda item: len(_terms(text) & _terms(item)), reverse=True)
+        return ranked[0] if ranked and _terms(text) & _terms(ranked[0]) else ""
+
+    @staticmethod
+    def _same_requirement(left: str, right: str) -> bool:
+        if not left or not right:
+            return False
+        return left == right or len(_terms(left) & _terms(right)) >= max(2, min(len(_terms(left)), len(_terms(right))) // 2)
+
+    @staticmethod
+    def _action(text: str) -> str:
+        match = _ACTION_PATTERN.search(text)
+        return match.group(1).lower() if match else ""
+
+    @staticmethod
+    def _behavior_phrase(text: str) -> str:
+        """Remove requirement framing so observable behavior drives the criterion."""
+        cleaned = text.strip().rstrip(".")
+        match = re.match(
+            r"^(?:allow|allows|enable|enables)\s+.+?\s+to\s+(.+)$",
+            cleaned,
+            re.I,
+        )
+        if match:
+            return match.group(1).strip()
+        provided_view = re.match(
+            r"^provide\s+.+?\s+with\s+(?:an?\s+)?(?:real[- ]time\s+)?"
+            r"(view|display|summary|list)\s+of\s+(.+)$",
+            cleaned,
+            re.I,
+        )
+        if provided_view:
+            action = "view" if provided_view.group(1).lower() == "summary" else provided_view.group(1).lower()
+            return f"{action} {provided_view.group(2).strip()}"
+        return cleaned
+
+    @staticmethod
+    def _atomic_behaviors(behavior: str) -> list[str]:
+        """Split coordinated product actions while preserving their shared target."""
+        observable = IntelligentAcceptanceCriteriaEngine._observable_list_behaviors(behavior)
+        if len(observable) > 1:
+            return observable
+        explicit_segments = [
+            IntelligentAcceptanceCriteriaEngine._normalize_nominalized_behavior(item)
+            for item in re.split(r"\s+(?:and|or)\s+", behavior, flags=re.I)
+            if item.strip()
+        ]
+        if "," not in behavior and len(explicit_segments) > 1 and all(_ACTION_PATTERN.search(item) for item in explicit_segments):
+            return explicit_segments
+        behavior = IntelligentAcceptanceCriteriaEngine._normalize_nominalized_behavior(behavior)
+        action = (
+            r"(?:view|show|display|search|filter|create|update|delete|submit|review|"
+            r"open|select|identify|detect|monitor|access|manage|configure|compare|list)"
+        )
+        match = re.match(
+            rf"^((?:{action})(?:\s*,\s*{action})*(?:\s*,?\s+and\s+{action}))\s+(.+)$",
+            behavior,
+            re.I,
+        )
+        if not match:
+            return [behavior]
+        actions = re.findall(action, match.group(1), re.I)
+        target = match.group(2).strip()
+        return [f"{verb.lower()} {target}" for verb in actions]
+
+    @staticmethod
+    def _observable_list_behaviors(behavior: str) -> list[str]:
+        """Expand explicitly listed outputs and passive outcomes into atomic behavior."""
+        parts = re.split(r"\s+so\s+that\s+", behavior, maxsplit=1, flags=re.I)
+        main = parts[0]
+        purpose = parts[1] if len(parts) > 1 else ""
+        match = re.match(r"^(view|show|display|review|monitor|list)\s+(.+)$", main.strip(), re.I)
+        output: list[str] = []
+        if match and "," in match.group(2):
+            targets = [
+                item.strip()
+                for item in re.split(r"\s*,\s*|\s*,?\s+and\s+", match.group(2), flags=re.I)
+                if item.strip()
+            ]
+            if len(targets) > 1:
+                output.extend(f"{match.group(1).lower()} {target}" for target in targets)
+        if purpose:
+            passive = re.match(
+                r"^(.+?)\s+can\s+be\s+(identified|detected|monitored)"
+                r"(?:\s+and\s+(acted\s+on))?\s*(.*)$",
+                purpose.strip(),
+                re.I,
+            )
+            if passive:
+                subject = passive.group(1).strip()
+                qualifier = passive.group(4).strip()
+                verb = {"identified": "identify", "detected": "detect", "monitored": "monitor"}[passive.group(2).lower()]
+                output.append(" ".join(part for part in (verb, subject, qualifier) if part))
+                if passive.group(3):
+                    output.append(" ".join(part for part in ("act on", subject, qualifier) if part))
+        return list(dict.fromkeys(output)) if output else [behavior]
+
+    @staticmethod
+    def _normalize_nominalized_behavior(value: str) -> str:
+        """Convert explicit action nouns into equivalent observable verb phrases."""
+        text = value.strip().rstrip(".")
+        if re.search(r"\brecommendations?\b", text, re.I):
+            return "provide recommendations"
+        patterns = (
+            (r"\b(?:proactive\s+)?(.+?)\s+monitoring\b", "monitor"),
+            (r"\b(.+?)\s+detection\b", "detect"),
+            (r"\b(.+?)\s+filtering\b", "filter"),
+            (r"\b(.+?)\s+management\b", "manage"),
+            (r"\b(.+?)\s+search\b", "search"),
+        )
+        for pattern, action in patterns:
+            match = re.search(pattern, text, re.I)
+            if match:
+                subject = re.sub(
+                    r"^(?:need|support|implement|provide|allow|enable|helps?\s+in)\s+",
+                    "",
+                    match.group(1).strip(),
+                    flags=re.I,
+                )
+                if subject:
+                    return f"{action} {subject}"
+        return text
+
+    @staticmethod
+    def _actor_context(actor: str) -> str:
+        normalized = re.sub(r"\bUsers\b", "User", actor.strip(), flags=re.I)
+        article = "an" if normalized[:1].lower() in "aeiou" else "a"
+        return f"{article} {normalized} is using the relevant workflow"
+
+    @staticmethod
+    def _user_action_phrase(phrase: str) -> str:
+        """Conjugate coordinated base actions for a singular user."""
+        actions = {
+            "search": "searches",
+            "monitor": "monitors",
+            "manage": "manages",
+            "filter": "filters",
+            "review": "reviews",
+            "view": "views",
+            "open": "opens",
+            "select": "selects",
+            "identify": "identifies",
+            "detect": "detects",
+            "access": "accesses",
+            "act": "acts",
+        }
+        result = phrase
+        for base, singular in actions.items():
+            result = re.sub(rf"\b{base}\b", singular, result, flags=re.I)
+        return result
+
+    @staticmethod
+    def _matched_phrase(text: str, action: str) -> str:
+        match = re.search(rf"\b{re.escape(action)}\b.+", text, re.I)
+        return (match.group(0) if match else text).strip().rstrip(".")
+
+    @staticmethod
+    def _observable_outcome(text: str, action: str) -> str:
+        phrase = IntelligentAcceptanceCriteriaEngine._matched_phrase(text, action)
+        if action in {"view", "show", "display", "review", "open", "access"}:
+            subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
+            return f"{subject} is available for the described business purpose"
+        if action == "filter":
+            subject = re.sub(r"^filter\s+", "", phrase, flags=re.I)
+            return f"the results contain only {subject} matching the requested filter"
+        if action == "search":
+            subject = re.sub(r"^search\s+", "", phrase, flags=re.I)
+            if "," in subject or re.search(r"\band\s+(?:monitor|manage|filter|review)\b", subject, re.I):
+                target = re.sub(
+                    r"^.*\b(?:and\s+)?(?:monitor|manage|filter|review)\s+",
+                    "",
+                    subject,
+                    flags=re.I,
+                )
+                return f"{target} are available as the observable result"
+            return f"matching {subject} are returned"
+        if action in {"identify", "detect", "monitor"}:
+            subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
+            verb = {"identify": "identified", "detect": "detected", "monitor": "monitored"}[action]
+            return f"{subject} can be {verb} from the observable result"
+        if action == "manage":
+            subject = re.sub(r"^manage\s+", "", phrase, flags=re.I)
+            return f"changes to {subject} are observable and complete"
+        if action == "act":
+            subject = re.sub(r"^act\s+on\s+", "", phrase, flags=re.I)
+            return f"the response to {subject} is observable and complete"
+        if action in {"provide", "surface", "list", "present", "deliver", "recommend"}:
+            subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
+            return f"{subject} is available as the observable business result"
+        if action in {"enable", "allow"}:
+            subject = re.sub(rf"^{re.escape(action)}\s+", "", phrase, flags=re.I)
+            return f"the described user can {subject}"
+        if action in {"add", "adding"}:
+            subject = re.sub(r"^add(?:ing)?\s+", "", phrase, flags=re.I)
+            return f"{subject} is available for the stated business goal"
+        return f"the stated outcome for '{phrase}' is observable and complete"
+
+    @staticmethod
+    def _matching_actor(functional: str, actors: list[str]) -> str:
+        for actor in actors:
+            if str(actor).lower() in functional.lower():
+                return str(actor)
+        return str(actors[0]) if len(actors) == 1 else ""
+
+    @staticmethod
+    def _title(text: str) -> str:
+        cleaned = re.sub(r"(?i)^(scenario:\s*)", "", text).splitlines()[0].strip(" .")
+        words = cleaned.split()
+        return " ".join(words[:8]).title() or "Acceptance Criterion"
+
+    @staticmethod
+    def _evidence_corpus(analysis: dict[str, Any], requirement: dict[str, Any]) -> str:
+        values = [
+            str(requirement.get("normalizedRequirement") or ""),
+            *(str(item) for key in (
+                "businessRules", "constraints", "nonFunctionalRequirements", "dependencies",
+            ) for item in analysis.get(key) or []),
+        ]
+        return "\n".join(values)
+
+    @staticmethod
+    def _unsupported_generic_category(functional: str, evidence_corpus: str) -> str:
+        for category, pattern in _GENERIC_RULES.items():
+            if pattern.search(functional) and not pattern.search(evidence_corpus):
+                return category
+        return ""
+
+    @staticmethod
+    def _coverage_area(area: str, count: int, *, required: bool = True) -> dict[str, Any]:
+        return {
+            "area": area,
+            "count": count,
+            "coveredCount": count,
+            "status": "Covered" if count else ("Uncovered" if required else "Not Provided"),
+        }
+
+
+def _terms(value: str) -> set[str]:
+    return {
+        item.lower()
+        for item in re.findall(r"[A-Za-z][A-Za-z0-9-]+", value)
+        if len(item) > 2 and item.lower() not in {
+            "the", "and", "for", "with", "must", "shall", "should", "user", "users",
+            "when", "then", "given", "that", "this", "from", "into",
+        }
+    }
+
+
+def _unique(values: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result

@@ -1,0 +1,26 @@
+name: Azure DevOps Phase 6
+
+on:
+  pull_request:
+    paths:
+      - "backend/ado_agent/**"
+      - "backend/ado_hardening/**"
+      - "backend/ado_intelligence/**"
+      - "backend/platform_sdk/**"
+      - "backend/integrations/azure_devops/**"
+      - "tests/integration/test_ado_phase6_hardening.py"
+      - "tests/integration/test_ado_phase6_operational_validation.py"
+      - "tests/test_ado_*"
+      - "tests/test_azure_devops_*"
+  workflow_dispatch:
+
+jobs:
+  mocked-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: bin/test-azure-devops-phase6

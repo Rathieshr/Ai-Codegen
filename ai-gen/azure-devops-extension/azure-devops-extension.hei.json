@@ -1,0 +1,105 @@
+{
+  "manifestVersion": 1,
+  "id": "hei-engineering-platform",
+  "publisher": "AiIntelliCodegen",
+  "version": "0.2.50",
+  "name": "HEI",
+  "description": "Engineering Intelligence for repository-aware planning, execution, QA, and engineering operations in Azure DevOps.",
+  "public": false,
+  "categories": [
+    "Azure Boards"
+  ],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "icons": {
+    "default": "static/hei-icon-light.png"
+  },
+  "files": [
+    {
+      "path": "dist",
+      "addressable": true
+    },
+    {
+      "path": "static",
+      "addressable": true
+    },
+    {
+      "path": "projectIntelligenceTab.html",
+      "addressable": true
+    },
+    {
+      "path": "openHeiAction.html",
+      "addressable": true
+    }
+  ],
+  "contributions": [
+    {
+      "id": "hei-hub-group",
+      "type": "ms.vss-web.hub-group",
+      "description": "Adds HEI to Azure DevOps project navigation.",
+      "targets": [
+        "ms.vss-web.project-hub-groups-collection"
+      ],
+      "properties": {
+        "name": "HEI",
+        "order": 85
+      }
+    },
+    {
+      "id": "hei-command-center",
+      "type": "ms.vss-web.hub",
+      "description": "Hosts the complete HEI Engineering Command Center.",
+      "targets": [
+        ".hei-hub-group"
+      ],
+      "properties": {
+        "name": "HEI",
+        "order": 1,
+        "uri": "dist/hei/index.html",
+        "iconAsset": "AiIntelliCodegen.hei-engineering-platform/static/hei-icon-light.png",
+        "includesData": {
+          "assets": [
+            "AiIntelliCodegen.hei-engineering-platform/static/hei-icon-light.png",
+            "AiIntelliCodegen.hei-engineering-platform/static/hei-icon-dark.png"
+          ]
+        },
+        "icon": {
+          "light": "static/hei-icon-light.png",
+          "dark": "static/hei-icon-dark.png"
+        },
+        "supportsMobile": true
+      }
+    },
+    {
+      "id": "hei.project-intelligence-tab",
+      "type": "ms.vss-work-web.work-item-form-page",
+      "targets": [
+        "ms.vss-work-web.work-item-form"
+      ],
+      "properties": {
+        "name": "HEI",
+        "uri": "projectIntelligenceTab.html"
+      }
+    },
+    {
+      "id": "hei.open-command-center",
+      "type": "ms.vss-web.action",
+      "targets": [
+        "work-item-toolbar"
+      ],
+      "properties": {
+        "text": "Open in HEI",
+        "title": "Open this work item in the HEI Command Center",
+        "uri": "openHeiAction.html"
+      }
+    }
+  ],
+  "scopes": [
+    "vso.work_write",
+    "vso.code",
+    "vso.graph"
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "name": "ai-gen-vscode",
+  "displayName": "HEI Engineering Assistant",
+  "description": "Repository-aware Engineering Intelligence for HEI.",
+  "version": "0.2.11",
+  "publisher": "rathiesh",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:aiGen.sidebar",
+    "onCommand:ai-gen.openStoryPlanner",
+    "onCommand:ai-gen.refreshBackendResolution",
+    "onUri"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiGen",
+          "title": "HEI",
+          "icon": "media/ai-gen.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiGen": [
+        {
+          "id": "aiGen.sidebar",
+          "name": "HEI Engineering Assistant",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ai-gen.openStoryPlanner",
+        "title": "HEI: Open Engineering Assistant"
+      },
+      {
+        "command": "ai-gen.refreshBackendResolution",
+        "title": "HEI: Refresh Backend Connection"
+      },
+      {
+        "command": "ai-gen.openExecution",
+        "title": "HEI: Open Execution Workspace"
+      },
+      {
+        "command": "ai-gen.generateExecutionPlan",
+        "title": "HEI: Generate Implementation Plan"
+      },
+      {
+        "command": "ai-gen.openContextCapsule",
+        "title": "HEI: Open Context Capsule"
+      }
+    ],
+    "configuration": {
+      "title": "HEI",
+      "properties": {
+        "ai-gen.backendMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "railway"
+          ],
+          "default": "auto",
+          "description": "Choose backend selection mode."
+        },
+        "ai-gen.localBackendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Local ai-gen backend base URL."
+        },
+        "ai-gen.railwayBackendUrl": {
+          "type": "string",
+          "default": "https://ai-codegen-production.up.railway.app",
+          "description": "Public Railway backend base URL."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "compile": "^0.0.2"
+  }
+}

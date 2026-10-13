@@ -1,0 +1,85 @@
+{
+  "name": "ai-gen-execution-preview",
+  "displayName": "AI Gen Execution Preview",
+  "description": "Project Intelligence execution workspace for building Copilot-ready context from Azure DevOps stories.",
+  "version": "0.1.0",
+  "publisher": "rathiesh",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:aiGenExecution.sidebar",
+    "onCommand:ai-gen-execution.openWorkspace",
+    "onCommand:ai-gen-execution.refreshBackend"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiGenExecution",
+          "title": "Project Intelligence",
+          "icon": "../media/ai-gen.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiGenExecution": [
+        {
+          "id": "aiGenExecution.sidebar",
+          "name": "Execution Workspace",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ai-gen-execution.openWorkspace",
+        "title": "AI Gen Execution: Open Workspace"
+      },
+      {
+        "command": "ai-gen-execution.refreshBackend",
+        "title": "AI Gen Execution: Refresh Backend"
+      }
+    ],
+    "configuration": {
+      "title": "AI Gen Execution Preview",
+      "properties": {
+        "ai-gen-execution.backendMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "railway"
+          ],
+          "default": "auto",
+          "description": "Choose backend selection mode."
+        },
+        "ai-gen-execution.localBackendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Local ai-gen backend base URL."
+        },
+        "ai-gen-execution.railwayBackendUrl": {
+          "type": "string",
+          "default": "https://ai-codegen-production.up.railway.app",
+          "description": "Public Railway backend base URL."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "../node_modules/.bin/tsc -p ./",
+    "watch": "../node_modules/.bin/tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

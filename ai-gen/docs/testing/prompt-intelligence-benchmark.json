@@ -1,0 +1,370 @@
+{
+  "runId": "prompt-hardening-b15fb3a2a467",
+  "hardeningVersion": "4.10",
+  "generatedAt": "2026-07-13T07:45:14.976502+00:00",
+  "environment": {
+    "python": "3.14.5",
+    "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+    "providerInvoked": false,
+    "networkCalls": 0
+  },
+  "repositoryScenarios": [
+    {
+      "id": "small-code-indexed",
+      "name": "Small Repository",
+      "repositoryMode": "CodeIndexed",
+      "fileCount": 4,
+      "status": "Passed",
+      "manifestTokens": 1259,
+      "promptTokens": 1483,
+      "evidenceSafe": true,
+      "repositoryModePreserved": true,
+      "durationMs": 3.36
+    },
+    {
+      "id": "large-code-indexed",
+      "name": "Large Repository",
+      "repositoryMode": "CodeIndexed",
+      "fileCount": 600,
+      "status": "Passed",
+      "manifestTokens": 15861,
+      "promptTokens": 16979,
+      "evidenceSafe": true,
+      "repositoryModePreserved": true,
+      "durationMs": 13.12
+    },
+    {
+      "id": "knowledge-snapshot",
+      "name": "Small Repository",
+      "repositoryMode": "KnowledgeSnapshot",
+      "fileCount": 0,
+      "status": "Passed",
+      "manifestTokens": 1145,
+      "promptTokens": 1351,
+      "evidenceSafe": true,
+      "repositoryModePreserved": true,
+      "durationMs": 2.73
+    },
+    {
+      "id": "repository-unavailable",
+      "name": "Unavailable Repository",
+      "repositoryMode": "Unavailable",
+      "fileCount": 0,
+      "status": "Passed",
+      "manifestTokens": 1144,
+      "promptTokens": 1328,
+      "evidenceSafe": true,
+      "repositoryModePreserved": true,
+      "durationMs": 2.37
+    }
+  ],
+  "modelAdapters": [
+    {
+      "modelId": "gpt",
+      "status": "Passed",
+      "estimatedTokens": 1487,
+      "contextLimitRespected": true,
+      "durationMs": 1.1
+    },
+    {
+      "modelId": "codex",
+      "status": "Passed",
+      "estimatedTokens": 1483,
+      "contextLimitRespected": true,
+      "durationMs": 1.41
+    },
+    {
+      "modelId": "claude",
+      "status": "Passed",
+      "estimatedTokens": 1488,
+      "contextLimitRespected": true,
+      "durationMs": 1.31
+    },
+    {
+      "modelId": "gemini",
+      "status": "Passed",
+      "estimatedTokens": 1490,
+      "contextLimitRespected": true,
+      "durationMs": 1.38
+    },
+    {
+      "modelId": "glm",
+      "status": "Passed",
+      "estimatedTokens": 1485,
+      "contextLimitRespected": true,
+      "durationMs": 1.17
+    },
+    {
+      "modelId": "qwen",
+      "status": "Passed",
+      "estimatedTokens": 1481,
+      "contextLimitRespected": true,
+      "durationMs": 1.32
+    },
+    {
+      "modelId": "ollama",
+      "status": "Passed",
+      "estimatedTokens": 1437,
+      "contextLimitRespected": true,
+      "durationMs": 1.11
+    }
+  ],
+  "tokenBudgets": [
+    {
+      "budgetTokens": 1024,
+      "status": "Passed",
+      "budgetStatus": "Blocked",
+      "estimatedTokens": 923,
+      "remainingBudget": -155,
+      "protectedContextPreserved": true,
+      "jsonIntegrityValid": true
+    },
+    {
+      "budgetTokens": 2048,
+      "status": "Passed",
+      "budgetStatus": "Ready",
+      "estimatedTokens": 1339,
+      "remainingBudget": 325,
+      "protectedContextPreserved": true,
+      "jsonIntegrityValid": true
+    },
+    {
+      "budgetTokens": 4096,
+      "status": "Passed",
+      "budgetStatus": "Ready",
+      "estimatedTokens": 1339,
+      "remainingBudget": 1989,
+      "protectedContextPreserved": true,
+      "jsonIntegrityValid": true
+    },
+    {
+      "budgetTokens": 8192,
+      "status": "Passed",
+      "budgetStatus": "Ready",
+      "estimatedTokens": 1339,
+      "remainingBudget": 5829,
+      "protectedContextPreserved": true,
+      "jsonIntegrityValid": true
+    },
+    {
+      "budgetTokens": 16000,
+      "status": "Passed",
+      "budgetStatus": "Ready",
+      "estimatedTokens": 1339,
+      "remainingBudget": 12613,
+      "protectedContextPreserved": true,
+      "jsonIntegrityValid": true
+    },
+    {
+      "budgetTokens": 32000,
+      "status": "Passed",
+      "budgetStatus": "Ready",
+      "estimatedTokens": 1339,
+      "remainingBudget": 26565,
+      "protectedContextPreserved": true,
+      "jsonIntegrityValid": true
+    },
+    {
+      "budgetTokens": 128000,
+      "status": "Passed",
+      "budgetStatus": "Ready",
+      "estimatedTokens": 1339,
+      "remainingBudget": 118469,
+      "protectedContextPreserved": true,
+      "jsonIntegrityValid": true
+    }
+  ],
+  "cache": {
+    "status": "Passed",
+    "firstStatus": "Miss",
+    "secondStatus": "Hit",
+    "sameRoutingId": true,
+    "metrics": {
+      "cacheVersion": "1.0",
+      "requests": 2,
+      "hits": 1,
+      "misses": 1,
+      "writes": 1,
+      "invalidations": 0,
+      "generationsAvoided": 1,
+      "estimatedGenerationMsSaved": 4.63,
+      "estimatedTokensSaved": 1483,
+      "hitRate": 50.0,
+      "activeEntries": 1,
+      "invalidatedEntries": 0
+    }
+  },
+  "diagnostics": {
+    "status": "Passed",
+    "diagnosticsId": "promptdiag_8c5fef7b70c6",
+    "lineageComplete": true,
+    "warnings": [
+      "AC002 needs review: not_testable.",
+      "AC003 needs review: not_testable.",
+      "Mode-specific optimization increased prompt size while preserving required engineering context."
+    ]
+  },
+  "routing": {
+    "status": "Passed",
+    "passed": 6,
+    "total": 6,
+    "decisions": [
+      {
+        "target": "Coding",
+        "expectedModel": "codex",
+        "selectedModel": "codex",
+        "passed": true
+      },
+      {
+        "target": "Architecture",
+        "expectedModel": "gpt",
+        "selectedModel": "gpt",
+        "passed": true
+      },
+      {
+        "target": "UI",
+        "expectedModel": "gemini",
+        "selectedModel": "gemini",
+        "passed": true
+      },
+      {
+        "target": "Documentation",
+        "expectedModel": "gpt",
+        "selectedModel": "gpt",
+        "passed": true
+      },
+      {
+        "target": "Large Context",
+        "expectedModel": "claude",
+        "selectedModel": "claude",
+        "passed": true
+      },
+      {
+        "target": "Local",
+        "expectedModel": "ollama",
+        "selectedModel": "ollama",
+        "passed": true
+      }
+    ]
+  },
+  "regression": {
+    "status": "Passed",
+    "stable": true,
+    "fingerprint": "88646a3129eb472e1775ee9d47404d8bcfc1e26b5bcc8ce42adb7b028e315afb"
+  },
+  "performance": {
+    "status": "Passed",
+    "stages": {
+      "manifest": {
+        "averageMs": 0.47,
+        "maximumMs": 0.97,
+        "targetMs": 100.0,
+        "withinTarget": true,
+        "sampleCount": 4
+      },
+      "compile": {
+        "averageMs": 1.62,
+        "maximumMs": 4.97,
+        "targetMs": 100.0,
+        "withinTarget": true,
+        "sampleCount": 4
+      },
+      "tokenBudget": {
+        "averageMs": 0.83,
+        "maximumMs": 2.54,
+        "targetMs": 150.0,
+        "withinTarget": true,
+        "sampleCount": 11
+      },
+      "adapter": {
+        "averageMs": 0.55,
+        "maximumMs": 1.38,
+        "targetMs": 100.0,
+        "withinTarget": true,
+        "sampleCount": 11
+      },
+      "optimizer": {
+        "averageMs": 0.88,
+        "maximumMs": 1.97,
+        "targetMs": 100.0,
+        "withinTarget": true,
+        "sampleCount": 11
+      },
+      "diagnostics": {
+        "averageMs": 0.24,
+        "maximumMs": 0.24,
+        "targetMs": 100.0,
+        "withinTarget": true,
+        "sampleCount": 1
+      },
+      "routingCold": {
+        "averageMs": 5.27,
+        "maximumMs": 5.27,
+        "targetMs": 250.0,
+        "withinTarget": true,
+        "sampleCount": 1
+      },
+      "routingCacheHit": {
+        "averageMs": 0.7,
+        "maximumMs": 0.7,
+        "targetMs": 50.0,
+        "withinTarget": true,
+        "sampleCount": 1
+      }
+    }
+  },
+  "qualityGates": [
+    {
+      "name": "Repository modes",
+      "passed": true,
+      "details": "Large, small, snapshot, and unavailable modes preserve truthful evidence."
+    },
+    {
+      "name": "Model adapters",
+      "passed": true,
+      "details": "Every registered deterministic adapter produces a bounded prompt."
+    },
+    {
+      "name": "Token safety",
+      "passed": true,
+      "details": "Every supported budget preserves protected JSON context."
+    },
+    {
+      "name": "Prompt cache",
+      "passed": true,
+      "details": "Repeated generation is served from cache with immutable routing identity."
+    },
+    {
+      "name": "Provider routing",
+      "passed": true,
+      "details": "Every routing rule selects the expected eligible model."
+    },
+    {
+      "name": "Prompt diagnostics",
+      "passed": true,
+      "details": "Prompt lineage and model diagnostics are complete."
+    },
+    {
+      "name": "Regression stability",
+      "passed": true,
+      "details": "Two identical runs produce the same deterministic fingerprint."
+    },
+    {
+      "name": "Performance",
+      "passed": true,
+      "details": "Every deterministic stage remains within its local benchmark target."
+    }
+  ],
+  "readiness": {
+    "status": "Production Ready",
+    "passedGates": 8,
+    "totalGates": 8,
+    "blockers": []
+  },
+  "limitations": [
+    "Benchmarks measure deterministic local processing and exclude provider, network, and repository clone latency.",
+    "Large repository coverage uses generated repository metadata rather than a live source checkout.",
+    "JSON-backed benchmark persistence is intended for single-process validation, not distributed load testing.",
+    "Production Ready applies to the deterministic Prompt Intelligence boundary; full repository regression status is reported separately."
+  ]
+}

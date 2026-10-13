@@ -1,0 +1,676 @@
+import * as SDK from 'azure-devops-extension-sdk';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  approvePlannerStage,
+  buildVsCodePromptUri,
+  createAzureDevOpsItems,
+  editPlannerStage,
+  getCurrentWorkItemContext,
+  loadCreationPreview,
+  loadPlannerSession,
+  regeneratePlannerStage,
+  startPlannerSession,
+  storeCreationResult,
+} from './storyPlannerApi';
+import { CreationPreview, PlannerSession, PlannerStage, PlannerViewState } from './storyPlannerTypes';
+import './storyPlanner.css';
+
+const SESSION_KEY_PREFIX = 'ai-story-planner:session-id';
+
+function StoryPlannerTab() {
+  const [view, setView] = useState<PlannerViewState>({
+    loading: true,
+    loadingMessage: 'Loading AI Story Planner...',
+    error: '',
+  });
+  const [requirement, setRequirement] = useState('');
+  const [activeInput, setActiveInput] = useState('');
+  const [copyMessage, setCopyMessage] = useState('');
+  const [manualPrompt, setManualPrompt] = useState('');
+
+  function addActivity(message: string) {
+    const timestamp = new Date().toLocaleTimeString();
+    setView((current) => ({
+      ...current,
+      activity: [`${timestamp} - ${message}`, ...(current.activity || [])].slice(0, 8),
+    }));
+  }
+
+  useEffect(() => {
+    SDK.init({ loaded: false, applyTheme: true });
+    SDK.ready().then(async () => {
+      SDK.notifyLoadSucceeded();
+      try {
+        const workItem = await getCurrentWorkItemContext();
+        const sessionKey = buildSessionKey(workItem);
+        const sessionId = window.sessionStorage.getItem(sessionKey) || '';
+        let session: PlannerSession | undefined;
+        if (sessionId) {
+          try {
+            session = await loadPlannerSession(sessionId);
+          } catch {
+            window.sessionStorage.removeItem(sessionKey);
+          }
+        }
+        setRequirement(session?.requirement || buildSeedRequirement(workItem));
+        setView({
+          loading: false,
+          loadingMessage: '',
+          error: '',
+          session,
+          workItem,
+        });
+      } catch (error) {
+        setView({
+          loading: false,
+          loadingMessage: '',
+          error: error instanceof Error ? error.message : 'Unable to load AI Story Planner.',
+        });
+        void SDK.notifyLoadSucceeded();
+      }
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : 'Unable to initialize Azure DevOps SDK.';
+      setView({
+        loading: false,
+        loadingMessage: '',
+        error: message,
+      });
+      void SDK.notifyLoadFailed(message);
+    });
+  }, []);
+
+  const currentStage = view.session?.current_stage;
+  const planner_kind = view.session?.planner_kind || 'story';
+  const plannerLabels = getPlannerLabels(planner_kind);
+  const seedWarning = useMemo(() => {
+    if (!view.workItem || view.session) {
+      return '';
+    }
+    const hasDescription = Boolean(cleanText(view.workItem.description));
+    const hasAcceptance = Boolean(cleanText(view.workItem.acceptanceCriteria));
+    if (!hasDescription && !hasAcceptance) {
+      return 'This work item has no description or acceptance criteria yet. Review and confirm the requirement below before starting planning.';
+    }
+    return '';
+  }, [view.workItem, view.session]);
+  const steps = useMemo(
+    () => [
+      { id: 'requirement', label: 'Requirement', done: Boolean(view.session) },
+      { id: 'refined_story', label: plannerLabels.step1, done: Boolean(view.session?.story_approved) },
+      { id: 'acceptance_criteria', label: plannerLabels.step2, done: Boolean(view.session?.acceptance_approved) },
+      { id: 'tasks', label: plannerLabels.step3, done: Boolean(view.session?.tasks_approved) },
+      { id: 'azure_devops_creation', label: 'Azure DevOps', done: currentStage === 'success' || currentStage === 'azure_devops_creation' },
+      { id: 'success', label: 'Success', done: currentStage === 'success' },
+    ],
+    [view.session, currentStage, plannerLabels]
+  );
+
+  async function withLoading<T>(message: string, action: () => Promise<T>) {
+    setView((current) => ({ ...current, loading: true, loadingMessage: message, error: '' }));
+    addActivity(message);
+    try {
+      const result = await action();
+      setView((current) => ({ ...current, loading: false, loadingMessage: '', error: '' }));
+      return result;
+    } catch (error) {
+      addActivity(`Failed: ${error instanceof Error ? error.message : String(error)}`);
+      setView((current) => ({
+        ...current,
+        loading: false,
+        loadingMessage: '',
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return undefined;
+    }
+  }
+
+  async function start() {
+    const session = await withLoading('Generating refined story...', () => startPlannerSession(requirement, view.workItem));
+    if (session) {
+      if (view.workItem) {
+        window.sessionStorage.setItem(buildSessionKey(view.workItem), session.session_id);
+      }
+      setActiveInput('');
+      setView((current) => ({ ...current, session, preview: undefined }));
+    }
+  }
+
+  async function saveCurrentStage() {
+    if (!view.session) return;
+    const stage = view.session.current_stage;
+    let payload: Record<string, unknown> = {};
+    if (stage === 'refined_story') {
+      payload = {
+        title: view.session.story.title,
+        description: view.session.story.description,
+        business_value: view.session.story.business_value,
+      };
+    } else if (stage === 'acceptance_criteria') {
+      payload = { acceptance_criteria: view.session.acceptance_criteria };
+    } else if (stage === 'tasks') {
+      payload = { tasks: view.session.tasks };
+    }
+    const session = await withLoading('Saving edits...', () => editPlannerStage(view.session!.session_id, stage, payload));
+    if (session) {
+      setView((current) => ({ ...current, session, preview: undefined }));
+    }
+  }
+
+  async function regenerate() {
+    if (!view.session) return;
+    const session = await withLoading('Regenerating stage...', () =>
+      regeneratePlannerStage(view.session!.session_id, view.session!.current_stage, activeInput)
+    );
+    if (session) {
+      setActiveInput('');
+      setView((current) => ({ ...current, session, preview: undefined }));
+    }
+  }
+
+  async function approve() {
+    if (!view.session) return;
+    const session = await withLoading('Approving stage...', () =>
+      approvePlannerStage(view.session!.session_id, view.session!.current_stage)
+    );
+    if (session) {
+      setActiveInput('');
+      setView((current) => ({ ...current, session, preview: undefined }));
+    }
+  }
+
+  async function createItems() {
+    if (!view.session || !view.workItem || !view.preview) return;
+    const confirmed = window.confirm(creationConfirmText(view.preview, view.workItem));
+    if (!confirmed) {
+      return;
+    }
+    const preview = view.preview;
+    const result = await withLoading('Creating Azure DevOps work items...', () => createAzureDevOpsItems(preview, view.workItem!, addActivity));
+    if (!result) return;
+    if (result.story.status !== 'created') {
+      setView((current) => ({
+        ...current,
+        loading: false,
+        loadingMessage: '',
+        error: result.story.error || 'Azure DevOps did not create the User Story.',
+      }));
+    }
+    const session = await withLoading('Saving creation results...', () =>
+      storeCreationResult(view.session!.session_id, result)
+    );
+    if (session) {
+      setView((current) => ({ ...current, session, preview }));
+    }
+  }
+
+  async function prepareCreationPreview() {
+    if (!view.session) return;
+    const preview = await withLoading('Preparing Azure DevOps work items...', () => loadCreationPreview(view.session!.session_id));
+    if (preview) {
+      addActivity(`Prepared Azure DevOps preview with ${preview.preview.tasks.length} child task(s).`);
+      setView((current) => ({ ...current, preview }));
+    }
+  }
+
+  function updateStory(field: 'title' | 'description' | 'business_value', value: string) {
+    setView((current) => current.session ? ({
+      ...current,
+      session: {
+        ...current.session,
+        story: {
+          ...current.session.story,
+          [field]: value,
+        },
+      },
+    }) : current);
+  }
+
+  function updateAcceptance(value: string) {
+    setView((current) => current.session ? ({
+      ...current,
+      session: {
+        ...current.session,
+        acceptance_criteria: value.split('\n').map((line) => line.trim()).filter(Boolean),
+      },
+    }) : current);
+  }
+
+  function updateTask(index: number, field: 'title' | 'description' | 'estimated_effort', value: string) {
+    setView((current) => {
+      if (!current.session) return current;
+      const tasks = current.session.tasks.map((task, taskIndex) => taskIndex === index ? { ...task, [field]: value } : task);
+      return { ...current, session: { ...current.session, tasks } };
+    });
+  }
+
+  function renderStageBody(session: PlannerSession) {
+    if (session.current_stage === 'refined_story') {
+      return (
+        <>
+          <div className="planner-label">{plannerLabels.titleLabel}</div>
+          <input className="planner-input" value={session.story.title} onChange={(event) => updateStory('title', event.target.value)} />
+          <div className="planner-label">{plannerLabels.descLabel}</div>
+          <textarea className="planner-textarea" value={session.story.description} onChange={(event) => updateStory('description', event.target.value)} />
+          <div className="planner-label">{plannerLabels.valueLabel}</div>
+          <textarea className="planner-textarea" value={session.story.business_value} onChange={(event) => updateStory('business_value', event.target.value)} />
+        </>
+      );
+    }
+    if (session.current_stage === 'acceptance_criteria') {
+      return (
+        <>
+          <div className="planner-label">{plannerLabels.criteriaLabel}</div>
+          <textarea className="planner-textarea" value={session.acceptance_criteria.join('\n')} onChange={(event) => updateAcceptance(event.target.value)} />
+          <div className="planner-subtle" style={{ fontSize: '0.8em' }}>
+            {plannerLabels.criteriaHint}
+          </div>
+        </>
+      );
+    }
+    if (session.current_stage === 'tasks') {
+      return (
+        <div className="planner-status-grid">
+          {session.tasks.map((task, index) => (
+            <div key={task.id} className="planner-task">
+              <div className="planner-label">{plannerLabels.workItemTitleLabel}</div>
+              <input className="planner-input" value={task.title} onChange={(event) => updateTask(index, 'title', event.target.value)} />
+              <div className="planner-label">{plannerLabels.workItemDescriptionLabel}</div>
+              <textarea className="planner-textarea" value={task.description} onChange={(event) => updateTask(index, 'description', event.target.value)} />
+              <div className="planner-label">{plannerLabels.workItemEffortLabel}</div>
+              <input className="planner-input" value={task.estimated_effort || ''} onChange={(event) => updateTask(index, 'estimated_effort', event.target.value)} />
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (session.current_stage === 'azure_devops_creation') {
+      return renderCreationPreview(view.preview);
+    }
+    return renderSuccess(session);
+  }
+
+  function renderCreationPreview(preview?: CreationPreview) {
+    if (!preview) {
+      return <div className="planner-subtle">{creationReadyText(view.session)}</div>;
+    }
+    return (
+      <div className="planner-status-grid">
+        {preview.preview.mode === 'epic' ? (
+          <div className="planner-task">
+            <div className="planner-label">Parent Epic</div>
+            <strong>{view.workItem?.title || `#${preview.preview.parent_work_item_id || view.workItem?.id}`}</strong>
+            <div className="planner-subtle">Features will be created under this Epic. User Stories will be linked under their Feature.</div>
+          </div>
+        ) : null}
+        {(preview.preview.features || []).map((feature) => (
+          <div key={feature.id} className="planner-task">
+            <div className="planner-label">Proposed Feature</div>
+            <strong>{feature.title}</strong>
+            <div>{feature.description}</div>
+          </div>
+        ))}
+        {preview.preview.story ? (
+          <div className="planner-task">
+            <div className="planner-label">User Story</div>
+            <strong>{preview.preview.story.title}</strong>
+            <div>{preview.preview.story.description}</div>
+            <ul className="planner-list">
+              {preview.preview.story.acceptance_criteria.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </div>
+        ) : preview.preview.mode !== 'epic' ? (
+          <div className="planner-task">
+            <div className="planner-label">Parent User Story</div>
+            <strong>{view.workItem?.title || `#${preview.preview.parent_work_item_id || view.workItem?.id}`}</strong>
+            <div className="planner-subtle">No duplicate User Story will be created. Tasks will be linked under this work item.</div>
+          </div>
+        ) : null}
+        {preview.preview.tasks.map((task) => (
+          <div key={task.id} className="planner-task">
+            <div className="planner-label">{task.type === 'User Story' ? 'Proposed User Story' : 'Proposed Task'}</div>
+            <strong>{task.title}</strong>
+            <div>{task.description}</div>
+            <div className="planner-subtle">Estimated effort: {task.estimated_effort || 'Not set'}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderSuccess(session: PlannerSession) {
+    return (
+      <div className="planner-status-grid">
+        <div className="planner-status-row">
+          <span>{session.planner_kind === 'user_story' ? 'Parent User Story' : 'User Story'}</span>
+          <span>
+            {session.created_summary?.story?.status === 'created'
+              ? `${session.planner_kind === 'user_story' ? 'Used' : 'Created'} #${session.created_summary?.story?.azure_work_item_id}`
+              : `Failed${session.created_summary?.story?.error ? `: ${session.created_summary.story.error}` : ''}`}
+          </span>
+        </div>
+        {(session.created_summary?.tasks || []).map((task) => (
+          <div key={`${task.id || task.title}`} className="planner-status-row">
+            <span>{task.title}</span>
+            <span>{task.status === 'created' ? `Created #${task.azure_work_item_id}` : `Failed${task.error ? `: ${task.error}` : ''}`}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderActions(session: PlannerSession) {
+    const promptActions = session.code_generation_prompt ? (
+      <>
+        <button className="planner-button secondary" onClick={() => void copyPrompt()} disabled={view.loading}>Copy Prompt</button>
+        <button className="planner-button secondary" onClick={() => openPromptInVsCode(session)} disabled={view.loading}>Send Prompt to VS Code</button>
+      </>
+    ) : null;
+    if (session.current_stage === 'success') {
+      return promptActions ? <div className="planner-actions">{promptActions}</div> : null;
+    }
+    if (session.current_stage === 'azure_devops_creation') {
+      return (
+        <div className="planner-actions">
+          {promptActions}
+          {!view.preview ? (
+            <button className="planner-button" onClick={prepareCreationPreview} disabled={view.loading}>Preview Azure DevOps Work Items</button>
+          ) : (
+            <button className="planner-button" onClick={createItems} disabled={view.loading}>Create Azure DevOps Work Items</button>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className="planner-actions">
+        {promptActions}
+        <button className="planner-button secondary" onClick={saveCurrentStage} disabled={view.loading}>Edit</button>
+        <button className="planner-button secondary" onClick={regenerate} disabled={view.loading}>Regenerate</button>
+        <button className="planner-button" onClick={approve} disabled={view.loading}>Approve</button>
+      </div>
+    );
+  }
+
+  return (
+    <main className="planner-shell">
+      <section className="planner-card">
+        <div className="planner-title">AI Story Planner</div>
+        <div className="planner-subtle">
+          {view.workItem ? `Boards item: ${view.workItem.title || `#${view.workItem.id}`}` : 'Plan a requirement into an approved story and real Azure DevOps work items.'}
+        </div>
+        <div className="planner-steps">
+          {steps.map((step) => (
+            <div
+              key={step.id}
+              className={`planner-step ${currentStage === step.id ? 'active' : ''} ${step.done ? 'done' : ''}`}
+            >
+              <strong>{step.label}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {view.error ? <div className="planner-error">{view.error}</div> : null}
+      {view.loading ? <div className="planner-subtle">{view.loadingMessage}</div> : null}
+      {copyMessage ? <div className="planner-subtle">{copyMessage}</div> : null}
+
+      {!view.session ? (
+        <section className="planner-card">
+          {seedWarning ? <div className="planner-subtle">{seedWarning}</div> : null}
+          <div className="planner-label">Requirement</div>
+          <textarea
+            className="planner-textarea"
+            value={requirement}
+            onChange={(event) => setRequirement(event.target.value)}
+            placeholder="As a customer, I want OTP login so I can securely access my account."
+          />
+          <div className="planner-actions">
+            <button className="planner-button" onClick={start} disabled={!requirement.trim() || view.loading}>Start Planning</button>
+          </div>
+        </section>
+      ) : view.session ? (
+        <section className="planner-card">
+          <div className="planner-label">Current Question</div>
+          <div>{view.session.question}</div>
+          {view.session.current_stage !== 'azure_devops_creation' && view.session.current_stage !== 'success' ? (
+            <>
+              <div className="planner-label">Your Input</div>
+              <textarea
+                className="planner-textarea"
+                value={activeInput}
+                onChange={(event) => setActiveInput(event.target.value)}
+                placeholder={view.session.user_input_hint}
+              />
+            </>
+          ) : null}
+          {renderStageBody(view.session)}
+          {renderActions(view.session)}
+          {view.activity?.length ? (
+            <>
+              <div className="planner-label">Activity</div>
+              <ul className="planner-list">
+                {view.activity.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </>
+          ) : null}
+          {manualPrompt ? (
+            <>
+              <div className="planner-label">Manual Copy Prompt</div>
+              <textarea className="planner-textarea" readOnly value={manualPrompt} onFocus={(event) => event.currentTarget.select()} />
+            </>
+          ) : null}
+        </section>
+      ) : null}
+    </main>
+  );
+
+  async function copyPrompt() {
+    setCopyMessage('');
+    const prompt = (view.session?.code_generation_prompt || buildFallbackPrompt(view.session)).trim();
+    if (!prompt) {
+      setView((current) => ({ ...current, error: 'Code-generation prompt is not ready yet.' }));
+      return;
+    }
+    setManualPrompt(prompt);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await promiseWithTimeout(navigator.clipboard.writeText(prompt), 1500);
+        setCopyMessage('Code-generation prompt copied. The prompt is also shown below.');
+        addActivity('Code-generation prompt copied and shown.');
+        return;
+      }
+    } catch {
+      // fall through to manual copy
+    }
+    const area = document.createElement('textarea');
+    area.value = prompt;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    try {
+      const copied = document.execCommand('copy');
+      document.body.removeChild(area);
+      if (copied) {
+        setCopyMessage('Code-generation prompt copied. The prompt is also shown below.');
+        addActivity('Code-generation prompt copied and shown.');
+        return;
+      }
+    } catch {
+      document.body.removeChild(area);
+    }
+    setCopyMessage('Clipboard access was blocked. Select the prompt below to copy it manually.');
+    addActivity('Clipboard access was blocked; manual prompt shown.');
+  }
+
+  function openPromptInVsCode(session: PlannerSession) {
+    if (!session.code_generation_prompt) {
+      setView((current) => ({ ...current, error: 'Code-generation prompt is not ready yet.' }));
+      return;
+    }
+    window.open(buildVsCodePromptUri(session), '_blank');
+    addActivity('Sent code-generation prompt handoff to VS Code.');
+    setCopyMessage('VS Code handoff opened. If VS Code asks for permission, allow ai-gen to open.');
+  }
+}
+
+function buildSeedRequirement(workItem: PlannerViewState['workItem']): string {
+  if (!workItem) {
+    return '';
+  }
+  const parts: string[] = [];
+  const type = cleanText(workItem.type);
+  const title = cleanText(workItem.title);
+  const description = htmlToText(workItem.description);
+  const acceptance = htmlToText(workItem.acceptanceCriteria);
+  const comments = (workItem.comments || []).map(htmlToText).map(cleanText).filter(Boolean);
+  const tags: string[] = Array.isArray((workItem as Record<string, unknown>).tags)
+    ? ((workItem as Record<string, unknown>).tags as string[]).map(cleanText).filter(Boolean)
+    : typeof (workItem as Record<string, unknown>).tags === 'string'
+      ? String((workItem as Record<string, unknown>).tags).split(/[;,]/).map(cleanText).filter(Boolean)
+      : [];
+  if (title) parts.push(title);
+  if (description) parts.push(description);
+  if (acceptance) parts.push(`Acceptance criteria include: ${acceptance}`);
+  if (tags.length) parts.push(`Relevant platforms or tags: ${tags.join(', ')}.`);
+  if (comments.length) parts.push(`Recent discussion notes: ${comments.join(' ')}`);
+  return parts.join('\n\n');
+}
+
+function buildSessionKey(workItem: PlannerViewState['workItem']): string {
+  if (!workItem?.id) {
+    return `${SESSION_KEY_PREFIX}:new`;
+  }
+  return `${SESSION_KEY_PREFIX}:${cleanText(workItem.type).toLowerCase()}:${workItem.id}`;
+}
+
+function creationReadyText(session?: PlannerSession): string {
+  if (session?.planner_kind === 'user_story') {
+    return 'The approved child Tasks are ready to create under the current User Story.';
+  }
+  if (session?.planner_kind === 'epic') {
+    return 'The approved plan is ready to create Azure DevOps work items under the current Epic.';
+  }
+  if (session?.planner_kind === 'feature') {
+    return 'The approved plan is ready to create Azure DevOps work items under the current Feature.';
+  }
+  return 'The approved story and tasks are ready to create in Azure DevOps.';
+}
+
+function creationConfirmText(preview: CreationPreview, workItem: PlannerViewState['workItem']): string {
+  if (!preview.preview.story) {
+    return `Create ${preview.preview.tasks.length} child Task(s) under ${workItem?.type || 'User Story'} #${preview.preview.parent_work_item_id || workItem?.id}?`;
+  }
+  return `Create the approved User Story and ${preview.preview.tasks.length} child Task(s) in Azure DevOps?`;
+}
+
+function htmlToText(value: string): string {
+  return cleanText(
+    String(value || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<li>/gi, '- ')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+  );
+}
+
+function cleanText(value: string): string {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+type PlannerLabels = {
+  step1: string; step2: string; step3: string;
+  titleLabel: string; descLabel: string; valueLabel: string;
+  criteriaLabel: string; criteriaHint: string;
+  workItemTitleLabel: string; workItemDescriptionLabel: string; workItemEffortLabel: string;
+};
+
+function getPlannerLabels(plannerKind: string): PlannerLabels {
+  if (plannerKind === 'epic') {
+    return {
+      step1: 'Epic Goal',
+      step2: 'Key Features',
+      step3: 'User Stories',
+      titleLabel: 'Epic Title',
+      descLabel: 'Strategic Goal',
+      valueLabel: 'Business Value',
+      criteriaLabel: 'Key Features (one per line)',
+      criteriaHint: 'Each line is a key product feature that the Epic must deliver.',
+      workItemTitleLabel: 'User Story Title',
+      workItemDescriptionLabel: 'User Story Description',
+      workItemEffortLabel: 'Estimated Story Size',
+    };
+  }
+  if (plannerKind === 'feature') {
+    return {
+      step1: 'Feature Definition',
+      step2: 'User Stories',
+      step3: 'Implementation Tasks',
+      titleLabel: 'Feature Title',
+      descLabel: 'Feature Description',
+      valueLabel: 'Business Value',
+      criteriaLabel: 'User Stories (one per line)',
+      criteriaHint: 'Each line is a user story that this Feature must deliver.',
+      workItemTitleLabel: 'Task Title',
+      workItemDescriptionLabel: 'Task Description',
+      workItemEffortLabel: 'Estimated Effort',
+    };
+  }
+  // default: story / user_story
+  return {
+    step1: 'Refined Story',
+    step2: 'Acceptance Criteria',
+    step3: 'Tasks',
+    titleLabel: 'Title',
+    descLabel: 'Description',
+    valueLabel: 'Business Value',
+    criteriaLabel: 'Acceptance Criteria',
+    criteriaHint: 'Use Given / When / Then format for each criterion.',
+    workItemTitleLabel: 'Task Title',
+    workItemDescriptionLabel: 'Task Description',
+    workItemEffortLabel: 'Estimated Effort',
+  };
+}
+
+function buildFallbackPrompt(session?: PlannerSession): string {
+  if (!session) {
+    return '';
+  }
+  const sections = [
+    '# Task',
+    session.story.description || session.requirement,
+    '',
+    '# Business Value',
+    `- ${session.story.business_value || 'Deliver the approved user story clearly and safely.'}`,
+    '',
+    '# Acceptance Criteria',
+    ...session.acceptance_criteria.map((item) => `- ${item}`),
+    '',
+    '# Proposed Tasks',
+    ...session.tasks.map((task) => `- ${task.title}: ${task.description}`),
+  ];
+  return sections.join('\n').trim();
+}
+
+async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error('Clipboard timed out.')), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+const rootNode = document.getElementById('root');
+if (rootNode) {
+  createRoot(rootNode).render(<StoryPlannerTab />);
+}
